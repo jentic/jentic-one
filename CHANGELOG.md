@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.45.0](https://github.com/jentic/jentic-one/compare/v0.44.0...v0.45.0) (2026-10-30)
+
+
+### Features
+
+* **auth:** move jti replay and remaining process-local state to shared storage ([#1875](https://github.com/jentic/jentic-one/issues/1875)) ([5654abd](https://github.com/jentic/jentic-one/commit/5654abd096bc72eb0961d9011a81c7273a24c310))
+* **broker:** opt-in per-stage Server-Timing header on execute responses ([#1764](https://github.com/jentic/jentic-one/issues/1764)) ([365f86d](https://github.com/jentic/jentic-one/commit/365f86d26329b6b4036c4e794fb9167e3a67448b))
+* **control:** change a credential binding's access through connect sessions ([#1929](https://github.com/jentic/jentic-one/issues/1929)) ([b022863](https://github.com/jentic/jentic-one/commit/b022863a8c8b8a4e87af06c420f9fe4922d4f92e))
+
+
+### Bug Fixes
+
+* **admin:** apply the login lockout to the change-password current-password check ([#1954](https://github.com/jentic/jentic-one/issues/1954)) ([342de94](https://github.com/jentic/jentic-one/commit/342de940f7cb466e7fe225705e8734a3889ed53a))
+* **admin:** revoke login sessions when a user's permissions are reduced ([#1977](https://github.com/jentic/jentic-one/issues/1977)) ([516e2fa](https://github.com/jentic/jentic-one/commit/516e2fab42fca3a3df4d50aea624c9ab46a52b08))
+* **auth:** resolve issuer-less identity links and tighten upstream id_token checks ([#1978](https://github.com/jentic/jentic-one/issues/1978)) ([ce041e3](https://github.com/jentic/jentic-one/commit/ce041e39a5d0c056917013ca84f0a6265b38fac9))
+* **broker:** one injection step and one Retry-After parser across sync, async and MCP ([#1957](https://github.com/jentic/jentic-one/issues/1957)) ([#1982](https://github.com/jentic/jentic-one/issues/1982)) ([44e0de3](https://github.com/jentic/jentic-one/commit/44e0de3c6bf7f5f4a183b7b28a7268dff5739a09))
+* **cli:** pull the published image when updating a Docker stack ([#2013](https://github.com/jentic/jentic-one/issues/2013)) ([ee0409a](https://github.com/jentic/jentic-one/commit/ee0409ae2c98bf62526eeb1a1d6ccbee7ae33b86))
+* **control:** attribute admin-confirmed connect credentials to agent owner and scope candidates ([#1926](https://github.com/jentic/jentic-one/issues/1926)) ([94af44a](https://github.com/jentic/jentic-one/commit/94af44a5e485d138a21e0e78f5ff9003966f89c6)), closes [#1838](https://github.com/jentic/jentic-one/issues/1838)
+* **control:** re-check sole binding when storing re-authorized tokens ([#1953](https://github.com/jentic/jentic-one/issues/1953)) ([f2803fd](https://github.com/jentic/jentic-one/commit/f2803fd71ad06d7c08a3f671268576bdfdb0b18c))
+* **pagination:** page on the full (timestamp, id) keyset and return 400 for every malformed cursor ([#1984](https://github.com/jentic/jentic-one/issues/1984)) ([cedec07](https://github.com/jentic/jentic-one/commit/cedec07c7fa20a6a5f4f3f5eb326da9ead94c777))
+* **registry:** correct five import defects found under concurrent spec-upload load ([#1995](https://github.com/jentic/jentic-one/issues/1995)) ([f221c7b](https://github.com/jentic/jentic-one/commit/f221c7b81e770390cb3fa6187d7af63e07f7860d))
+* **registry:** normalise vendor and name on /apis path lookups and the vendor filter ([#1989](https://github.com/jentic/jentic-one/issues/1989)) ([0f2c8c2](https://github.com/jentic/jentic-one/commit/0f2c8c2455ace9d27fc2405dd89830615e682f97))
+* **registry:** require org:admin to make a server-host change current ([#1979](https://github.com/jentic/jentic-one/issues/1979)) ([dccf17b](https://github.com/jentic/jentic-one/commit/dccf17bf566b07c5d11d0685ed030057134b9d49))
+* **state:** budget the repeated-failure counter as a shared-state namespace ([#2008](https://github.com/jentic/jentic-one/issues/2008)) ([0a24909](https://github.com/jentic/jentic-one/commit/0a24909c7c61d4ceda1d479dfa8b1ccb6f097828))
+
+
+### Performance
+
+* **events:** gate the repeated-failure scan behind a shared-state counter ([#1744](https://github.com/jentic/jentic-one/issues/1744)) ([fc4f020](https://github.com/jentic/jentic-one/commit/fc4f020ead47bb2a780774b1ff58788fda67bdff))
+
+
+### Refactors
+
+* **auth:** split the authorize router into pages, consent state and routers ([#1997](https://github.com/jentic/jentic-one/issues/1997)) ([3e63f2e](https://github.com/jentic/jentic-one/commit/3e63f2e6d921eb6bc7d4843a7420ebc8b02ec527))
+* **web:** split shared/web/openapi_meta.py into a package ([#1994](https://github.com/jentic/jentic-one/issues/1994)) ([396bc78](https://github.com/jentic/jentic-one/commit/396bc7891888d3cbdd2a6e17747aaa5b1ae743a1))
+
+
+### Documentation
+
+* **quickstart:** generate a credential-encryption key per install ([#2034](https://github.com/jentic/jentic-one/issues/2034)) ([3b0c776](https://github.com/jentic/jentic-one/commit/3b0c77658db6f9d80c83e730b1f52cca846f4489))
+
+
+### Build System
+
+* **deps:** bump github.com/go-jose/go-jose/v4 from 4.1.4 to 4.1.6 (CVE-2026-116587) ([#2009](https://github.com/jentic/jentic-one/issues/2009)) ([e6f19a6](https://github.com/jentic/jentic-one/commit/e6f19a6991c19186798a0cc00692aac2a04d18f8))
+
 ## [0.44.0](https://github.com/jentic/jentic-one/compare/v0.43.0...v0.44.0) (2026-10-27)
 
 
