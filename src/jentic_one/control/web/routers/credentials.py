@@ -1121,7 +1121,7 @@ async def delete_credential(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
     responses=with_responses(not_found(), conflict("Credential is not connectable")),
-    response_model=None,
+    response_model=ConnectChallengeResponse,
 )
 async def connect_credential(
     credential_id: Annotated[

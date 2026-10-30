@@ -9,7 +9,7 @@ export class ApiSpecService {
     /**
      * Get Api Spec
      * Download the OpenAPI spec for the API's current (live) revision.
-     * @returns any Successful Response
+     * @returns any The stored OpenAPI document, served as-is, with `Content-Disposition: attachment`. `application/json` is the default; request `application/openapi+yaml` or `application/yaml` via `Accept` for YAML.
      * @throws ApiError
      */
     public static getApiSpec({
@@ -34,7 +34,7 @@ export class ApiSpecService {
          * Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
          */
         overlays?: boolean,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<Record<string, any>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/openapi',
@@ -66,7 +66,7 @@ export class ApiSpecService {
      * `.json` or `.yaml` filename. The document is served exactly as stored —
      * a revision produced by confirming an overlay already includes it, so the
      * `overlays` flag currently has no effect.
-     * @returns any Successful Response
+     * @returns any The stored OpenAPI document, served as-is, with `Content-Disposition: attachment`. `application/json` is the default; request `application/openapi+yaml` or `application/yaml` via `Accept` for YAML.
      * @throws ApiError
      */
     public static getApiRevisionSpec({
@@ -96,7 +96,7 @@ export class ApiSpecService {
          * Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
          */
         overlays?: boolean,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<Record<string, any>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi',

@@ -35,6 +35,7 @@ _ROOT_EXPORTS = {
     "authenticated_security": content,
     "OPENAPI_TAGS": tags,
     "X_TAG_GROUPS": tags,
+    "ALWAYS_ERROR_OPERATION_IDS": operation_ids,
     "NON_BEARER_AUTH_OPERATION_IDS": operation_ids,
     "PUBLIC_OPERATION_IDS": operation_ids,
     "ROUTER_RESHAPED_422_OPERATION_IDS": operation_ids,

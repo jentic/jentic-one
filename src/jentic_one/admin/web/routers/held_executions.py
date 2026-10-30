@@ -10,7 +10,7 @@ part of this surface: every read goes through the held execution itself.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -28,6 +28,7 @@ from jentic_one.admin.web.schemas.held_executions import (
     HeldExecutionLinksResponse,
     HeldExecutionListResponse,
     HeldExecutionResponse,
+    HeldExecutionResultResponse,
     HeldRequestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -165,10 +166,47 @@ async def get_held_execution(
     return _detail_response(view, request)
 
 
+#: The result is one of two bodies, chosen by whether the call ran, so the
+#: ``200`` declares both media types: the execution document for a call that
+#: ran, and the RFC 9457 body for one that never did.
+_RESULT_200: Final[dict[int | str, dict[str, Any]]] = {
+    200: {
+        "description": (
+            "The finished call's outcome, in one of two bodies.\n\n"
+            "- **The call ran** (approved and released): the execution document as "
+            "`application/json` — `execution_id`, `status`, `http_status`, `duration_ms` and, "
+            "when the upstream returned a body, `body_b64` (base64; the upstream payload is "
+            "never inlined as JSON).\n"
+            "- **The call never ran** (denied, its approval window lapsed, or its approved "
+            "run interrupted): the `application/problem+json` body explaining why, with "
+            "`type` `approval_denied`, `approval_expired`, `approval_required` or "
+            "`approval_resume_failed`, plus `error_origin` and a `held_execution` object "
+            "(`id`, `state`). The HTTP status stays `200`; the problem's own `status` member "
+            "(403, or 409 for an interrupted approved run) says why.\n\n"
+            "Decide which arm arrived from the response `Content-Type`."
+        ),
+        "model": HeldExecutionResultResponse,
+        "content": {
+            PROBLEM_CONTENT_TYPE: {
+                "schema": {"$ref": "#/components/schemas/ProblemDetail"},
+                "example": {
+                    "type": "approval_denied",
+                    "title": "Execution approval denied",
+                    "status": 403,
+                    "detail": "A reviewer denied this held execution: Not this account",
+                    "error_origin": "broker",
+                    "held_execution": {"id": ex.HELD_EXECUTION_ID, "state": "denied"},
+                },
+            }
+        },
+    }
+}
+
+
 @router.get(
     "/executions/holds/{held_execution_id}/result",
     summary="Get a held execution's result",
-    responses=with_responses(not_found(), conflict()),
+    responses=with_responses(not_found(), conflict(), _RESULT_200),
 )
 async def get_held_execution_result(
     held_execution_id: _HeldExecutionId,

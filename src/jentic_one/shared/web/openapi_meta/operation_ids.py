@@ -170,6 +170,19 @@ ROUTER_RESHAPED_422_OPERATION_IDS: frozenset[str] = frozenset(
 )
 
 
+#: Operations that exist only to refuse: the RFC 7592 client-update and
+#: client-delete doors answer every call with ``OperationNotSupportedError``
+#: (403), so they have no success body and FastAPI's inferred ``200`` describes a
+#: response no caller can observe. The success entry is dropped from the spec so
+#: a reader sees only what the endpoint can actually return.
+ALWAYS_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "deleteRegistrationEndpoint",
+        "updateRegistrationEndpoint",
+    }
+)
+
+
 def _camelize(name: str) -> str:
     """Convert a snake_case route function name to camelCase."""
     parts = [p for p in name.split("_") if p]

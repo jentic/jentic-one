@@ -249,6 +249,7 @@ def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int, instance:
 @_import_router.post(
     "/apis",
     status_code=202,
+    response_model=ApiImportResponse,
     responses={
         413: problem(
             "The request body exceeds `ingest.max_import_request_bytes`, or an inline "
@@ -379,7 +380,11 @@ def _build_revision_links(
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions", summary="List an API's revisions")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/revisions",
+    response_model=ApiRevisionListResponse,
+    summary="List an API's revisions",
+)
 async def list_api_revisions(
     request: Request,
     vendor: ApiVendorPath,
@@ -457,7 +462,9 @@ async def list_api_revisions(
 
 
 @router.get(
-    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}", summary="Get an API revision"
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
+    response_model=ApiRevisionResponse,
+    summary="Get an API revision",
 )
 async def get_api_revision(
     request: Request,
@@ -592,6 +599,8 @@ async def list_api_operations(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations",
+    response_model=OperationSummaryListResponse,
+    response_model_by_alias=True,
     summary="List the operations in an API revision",
 )
 async def list_api_revision_operations(
@@ -639,7 +648,7 @@ async def list_api_revision_operations(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/apis/{vendor}/{name}/{version}")
+@router.patch("/apis/{vendor}/{name}/{version}", response_model=ApiResponse)
 async def update_api(
     request: Request,
     vendor: ApiVendorPath,
@@ -685,7 +694,10 @@ async def delete_api(
     return Response(status_code=204)
 
 
-@router.post("/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote")
+@router.post(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote",
+    response_model=ApiResponse,
+)
 async def promote_revision(
     request: Request,
     vendor: ApiVendorPath,
@@ -715,6 +727,7 @@ async def promote_revision(
 
 @router.post(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive",
+    response_model=ApiRevisionResponse,
     summary="Archive an API revision",
 )
 async def archive_revision(
@@ -794,6 +807,43 @@ async def delete_revision(
 
 _SPEC_SUPPORTED_MEDIA_TYPES = {"application/json", "application/openapi+yaml", "application/yaml"}
 
+# The body is a third-party OpenAPI document, so it has no fixed shape and is not
+# modelled. Declaring a permissive schema per media type tells a caller what they
+# are getting instead of leaving the response untyped.
+_SPEC_DOWNLOAD_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "The stored OpenAPI document, served as-is, with "
+            "`Content-Disposition: attachment`. `application/json` is the default; request "
+            "`application/openapi+yaml` or `application/yaml` via `Accept` for YAML."
+        ),
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "description": (
+                        "The API's OpenAPI document as stored on the revision — an OpenAPI "
+                        "object (`openapi`, `info`, `paths`, …) whose shape is the "
+                        "third-party spec's own, so it is not modelled here."
+                    ),
+                }
+            },
+            "application/openapi+yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": "The same OpenAPI document serialized as YAML.",
+                }
+            },
+            "application/yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": "The same OpenAPI document serialized as YAML.",
+                }
+            },
+        },
+    }
+}
+
 
 def _spec_response(request: Request, doc: SpecDocument) -> Response:
     """Build a content-negotiated response for a spec document."""
@@ -822,7 +872,7 @@ def _spec_response(request: Request, doc: SpecDocument) -> Response:
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/openapi")
+@router.get("/apis/{vendor}/{name}/{version}/openapi", responses=_SPEC_DOWNLOAD_RESPONSES)
 async def get_api_spec(
     request: Request,
     vendor: ApiVendorPath,
@@ -852,6 +902,7 @@ async def get_api_spec(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi",
+    responses=_SPEC_DOWNLOAD_RESPONSES,
     summary="Download an API revision's OpenAPI document",
 )
 async def get_api_revision_spec(

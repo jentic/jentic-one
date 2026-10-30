@@ -16,7 +16,12 @@ _EX_SPEC_URL = (
     "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/"
     f"{ex.API_VENDOR}/main/{ex.API_VERSION}/openapi.json"
 )
+_EX_REVISION_PATH = f"{_EX_API_PATH}/revisions/{ex.REVISION_ID}"
 _EX_ICON_URL = "https://stripe.com/favicon.ico"
+# Bare SHA-256 hex over the fetched document (``ingest/fetch.py``).
+_EX_SPEC_DIGEST = (
+    "5f7a1c0d9b3e46a2c8d1f0e7b4a39526d8c71e0fb2a5934c6d8e1f0a7b4c3d2e"  # pragma: allowlist secret
+)
 # JSON lets a string carry an unpaired ``\\uD800``-style escape, which decodes to
 # a lone surrogate that no UTF-8 encoder (or Postgres JSONB) accepts.
 _LONE_SURROGATE = re.compile("[\\ud800-\\udfff]")
@@ -291,17 +296,17 @@ class ApiListResponse(BaseModel):
 class ApiRevisionSourceUrlResponse(BaseModel):
     """Source descriptor for a URL-fetched revision."""
 
-    type: Literal["url"]
-    url: str
-    submitted_by: str | None
+    type: Literal["url"] = Field(examples=["url"])
+    url: str = Field(examples=[_EX_SPEC_URL])
+    submitted_by: str | None = Field(examples=[ex.USER_ID])
 
 
 class ApiRevisionSourceInlineResponse(BaseModel):
     """Source descriptor for an inline-submitted revision."""
 
-    type: Literal["inline"]
-    filename: str | None
-    submitted_by: str | None
+    type: Literal["inline"] = Field(examples=["inline"])
+    filename: str | None = Field(examples=["openapi.json"])
+    submitted_by: str | None = Field(examples=[ex.USER_ID])
 
 
 ApiRevisionSourceResponse = Annotated[
@@ -315,10 +320,10 @@ class ApiRevisionLinksResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    self_link: str = Field(serialization_alias="self")
-    api: str
-    promote: str | None = None
-    archive: str | None = None
+    self_link: str = Field(serialization_alias="self", examples=[_EX_REVISION_PATH])
+    api: str = Field(examples=[_EX_API_PATH])
+    promote: str | None = Field(default=None, examples=[f"{_EX_REVISION_PATH}:promote"])
+    archive: str | None = Field(default=None, examples=[f"{_EX_REVISION_PATH}:archive"])
 
 
 class ApiRevisionResponse(BaseModel):
@@ -326,18 +331,21 @@ class ApiRevisionResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    revision_id: str
+    revision_id: str = Field(examples=[ex.REVISION_ID])
     api: ApiReferenceResponse
     source: ApiRevisionSourceResponse | None
-    spec_digest: str | None
-    operation_count: int
-    submitted_by: str | None
-    state: str
-    origin: str | None = None
-    is_current: bool
-    promoted_at: datetime | None
-    archived_at: datetime | None
-    created_at: datetime
+    spec_digest: str | None = Field(examples=[_EX_SPEC_DIGEST])
+    operation_count: int = Field(examples=[412])
+    submitted_by: str | None = Field(examples=[ex.USER_ID])
+    state: str = Field(examples=["archived"])
+    origin: str | None = Field(default=None, examples=["catalog"])
+    is_current: bool = Field(examples=[False])
+    # One coherent revision: promoted on the 15th, superseded and archived on the
+    # 20th. `archived_at` is required, so it carries a real value rather than
+    # null, which fixes `state` and `is_current` to match an archived revision.
+    promoted_at: datetime | None = Field(examples=["2026-01-15T09:30:00Z"])
+    archived_at: datetime | None = Field(examples=["2026-01-20T14:05:00Z"])
+    created_at: datetime = Field(examples=["2026-01-10T08:00:00Z"])
     links: ApiRevisionLinksResponse = Field(serialization_alias="_links")
 
 
@@ -345,8 +353,8 @@ class ApiRevisionListResponse(BaseModel):
     """Cursor-paginated list of API revisions."""
 
     data: list[ApiRevisionResponse]
-    has_more: bool
-    next_cursor: str | None = None
+    has_more: bool = Field(examples=[True])
+    next_cursor: str | None = Field(default=None, examples=[ex.CURSOR])
 
 
 # --- Operation response schemas ---

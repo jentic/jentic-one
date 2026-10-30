@@ -26,6 +26,7 @@ from jentic_one.shared.web.openapi_meta.content import (
     SERVERS,
     authenticated_security,
 )
+from jentic_one.shared.web.openapi_meta.dedupe import collapse_duplicate_components
 from jentic_one.shared.web.openapi_meta.examples import (
     add_oneof_discriminators,
     compose_component_examples,
@@ -36,6 +37,7 @@ from jentic_one.shared.web.openapi_meta.examples import (
     summarise_path_item,
 )
 from jentic_one.shared.web.openapi_meta.operation_ids import (
+    ALWAYS_ERROR_OPERATION_IDS,
     NON_BEARER_AUTH_OPERATION_IDS,
     PUBLIC_OPERATION_IDS,
     ROUTER_RESHAPED_422_OPERATION_IDS,
@@ -144,6 +146,12 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # dialect at the router; the framework 422 can never be
                     # returned.
                     operation.get("responses", {}).pop("422", None)
+                if op_id in ALWAYS_ERROR_OPERATION_IDS:
+                    # The operation only ever raises, so its inferred success
+                    # response describes a body no caller can observe.
+                    responses = operation.get("responses", {})
+                    for code in [c for c in responses if c.startswith("2")]:
+                        responses.pop(code)
                 normalise_error_responses(operation.get("responses", {}))
                 add_default_problem_response(operation.get("responses", {}))
                 summarise_parameter_examples(operation)
@@ -154,6 +162,11 @@ def install_openapi_metadata(app: FastAPI) -> None:
         compose_component_examples(components.get("schemas", {}))
         propagate_examples(schema.get("paths", {}), components.get("schemas", {}))
         add_oneof_discriminators(schema, components.get("schemas", {}))
+
+        # Last: the per-operation passes above are written against inline
+        # response and parameter objects, so the repeats are only collapsed into
+        # components once every one of them has run.
+        collapse_duplicate_components(schema)
 
         app.openapi_schema = schema
         return schema

@@ -269,7 +269,7 @@ export class OAuthService {
      * makes N parallel submits (N distinct blobs from N renders) create exactly
      * one agent — losers re-enter consent, which renders the picker or the
      * awaiting page as appropriate.
-     * @returns any Successful Response
+     * @returns string The re-rendered consent page, as HTML for the browser that posted the form. This endpoint serves a page rather than an API body: a failure redirects (302) to `/error` instead of returning a problem document.
      * @throws ApiError
      */
     public static consentAgentCreate({
@@ -279,7 +279,7 @@ export class OAuthService {
          * Request payload for the `consentAgentCreate` operation.
          */
         formData: Body_consentAgentCreate,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<string> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/consent/agent',
@@ -407,7 +407,7 @@ export class OAuthService {
      * resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
      * may honour an already-cached verdict for up to 30 s — the same residual as
      * the UI `:revoke` kill switch and the G10 transfer sweep.
-     * @returns any Successful Response
+     * @returns any The token is revoked, or there was nothing to revoke. The response body is **empty** (RFC 7009 §2.2) — there is nothing to parse, and success is indistinguishable from a no-op on both arms, deliberately: neither tells the caller whether the token existed. Both arms answer this same empty `200` — the form-encoded RFC 7009 arm and the bearer-authenticated JSON arm.
      * @throws ApiError
      */
     public static revokeEndpoint({

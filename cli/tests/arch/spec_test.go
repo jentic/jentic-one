@@ -187,6 +187,8 @@ var sensitiveSweepAllowlist = map[string]bool{
 	"has_client_secret":    true, // presence flag on OAuthAppRegistrationResponse, not the secret
 	"must_change_password": true, // policy boolean
 	"clear_session_token":  true, // "clear the token?" boolean directive
+	// Redacted credential summaries (id, name, type, scope lists, flags) — no secret value.
+	"existing_credentials": true,
 }
 
 // Test1H_SensitiveAnnotationSweep walks every schema property in the vendored

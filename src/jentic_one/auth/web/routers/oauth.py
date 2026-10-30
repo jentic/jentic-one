@@ -594,8 +594,22 @@ _REVOKE_FORM_BODY: dict[str, object] = {
 @revocation_router.post(
     "/oauth/revoke",
     status_code=200,
+    # Both arms answer ``Response(status_code=200)``: no body, which RFC 7009
+    # §2.2 prescribes. ``response_class=Response`` keeps the generated ``200``
+    # body-less instead of inventing an empty JSON schema for it.
+    response_class=Response,
     openapi_extra=_REVOKE_FORM_BODY,
     responses={
+        200: {
+            "description": (
+                "The token is revoked, or there was nothing to revoke. The response body "
+                "is **empty** (RFC 7009 §2.2) — there is nothing to parse, and success is "
+                "indistinguishable from a no-op on both arms, deliberately: neither tells "
+                "the caller whether the token existed. Both arms answer this same empty "
+                "`200` — the form-encoded RFC 7009 arm and the bearer-authenticated JSON "
+                "arm."
+            )
+        },
         400: oauth_error(
             "Form-encoded (RFC 7009) requests only: missing `token` "
             "(RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): "

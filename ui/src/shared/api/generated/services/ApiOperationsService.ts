@@ -78,7 +78,7 @@ export class ApiOperationsService {
      * but for the named revision, so you can review a draft before promoting
      * it or compare against an archived one. Follow each row's `inspect` link
      * for full detail. 404 if the API or revision does not exist.
-     * @returns any Successful Response
+     * @returns OperationSummaryListResponse Successful Response
      * @throws ApiError
      */
     public static listApiRevisionOperations({
@@ -113,7 +113,7 @@ export class ApiOperationsService {
          * Maximum number of operations to return (1-200).
          */
         limit?: number,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OperationSummaryListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations',

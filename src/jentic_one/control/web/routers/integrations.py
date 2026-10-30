@@ -48,7 +48,6 @@ from jentic_one.control.web.schemas.integrations import (
     AmendSessionRequest,
     AmendSessionResponse,
     ApiKeyConfirmSessionRequest,
-    ApiReferenceResponse,
     AuthCodeConfirmSessionResponse,
     BasicConfirmSessionRequest,
     BearerConfirmSessionRequest,
@@ -84,6 +83,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
+    SessionApiReferenceResponse,
     SessionRevisionListResponse,
     SessionRevisionRef,
     SessionRevisionResponse,
@@ -162,7 +162,7 @@ async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> N
     "/integrations:connect",
     status_code=201,
     summary="Start an integration connect session",
-    response_model=None,
+    response_model=IntegrationsConnectResponse,
     responses=with_responses(
         not_found("Unknown vendor or API, or API targets are not enabled"),
         conflict(
@@ -243,7 +243,7 @@ async def integrations_connect(
 @router.get(
     "/integrations/{vendor}/{name}/{version}/connect-options",
     summary="How a connection to an API would be made",
-    response_model=None,
+    response_model=ConnectOptionsResponse,
     responses=with_responses(not_found("The registry holds no such API")),
 )
 async def integrations_connect_options(
@@ -301,7 +301,7 @@ def _scope_change(scopes: EditScopesRequest | None) -> dict[str, Any]:
     "/integrations:edit-connection",
     status_code=201,
     summary="Ask to change a credential binding",
-    response_model=None,
+    response_model=EditConnectionResponse,
     responses=with_responses(
         not_found("No binding the caller may edit for this credential"),
         conflict("The calling agent already has an open edit of this binding; amend it"),
@@ -469,7 +469,7 @@ async def list_connect_sessions(
 @router.get(
     "/connect-sessions/{session_id}",
     summary="Get review data for a connect session",
-    response_model=None,
+    response_model=ReviewSessionResponse,
     responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
@@ -533,7 +533,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
             else None
         ),
         last_rejected_at=data.last_rejected_at,
-        api_reference=ApiReferenceResponse(
+        api_reference=SessionApiReferenceResponse(
             vendor=data.api_vendor,
             name=data.api_name,
             version=data.api_version,
@@ -623,7 +623,7 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
 @router.get(
     "/connect-sessions/{session_id}/revisions",
     summary="List a connect session's revisions",
-    response_model=None,
+    response_model=SessionRevisionListResponse,
 )
 async def list_connect_session_revisions(
     session_id: Annotated[
@@ -671,7 +671,7 @@ async def list_connect_session_revisions(
 @router.post(
     "/connect-sessions/{session_id}:confirm",
     summary="Confirm a connect session",
-    response_model=None,
+    response_model=ConfirmSessionResponse,
     responses=with_responses(
         not_found(),
         conflict(
@@ -836,7 +836,7 @@ def _to_variant(
 @router.post(
     "/connect-sessions/{session_id}:amend",
     summary="Amend an open connect session's request",
-    response_model=None,
+    response_model=AmendSessionResponse,
     responses=with_responses(conflict("The session is closed: confirmed or ended")),
 )
 async def amend_connect_session(
@@ -914,7 +914,7 @@ async def amend_connect_session(
 @router.get(
     "/connect-sessions/{session_id}/status",
     summary="Poll a connect session's status",
-    response_model=None,
+    response_model=StatusResponse,
 )
 async def poll_connect_session_status(
     session_id: Annotated[

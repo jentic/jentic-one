@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { NoteCreateRequest } from '../models/NoteCreateRequest';
+import type { NoteListResponse } from '../models/NoteListResponse';
+import type { NoteResponse } from '../models/NoteResponse';
 import type { NoteUpdateRequest } from '../models/NoteUpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -13,7 +15,7 @@ export class NotesService {
      * List notes with optional filters and cursor pagination.
      *
      * Returns the caller's own notes; a user also sees the notes of agents they own.
-     * @returns any Successful Response
+     * @returns NoteListResponse Successful Response
      * @throws ApiError
      */
     public static listNotes({
@@ -58,7 +60,7 @@ export class NotesService {
          * Only return notes created by this actor ID.
          */
         createdBy?: (string | null),
-    }): CancelablePromise<any> {
+    }): CancelablePromise<NoteListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/notes',
@@ -85,7 +87,7 @@ export class NotesService {
     /**
      * Create Note
      * Create a new note attached to a registry resource.
-     * @returns any Successful Response
+     * @returns NoteResponse Successful Response
      * @throws ApiError
      */
     public static createNote({
@@ -95,7 +97,7 @@ export class NotesService {
          * Payload for creating a new note.
          */
         requestBody: NoteCreateRequest,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<NoteResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/notes',
@@ -155,7 +157,7 @@ export class NotesService {
      *
      * A user can read the notes of agents they own, but only a note's author (or
      * an org admin) can update or delete it.
-     * @returns any Successful Response
+     * @returns NoteResponse Successful Response
      * @throws ApiError
      */
     public static getNote({
@@ -165,7 +167,7 @@ export class NotesService {
          * ID of the note.
          */
         noteId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<NoteResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/notes/{note_id}',
@@ -185,7 +187,7 @@ export class NotesService {
     /**
      * Update Note
      * Update a note (partial). Supports optimistic concurrency via If-Match.
-     * @returns any Successful Response
+     * @returns NoteResponse Successful Response
      * @throws ApiError
      */
     public static updateNote({
@@ -205,7 +207,7 @@ export class NotesService {
          * Expected note revision (the `ETag` value); the request fails with 412 if the note has changed.
          */
         ifMatch?: (string | null),
-    }): CancelablePromise<any> {
+    }): CancelablePromise<NoteResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',
             url: '/notes/{note_id}',

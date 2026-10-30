@@ -34,6 +34,7 @@ from jentic_one.shared.web.openapi_meta.install import (
     install_openapi_metadata,
 )
 from jentic_one.shared.web.openapi_meta.operation_ids import (
+    ALWAYS_ERROR_OPERATION_IDS,
     NON_BEARER_AUTH_OPERATION_IDS,
     PUBLIC_OPERATION_IDS,
     ROUTER_RESHAPED_422_OPERATION_IDS,
@@ -43,6 +44,7 @@ from jentic_one.shared.web.openapi_meta.operation_ids import (
 from jentic_one.shared.web.openapi_meta.tags import OPENAPI_TAGS, X_TAG_GROUPS
 
 __all__ = [
+    "ALWAYS_ERROR_OPERATION_IDS",
     "API_DESCRIPTION",
     "API_SUMMARY",
     "API_TITLE",

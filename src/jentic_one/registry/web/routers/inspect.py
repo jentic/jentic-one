@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid as uuid_mod
-from typing import Literal
+from typing import Any, Final, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -26,7 +26,41 @@ router = APIRouter()
 _SUPPORTED_MEDIA_TYPES = {"application/json", "text/markdown", "application/openapi+yaml"}
 
 
-@router.get("/inspect", summary="Inspect operation")
+#: The handler negotiates one of three renderings of the same result, so the
+#: ``200`` declares all three: the structured JSON document, and the two
+#: text renderings built from it.
+_INSPECT_200: Final[dict[int | str, dict[str, Any]]] = {
+    200: {
+        "description": (
+            "The resolved operation, rendered in the format negotiated from `Accept`. "
+            "`application/json` (the default, and what `*/*` or an absent `Accept` gets) "
+            "returns the structured result below. `text/markdown` returns the same result "
+            "as a human-readable Markdown page, and `application/openapi+yaml` as a "
+            "single-operation OpenAPI document — both are plain text, with no JSON "
+            "envelope. Any other requested media type answers `406`."
+        ),
+        "model": OperationInspectResult,
+        "content": {
+            "text/markdown": {
+                "schema": {
+                    "type": "string",
+                    "description": "The operation rendered as a Markdown page.",
+                }
+            },
+            "application/openapi+yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": (
+                        "The operation rendered as a single-operation OpenAPI YAML document."
+                    ),
+                }
+            },
+        },
+    }
+}
+
+
+@router.get("/inspect", summary="Inspect operation", responses=_INSPECT_200)
 async def inspect_operation(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),

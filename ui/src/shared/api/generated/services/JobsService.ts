@@ -101,7 +101,13 @@ export class JobsService {
     /**
      * Get Job Result
      * Get the result of a completed job — polymorphic by kind.
-     * @returns any Successful Response
+     * @returns any The completed job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:
+     *
+     * - **`kind=import`**: `revisions`, one entry per API revision the import produced, each with `api` (the API object), `revision_id` and `state`.
+     * - **`kind=execution`**: the execution document — `execution_id`, `status` (`completed` or `failed`), `http_status` (the upstream status, or null when the call never reached the upstream), `duration_ms`, and `body_b64` when the upstream returned a body. The upstream payload is base64 in `body_b64`; it is never inlined as JSON, so it needs decoding and interpreting against the upstream's own content type. A run-time authorization denial adds `problem`, the RFC 9457 body the synchronous execute route would have returned.
+     * - **A held execution that never ran** (denied, its approval window lapsed, or its approved run interrupted) carries an `application/problem+json` body in place of the execution document, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin` and a `held_execution` object (`id`, `state`). The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why the call never happened.
+     *
+     * `Content-Type` caveat: for a `kind=execution` result the header echoes the **upstream** response's content type, while the body is still the JSON execution document above — parse the body as JSON whatever the header says.
      * @throws ApiError
      */
     public static getJobResult({
@@ -111,7 +117,7 @@ export class JobsService {
          * ID of the job.
          */
         jobId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<Record<string, any>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/jobs/{job_id}/result',

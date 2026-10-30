@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ApiKeyCreateRequest } from '../models/ApiKeyCreateRequest';
 import type { ApiKeyUpdateRequest } from '../models/ApiKeyUpdateRequest';
+import type { AuthCodeConnectChallengeResponse } from '../models/AuthCodeConnectChallengeResponse';
 import type { BasicAuthCreateRequest } from '../models/BasicAuthCreateRequest';
 import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
@@ -14,6 +15,7 @@ import type { CredentialAgentListResponse } from '../models/CredentialAgentListR
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
+import type { DeviceAuthorizationConnectChallengeResponse } from '../models/DeviceAuthorizationConnectChallengeResponse';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { NoAuthUpdateRequest } from '../models/NoAuthUpdateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
@@ -570,7 +572,7 @@ export class CredentialsService {
          * Request body for initiating a credential connect flow.
          */
         requestBody: ConnectRequestBody,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<(AuthCodeConnectChallengeResponse | DeviceAuthorizationConnectChallengeResponse)> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/credentials/{credential_id}/connect',

@@ -39,7 +39,7 @@ export class AgentRegistrationService {
     /**
      * Delete Registration Endpoint
      * Client deletion not supported — returns 403.
-     * @returns any Successful Response
+     * @returns void
      * @throws ApiError
      */
     public static deleteRegistrationEndpoint({
@@ -49,7 +49,7 @@ export class AgentRegistrationService {
          * ID of the registered agent (its client_id).
          */
         agentId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/register/{agent_id}',
@@ -98,7 +98,7 @@ export class AgentRegistrationService {
     /**
      * Update Registration Endpoint
      * Client update not supported — returns 403.
-     * @returns any Successful Response
+     * @returns void
      * @throws ApiError
      */
     public static updateRegistrationEndpoint({
@@ -108,7 +108,7 @@ export class AgentRegistrationService {
          * ID of the registered agent (its client_id).
          */
         agentId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/register/{agent_id}',

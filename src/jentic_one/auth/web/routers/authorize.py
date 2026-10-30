@@ -2491,6 +2491,24 @@ async def _approve_agent_consent(
     operation_id="consentAgentCreate",
     summary="Create the consenting user's first agent inline (consent page)",
     response_model=None,
+    response_class=HTMLResponse,
+    responses={
+        200: {
+            "description": (
+                "The re-rendered consent page, as HTML for the browser that posted the "
+                "form. This endpoint serves a page rather than an API body: a failure "
+                "redirects (302) to `/error` instead of returning a problem document."
+            ),
+            "content": {
+                "text/html": {
+                    "schema": {
+                        "type": "string",
+                        "description": "The consent page HTML document.",
+                    }
+                }
+            },
+        }
+    },
     dependencies=[Depends(check_rate_limit)],
 )
 async def consent_agent_create(
