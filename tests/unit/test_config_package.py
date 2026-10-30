@@ -50,6 +50,7 @@ _EXPECTED_PUBLIC: frozenset[str] = frozenset(
         "JwtVerificationConfig",
         "LocalLoginConfig",
         "LoggingConfig",
+        "MAX_DISCOVERY_CACHE_TTL_S",
         "MEMORY_IDEMPOTENCY_TTL_S",
         "McpConfig",
         "McpOAuthConfig",

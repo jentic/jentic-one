@@ -43,6 +43,7 @@ from jentic_one.shared.config.auth import (
     parse_trusted_proxy,
 )
 from jentic_one.shared.config.broker import (
+    MAX_DISCOVERY_CACHE_TTL_S,
     MEMORY_IDEMPOTENCY_TTL_S,
     SHARED_IDEMPOTENCY_TTL_S,
     BrokerConfig,
@@ -130,6 +131,7 @@ from jentic_one.shared.config.runtime import (
 
 __all__ = [
     "GUARDED_FIELD_SURFACES",
+    "MAX_DISCOVERY_CACHE_TTL_S",
     "MEMORY_IDEMPOTENCY_TTL_S",
     "POOL_PRE_PING_IDLE_S",
     "POOL_RECYCLE_S",
