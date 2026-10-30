@@ -9,7 +9,7 @@ documented remedy (re-import from the spec URL, then promote) makes it routable.
 Catalog, update, and overlay re-ingests keep unresolvable servers inspect-only;
 an overlay never resolves, so a host-less API only gains a host through the
 re-import, which resolves against the post-redirect URL, and a promote that
-needs ``credentials:write`` when credentials are bound.
+needs ``org:admin`` when credentials are bound.
 """
 
 from __future__ import annotations
@@ -57,11 +57,12 @@ MIRROR_URL = (
     "petstore3.swagger.io/main/1.0.27/openapi.json"
 )
 _WRITER = Identity(sub="usr_writer", actor_type=ActorType.USER, permissions=["apis:write"])
-_OPERATOR = Identity(
-    sub="usr_operator",
+_CREDENTIALS_WRITER = Identity(
+    sub="usr_credentials_writer",
     actor_type=ActorType.USER,
     permissions=["apis:write", "credentials:write"],
 )
+_ADMIN = Identity(sub="usr_admin", actor_type=ActorType.USER, permissions=["org:admin"])
 _AGENT_NAME = "relative-servers-agent"
 
 
@@ -361,14 +362,14 @@ async def test_overlay_over_a_legacy_host_less_url_api_never_gives_it_a_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An overlay materialization carries the base's ``source_url``, but its
-    confirmer never saw a host and no ``credentials:write`` review runs, so it
+    confirmer never saw a host and no ``org:admin`` review runs, so it
     keeps the servers as declared. The bound credentials go nowhere new."""
     legacy = await _ingest_legacy(
         ingest_context,
         monkeypatch,
         _petstore(source_type=ApiRevisionSourceType.URL, source_url=PETSTORE_URL),
     )
-    await _promote(ingest_context, legacy, _OPERATOR)
+    await _promote(ingest_context, legacy, _CREDENTIALS_WRITER)
     overlay = _petstore(
         source_type=ApiRevisionSourceType.INLINE, origin="overlay", source_url=PETSTORE_URL
     )
@@ -405,7 +406,7 @@ async def test_overlay_over_a_legacy_host_less_url_api_never_gives_it_a_host(
     assert list(hosts) == [""]
 
 
-async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_credentials_write(
+async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_org_admin(
     ingest_context: Context,
     clean_registry: None,
     bound_petstore: None,
@@ -413,13 +414,13 @@ async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_cr
 ) -> None:
     """Pins the runbook's gate: the re-import resolves against the URL its
     redirects ended on, and gives the API hosts it never had, so with
-    credentials bound a promote needs ``credentials:write``."""
+    credentials bound a promote needs ``org:admin``."""
     legacy = await _ingest_legacy(
         ingest_context,
         monkeypatch,
         _petstore(source_type=ApiRevisionSourceType.URL, source_url=PETSTORE_URL),
     )
-    await _promote(ingest_context, legacy, _OPERATOR)
+    await _promote(ingest_context, legacy, _CREDENTIALS_WRITER)
 
     reimport = await Ingestor(ingest_context).ingest(
         _petstore(
@@ -433,12 +434,13 @@ async def test_promoting_a_reimport_of_a_credential_bound_host_less_api_needs_cr
     assert reimport.server_url_changes is not None
     assert reimport.server_url_changes.resolved == ["https://cdn.petstore.example/api/v3"]
 
-    with pytest.raises(HostChangeRequiresOperatorError):
-        await _promote(ingest_context, reimport)
+    for refused in (_WRITER, _CREDENTIALS_WRITER):
+        with pytest.raises(HostChangeRequiresOperatorError):
+            await _promote(ingest_context, reimport, refused)
     assert await _state(ingest_context, reimport) == ApiRevisionState.DRAFT
     assert await _state(ingest_context, legacy) != ApiRevisionState.ARCHIVED
 
-    await _promote(ingest_context, reimport, _OPERATOR)
+    await _promote(ingest_context, reimport, _ADMIN)
     assert await _state(ingest_context, legacy) == ApiRevisionState.ARCHIVED
     resolver = InProcessRegistryResolver(ingest_context.registry_db)
     resolved = await discover(

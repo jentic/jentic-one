@@ -132,9 +132,9 @@ class CreateRevisionStage(BasePipelineStage):
             held = await self._held_host_change(ctx, api_id)
             if held is not None:
                 # Server-host change guard: this catalog revision would change where the
-                # API's bound credentials are sent, and the caller is not an operator.
-                # Keep it as a DRAFT (origin preserved, nothing archived) so the current
-                # revision stays live until an operator promotes it. See
+                # API's bound credentials are sent, and the caller is not an organisation
+                # admin. Keep it as a DRAFT (origin preserved, nothing archived) so the
+                # current revision stays live until an organisation admin promotes it. See
                 # ``registry/ingest/host_change_guard.py``.
                 revision = await ApiRevisionRepository.create_draft(
                     ctx.session,

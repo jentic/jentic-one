@@ -190,8 +190,8 @@ refuses with `RESOLVE_FAILED` ("has no upstream host"). Import the description
 from its URL again (`jentic apis import <url>`) and promote the new draft
 (`jentic apis promote <vendor/name/version> <revision_id>`); the new revision
 stores the resolved servers, so it doesn't collide with the live one. If
-credentials are bound to the API, promoting needs `credentials:write`, since
-the API's host changes.
+credentials are bound to the API, promoting needs `org:admin`, since the API's
+host changes and the bound credentials would be sent somewhere new.
 
 ## `credential_undecryptable` (424) on execute
 

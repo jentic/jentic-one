@@ -300,7 +300,7 @@ class RevisionService:
     ) -> None:
         """Refuse a promote that changes the server hosts of a credential-bound API.
 
-        Only called for callers without ``credentials:write``. Same rules as the
+        Only called for callers without ``org:admin``. Same rules as the
         catalog re-import guard (``registry/ingest/host_change_guard.py``); see
         ``pending_host_change`` for the baseline and the never-live case.
         """

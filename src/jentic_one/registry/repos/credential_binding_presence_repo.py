@@ -1,7 +1,7 @@
 """Cross-database check: does an API have credentials bound to a consumer?
 
 Backs the server-host change guard: a catalog re-import or a promote that
-changes an API's server hosts is held for operator review only when the API
+changes an API's server hosts is held for organisation-admin review only when the API
 has stored credentials that some agent is bound to (direct agent bindings
 are the only binding form since theme-5 Phase 6b dropped the toolkit tables),
 or an open connect session that targets it, because only then does the host

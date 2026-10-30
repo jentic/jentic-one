@@ -11,7 +11,7 @@ export type ApiSourceUrl = {
      */
     api_name?: (string | null);
     /**
-     * Who the resulting revision is attributed to; defaults to the caller.
+     * Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
      */
     submitted_by?: (string | null);
     /**

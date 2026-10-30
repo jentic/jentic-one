@@ -2003,7 +2003,7 @@ type ApiSourceInline struct {
 	// Examples: openapi.json
 	Filename string `json:"filename"`
 
-	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	// SubmittedBy Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
 	//
 	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	SubmittedBy *string `json:"submitted_by,omitempty"`
@@ -2038,7 +2038,7 @@ type ApiSourceUrl struct {
 	// Examples: stripe
 	ApiName *string `json:"api_name,omitempty"`
 
-	// SubmittedBy Who the resulting revision is attributed to; defaults to the caller.
+	// SubmittedBy Who the resulting revision is attributed to. Honoured only for an organisation admin (`org:admin`); for anyone else the revision is attributed to the caller.
 	//
 	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	SubmittedBy *string `json:"submitted_by,omitempty"`
@@ -10943,8 +10943,8 @@ type ClientInterface interface {
 	//
 	// If the draft declares different server hosts than the API's current (or last
 	// live) revision, or serves a host over plaintext http that was https-only, and
-	// the API has credentials bound to agents, the caller also needs
-	// ``credentials:write``; otherwise the promote is refused with 403
+	// the API has credentials bound to agents, the caller must be an organisation
+	// admin (``org:admin``); otherwise the promote is refused with 403
 	// ``host_change_requires_operator``.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
@@ -14669,8 +14669,8 @@ func (c *Client) ArchiveRevision(ctx context.Context, vendor string, name string
 //
 // If the draft declares different server hosts than the API's current (or last
 // live) revision, or serves a host over plaintext http that was https-only, and
-// the API has credentials bound to agents, the caller also needs
-// “credentials:write“; otherwise the promote is refused with 403
+// the API has credentials bound to agents, the caller must be an organisation
+// admin (“org:admin“); otherwise the promote is refused with 403
 // “host_change_requires_operator“.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
@@ -28062,8 +28062,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// If the draft declares different server hosts than the API's current (or last
 	// live) revision, or serves a host over plaintext http that was https-only, and
-	// the API has credentials bound to agents, the caller also needs
-	// ``credentials:write``; otherwise the promote is refused with 403
+	// the API has credentials bound to agents, the caller must be an organisation
+	// admin (``org:admin``); otherwise the promote is refused with 403
 	// ``host_change_requires_operator``.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -46898,8 +46898,8 @@ func (c *ClientWithResponses) ArchiveRevisionWithResponse(ctx context.Context, v
 //
 // If the draft declares different server hosts than the API's current (or last
 // live) revision, or serves a host over plaintext http that was https-only, and
-// the API has credentials bound to agents, the caller also needs
-// “credentials:write“; otherwise the promote is refused with 403
+// the API has credentials bound to agents, the caller must be an organisation
+// admin (“org:admin“); otherwise the promote is refused with 403
 // “host_change_requires_operator“.
 //
 // Returns a wrapper object for the known response body format(s).
