@@ -6,18 +6,25 @@
  * verbs to clear it inline. The rule it enforces: if a human has to act, it's
  * here; if it's just information, it's in Activity (the rail and Monitor).
  *
+ * Held calls lead the list, one row per call; each Review closes the panel and
+ * opens that call's review pop-up, and past the first few "See all N in the
+ * inbox" opens the rail's Inbox tab.
+ *
  * The panel also owns the notification preferences — which events pop a
  * toast, and the sound on failures — so they live next to the notifications
  * they govern instead of in the activity feed's overflow menu.
  */
 import { useCallback, useId, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { ArrowLeft, Bell, CheckCircle2, Inbox, Settings2 } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { useDismissable, useViewportClamp } from '@/shared/ui/Menu';
 import { SkeletonRows } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
 import { useRailPreferences } from '@/shared/app/rail/railPreferences';
+import { isRailHiddenOn } from '@/shared/app/rail/ShellActivityEffects';
+import { useReviewLinks } from '@/shared/approvals';
 import { AttentionList } from '@/shared/attention/AttentionList';
 import { useAttentionItems } from '@/shared/attention/useAttentionItems';
 import { useNotificationsSeen } from '@/shared/attention/useNotificationsSeen';
@@ -46,6 +53,16 @@ export function NotificationsMenu() {
 	const containerRef = useDismissable<HTMLDivElement>(open, close);
 	const panelRef = useViewportClamp<HTMLDivElement>(open);
 	const titleId = useId();
+
+	// The Inbox is a tab of the shell rail; on a page without the rail
+	// (Monitor) it opens over the Agents page instead.
+	const { pathname } = useLocation();
+	const navigate = useNavigate();
+	const { openInbox } = useReviewLinks();
+	const openInboxTab = useCallback(() => {
+		if (isRailHiddenOn(pathname)) navigate(ROUTE_PATHS.approvalsInbox());
+		else openInbox();
+	}, [pathname, navigate, openInbox]);
 
 	const urgent = items.some((i) => i.urgency === 3 && isUnread(i.key));
 	// The badge's figure sits outside any parentheses in the name (axe drops
@@ -171,6 +188,7 @@ export function NotificationsMenu() {
 										variant="menu"
 										onNavigate={close}
 										isUnread={isUnread}
+										onOpenInbox={openInboxTab}
 									/>
 								)}
 								{failedSources.length > 0 && (

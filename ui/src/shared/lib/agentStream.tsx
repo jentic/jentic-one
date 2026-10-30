@@ -1153,12 +1153,12 @@ const NAV = {
 	// approve/deny verbs for a pending DCR registration live. Static target:
 	// the queue tab lists every pending client.
 	oauthQueue: () => '/settings?tab=queue',
-	// A held execution's review page (approve/deny, and where the call stands),
-	// a subsection of Agents — the shape of `ROUTE_PATHS.approval`, inlined like
-	// `agent` above.
+	// A held execution opened in its review pop-up (approve/deny, and where the
+	// call stands) over the Agents page — the shape of `ROUTE_PATHS.approval`,
+	// inlined like `agent` above.
 	approval: (ev: StreamEvent) =>
 		ev.tokens.held_execution_id
-			? `/agents/approvals/${encodeURIComponent(ev.tokens.held_execution_id)}`
+			? `/agents?review=${encodeURIComponent(ev.tokens.held_execution_id)}`
 			: null,
 };
 

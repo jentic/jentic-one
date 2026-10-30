@@ -1,27 +1,32 @@
 /**
- * ActivityDrawerButton — the Activity rail for viewports below `xl`, where the
- * docked rail is hidden. A top-bar button (with a red dot for recent
- * failures — counts are the Notifications bell's job) opens the SAME
- * `ActivityRailBody` in a right-side sheet.
+ * ActivityDrawerButton — the rail for viewports below `xl`, where the docked
+ * rail is hidden. A top-bar button (with a red dot for recent failures —
+ * counts are the Notifications bell's job) opens the SAME `ActivityRailBody`,
+ * Inbox and Activity tabs included, in a right-side sheet. Below `xl` it also
+ * answers `?inbox=1`, opening on the Inbox tab.
  */
 import { useEffect, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { SheetPrimitive } from '@/shared/ui';
 import { ActivityRailBody, useScopedActivity } from '@/shared/app/rail/ActivityRailBody';
+import { useRailView } from '@/shared/app/rail/railPreferences';
+import { RAIL_DOCKED_QUERY, useInboxParam } from '@/shared/app/rail/useInboxParam';
 import { cn } from '@/shared/lib/utils';
-
-/** Tailwind's `xl` breakpoint — the docked rail takes over from here. */
-const XL_QUERY = '(min-width: 1280px)';
 
 export function ActivityDrawerButton({ className }: { className?: string }) {
 	const [open, setOpen] = useState(false);
 	const { failureCount } = useScopedActivity();
+	const { setTab } = useRailView();
+	useInboxParam('drawer', () => {
+		setTab('inbox');
+		setOpen(true);
+	});
 
 	// Growing past `xl` hides this button and shows the docked rail — don't
 	// leave an orphaned sheet over it.
 	useEffect(() => {
 		if (!open) return undefined;
-		const mq = window.matchMedia(XL_QUERY);
+		const mq = window.matchMedia(RAIL_DOCKED_QUERY);
 		const onChange = () => mq.matches && setOpen(false);
 		mq.addEventListener('change', onChange);
 		return () => mq.removeEventListener('change', onChange);

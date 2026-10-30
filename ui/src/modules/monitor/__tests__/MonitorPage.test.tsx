@@ -419,10 +419,9 @@ describe('MonitorPage', () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/held_held_1',
-			),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('review')).toBe('held_held_1');
 		expect(currentParams().get('execution_id')).toBeNull();
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
@@ -602,7 +601,7 @@ describe('MonitorPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('offers the Approvals page, not Cancel, for a held execution', async () => {
+	it('offers the inbox, not Cancel, for a held execution the waiting list does not name', async () => {
 		const held = {
 			_links: {
 				self: '/jobs/job_exec_held',
@@ -628,7 +627,7 @@ describe('MonitorPage', () => {
 
 		await user.click(await screen.findByText('job_exec_held'));
 		const dialog = await screen.findByRole('dialog');
-		const open = await within(dialog).findByRole('button', { name: 'Open approvals' });
+		const open = await within(dialog).findByRole('button', { name: 'Open inbox' });
 		expect(
 			within(dialog).queryByRole('button', { name: 'Cancel job' }),
 		).not.toBeInTheDocument();
@@ -637,8 +636,63 @@ describe('MonitorPage', () => {
 
 		await user.click(open);
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents/approvals'),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('inbox')).toBe('1');
+	});
+
+	it("opens the held call's review when the waiting list names its execution", async () => {
+		const held = {
+			_links: { self: '/jobs/job_exec_named', result: null, execution: null },
+			created_at: new Date().toISOString(),
+			error: null,
+			execution_id: 'exec_named',
+			job_id: 'job_exec_named',
+			kind: 'execution',
+			status: 'held',
+			updated_at: null,
+		};
+		worker.use(
+			http.get('/jobs', () =>
+				HttpResponse.json({ data: [held], has_more: false, next_cursor: null }),
+			),
+			http.get('/jobs/job_exec_named', () => HttpResponse.json(held)),
+			http.get('/executions/holds', () =>
+				HttpResponse.json({
+					data: [
+						{
+							id: 'held_named',
+							agent_id: 'agnt_1',
+							credential_id: 'cred_1',
+							api_vendor: 'api.stripe.com',
+							api_name: 'payments',
+							api_version: '1',
+							method: 'POST',
+							path: '/v1/charges',
+							state: 'pending',
+							execution_status: 'held',
+							execution_id: 'exec_named',
+							expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+							created_at: new Date(Date.now() - 60_000).toISOString(),
+							review_url: 'https://jentic.example/app/agents/approvals/held_named',
+							_links: { self: '/executions/holds/held_named' },
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?show=jobs');
+
+		await user.click(await screen.findByText('job_exec_named'));
+		const dialog = await screen.findByRole('dialog');
+		await user.click(await within(dialog).findByRole('button', { name: 'Review' }));
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
+		);
+		expect(currentParams().get('review')).toBe('held_named');
 	});
 
 	it('opens the review page, not the job, from a decided approval row', async () => {
@@ -671,10 +725,9 @@ describe('MonitorPage', () => {
 			await screen.findByRole('link', { name: /Held call held_held_1 approved/ }),
 		);
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/held_held_1',
-			),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('review')).toBe('held_held_1');
 		expect(currentParams().get('job_id')).toBeNull();
 	});
 

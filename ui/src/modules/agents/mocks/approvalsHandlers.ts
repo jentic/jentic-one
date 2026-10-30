@@ -3,15 +3,19 @@
  *
  * Mirrors the backend held-executions surface and its response codes:
  *
- *   GET  /executions/holds              → 200 page (`?state=` filters)
+ *   GET  /executions/holds              → 200 page (`?state=` / `?agent_id=` filter)
  *   GET  /executions/holds/{id}         → 200 detail | 404 `held_execution_not_found`
  *   POST /executions/holds/{id}:decide  → 200 updated row | 409 `held_execution_already_settled`
  *                                         | 422 bad decision
  *   POST /executions/holds/{id}:withdraw → 200 withdrawn row | 409 `held_execution_already_settled`
+ *   GET  /users                         → 200 page of the org's users (the review
+ *                                         pop-up counts the org admins who can decide)
  *
  * The store keeps each row's `job_id` to stand in for the backend's join; it
  * never reaches the wire. Approving moves `execution_status` to `queued`;
- * denying to `failed`; withdrawing to `cancelled`.
+ * denying to `failed`; withdrawing to `cancelled`. A row's `agent_reason` is
+ * the agent's own reason for the call, which the backend sends once the broker
+ * stores one; it is null on most rows, as it is for every agent today.
  *
  * Registered additively in src/mocks/handlers.ts.
  */
@@ -42,6 +46,7 @@ interface ApprovalRow {
 	created_at: string;
 	updated_at: string | null;
 	request: { method: string; url: string; body: string | null; body_truncated: boolean } | null;
+	agent_reason: string | null;
 }
 
 const hours = (n: number) => new Date(Date.now() + n * 3_600_000).toISOString();
@@ -78,6 +83,7 @@ function seed(): ApprovalRow[] {
 				body: '{"amount":500,"currency":"eur"}',
 				body_truncated: false,
 			},
+			agent_reason: null,
 		},
 		{
 			id: 'held_denied1',
@@ -104,6 +110,7 @@ function seed(): ApprovalRow[] {
 			created_at: hours(-3),
 			updated_at: hours(-2),
 			request: null,
+			agent_reason: null,
 		},
 	];
 }
@@ -153,6 +160,7 @@ export function seedMockApproval(overrides: Partial<ApprovalRow> = {}): Approval
 		created_at: hours(-0.5),
 		updated_at: null,
 		request: null,
+		agent_reason: null,
 		...overrides,
 	};
 	store.push(row);
@@ -193,6 +201,46 @@ function listView(row: ApprovalRow) {
 	return rest;
 }
 
+/**
+ * The org's users as an org admin lists them (`GET /users`): two admins who
+ * can decide any held call (the mock signed-in admin and one more), a member
+ * who can't, and an admin whose invite nobody redeemed yet.
+ */
+const ORG_USERS = [
+	{
+		id: '00000000-0000-0000-0000-000000000001',
+		name: 'Admin User',
+		admin: true,
+		invite: 'accepted',
+	},
+	{ id: 'usr_priya_shah', name: 'Priya Shah', admin: true, invite: 'accepted' },
+	{ id: 'usr_tomas_ortega', name: 'Tomás Ortega', admin: false, invite: 'accepted' },
+	{ id: 'usr_dana_lee', name: 'Dana Lee', admin: true, invite: 'pending' },
+].map((u) => {
+	const [first_name, ...rest] = u.name.split(' ');
+	return {
+		id: u.id,
+		name: u.name,
+		first_name,
+		last_name: rest.join(' '),
+		email: `${first_name.toLowerCase()}@example.test`,
+		active: true,
+		auth_provider: 'local',
+		external_subject_id: null,
+		invite_state: u.invite,
+		must_change_password: false,
+		permissions: {
+			assigned: u.admin ? ['org:admin'] : ['agents:read'],
+			effective: (u.admin ? ['org:admin'] : ['agents:read']).map((name) => ({
+				name,
+				implied_by: null,
+			})),
+		},
+		created_at: '2026-01-01T00:00:00Z',
+		updated_at: null,
+	};
+});
+
 function alreadySettled(row: ApprovalRow) {
 	return HttpResponse.json(
 		{
@@ -206,8 +254,12 @@ function alreadySettled(row: ApprovalRow) {
 
 export const approvalsHandlers = [
 	http.get('/executions/holds', ({ request }) => {
-		const state = new URL(request.url).searchParams.get('state');
-		const data = store.filter((r) => !state || r.state === state).map(listView);
+		const params = new URL(request.url).searchParams;
+		const state = params.get('state');
+		const agentId = params.get('agent_id');
+		const data = store
+			.filter((r) => (!state || r.state === state) && (!agentId || r.agent_id === agentId))
+			.map(listView);
 		return HttpResponse.json({ data, has_more: false, next_cursor: null });
 	}),
 	http.get('/executions/holds/:id', ({ params }) => {
@@ -233,7 +285,8 @@ export const approvalsHandlers = [
 		row.state = body.decision === 'approve' ? 'approved' : 'denied';
 		row.execution_status = body.decision === 'approve' ? 'queued' : 'failed';
 		row.decided_at = new Date().toISOString();
-		row.decided_by = 'usr_owner';
+		// The mock signed-in admin (`/users/me`), so the receipt reads "by you".
+		row.decided_by = '00000000-0000-0000-0000-000000000001';
 		row.decision_reason = body.reason ?? null;
 		return HttpResponse.json(listView(row));
 	}),
@@ -248,4 +301,7 @@ export const approvalsHandlers = [
 		row.updated_at = new Date().toISOString();
 		return HttpResponse.json(listView(row));
 	}),
+	http.get('/users', () =>
+		HttpResponse.json({ data: ORG_USERS, has_more: false, next_cursor: null }),
+	),
 ];

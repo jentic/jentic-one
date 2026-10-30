@@ -217,14 +217,14 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByRole('tablist', { name: 'Agents' })).toBeInTheDocument();
 	});
 
-	it('opens the Approvals subsection from the page header', async () => {
-		const user = userEvent.setup();
+	it('keeps held calls on the agents: the header has no Approvals entry', async () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
-		await user.click(screen.getByRole('button', { name: /^Approvals/ }));
-		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents/approvals'),
-		);
+		expect(screen.queryByRole('button', { name: /^Approvals/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: /^Approvals/ })).not.toBeInTheDocument();
+		// The header still carries its own verbs.
+		expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Credentials/ })).toBeInTheDocument();
 	});
 
 	it('renders every agent as a strip pill and names the longest-waiting in the banner', async () => {
@@ -2636,7 +2636,7 @@ describe('AgentsPage — agents waiting on a connect request', () => {
 		seedComposedStores();
 		resetOrphanPurgeAttemptsForTest();
 		resetConnectSessionsStore();
-		// Held calls share the section; none here, so it shows connect requests only.
+		// No held calls: the section is about connect requests alone.
 		clearApprovalsStore();
 	});
 
@@ -2762,70 +2762,185 @@ describe('AgentsPage — held calls waiting on the viewer', () => {
 		resetApprovalsStore();
 	});
 
-	function waitingSection() {
-		return screen.findByRole('region', { name: 'Waiting for you' });
+	/** The selected agent's "Waiting for you" card. */
+	function findHeldCard() {
+		return screen.findByRole('article', { name: 'Waiting for you' });
 	}
 
-	it("collapses an agent's held calls into one row, each linking to its review page", async () => {
+	/** support-agent's two held calls: a charge (the older) and a delete. */
+	function seedSupportAgentCalls() {
 		const charge = seedMockApproval({
+			id: 'held_charge',
 			created_at: new Date(Date.now() - 50 * 60_000).toISOString(),
 		});
-		const refund = seedMockApproval({ path: '/v1/refunds' });
-		renderPage();
+		const remove = seedMockApproval({
+			id: 'held_delete',
+			method: 'DELETE',
+			path: '/v1/customers/cus_1',
+			operation_id: 'deleteCustomer',
+			created_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+		});
+		return { charge, remove };
+	}
 
-		const section = await waitingSection();
-		// The agent's name resolves through the actor directory, read alongside.
-		await waitFor(() => expect(section).toHaveTextContent('support-agent'));
-		const rows = within(section).getAllByRole('listitem');
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toHaveTextContent('support-agent');
-		expect(rows[0]).toHaveTextContent('wants to make 2 calls');
-		const links = within(rows[0]).getAllByRole('link');
-		expect(links.map((l) => l.textContent)).toEqual([
-			'Review POST /v1/charges for support-agent',
-			'Review POST /v1/refunds for support-agent',
-		]);
-		expect(links[0].getAttribute('href')).toBe(`/agents/approvals/${charge.id}`);
-		expect(links[1].getAttribute('href')).toBe(`/agents/approvals/${refund.id}`);
-		await checkA11y(section);
+	const search = () =>
+		new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
+
+	it('shows no card on an agent with nothing waiting, and no Approvals entry', async () => {
+		// Another agent's calls show on that agent's tab, not on this one.
+		seedSupportAgentCalls();
+		renderPage('/?agent=agnt_disabled_1');
+		await screen.findAllByText('legacy-scraper');
+		await waitFor(() =>
+			expect(
+				within(stripTab('support-agent')).getByTestId('strip-waiting-chip'),
+			).toBeInTheDocument(),
+		);
+		expect(screen.queryByRole('article', { name: 'Waiting for you' })).toBeNull();
+		expect(screen.queryByTestId('agent-waiting-status')).toBeNull();
+		expect(screen.queryByRole('button', { name: /^Approvals/ })).toBeNull();
 	});
 
-	it('badges the Approvals entry with the pending count', async () => {
-		seedMockApproval();
-		seedMockApproval({ path: '/v1/refunds' });
-		renderPage();
-		expect(
-			await screen.findByRole('button', {
-				name: /^Approvals 2 calls awaiting your approval/,
+	it('shows a card with the count and every call’s name first under the agent waiting on the viewer', async () => {
+		seedSupportAgentCalls();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		expect(card).toHaveTextContent('2 calls held for approval · next expires in');
+		// The spec names neither call here, so each reads as its route.
+		expect(card).toHaveTextContent('POST /v1/charges · DELETE /v1/customers/cus_1');
+		// The tree's first branch, under the agent card and above the API rows —
+		// not in the card's pinned stack, so it scrolls with the rows.
+		const row = screen.getByTestId('held-calls-row');
+		expect(row).toContainElement(card);
+		expect(within(row).getByTestId('tree-elbow')).toBeInTheDocument();
+		expect(screen.getByTestId('agent-card')).not.toContainElement(card);
+		expect(screen.getByTestId('can-call').compareDocumentPosition(row)).toBe(
+			Node.DOCUMENT_POSITION_PRECEDING,
+		);
+	});
+
+	it('marks the agent “Waiting for you” beside its status, and counts its calls on its tab', async () => {
+		seedSupportAgentCalls();
+		renderPage('/?agent=agnt_active_1');
+		await findHeldCard();
+		const card = screen.getByTestId('agent-card');
+		expect(within(card).getByTestId('agent-status-chip')).toHaveTextContent('Active');
+		expect(within(card).getByTestId('agent-waiting-status')).toHaveTextContent(
+			'Waiting for you',
+		);
+		const chip = within(stripTab('support-agent')).getByTestId('strip-waiting-chip');
+		expect(chip).toHaveTextContent('2');
+		expect(stripTab('support-agent')).toHaveAccessibleName(/2 calls waiting for you/);
+		// Agents with nothing held carry no chip.
+		expect(within(stripTab('legacy-scraper')).queryByTestId('strip-waiting-chip')).toBeNull();
+	});
+
+	it('Review all opens the review pop-up on the oldest call, keeping the selection', async () => {
+		const { charge } = seedSupportAgentCalls();
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		await user.click(within(card).getByRole('button', { name: 'Review all' }));
+		await waitFor(() => expect(search().get('review')).toBe(charge.id));
+		expect(search().get('agent')).toBe('agnt_active_1');
+	});
+
+	it('Deny N decides each ticked call, then the card goes once nothing waits', async () => {
+		seedSupportAgentCalls();
+		const decided: { id: string; body: unknown }[] = [];
+		worker.use(
+			http.post('/executions/holds/:id\\:decide', async ({ params, request }) => {
+				decided.push({ id: String(params.id), body: await request.clone().json() });
+				// Recorded; the store's own handler decides it.
+				return undefined;
 			}),
-		).toBeInTheDocument();
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		await user.click(within(card).getByRole('button', { name: 'Show the calls' }));
+		await user.click(within(card).getByRole('checkbox', { name: 'Select all' }));
+		await user.click(within(card).getByRole('button', { name: 'Deny 2' }));
+
+		expect(await screen.findByText('Denied 2 calls from support-agent')).toBeInTheDocument();
+		expect(screen.queryByText(/Denied execution for/)).toBeNull();
+		expect(decided.map((d) => d.id).sort()).toEqual(['held_charge', 'held_delete']);
+		for (const d of decided) expect(d.body).toEqual({ decision: 'deny', reason: null });
+		await waitFor(() =>
+			expect(screen.queryByRole('article', { name: 'Waiting for you' })).toBeNull(),
+		);
+		expect(screen.queryByTestId('agent-waiting-status')).toBeNull();
+		expect(within(stripTab('support-agent')).queryByTestId('strip-waiting-chip')).toBeNull();
 	});
 
-	it('lists a held call and a connect request for the same agent side by side', async () => {
+	it('Approve N… opens the bulk confirmation without the delete', async () => {
+		const { charge } = seedSupportAgentCalls();
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		await user.click(within(card).getByRole('button', { name: 'Show the calls' }));
+		await user.click(within(card).getByRole('checkbox', { name: 'Select all' }));
+		expect(card).toHaveTextContent('Deletes are approved one at a time');
+		await user.click(within(card).getByRole('button', { name: 'Approve 1…' }));
+		await waitFor(() => expect(search().get('review_batch')).toBe(charge.id));
+	});
+
+	it('Expand all opens the card with the rows, and Collapse all shuts it', async () => {
+		seedSupportAgentCalls();
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		await user.click(await screen.findByTestId('expand-all-rows'));
+		await waitFor(() => expect(card).toHaveAttribute('data-pinned', 'true'));
+		expect(
+			within(card).getByRole('list', { name: /Calls waiting for you/ }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId('expand-all-rows')).toHaveTextContent('Collapse all');
+
+		await user.click(screen.getByTestId('expand-all-rows'));
+		await waitFor(() => expect(card).not.toHaveAttribute('data-pinned'));
+		await waitFor(() =>
+			expect(within(card).queryByRole('list', { name: /Calls waiting for you/ })).toBeNull(),
+		);
+	});
+
+	it('opens the list at its full height, scrolling with the page like an API row', async () => {
+		seedSupportAgentCalls();
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		await user.click(within(card).getByRole('button', { name: 'Show the calls' }));
+		const list = await within(card).findByRole('list', { name: /Calls waiting for you/ });
+		expect(getComputedStyle(list).maxHeight).toBe('none');
+		expect(getComputedStyle(list).overflowY).toBe('visible');
+		await checkA11y(card);
+	});
+
+	it('shows a connect request in its section and a held call on the card, side by side', async () => {
 		seedMockApproval();
 		seedMockAgentConnectSession({ agent_id: 'agnt_active_1', vendor_key: 'github' });
-		renderPage();
-		const section = await waitingSection();
-		await waitFor(() => expect(within(section).getAllByRole('listitem')).toHaveLength(2));
-		expect(section).toHaveTextContent('wants to make a call to api.stripe.com/payments');
+		renderPage('/?agent=agnt_active_1');
+		const section = await screen.findByRole('region', { name: 'Waiting for you' });
+		await waitFor(() => expect(within(section).getAllByRole('listitem')).toHaveLength(1));
 		expect(section).toHaveTextContent('wants to connect github');
+		// The held call is on the agent's card, not in the connect section.
+		expect(section).not.toHaveTextContent('wants to make');
+		expect(await findHeldCard()).toHaveTextContent('1 call held for approval');
 	});
 
 	it('drops a held call whose approval window already lapsed', async () => {
 		seedMockApproval({ expires_at: new Date(Date.now() - 60_000).toISOString() });
-		renderPage();
-		await screen.findAllByText('inbox-triage-bot');
+		renderPage('/?agent=agnt_active_1');
+		await screen.findAllByText('support-agent');
 		await new Promise((r) => setTimeout(r, 300));
-		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('article', { name: 'Waiting for you' })).toBeNull();
 	});
 
-	it('lists held calls to a viewer with no jobs permission', async () => {
+	it('shows held calls to a viewer with no jobs permission', async () => {
 		seedMockApproval();
 		seedViewer(['agents:read', 'agents:write']);
-		renderPage('/', { withAuth: true });
-		expect(await waitingSection()).toHaveTextContent(
-			'wants to make a call to api.stripe.com/payments',
-		);
+		renderPage('/?agent=agnt_active_1', { withAuth: true });
+		expect(await findHeldCard()).toHaveTextContent('1 call held for approval');
 	});
 
 	it('shows nothing when the server shows the viewer no held call', async () => {
@@ -2837,10 +2952,11 @@ describe('AgentsPage — held calls waiting on the viewer', () => {
 			}),
 		);
 		seedViewer(['agents:read', 'agents:write', 'jobs:read', 'jobs:write']);
-		renderPage('/', { withAuth: true });
-		await screen.findAllByText('inbox-triage-bot');
+		renderPage('/?agent=agnt_active_1', { withAuth: true });
+		await screen.findAllByText('support-agent');
 		await waitFor(() => expect(reads).toBeGreaterThan(0));
-		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Approvals' })).toBeInTheDocument();
+		expect(screen.queryByRole('article', { name: 'Waiting for you' })).toBeNull();
+		expect(screen.queryByTestId('strip-waiting-chip')).toBeNull();
+		expect(screen.queryByRole('button', { name: /^Approvals/ })).toBeNull();
 	});
 });

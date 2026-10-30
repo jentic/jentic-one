@@ -1,15 +1,17 @@
 /**
- * Pending held executions — the live state behind the attention inbox's
- * held-call rows, the Agents page "Waiting for you" section and the
+ * Pending held executions — the live state behind the bell's held-call rows,
+ * the rail's Inbox, the attention toast, the waiting card on an agent and the
  * pending-count badges. Reads `GET /executions/holds?state=pending`, which the
  * server scopes to the held executions the caller may see (the agents they
  * own, or every agent for an `org:admin`).
  *
- * Shared rather than in the Agents module because the inbox and the nav badge
- * are shell chrome; the Agents module's Approvals pages keep their own list and
- * detail slices under `sharedQueryKeys.approvalsRoot`.
+ * Shared rather than in the Agents module because the bell, the rail and the
+ * nav badge are shell chrome; one held call's detail lives under
+ * `sharedQueryKeys.approvalsRoot` (see `hooks.ts`).
  */
+import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNow } from '@/shared/app/rail/useNow';
 import {
 	HeldExecutionState,
 	HeldExecutionsService,
@@ -17,11 +19,12 @@ import {
 	type HeldExecutionResponse,
 } from '@/shared/api';
 import { useCanDecideApprovals } from '@/shared/approvals/pendingApprovals';
+import { normaliseHeldCall } from '@/shared/approvals/client';
 
 /**
  * Under the attention root, so anything that refreshes the inbox (a decision
- * made on the review page, an approval event on the live stream) refreshes the
- * badges and the "Waiting for you" rows with it.
+ * made in the review pop-up, an approval event on the live stream) refreshes
+ * the badges, the Inbox and the waiting card with it.
  */
 export const pendingApprovalsKey = [
 	...sharedQueryKeys.attentionRoot,
@@ -49,10 +52,21 @@ export interface PendingApprovals {
 
 /**
  * Drop a pending row whose window already lapsed: the expiry sweep records it
- * shortly, and until then nobody can decide it.
+ * shortly, and until then nobody can decide it. An expiry the row doesn't
+ * state can't have passed.
  */
 function stillDecidable(approval: HeldExecutionResponse, now: number): boolean {
-	return Date.parse(approval.expires_at) > now;
+	const at = Date.parse(approval.expires_at);
+	return Number.isNaN(at) || at > now;
+}
+
+const byCreated = (a: HeldExecutionResponse, b: HeldExecutionResponse) =>
+	Date.parse(a.created_at) - Date.parse(b.created_at);
+
+/** `rows` less any whose window has closed; `rows` itself when none has, so nothing re-renders for nothing. */
+function keepDecidable(rows: HeldExecutionResponse[], now: number): HeldExecutionResponse[] {
+	const kept = rows.filter((row) => stillDecidable(row, now));
+	return kept.length === rows.length ? rows : kept;
 }
 
 export async function listPendingApprovals(): Promise<PendingApprovals> {
@@ -65,16 +79,13 @@ export async function listPendingApprovals(): Promise<PendingApprovals> {
 			limit: PAGE_LIMIT,
 			cursor,
 		});
-		rows.push(...res.data);
+		rows.push(...res.data.map(normaliseHeldCall));
 		if (!res.has_more || !res.next_cursor) break;
 		cursor = res.next_cursor;
 		truncated = page === MAX_PAGES - 1;
 	}
-	const now = Date.now();
 	return {
-		approvals: rows
-			.filter((row) => stillDecidable(row, now))
-			.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+		approvals: keepDecidable(rows, Date.now()).sort(byCreated),
 		truncated,
 	};
 }
@@ -84,19 +95,57 @@ export async function listPendingApprovals(): Promise<PendingApprovals> {
  * viewer is known (see `useCanDecideApprovals`): no request goes out.
  */
 export function usePendingApprovals(options?: { enabled?: boolean }) {
+	// Read against the clock, not only at fetch time: a call whose window closes
+	// between two reads leaves every list and count at the next tick.
+	const now = useNow();
+	const select = useCallback(
+		(data: PendingApprovals): PendingApprovals => {
+			const approvals = keepDecidable(data.approvals, now);
+			return approvals === data.approvals ? data : { ...data, approvals };
+		},
+		[now],
+	);
 	return useQuery<PendingApprovals>({
 		queryKey: pendingApprovalsKey,
 		queryFn: listPendingApprovals,
 		enabled: options?.enabled ?? true,
 		staleTime: 30_000,
 		refetchInterval: REFETCH_MS,
+		select,
+	});
+}
+
+/**
+ * One agent's waiting calls, read on their own. For the agent on screen while
+ * the shared list is cut short (`truncated`): its calls may lie past the pages
+ * that list reads. Under the same key root, so what refreshes the list
+ * refreshes this.
+ */
+export function useAgentPendingApprovals(agentId: string | null | undefined, enabled: boolean) {
+	// Against the same clock as the shared list, so the two never disagree.
+	const now = useNow();
+	const select = useCallback((rows: HeldExecutionResponse[]) => keepDecidable(rows, now), [now]);
+	return useQuery({
+		queryKey: [...pendingApprovalsKey, 'agent', agentId ?? ''] as const,
+		queryFn: async (): Promise<HeldExecutionResponse[]> => {
+			const res = await HeldExecutionsService.listHeldExecutions({
+				state: HeldExecutionState.PENDING,
+				agentId,
+				limit: PAGE_LIMIT,
+			});
+			return keepDecidable(res.data.map(normaliseHeldCall), Date.now()).sort(byCreated);
+		},
+		enabled: enabled && !!agentId,
+		staleTime: 30_000,
+		refetchInterval: REFETCH_MS,
+		select,
 	});
 }
 
 /**
  * The pending-count badges' read: how many held calls wait on the viewer. Off
  * (zero, no request) until the viewer is known. Shares the one cache slice with
- * the inbox and "Waiting for you", so every count agrees.
+ * the bell, the Inbox and the waiting card, so every count agrees.
  */
 export function usePendingApprovalsCount(): { count: number; atLeast: boolean } {
 	const canDecide = useCanDecideApprovals();

@@ -111,6 +111,14 @@
 	--color-danger: hsl(var(--danger));
 	--color-destructive: hsl(var(--destructive));
 
+	/* Held-call attention accent (see the tokens below). */
+	--color-attention-fill: hsl(var(--attention-fill));
+	--color-attention-tile: hsl(var(--attention-tile));
+	--color-attention-chip: hsl(var(--attention-chip));
+	--color-attention-chip-foreground: hsl(var(--attention-chip-foreground));
+	--color-attention-ring: hsl(var(--attention-ring));
+	--color-attention-row: hsl(var(--attention-row));
+
 	/* Fonts */
 	--font-sans: 'Nunito Sans', sans-serif;
 	--font-heading: 'Sora', sans-serif;
@@ -320,6 +328,17 @@
 	--scrim: 192 35% 4% / 0.55;
 	--code-bg: 0 0% 0% / 0.3;
 	--shimmer-hi: var(--primary-700) / 0.55;
+	/* Held calls waiting for the viewer: amber is an accent on the glyph, the
+	   count and a hairline only. Any fill of the dark `--warning` (a pale tan)
+	   turns olive, so the dark surfaces stay neutral. */
+	--attention-fill: 0 0% 0% / 0;
+	--attention-tile: var(--surface-tonal);
+	--attention-chip: var(--surface-chip);
+	--attention-chip-foreground: var(--foreground-name);
+	--attention-ring: var(--warning) / 0.42;
+	/* A request waiting on the viewer in a list (the Agents page's connect
+	   requests): a neutral surface, with the amber on its dot. */
+	--attention-row: var(--surface-1);
 	/* Shadows: an inner top highlight, and the drop colour at full strength
 	   (`--shadow`) — a light page wants a far softer drop than a dark one. */
 	--highlight: 0 0% 100%;
@@ -455,6 +474,13 @@
 	/* A white card on a white sheet has no edge of its own: this hairline,
 	   drawn just inside the card, is what separates the two. */
 	--card-edge: 192 30% 20% / 0.1;
+	/* Held calls waiting for the viewer: the light page keeps a faint warm fill. */
+	--attention-fill: var(--warning) / 0.06;
+	--attention-tile: var(--warning) / 0.15;
+	--attention-chip: var(--warning) / 0.12;
+	--attention-chip-foreground: var(--warning);
+	--attention-ring: var(--warning) / 0.35;
+	--attention-row: var(--warning) / 0.1;
 	--elevation-card-hover:
 		0 6px 20px -6px hsl(192 30% 20% / 0.14), 0 2px 6px -2px hsl(192 30% 20% / 0.08);
 	--elevation-pop:

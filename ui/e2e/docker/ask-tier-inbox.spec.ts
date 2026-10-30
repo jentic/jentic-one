@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { authHeaders, TOKEN_STORAGE_KEY, uniqueSuffix } from './helpers';
 import { provisionAdminOwnedAgent, type AgentIdentity } from './agent-flow';
 
@@ -6,13 +6,13 @@ import { provisionAdminOwnedAgent, type AgentIdentity } from './agent-flow';
  * The ask tier's human loop in the UI (real backend).
  *
  * An agent's call that matches an Ask (`require-approval`) rule is held by the
- * real broker; the UI must then show it where a decider looks — the
- * Notifications inbox, the Agents page "Waiting for you" section and the
- * pending-count badges — and clear every one of those signals once the hold
- * settles: approved (the agent reads the result), denied with a reason, or
- * expired by the worker's sweep. A viewer the server does not show it to (not
- * the agent's owner, not an org admin) sees none of them, whatever their jobs
- * permissions.
+ * real broker; the UI must then show it where a decider looks — the bell, the
+ * waiting card on the agent and the pending-count badge — let them decide it
+ * in the review pop-up (opened from the card or from the broker's
+ * `review_url`), and clear every one of those signals once the hold settles:
+ * approved (the agent reads the result), denied with a reason, or expired by
+ * the worker's sweep. A viewer the server does not show it to (not the agent's
+ * owner, not an org admin) sees none of them, whatever their jobs permissions.
  *
  * Needs the ask-tier stack (app + standalone broker + recorded upstream), not
  * the plain `make start-app` boot, so it skips unless ASK_E2E_BROKER_URL and
@@ -52,6 +52,8 @@ const ASK_RULES = [
 
 interface Held {
 	heldExecutionId: string;
+	/** The agent whose call was held — the Agents page selects it by this id. */
+	agentId: string;
 	reviewPath: string;
 }
 
@@ -168,54 +170,80 @@ async function hold(
 	const body = await res.json();
 	expect(body.status).toBe('held');
 	const reviewUrl = new URL(body.review_url as string);
+	const heldExecutionId = body.held_execution_id as string;
+	const detail = await request.get(`/executions/holds/${heldExecutionId}`, {
+		headers: authHeaders(),
+	});
+	expect(
+		detail.ok(),
+		`GET /executions/holds/${heldExecutionId}: ${detail.status()}`,
+	).toBeTruthy();
 	return {
-		heldExecutionId: body.held_execution_id as string,
+		heldExecutionId,
+		agentId: (await detail.json()).agent_id as string,
 		// The SPA path behind the router basename.
 		reviewPath: reviewUrl.pathname,
 	};
 }
 
-/** Every held-call signal a decider sees, for one agent. */
-function signals(page: Page, agentName: string) {
+/** Every held-call signal a decider sees on the Agents page. */
+function signals(page: Page) {
 	return {
 		navBadge: page
 			.getByRole('navigation', { name: 'Primary' })
 			.getByLabel(/calls? awaiting your approval/),
-		waiting: page.getByRole('region', { name: 'Waiting for you' }),
-		waitingRow: page
-			.getByRole('region', { name: 'Waiting for you' })
-			.getByRole('listitem')
-			.filter({ hasText: agentName }),
-		approvalsEntry: page.getByRole('button', { name: /^Approvals/ }),
+		// The waiting card on the selected agent.
+		card: page.getByRole('article', { name: 'Waiting for you' }),
 	};
 }
 
-async function openInbox(page: Page) {
+/** The Agents page with `agentId` selected, so its waiting card can show. */
+function agentPage(agentId: string): string {
+	return `/app/agents?agent=${encodeURIComponent(agentId)}`;
+}
+
+async function openBell(page: Page) {
 	await page.getByRole('button', { name: /^Notifications/ }).click();
 	return page.getByRole('dialog', { name: /Notifications/ });
 }
 
-async function expectSignalsShown(page: Page, agentName: string): Promise<void> {
-	await page.goto('/app/agents');
-	const s = signals(page, agentName);
-	await expect(s.waitingRow).toBeVisible();
-	await expect(s.waitingRow).toContainText('wants to make');
+/** The bell's row for one of the agent's held calls: "<agent> wants to …". */
+function bellRows(bell: Locator, agentName: string) {
+	return bell.getByText(`${agentName} wants to`, { exact: false });
+}
+
+/** The review pop-up the card, the bell and the `review_url` all open. */
+function reviewDialog(page: Page) {
+	return page.getByRole('dialog', { name: 'Review call' });
+}
+
+/** Resolves once the pop-up's decision for `heldExecutionId` is accepted. */
+function decided(page: Page, heldExecutionId: string) {
+	return page.waitForResponse(
+		(r) =>
+			r.request().method() === 'POST' &&
+			new URL(r.url()).pathname === `/executions/holds/${heldExecutionId}:decide` &&
+			r.ok(),
+	);
+}
+
+async function expectSignalsShown(page: Page, agentName: string, agentId: string): Promise<void> {
+	await page.goto(agentPage(agentId));
+	const s = signals(page);
+	await expect(s.card).toBeVisible();
+	await expect(s.card).toContainText('held for approval');
 	await expect(s.navBadge).toBeVisible();
-	await expect(s.approvalsEntry).toContainText(/\d/);
-	const inbox = await openInbox(page);
-	await expect(inbox.getByText(`${agentName} is waiting for you to approve`)).toBeVisible();
+	const bell = await openBell(page);
+	await expect(bellRows(bell, agentName).first()).toBeVisible();
 	await page.keyboard.press('Escape');
 }
 
 async function expectSignalsClear(page: Page, agentName: string, timeout = 15_000) {
-	const s = signals(page, agentName);
-	await expect(s.waitingRow).toHaveCount(0, { timeout });
+	const s = signals(page);
+	await expect(s.card).toHaveCount(0, { timeout });
 	await expect(s.navBadge).toHaveCount(0, { timeout });
-	await expect(s.approvalsEntry).toHaveAccessibleName('Approvals', { timeout });
-	const inbox = await openInbox(page);
-	await expect(inbox.getByText(`${agentName} is waiting for you to approve`)).toHaveCount(0, {
-		timeout,
-	});
+	const bell = await openBell(page);
+	await expect(bellRows(bell, agentName)).toHaveCount(0, { timeout });
 	await page.keyboard.press('Escape');
 }
 
@@ -228,26 +256,21 @@ test.beforeAll(async ({ request }) => {
 	await bindWithAskRules(request, agent.clientId);
 });
 
-test('a held call shows in the inbox, the badge and Waiting for you, and approving it clears them', async ({
+test('a held call shows on the bell, the badge and the waiting card, and approving it clears them', async ({
 	page,
 	request,
 }) => {
 	const held = await hold(request, agent, 'GET', '/items?limit=2');
-	await expectSignalsShown(page, agent.name);
+	await expectSignalsShown(page, agent.name, held.agentId);
 
-	// The Waiting for you row deep-links to the review page.
-	await signals(page, agent.name)
-		.waitingRow.getByRole('link', { name: /^Review/ })
-		.click();
-	await expect(page).toHaveURL(new RegExp(`${held.reviewPath}$`));
-	await page.getByLabel('Reason (optional)').fill('fine by me');
-	await page.getByRole('button', { name: 'Approve and run' }).click();
-	await expect(page.getByText('Outcome')).toBeVisible();
-
-	// The review page follows the call to its outcome and links the record.
-	await expect(page.getByRole('link', { name: /^View execution/ })).toBeVisible({
-		timeout: 60_000,
-	});
+	// The card's "Review all" opens the pop-up on the agent's oldest call.
+	await signals(page).card.getByRole('button', { name: 'Review all' }).click();
+	await expect(page).toHaveURL(new RegExp(`[?&]review=${held.heldExecutionId}(&|$)`));
+	const dialog = reviewDialog(page);
+	await expect(dialog).toBeVisible();
+	const approved = decided(page, held.heldExecutionId);
+	await dialog.getByRole('button', { name: 'Approve and run' }).click();
+	await approved;
 
 	// The agent gets its result: the upstream response itself.
 	const settled = await waitHeld(request, held.heldExecutionId, ['completed', 'failed']);
@@ -257,7 +280,7 @@ test('a held call shows in the inbox, the badge and Waiting for you, and approvi
 	});
 	expect(result.ok(), await result.text()).toBeTruthy();
 
-	await page.goto('/app/agents');
+	await page.goto(agentPage(held.agentId));
 	await expectSignalsClear(page, agent.name);
 });
 
@@ -266,15 +289,18 @@ test('denying with a reason from the review_url clears the signals and tells the
 	request,
 }) => {
 	const held = await hold(request, agent, 'POST', '/orders');
-	await expectSignalsShown(page, agent.name);
+	await expectSignalsShown(page, agent.name, held.agentId);
 
-	// The review_url the broker returned opens the same page.
+	// The review_url the broker returned opens the same pop-up.
 	await page.goto(held.reviewPath);
-	await page.getByLabel('Reason (optional)').fill('not this order');
-	await page.getByRole('button', { name: 'Deny' }).click();
-	await expect(page.getByText('not this order')).toBeVisible();
-	// The badge settles on the review page itself, without a reload.
-	await expect(signals(page, agent.name).navBadge).toHaveCount(0);
+	await expect(page).toHaveURL(new RegExp(`[?&]review=${held.heldExecutionId}(&|$)`));
+	const dialog = reviewDialog(page);
+	await dialog.getByLabel(/^Reason \(optional\)/).fill('not this order');
+	const denied = decided(page, held.heldExecutionId);
+	await dialog.getByRole('button', { name: 'Deny', exact: true }).click();
+	await denied;
+	// The badge settles behind the pop-up, without a reload.
+	await expect(signals(page).navBadge).toHaveCount(0);
 
 	await waitHeld(request, held.heldExecutionId, ['failed']);
 	const result = await request.get(`/executions/holds/${held.heldExecutionId}/result`, {
@@ -285,7 +311,7 @@ test('denying with a reason from the review_url clears the signals and tells the
 	expect(String(problem.detail)).toContain('not this order');
 	expect(problem.held_execution?.id).toBe(held.heldExecutionId);
 
-	await page.goto('/app/agents');
+	await page.goto(agentPage(held.agentId));
 	await expectSignalsClear(page, agent.name);
 });
 
@@ -294,7 +320,7 @@ test('an expired hold clears the signals without a reload', async ({ page, reque
 	// the live event or the inbox's own refresh.
 	test.setTimeout((TTL_S + 240) * 1000);
 	const held = await hold(request, agent, 'GET', '/items?limit=3');
-	await expectSignalsShown(page, agent.name);
+	await expectSignalsShown(page, agent.name, held.agentId);
 
 	const expired = await waitHeld(request, held.heldExecutionId, ['failed'], (TTL_S + 180) * 1000);
 	expect(expired.state).toBe('expired');
@@ -339,14 +365,14 @@ test('a viewer the server does not show the held call to sees none of the signal
 			viewer.waitForResponse((r) => new URL(r.url()).pathname === '/agents' && r.ok()),
 			viewer.waitForResponse((r) => new URL(r.url()).pathname === '/executions/holds'),
 		];
-		await viewer.goto('/app/agents');
+		await viewer.goto(agentPage(held.agentId));
 		await expect(viewer.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
 		await Promise.all(firstReads);
-		const s = signals(viewer, agent.name);
-		await expect(s.waiting).toHaveCount(0);
+		const s = signals(viewer);
+		await expect(s.card).toHaveCount(0);
 		await expect(s.navBadge).toHaveCount(0);
-		const inbox = await openInbox(viewer);
-		await expect(inbox.getByText(/is waiting for you to approve/)).toHaveCount(0);
+		const bell = await openBell(viewer);
+		await expect(bellRows(bell, agent.name)).toHaveCount(0);
 		await context.close();
 	}
 
