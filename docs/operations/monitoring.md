@@ -189,6 +189,61 @@ that hit its budget or was cut off by a shutdown drain),
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
 
+Request-latency histograms are exported with explicit bucket boundaries, by
+default 1, 2, 5, 10, 15, 20, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000
+and 30000 ms, so `histogram_quantile` p50/p99 resolve sub-25 ms latencies and
+the tail reaches the default 30 s upstream timeout. Other histograms keep the
+OpenTelemetry default buckets. The histograms that get these buckets, with
+their Prometheus bucket series:
+
+| Instrument | Unit | Prometheus series |
+| ---------- | ---- | ----------------- |
+| `http.server.duration` | ms (whole) | `http_server_duration_milliseconds_bucket` |
+| `http.server.request.duration` | s | `http_server_request_duration_seconds_bucket` |
+| `broker.execution.duration_ms` | ms (fractional) | `broker_execution_duration_ms_milliseconds_bucket` |
+
+The inbound HTTP instrumentation emits `http.server.duration` by default,
+`http.server.request.duration` under `OTEL_SEMCONV_STABILITY_OPT_IN=http`, and
+both under `OTEL_SEMCONV_STABILITY_OPT_IN=http/dup` — each gets the buckets.
+Each view matches on the instrument's unit as well as its name, so an
+instrument with one of these names recorded in a different unit keeps the
+default buckets.
+
+Tune the boundaries with
+[`observability.metrics.latency_buckets_ms`](../reference/config.md#observability)
+(milliseconds, strictly increasing, all > 0, at most 64), or as a
+comma-separated env var:
+
+```yaml
+observability:
+  metrics:
+    latency_buckets_ms: [1, 2, 5, 10, 25, 50, 100, 500, 1000, 5000, 30000]
+```
+
+```bash
+JENTIC__OBSERVABILITY__METRICS__LATENCY_BUCKETS_MS=1,2,5,10,25,50,100,500,1000,5000,30000
+```
+
+The one list drives every latency histogram; the seconds-unit
+`http.server.request.duration` uses it divided by 1000. Things to keep in mind
+when changing it:
+
+- **Keep it identical everywhere it is aggregated.** Dashboards sum buckets
+  across instances (`sum by (le)`), so every replica and surface whose series
+  are aggregated together must use the same list. While lists differ —
+  including for the whole of a rolling deploy that changes it, or under a
+  per-surface env override — `histogram_quantile` results are wrong.
+- **Resolution differs per instrument.** The HTTP instrumentation records
+  `http.server.duration` in whole milliseconds, so non-integer boundaries
+  (such as `0.5`) only take effect on `http.server.request.duration` and
+  `broker.execution.duration_ms`, which record fractional values.
+- **Cardinality.** Each boundary adds one `_bucket` series per label set.
+  `http.server.duration` is labelled by method, status, host, port, target
+  and more; `broker.execution.duration_ms` by `operation`.
+- **Cover the upstream timeout.** The default tail stops at 30000 ms, matching
+  the default `broker.upstream_timeout_s`. If you raise that timeout, extend
+  the list to match so slow calls don't all collapse into `+Inf`.
+
 ### Per-request stage timing (`Server-Timing`)
 
 To see where one broker request spends its time without a profiler, set
