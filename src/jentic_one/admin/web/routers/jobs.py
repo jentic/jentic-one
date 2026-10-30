@@ -118,7 +118,15 @@ async def list_jobs(
     )
 
 
-@router.get("/jobs/{job_id}", summary="Get a job")
+@router.get(
+    "/jobs/{job_id}",
+    summary="Get a job",
+    responses=not_found(
+        "No job with this id is visible to the caller. A job belonging to another actor, "
+        "or one whose retention window has expired, is indistinguishable from one that "
+        "never existed."
+    ),
+)
 async def get_job(
     request: Request,
     job_id: Annotated[
@@ -197,7 +205,18 @@ _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
 }
 
 
-@router.get("/jobs/{job_id}/result", summary="Get a job's result", responses=_JOB_RESULT_RESPONSE)
+@router.get(
+    "/jobs/{job_id}/result",
+    summary="Get a job's result",
+    responses={
+        **_JOB_RESULT_RESPONSE,
+        **not_found(
+            "No job with this id is visible to the caller, or its retention window has "
+            "expired and the result is gone. Both are indistinguishable from a job that "
+            "never existed."
+        ),
+    },
+)
 async def get_job_result(
     job_id: Annotated[
         str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))

@@ -634,3 +634,43 @@ def test_tag_catalogue_and_groups_agree(generated_control_spec: dict[str, Any]) 
         + "\n".join(f"  - {problem}" for problem in problems)
         + f"\n\n{_GUIDE_HINT}"
     )
+
+
+@pytest.mark.arch
+def test_tag_promised_status_codes_exist_somewhere_in_the_tag(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """A status code a tag description promises is declared by some operation it covers.
+
+    A tag description speaks for a whole group, so when the ``Executions`` tag
+    says an id outside the caller's visibility answers 404, a caller expects to
+    find a 404 somewhere under that tag. If no operation declares one, the tag is
+    describing behaviour the document does not model anywhere.
+
+    This deliberately does NOT require every operation in the tag to declare the
+    code — a 410 for a deleted user belongs on the single-user reads, not on
+    ``GET /users`` — so it asks only that the promise is realised somewhere.
+    Per-operation accuracy is :func:`test_prose_status_codes_are_declared`'s job.
+    """
+    declared_by_tag: dict[str, set[str]] = {}
+    for _, _, operation in _operations(generated_control_spec):
+        codes = set((operation.get("responses") or {}).keys())
+        for name in operation.get("tags") or []:
+            declared_by_tag.setdefault(name, set()).update(codes)
+
+    violations: list[str] = []
+    for tag in generated_control_spec.get("tags") or []:
+        name, description = tag.get("name"), tag.get("description") or ""
+        if not name or name not in declared_by_tag:
+            continue
+        for code in sorted(set(re.findall(r"\b([45]\d\d)\b", description))):
+            if code not in declared_by_tag[name]:
+                violations.append(
+                    f"tag {name!r} promises {code}, but no operation it covers declares it"
+                )
+    assert not violations, (
+        "Tag descriptions promising status codes nothing declares:\n"
+        + "\n".join(f"  - {violation}" for violation in violations)
+        + "\n\nFix: declare the code on the operations that really return it, or stop "
+        f"claiming it in the tag description. {_GUIDE_HINT}"
+    )

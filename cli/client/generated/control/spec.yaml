@@ -20421,6 +20421,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          content:
+            application/problem+json:
+              example: *id266
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: No event with this id is visible to the caller. An event belonging to another actor is indistinguishable from one that does not exist, so a 404 here does not mean the id is wrong — do not retry it.
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -21003,6 +21010,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          content:
+            application/problem+json:
+              example: *id266
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: No execution with this id is visible to the caller. An execution belonging to another actor is indistinguishable from one that does not exist, so a 404 here does not mean the id is wrong — do not retry it.
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -21731,6 +21745,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          content:
+            application/problem+json:
+              example: *id266
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: No job with this id is visible to the caller. A job belonging to another actor, or one whose retention window has expired, is indistinguishable from one that never existed.
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -21805,6 +21826,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          content:
+            application/problem+json:
+              example: *id266
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: No job with this id is visible to the caller, or its retention window has expired and the result is gone. Both are indistinguishable from a job that never existed.
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':

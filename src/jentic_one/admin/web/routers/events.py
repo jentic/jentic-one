@@ -44,6 +44,7 @@ from jentic_one.shared.web.deps import (
     get_credential_recheck,
 )
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import not_found
 
 _LAST_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{24}$")
 
@@ -405,7 +406,15 @@ async def stream_events(
     )
 
 
-@router.get("/events/{event_id}", summary="Get an event")
+@router.get(
+    "/events/{event_id}",
+    summary="Get an event",
+    responses=not_found(
+        "No event with this id is visible to the caller. An event belonging to another "
+        "actor is indistinguishable from one that does not exist, so a 404 here does not "
+        "mean the id is wrong — do not retry it."
+    ),
+)
 async def get_event(
     event_id: Annotated[
         str, Path(description="ID of the event.", openapi_examples=ex.example(ex.EVENT_ID))
