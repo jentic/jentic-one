@@ -3481,7 +3481,9 @@ type ConnectSchemeOptionResponse struct {
 	VendorKey *string `json:"vendor_key,omitempty"`
 }
 
-// ConnectSchemeOptionResponseKind defines model for ConnectSchemeOptionResponse.Kind.
+// ConnectSchemeOptionResponseKind What a connect session collects for it; null when it can't serve it.
+//
+// Examples: oauth2
 type ConnectSchemeOptionResponseKind string
 
 // ConnectScopeOptionResponse One scope a connection to the API could ask for.
@@ -3510,7 +3512,9 @@ type ConnectScopeOptionResponse struct {
 	Requestable bool `json:"requestable"`
 }
 
-// ConnectScopeOptionResponseClassification defines model for ConnectScopeOptionResponse.Classification.
+// ConnectScopeOptionResponseClassification What the scope lets a holder do.
+//
+// Examples: write
 type ConnectScopeOptionResponseClassification string
 
 // ConnectSessionListResponse Cursor-paginated envelope of connect-session summaries.
@@ -5124,7 +5128,9 @@ type HeldExecutionDetailResponse struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// HeldExecutionDetailResponseExecutionStatus defines model for HeldExecutionDetailResponse.ExecutionStatus.
+// HeldExecutionDetailResponseExecutionStatus Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+//
+// Examples: held
 type HeldExecutionDetailResponseExecutionStatus string
 
 // HeldExecutionLinksResponse HAL-style links for a held execution.
@@ -5287,7 +5293,9 @@ type HeldExecutionResponse struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// HeldExecutionResponseExecutionStatus defines model for HeldExecutionResponse.ExecutionStatus.
+// HeldExecutionResponseExecutionStatus Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+//
+// Examples: held
 type HeldExecutionResponseExecutionStatus string
 
 // HeldExecutionResultResponse The outcome of a held call that ran: the execution document the run recorded.
@@ -20302,7 +20310,7 @@ func NewListActorsRequest(server string, params *ListActorsParams) (*http.Reques
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20569,7 +20577,7 @@ func NewListOauthClientsRequest(server string, params *ListOauthClientsParams) (
 
 		if params.ApprovalStatus != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "approval_status", *params.ApprovalStatus, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "approval_status", *params.ApprovalStatus, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20927,7 +20935,7 @@ func NewListOauthGrantsRequest(server string, params *ListOauthGrantsParams) (*h
 
 		if params.ClientId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_id", *params.ClientId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_id", *params.ClientId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20939,7 +20947,7 @@ func NewListOauthGrantsRequest(server string, params *ListOauthGrantsParams) (*h
 
 		if params.AgentId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20951,7 +20959,7 @@ func NewListOauthGrantsRequest(server string, params *ListOauthGrantsParams) (*h
 
 		if params.UserId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20963,7 +20971,7 @@ func NewListOauthGrantsRequest(server string, params *ListOauthGrantsParams) (*h
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20987,7 +20995,7 @@ func NewListOauthGrantsRequest(server string, params *ListOauthGrantsParams) (*h
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -21041,7 +21049,7 @@ func NewListAgentsRequest(server string, params *ListAgentsParams) (*http.Reques
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -21065,7 +21073,7 @@ func NewListAgentsRequest(server string, params *ListAgentsParams) (*http.Reques
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -21613,7 +21621,7 @@ func NewListAgentOauthGrantsRequest(server string, agentId string, params *ListA
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -21637,7 +21645,7 @@ func NewListAgentOauthGrantsRequest(server string, agentId string, params *ListA
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22036,7 +22044,7 @@ func NewListApisRequest(server string, params *ListApisParams) (*http.Request, e
 
 		if params.Vendor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22048,7 +22056,7 @@ func NewListApisRequest(server string, params *ListApisParams) (*http.Request, e
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22407,7 +22415,7 @@ func NewListApiOperationsRequest(server string, vendor PathVendor, name PathName
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22494,7 +22502,7 @@ func NewListOverlaysRequest(server string, vendor PathVendor, name PathName, ver
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22518,7 +22526,7 @@ func NewListOverlaysRequest(server string, vendor PathVendor, name PathName, ver
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22955,7 +22963,7 @@ func NewListApiRevisionsRequest(server string, vendor PathVendor, name PathName,
 
 		if params.State != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -22967,7 +22975,7 @@ func NewListApiRevisionsRequest(server string, vendor PathVendor, name PathName,
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23253,7 +23261,7 @@ func NewListApiRevisionOperationsRequest(server string, vendor PathVendor, name 
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23489,7 +23497,7 @@ func NewListAuditEntriesRequest(server string, params *ListAuditEntriesParams) (
 
 		if params.TargetId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "target_id", *params.TargetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "target_id", *params.TargetId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23501,7 +23509,7 @@ func NewListAuditEntriesRequest(server string, params *ListAuditEntriesParams) (
 
 		if params.ActorId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23513,7 +23521,7 @@ func NewListAuditEntriesRequest(server string, params *ListAuditEntriesParams) (
 
 		if params.Origin != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "origin", *params.Origin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "origin", *params.Origin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23525,7 +23533,7 @@ func NewListAuditEntriesRequest(server string, params *ListAuditEntriesParams) (
 
 		if params.Since != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23537,7 +23545,7 @@ func NewListAuditEntriesRequest(server string, params *ListAuditEntriesParams) (
 
 		if params.Until != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23549,7 +23557,7 @@ func NewListAuditEntriesRequest(server string, params *ListAuditEntriesParams) (
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23743,7 +23751,7 @@ func NewListCatalogRequest(server string, params *ListCatalogParams) (*http.Requ
 
 		if params.Q != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23803,7 +23811,7 @@ func NewListCatalogRequest(server string, params *ListCatalogParams) (*http.Requ
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23934,7 +23942,7 @@ func NewPreviewCatalogOperationsRequest(server string, apiId PathApiId, params *
 
 		if params.Tag != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "tag", *params.Tag, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "tag", *params.Tag, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -23946,7 +23954,7 @@ func NewPreviewCatalogOperationsRequest(server string, apiId PathApiId, params *
 
 		if params.Q != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24142,7 +24150,7 @@ func NewListConnectSessionsRequest(server string, params *ListConnectSessionsPar
 
 		if params.State != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24154,7 +24162,7 @@ func NewListConnectSessionsRequest(server string, params *ListConnectSessionsPar
 
 		if params.Vendor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24166,7 +24174,7 @@ func NewListConnectSessionsRequest(server string, params *ListConnectSessionsPar
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24239,7 +24247,7 @@ func NewGetConnectSessionRequest(server string, sessionId PathSessionId, params 
 
 		if params.PollToken != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24300,7 +24308,7 @@ func NewListConnectSessionRevisionsRequest(server string, sessionId PathSessionI
 
 		if params.PollToken != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24361,7 +24369,7 @@ func NewPollConnectSessionStatusRequest(server string, sessionId PathSessionId, 
 
 		if params.PollToken != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24469,7 +24477,7 @@ func NewCancelConnectSessionRequest(server string, sessionId PathSessionId, para
 
 		if params.PollToken != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24541,7 +24549,7 @@ func NewConfirmConnectSessionRequestWithBody(server string, sessionId PathSessio
 
 		if params.PollToken != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24631,7 +24639,7 @@ func NewListCredentialsRequest(server string, params *ListCredentialsParams) (*h
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24655,7 +24663,7 @@ func NewListCredentialsRequest(server string, params *ListCredentialsParams) (*h
 
 		if params.Vendor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -24898,7 +24906,7 @@ func NewListCredentialAgentsRequest(server string, credentialId PathCredentialId
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25363,7 +25371,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.EventType != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "event_type", *params.EventType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "event_type", *params.EventType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25375,7 +25383,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.Severity != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25387,7 +25395,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.RequiresAction != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "requires_action", *params.RequiresAction, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "requires_action", *params.RequiresAction, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25399,7 +25407,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.From != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25411,7 +25419,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.To != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25423,7 +25431,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.TraceId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25435,7 +25443,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.ActorId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25447,7 +25455,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.ActorType != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_type", *params.ActorType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_type", *params.ActorType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25459,7 +25467,7 @@ func NewListEventsRequest(server string, params *ListEventsParams) (*http.Reques
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25525,7 +25533,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.Since != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25537,7 +25545,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.EventType != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "event_type", *params.EventType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "event_type", *params.EventType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25549,7 +25557,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.Severity != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25561,7 +25569,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.RequiresAction != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "requires_action", *params.RequiresAction, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "requires_action", *params.RequiresAction, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25573,7 +25581,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.TraceId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25585,7 +25593,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.ActorId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25597,7 +25605,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 
 		if params.ActorType != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_type", *params.ActorType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_type", *params.ActorType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25623,7 +25631,7 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 		if params.LastEventID != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Last-Event-ID", *params.LastEventID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Last-Event-ID", *params.LastEventID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
@@ -25700,7 +25708,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.TraceId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trace_id", *params.TraceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25712,7 +25720,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25724,7 +25732,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.From != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25736,7 +25744,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.To != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25748,7 +25756,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.Api != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api", *params.Api, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api", *params.Api, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25760,7 +25768,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.ActorId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_id", *params.ActorId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25772,7 +25780,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.Origin != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "origin", *params.Origin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "origin", *params.Origin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25784,7 +25792,7 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25862,7 +25870,7 @@ func NewListHeldExecutionsRequest(server string, params *ListHeldExecutionsParam
 
 		if params.AgentId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -25874,7 +25882,7 @@ func NewListHeldExecutionsRequest(server string, params *ListHeldExecutionsParam
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26122,7 +26130,7 @@ func NewGetGovernedHostsRequest(server string, params *GetGovernedHostsParams) (
 		if params.IfNoneMatch != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-none-match", *params.IfNoneMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-none-match", *params.IfNoneMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
@@ -26192,7 +26200,7 @@ func NewInspectOperationRequest(server string, params *InspectOperationParams) (
 
 		if params.Id != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26204,7 +26212,7 @@ func NewInspectOperationRequest(server string, params *InspectOperationParams) (
 
 		if params.OperationId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "operation_id", *params.OperationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "operation_id", *params.OperationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26216,7 +26224,7 @@ func NewInspectOperationRequest(server string, params *InspectOperationParams) (
 
 		if params.RevisionId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "revision_id", *params.RevisionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "revision_id", *params.RevisionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26330,7 +26338,7 @@ func NewIntegrationsConnectOptionsRequest(server string, vendor string, name str
 
 		if params.RegistrationId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "registration_id", *params.RegistrationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "registration_id", *params.RegistrationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26464,7 +26472,7 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		if params.Kind != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "kind", *params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "kind", *params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26476,7 +26484,7 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26488,7 +26496,7 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		if params.From != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26500,7 +26508,7 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		if params.To != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26512,7 +26520,7 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26801,7 +26809,7 @@ func NewGetUsageStatsRequest(server string, params *GetUsageStatsParams) (*http.
 
 		if params.Since != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26813,7 +26821,7 @@ func NewGetUsageStatsRequest(server string, params *GetUsageStatsParams) (*http.
 
 		if params.Until != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26849,7 +26857,7 @@ func NewGetUsageStatsRequest(server string, params *GetUsageStatsParams) (*http.
 
 		if params.ApiId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_id", *params.ApiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_id", *params.ApiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26861,7 +26869,7 @@ func NewGetUsageStatsRequest(server string, params *GetUsageStatsParams) (*http.
 
 		if params.AgentId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26873,7 +26881,7 @@ func NewGetUsageStatsRequest(server string, params *GetUsageStatsParams) (*http.
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26927,7 +26935,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26951,7 +26959,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.Api != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api", *params.Api, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api", *params.Api, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26963,7 +26971,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.OperationId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "operation_id", *params.OperationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "operation_id", *params.OperationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26975,7 +26983,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.ExecutionId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "execution_id", *params.ExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "execution_id", *params.ExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26987,7 +26995,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.CredentialId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "credential_id", *params.CredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "credential_id", *params.CredentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -26999,7 +27007,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.Type != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "type", *params.Type, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "type", *params.Type, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -27011,7 +27019,7 @@ func NewListNotesRequest(server string, params *ListNotesParams) (*http.Request,
 
 		if params.CreatedBy != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_by", *params.CreatedBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_by", *params.CreatedBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -27111,7 +27119,7 @@ func NewDeleteNoteRequest(server string, noteId string, params *DeleteNoteParams
 		if params.IfMatch != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
@@ -27207,7 +27215,7 @@ func NewUpdateNoteRequestWithBody(server string, noteId string, params *UpdateNo
 		if params.IfMatch != nil {
 			var headerParam0 string
 
-			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "", Format: ""})
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 			if err != nil {
 				return nil, err
 			}
@@ -27250,7 +27258,7 @@ func NewListOauthAppRegistrationsRequest(server string, params *ListOauthAppRegi
 
 		if params.ApiVendor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_vendor", *params.ApiVendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_vendor", *params.ApiVendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -27286,7 +27294,7 @@ func NewListOauthAppRegistrationsRequest(server string, params *ListOauthAppRegi
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -27961,7 +27969,7 @@ func NewListPermissionRuleSetsRequest(server string, params *ListPermissionRuleS
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -28465,7 +28473,7 @@ func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request,
 
 		if params.Cursor != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -29028,7 +29036,7 @@ func NewGetAuthCapabilitiesRequest(server string, vendorKey string, params *GetA
 
 		if params.OauthAppRegistrationId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "oauth_app_registration_id", *params.OauthAppRegistrationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "oauth_app_registration_id", *params.OauthAppRegistrationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

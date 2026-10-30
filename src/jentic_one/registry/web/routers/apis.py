@@ -862,10 +862,15 @@ _SPEC_DOWNLOAD_RESPONSES: dict[int | str, dict[str, Any]] = {
             "application/json": {
                 "schema": {
                     "type": "object",
+                    # The shape is the third-party document's own, so every member is
+                    # unknown here. Saying so explicitly tells a client generator that
+                    # arbitrary members are expected rather than leaving it to guess.
+                    "additionalProperties": True,
                     "description": (
                         "The API's OpenAPI document as stored on the revision — an OpenAPI "
                         "object (`openapi`, `info`, `paths`, …) whose shape is the "
-                        "third-party spec's own, so it is not modelled here."
+                        "third-party spec's own, so it is not modelled here. Expect "
+                        "arbitrary members."
                     ),
                 }
             },

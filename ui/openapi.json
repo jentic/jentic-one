@@ -28226,7 +28226,8 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "The API's OpenAPI document as stored on the revision — an OpenAPI object (`openapi`, `info`, `paths`, …) whose shape is the third-party spec's own, so it is not modelled here.",
+                  "additionalProperties": true,
+                  "description": "The API's OpenAPI document as stored on the revision — an OpenAPI object (`openapi`, `info`, `paths`, …) whose shape is the third-party spec's own, so it is not modelled here. Expect arbitrary members.",
                   "type": "object"
                 }
               },
@@ -29672,7 +29673,8 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "description": "The API's OpenAPI document as stored on the revision — an OpenAPI object (`openapi`, `info`, `paths`, …) whose shape is the third-party spec's own, so it is not modelled here.",
+                  "additionalProperties": true,
+                  "description": "The API's OpenAPI document as stored on the revision — an OpenAPI object (`openapi`, `info`, `paths`, …) whose shape is the third-party spec's own, so it is not modelled here. Expect arbitrary members.",
                   "type": "object"
                 }
               },
@@ -37222,7 +37224,8 @@
                   "status": "completed"
                 },
                 "schema": {
-                  "description": "The result document for the job's kind; see the response description for the members of each.",
+                  "additionalProperties": true,
+                  "description": "The result document for the job's kind; see the response description for the members of each. Expect arbitrary members.",
                   "type": "object"
                 }
               },

@@ -174,9 +174,13 @@ _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
             "application/json": {
                 "schema": {
                     "type": "object",
+                    # Members differ by job kind, so none can be declared here. Stating
+                    # that arbitrary members are expected is both true and lets a client
+                    # generator stop guessing whether unknown ones are permitted.
+                    "additionalProperties": True,
                     "description": (
                         "The result document for the job's kind; see the response "
-                        "description for the members of each."
+                        "description for the members of each. Expect arbitrary members."
                     ),
                 },
                 # One arm illustrated: a finished `kind=execution` job. A
