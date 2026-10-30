@@ -561,7 +561,7 @@ async def oauth_callback(
     )
 
 
-@router.get("/error")
+@router.get("/error", summary="Get a browser authorization error")
 async def error_page(
     error: str = Query(
         default="unknown_error",

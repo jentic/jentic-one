@@ -23,6 +23,7 @@ from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import not_found
 
 router = APIRouter()
 
@@ -74,7 +75,7 @@ def _parse_api_filter(api: str) -> tuple[str | None, str | None, str | None]:
     return vendor, name, version
 
 
-@router.get("/executions")
+@router.get("/executions", summary="List executions")
 async def list_executions(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
@@ -171,7 +172,15 @@ async def list_executions(
     )
 
 
-@router.get("/executions/{execution_id}")
+@router.get(
+    "/executions/{execution_id}",
+    summary="Get an execution",
+    responses=not_found(
+        "No execution with this id is visible to the caller. An execution belonging to "
+        "another actor is indistinguishable from one that does not exist, so a 404 here "
+        "does not mean the id is wrong — do not retry it."
+    ),
+)
 async def get_execution(
     execution_id: Annotated[
         str,

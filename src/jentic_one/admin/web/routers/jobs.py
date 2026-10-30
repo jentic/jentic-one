@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -25,7 +25,13 @@ from jentic_one.shared.models import JobKind, JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import (
+    HELD_EXECUTION_PROBLEM_CONTENT,
+    PROBLEM_JSON,
+    conflict,
+    not_found,
+    with_responses,
+)
 
 router = APIRouter()
 
@@ -59,7 +65,7 @@ def _job_response(view: JobView, request: Request) -> JobResponse:
     )
 
 
-@router.get("/jobs")
+@router.get("/jobs", summary="List jobs")
 async def list_jobs(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
@@ -113,7 +119,15 @@ async def list_jobs(
     )
 
 
-@router.get("/jobs/{job_id}")
+@router.get(
+    "/jobs/{job_id}",
+    summary="Get a job",
+    responses=not_found(
+        "No job with this id is visible to the caller. A job belonging to another actor, "
+        "or one whose retention window has expired, is indistinguishable from one that "
+        "never existed."
+    ),
+)
 async def get_job(
     request: Request,
     job_id: Annotated[
@@ -127,7 +141,79 @@ async def get_job(
     return _job_response(view, request)
 
 
-@router.get("/jobs/{job_id}/result")
+#: A job result body is stored as JSON chosen by the handler that produced it,
+#: so it has no single shape to model: the two kinds carry unrelated documents
+#: and a held execution that never ran carries a problem body. The schema stays
+#: an open object and the description carries the per-kind contract.
+_JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
+    200: {
+        "description": (
+            "The completed job's result, polymorphic by the job's `kind` (read `kind` from "
+            "`GET /jobs/{job_id}`). The body is always a JSON object — never an array or a "
+            "scalar — but its members depend on the kind:\n\n"
+            "- **`kind=import`**: `revisions`, one entry per API revision the import "
+            "produced, each with `api` (the API object), `revision_id` and `state`.\n"
+            "- **`kind=execution`**: the execution document — `execution_id`, `status` "
+            "(`completed` or `failed`), `http_status` (the upstream status, or null when the "
+            "call never reached the upstream), `duration_ms`, and `body_b64` when the "
+            "upstream returned a body. The upstream payload is base64 in `body_b64`; it is "
+            "never inlined as JSON, so it needs decoding and interpreting against the "
+            "upstream's own content type. A run-time authorization denial adds `problem`, "
+            "the RFC 9457 body the synchronous execute route would have returned.\n"
+            "- **A held execution that never ran** (denied, its approval window lapsed, or "
+            "its approved run interrupted) carries an `application/problem+json` body in "
+            "place of the execution document, with `type` `approval_denied`, "
+            "`approval_expired`, `approval_required` or `approval_resume_failed`, plus "
+            "`error_origin`. The first three of those carry a `held_execution` object "
+            "(`id`, `state`); `approval_required` names no held row, so it has none — read "
+            "`held_execution` only when it is present. The HTTP status stays `200`; the "
+            "problem's own `status` member (403, or 409 for an interrupted approved run) "
+            "says why the call never happened.\n\n"
+            "`Content-Type` caveat: for a `kind=execution` result the header echoes the "
+            "**upstream** response's content type, while the body is still the JSON "
+            "execution document above — parse the body as JSON whatever the header says."
+        ),
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    # Members differ by job kind, so none can be declared here. Stating
+                    # that arbitrary members are expected is both true and lets a client
+                    # generator stop guessing whether unknown ones are permitted.
+                    "additionalProperties": True,
+                    "description": (
+                        "The result document for the job's kind; see the response "
+                        "description for the members of each. Expect arbitrary members."
+                    ),
+                },
+                # One arm illustrated: a finished `kind=execution` job. A
+                # `kind=import` job's result carries `revisions` instead.
+                "example": {
+                    "execution_id": ex.EXECUTION_ID,
+                    "status": "completed",
+                    "http_status": 200,
+                    "duration_ms": 412,
+                    "body_b64": "eyJpZCI6ICJyZV8xMjMifQ==",
+                },
+            },
+            PROBLEM_JSON: HELD_EXECUTION_PROBLEM_CONTENT,
+        },
+    }
+}
+
+
+@router.get(
+    "/jobs/{job_id}/result",
+    summary="Get a job's result",
+    responses={
+        **_JOB_RESULT_RESPONSE,
+        **not_found(
+            "No job with this id is visible to the caller, or its retention window has "
+            "expired and the result is gone. Both are indistinguishable from a job that "
+            "never existed."
+        ),
+    },
+)
 async def get_job_result(
     job_id: Annotated[
         str, Path(description="ID of the job.", openapi_examples=ex.example(ex.JOB_ID))
@@ -142,7 +228,11 @@ async def get_job_result(
     return JSONResponse(content=view.body)
 
 
-@router.post("/jobs/{job_id}:cancel", responses=with_responses(not_found(), conflict()))
+@router.post(
+    "/jobs/{job_id}:cancel",
+    summary="Cancel a job",
+    responses=with_responses(not_found(), conflict()),
+)
 async def cancel_job(
     request: Request,
     job_id: Annotated[

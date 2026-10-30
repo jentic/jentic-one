@@ -6,7 +6,7 @@ import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from datetime import datetime
-from typing import Annotated, Final
+from typing import Annotated, Any, Final
 
 import structlog
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
@@ -44,6 +44,7 @@ from jentic_one.shared.web.deps import (
     get_credential_recheck,
 )
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import not_found
 
 _LAST_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{24}$")
 
@@ -82,7 +83,7 @@ def _event_response(view: EventView, request: Request) -> EventResponse:
     )
 
 
-@router.get("/events")
+@router.get("/events", summary="List events")
 async def list_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
@@ -181,7 +182,70 @@ _CLOSED_REASONS: Final[dict[CredentialRecheckResult, StreamClosedReason]] = {
 }
 
 
-@router.get("/events/stream")
+#: An SSE frame carries its payload as a ``data:`` line, so the body is a byte
+#: stream rather than a JSON document. FastAPI infers nothing from a
+#: ``StreamingResponse``, so the media type, the frame grammar and the
+#: per-frame payloads are declared here instead.
+_SSE_FRAME_EXAMPLE: Final = (
+    "event: import.completed\n"
+    "id: evt_6968b3985e8c9902207afaeb\n"
+    'data: {"event_id": "evt_6968b3985e8c9902207afaeb", "type": "import.completed", '
+    '"severity": "info", "summary": "Import completed", "requires_action": false, '
+    '"created_at": "2026-01-15T09:30:00Z", "_links": {"self": "/events/evt_6968b398"}}\n'
+    "\n"
+    "event: heartbeat\n"
+    'data: {"type": "heartbeat", "sent_at": "2026-01-15T09:30:15Z"}\n'
+    "\n"
+    "event: stream_closed\n"
+    'data: {"type": "stream_closed", "reason": "refused"}\n'
+    "\n"
+)
+
+_SSE_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
+    200: {
+        "description": (
+            "An open `text/event-stream` connection in the HTML Server-Sent Events wire "
+            "format — not a JSON document. The server holds the response open and writes "
+            "frames until the caller disconnects or the stream closes. Each frame is an "
+            "`event: <name>` line, an optional `id: <id>` line, one `data: <JSON object>` "
+            "line, and a blank line. Three frame kinds arrive:\n\n"
+            "- **An event frame.** Its `event` is the event's own `type` (e.g. "
+            "`import.completed`, an open set — retired kinds persist in history), its `id` "
+            "the event's `evt_…` id (send it back as `Last-Event-ID` to resume), and its "
+            "`data` the same `EventResponse` object `GET /events/{event_id}` returns.\n"
+            "- **A `heartbeat` frame**, with no `id` and `data` of "
+            '`{"type": "heartbeat", "sent_at": "<RFC 3339>"}`, which keeps the connection '
+            "open while no event matches.\n"
+            "- **A final `stream_closed` frame**, with `data` of "
+            '`{"type": "stream_closed", "reason": "refused" | "forbidden" | "unavailable"}`, '
+            "after which the server closes the stream; reconnect to continue.\n\n"
+            "The response also carries `Cache-Control: no-cache` and `X-Accel-Buffering: no`. "
+            "Because the `200` and its headers are sent before the first frame, a failure "
+            "that happens later arrives as a `stream_closed` frame rather than an error "
+            "status."
+        ),
+        "content": {
+            "text/event-stream": {
+                "schema": {
+                    "type": "string",
+                    "description": (
+                        "A stream of SSE frames; see the response description for the frame "
+                        "grammar and the per-frame `data` payloads."
+                    ),
+                },
+                "example": _SSE_FRAME_EXAMPLE,
+            }
+        },
+    }
+}
+
+
+@router.get(
+    "/events/stream",
+    summary="Stream events over SSE",
+    response_class=StreamingResponse,
+    responses=_SSE_RESPONSE,
+)
 async def stream_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=_STREAM_PERMISSIONS),
@@ -342,7 +406,15 @@ async def stream_events(
     )
 
 
-@router.get("/events/{event_id}")
+@router.get(
+    "/events/{event_id}",
+    summary="Get an event",
+    responses=not_found(
+        "No event with this id is visible to the caller. An event belonging to another "
+        "actor is indistinguishable from one that does not exist, so a 404 here does not "
+        "mean the id is wrong — do not retry it."
+    ),
+)
 async def get_event(
     event_id: Annotated[
         str, Path(description="ID of the event.", openapi_examples=ex.example(ex.EVENT_ID))

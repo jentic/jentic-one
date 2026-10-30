@@ -170,6 +170,35 @@ ROUTER_RESHAPED_422_OPERATION_IDS: frozenset[str] = frozenset(
 )
 
 
+#: Operations that exist only to refuse: the RFC 7592 client-update and
+#: client-delete doors answer every call with ``OperationNotSupportedError``
+#: (403), so they have no success body and FastAPI's inferred ``200`` describes a
+#: response no caller can observe. The success entry is dropped from the spec so
+#: a reader sees only what the endpoint can actually return.
+#: Public operations that nonetheless answer 401 from their own credential check.
+#: A public operation normally has no 401 to document — it never authenticates — so
+#: the inherited one is dropped. These authenticate the *client* rather than the
+#: caller's identity, and say 401 when that fails, so their own 401 is kept. They
+#: stay in :data:`PUBLIC_OPERATION_IDS` because they carry no identity dependency,
+#: which is what the route-auth gate checks.
+PUBLIC_WITH_CLIENT_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        # RFC 6749 token endpoint: a client that attempted HTTP Basic and failed
+        # authentication gets `invalid_client` as 401 with a `WWW-Authenticate:
+        # Basic` challenge (§5.2); one that did not attempt Basic gets 400.
+        "tokenEndpoint",
+    }
+)
+
+
+ALWAYS_ERROR_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "deleteRegistrationEndpoint",
+        "updateRegistrationEndpoint",
+    }
+)
+
+
 def _camelize(name: str) -> str:
     """Convert a snake_case route function name to camelCase."""
     parts = [p for p in name.split("_") if p]
@@ -216,7 +245,6 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/catalog"), "Catalog"),
     (re.compile(r"^/search"), "Search"),
     (re.compile(r"^/inspect"), "Inspect"),
-    (re.compile(r"^/lookup"), "Lookup"),
     (re.compile(r"^/notes"), "Notes"),
     (re.compile(r"^/monitoring"), "Monitoring"),
     (re.compile(r"^/executions/holds"), "Held Executions"),

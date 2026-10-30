@@ -20,6 +20,7 @@ spec that wasn't regenerated). The spec is built once per session via the
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import jsonschema
@@ -53,6 +54,36 @@ def _operations(spec: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
             if method.lower() in _HTTP_METHODS and isinstance(operation, dict):
                 ops.append((method.upper(), path, operation))
     return ops
+
+
+def _resolve(spec: dict[str, Any], node: Any) -> Any:
+    """Follow a local ``$ref`` to the object it names, keeping any sibling keys.
+
+    The generator hoists repeated response and parameter objects into
+    ``components`` (:mod:`jentic_one.shared.web.openapi_meta.dedupe`), so these
+    checks resolve a reference before inspecting the object, exactly as a
+    document consumer does. OpenAPI 3.1 lets ``$ref`` carry siblings, so a local
+    override wins over the component it references.
+    """
+    for _ in range(10):
+        if not (isinstance(node, dict) and isinstance(node.get("$ref"), str)):
+            return node
+        ref: str = node["$ref"]
+        if not ref.startswith("#/"):
+            return node
+        target: Any = spec
+        for part in ref[2:].split("/"):
+            if not isinstance(target, dict):
+                return node
+            target = target.get(part.replace("~1", "/").replace("~0", "~"))
+        siblings = {key: value for key, value in node.items() if key != "$ref"}
+        node = {**(target if isinstance(target, dict) else {}), **siblings}
+    return node
+
+
+def _parameters(spec: dict[str, Any], operation: dict[str, Any]) -> list[dict[str, Any]]:
+    """The operation's parameters, each resolved through any ``$ref``."""
+    return [_resolve(spec, param) for param in operation.get("parameters") or []]
 
 
 @pytest.mark.arch
@@ -155,9 +186,10 @@ def test_error_responses_document_a_body(generated_control_spec: dict[str, Any])
     """
     violations: list[str] = []
     for method, path, op in _operations(generated_control_spec):
-        for code, response in (op.get("responses") or {}).items():
+        for code, raw_response in (op.get("responses") or {}).items():
             if not _is_error_code(code):
                 continue
+            response = _resolve(generated_control_spec, raw_response)
             content = response.get("content") or {}
             if not content:
                 violations.append(f"{method} {path} {code} -> no content")
@@ -171,6 +203,37 @@ def test_error_responses_document_a_body(generated_control_spec: dict[str, Any])
             + "\n".join(violations)
             + "\n\nFix: declare model=ProblemDetail (or use problem()/oauth_error()/"
             f"route_not_found() from openapi_responses.py). {_GUIDE_HINT}"
+        )
+
+
+@pytest.mark.arch
+def test_success_responses_declare_a_schema(generated_control_spec: dict[str, Any]) -> None:
+    """Every 2xx body declares a schema, so a caller knows the shape it will parse.
+
+    An empty ``schema: {}`` is what FastAPI emits when a route suppresses its
+    response model (``response_model=None``) or returns a bare ``Response``, and
+    it tells a caller nothing at all. Declare ``response_model=`` on the route,
+    or — when the body genuinely has no fixed shape, such as a pass-through of an
+    upstream payload — declare an explicit permissive schema with a description
+    saying so. A response with no ``content`` at all (204, or a redirect) is
+    fine: it promises no body.
+    """
+    violations: list[str] = []
+    for method, path, operation in _operations(generated_control_spec):
+        for code, raw_response in (operation.get("responses") or {}).items():
+            if not code.startswith("2"):
+                continue
+            response = _resolve(generated_control_spec, raw_response)
+            for media_type, raw_media in (response.get("content") or {}).items():
+                media = _resolve(generated_control_spec, raw_media)
+                if not media.get("schema"):
+                    violations.append(f"{method} {path} {code} {media_type}")
+    if violations:
+        pytest.fail(
+            "Success responses without a declared schema:\n"
+            + "\n".join(violations)
+            + "\n\nFix: set response_model= on the route, or declare an explicit schema "
+            f"via responses={{...}} when the body has no fixed shape. {_GUIDE_HINT}"
         )
 
 
@@ -242,7 +305,7 @@ def test_every_parameter_has_a_valid_example(generated_control_spec: dict[str, A
     schemas = (generated_control_spec.get("components") or {}).get("schemas") or {}
     violations: list[str] = []
     for method, path, operation in _operations(generated_control_spec):
-        for param in operation.get("parameters") or []:
+        for param in _parameters(generated_control_spec, operation):
             where = f"{method} {path} [{param.get('in')}] {param.get('name')}"
             values = [entry.get("value") for entry in (param.get("examples") or {}).values()]
             if "example" in param:
@@ -301,7 +364,7 @@ def test_every_parameter_has_a_description(generated_control_spec: dict[str, Any
     missing = [
         f"{method.upper()} {path} {param.get('in')}:{param.get('name')}"
         for path, method, operation in _operations(generated_control_spec)
-        for param in operation.get("parameters") or []
+        for param in _parameters(generated_control_spec, operation)
         if not param.get("description")
     ]
     assert not missing, "Parameters without a description:\n" + "\n".join(missing)
@@ -331,8 +394,7 @@ def test_every_operation_documents_a_default_problem_response(
     bad = [
         f"{method.upper()} {path}"
         for path, method, operation in _operations(generated_control_spec)
-        if (operation.get("responses") or {})
-        .get("default", {})
+        if _resolve(generated_control_spec, (operation.get("responses") or {}).get("default", {}))
         .get("content", {})
         .get("application/problem+json", {})
         .get("schema", {})
@@ -461,4 +523,154 @@ def test_oneof_discriminator_mappings_match_variant_constants(
     walk(generated_control_spec, "")
     assert not problems, "Discriminator mappings inconsistent with variants:\n" + "\n".join(
         problems
+    )
+
+
+#: Status codes an operation's prose names without the operation returning them.
+#: Keyed by ``(operationId, code)`` with the reason, because
+#: :func:`test_prose_status_codes_are_declared` cannot tell a real promise from a
+#: number that happens to look like one. Add an entry only after checking the
+#: handler: the default assumption is that prose naming a code is a promise, and
+#: an undeclared promise is the defect the test exists to catch.
+_PROSE_CODE_EXEMPTIONS: dict[tuple[str, str], str] = {
+    # "at most 512 actions" — a size limit, not a status.
+    ("submitOverlay", "512"): "overlay action-count limit, not a status code",
+    # Describes the 429 its sibling `:connect` answers, not this operation.
+    ("rejectConnectSession", "429"): "documents the rejection cooldown seen on :connect",
+    # The 403/409 here are the Problem Details body's own `status` member for a
+    # call that never ran; the HTTP status of this response stays 200.
+    ("getJobResult", "409"): "problem document's own status member, HTTP stays 200",
+    ("getJobResult", "403"): "problem document's own status member, HTTP stays 200",
+}
+
+
+@pytest.mark.arch
+def test_prose_status_codes_are_declared(generated_control_spec: dict[str, Any]) -> None:
+    """A status code an operation's prose promises is also declared in ``responses``.
+
+    Telling a caller in English that an operation 404s, while declaring no 404,
+    leaves it unable to generate error handling from the document — the fact is
+    written down but not machine-readable. Declare the code with
+    ``not_found()``/``conflict()``/``problem()`` from ``openapi_responses.py``,
+    reusing the condition the prose already states and naming the problem `type`
+    slug a caller branches on.
+
+    A number that only looks like a status (a byte or item limit), or a code
+    described as belonging to another operation or to a Problem Details body's
+    own ``status`` member, belongs in :data:`_PROSE_CODE_EXEMPTIONS` with a
+    reason — after checking the handler, not to silence the test.
+    """
+    violations: list[str] = []
+    for method, path, operation in _operations(generated_control_spec):
+        op_id = str(operation.get("operationId") or "")
+        declared = set((operation.get("responses") or {}).keys())
+        prose = " ".join(
+            text
+            for text in (
+                operation.get("summary"),
+                operation.get("description"),
+                *(
+                    _resolve(generated_control_spec, response).get("description")
+                    for response in (operation.get("responses") or {}).values()
+                ),
+            )
+            if isinstance(text, str)
+        )
+        for code in sorted(set(re.findall(r"\b([45]\d\d)\b", prose))):
+            if code in declared or (op_id, code) in _PROSE_CODE_EXEMPTIONS:
+                continue
+            violations.append(
+                f"{method} {path} ({op_id}) describes {code} but declares {sorted(declared)}"
+            )
+    if violations:
+        pytest.fail(
+            "Status codes promised in prose but never declared:\n"
+            + "\n".join(violations)
+            + "\n\nFix: declare the code on the route with the openapi_responses.py helpers, "
+            "or exempt it in _PROSE_CODE_EXEMPTIONS with a reason if the handler never "
+            f"returns it. {_GUIDE_HINT}"
+        )
+
+
+@pytest.mark.arch
+def test_tag_catalogue_and_groups_agree(generated_control_spec: dict[str, Any]) -> None:
+    """Every declared tag carries operations and sits in exactly one ``x-tagGroups`` group.
+
+    Three ways this drifts, each of which misleads a reader navigating the
+    document rather than breaking it:
+
+    - a tag declared with a description but carrying no operations promises a
+      surface that is not there;
+    - a tag missing from ``x-tagGroups`` is invisible to a grouped renderer, so
+      its operations cannot be found by browsing;
+    - a group naming a tag that was never declared renders an empty heading.
+
+    Fix all three in ``openapi_meta/tags.py`` (``OPENAPI_TAGS`` and
+    ``X_TAG_GROUPS``), and the path to tag rules in ``openapi_meta/operation_ids.py``.
+    """
+    declared = {tag["name"] for tag in generated_control_spec.get("tags") or []}
+    grouped = [
+        name
+        for group in generated_control_spec.get("x-tagGroups") or []
+        for name in group.get("tags") or []
+    ]
+    used = {
+        (operation.get("tags") or [None])[0]
+        for _, _, operation in _operations(generated_control_spec)
+    }
+
+    problems: list[str] = []
+    for name in sorted(declared - used):
+        problems.append(f"tag {name!r} is declared but no operation carries it")
+    for name in sorted(declared - set(grouped)):
+        problems.append(f"tag {name!r} is declared but in no x-tagGroups group")
+    for name in sorted(set(grouped) - declared):
+        problems.append(f"x-tagGroups names {name!r}, which is not a declared tag")
+    for name in sorted({n for n in grouped if grouped.count(n) > 1}):
+        problems.append(f"tag {name!r} appears in more than one x-tagGroups group")
+
+    assert not problems, (
+        "Tag catalogue and groups disagree:\n"
+        + "\n".join(f"  - {problem}" for problem in problems)
+        + f"\n\n{_GUIDE_HINT}"
+    )
+
+
+@pytest.mark.arch
+def test_tag_promised_status_codes_exist_somewhere_in_the_tag(
+    generated_control_spec: dict[str, Any],
+) -> None:
+    """A status code a tag description promises is declared by some operation it covers.
+
+    A tag description speaks for a whole group, so when the ``Executions`` tag
+    says an id outside the caller's visibility answers 404, a caller expects to
+    find a 404 somewhere under that tag. If no operation declares one, the tag is
+    describing behaviour the document does not model anywhere.
+
+    This deliberately does NOT require every operation in the tag to declare the
+    code — a 410 for a deleted user belongs on the single-user reads, not on
+    ``GET /users`` — so it asks only that the promise is realised somewhere.
+    Per-operation accuracy is :func:`test_prose_status_codes_are_declared`'s job.
+    """
+    declared_by_tag: dict[str, set[str]] = {}
+    for _, _, operation in _operations(generated_control_spec):
+        codes = set((operation.get("responses") or {}).keys())
+        for name in operation.get("tags") or []:
+            declared_by_tag.setdefault(name, set()).update(codes)
+
+    violations: list[str] = []
+    for tag in generated_control_spec.get("tags") or []:
+        name, description = tag.get("name"), tag.get("description") or ""
+        if not name or name not in declared_by_tag:
+            continue
+        for code in sorted(set(re.findall(r"\b([45]\d\d)\b", description))):
+            if code not in declared_by_tag[name]:
+                violations.append(
+                    f"tag {name!r} promises {code}, but no operation it covers declares it"
+                )
+    assert not violations, (
+        "Tag descriptions promising status codes nothing declares:\n"
+        + "\n".join(f"  - {violation}" for violation in violations)
+        + "\n\nFix: declare the code on the operations that really return it, or stop "
+        f"claiming it in the tag description. {_GUIDE_HINT}"
     )

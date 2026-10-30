@@ -59,16 +59,19 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "Part of the **Core / Access** bounded context — agent-initiated OAuth "
             "connect sessions. A caller (agent or UI) begins a session via "
             "``POST /integrations:connect``, choosing a vendor and requested scope set; "
-            "the platform provisions a pending credential, initiates the vendor's OAuth "
-            "flow (device_authorization or authorization_code depending on the vendor), "
-            "and returns a session id + human-facing challenge (device user_code / "
-            "authorize_url).\n\n"
+            "the platform provisions a pending credential, resolves the vendor's OAuth "
+            "flow, and returns ``session_id``, ``approval_url``, ``poll_token`` and the "
+            "``resolved_flow`` it selected (``device_authorization`` or "
+            "``authorization_code``).\n\n"
+            "``POST /connect-sessions/{id}:confirm`` binds any pre-declared permission "
+            "rules and returns the human-facing challenge for the resolved flow — the "
+            "device ``user_code`` or the ``authorization_code`` redirect — or "
+            "``connected`` when no challenge is needed. It is reachable with the "
+            "``poll_token`` as well as from the UI.\n\n"
             "The initiator polls ``GET /connect-sessions/{id}/status`` until the session "
             "reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are "
             "capped by a TTL; unfinished sessions can be cancelled via "
-            "``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only "
-            "hand-off that binds any pre-declared permission rules to the resulting "
-            "credential."
+            "``POST /connect-sessions/{id}:cancel``."
         ),
     },
     {
@@ -170,18 +173,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Inspect",
         "description": (
             "Resolve a single registered operation to its full structural detail — "
-            "parameters, response schema, security scheme, server URL. Heavier than `Lookup` "
-            "(which is the Broker hot path) and separate from `Search` (which only returns "
-            "ranked summaries). Supports JSON, Markdown, and OpenAPI YAML response formats via "
-            "`Accept`-header content negotiation."
-        ),
-    },
-    {
-        "name": "Lookup",
-        "description": (
-            "The Broker's read interface into Registry — fast, narrow lookup from a real-world "
-            "URL to a Jentic `operation_id`. Hot path; not for human use. The capability map "
-            "names this as the Execution → Registry read interface."
+            "parameters, response schema, security scheme, server URL. Separate from `Search`, "
+            "which only returns ranked summaries. Response format is negotiated on `Accept`: "
+            "`application/json` (the default), `text/markdown`, or `application/openapi+yaml`; "
+            "anything else answers 406."
         ),
     },
     {
@@ -396,9 +391,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "OAuth",
         "description": (
-            "OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the "
-            "authorize, token, introspection, and revocation endpoints plus "
-            "the redirect callback."
+            "OAuth 2.0 / OIDC endpoints exposed by the platform authorization server. "
+            "Documented here are the programmatic ones: token, introspection and "
+            "revocation, plus the consent and approval status reads an agent polls. The "
+            "`/authorize` entry point and the redirect callback are browser-driven pages "
+            "that answer HTML or a 302, so they are deliberately not operations in this "
+            "document; start that flow by sending a human to the `authorizationUrl` the "
+            "`OAuth2` security scheme names."
         ),
     },
     {
@@ -411,8 +410,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Discovery",
         "description": (
-            "Unauthenticated metadata discovery — the JWKS document and OAuth authorization "
-            "server metadata under `/.well-known/*`."
+            "Unauthenticated metadata discovery. Documented here: `GET /auth/idp`, which "
+            "names the identity provider this deployment authenticates humans against. The "
+            "JWKS document and the OAuth authorization-server metadata are also served, "
+            "under `/.well-known/*`, but are not operations in this document — fetch them "
+            "directly from the deployment origin rather than looking for them here."
         ),
     },
     {
@@ -496,6 +498,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Permission Rule Sets",
             "Vendors",
             "Integrations",
+            "Governed Hosts",
         ],
     },
     {
@@ -507,7 +510,6 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Catalog",
             "Search",
             "Inspect",
-            "Lookup",
             "Notes",
             "Overlays",
         ],

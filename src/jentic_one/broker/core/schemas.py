@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from jentic_one.broker.core.directives import AgentDirective
 from jentic_one.shared.broker.schemas import ExecuteRequestContext
 
 __all__ = [
@@ -64,5 +65,11 @@ class HeldExecutionAcceptedResponse(BaseModel):
         description="Review page a signed-in reviewer opens to approve or deny the call."
     )
     expires_at: datetime = Field(description="When the call expires undecided and fails.")
-    agent_directive: str
+    agent_directive: AgentDirective = Field(
+        description=(
+            "Machine-actionable recovery instruction: the same `strategy`/`parameters`/"
+            "`human_readable_instruction` object the broker's problem bodies carry, so an "
+            "agent switches on `strategy` here exactly as it does on a denial."
+        )
+    )
     links: HeldExecutionAcceptedLinks = Field(serialization_alias="_links")

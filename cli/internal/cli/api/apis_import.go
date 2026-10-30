@@ -86,7 +86,7 @@ func buildImportSource(arg, vendor, name, version, submittedBy string) (control.
 
 	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		src := control.ApiSourceUrl{
-			Type:        control.Url,
+			Type:        control.ApiSourceUrlTypeUrl,
 			Url:         arg,
 			Vendor:      optPtr(vendor),
 			ApiName:     optPtr(name),
@@ -104,7 +104,7 @@ func buildImportSource(arg, vendor, name, version, submittedBy string) (control.
 		return item, fmt.Errorf("reading %s: %w", arg, err)
 	}
 	src := control.ApiSourceInline{
-		Type:        control.Inline,
+		Type:        control.ApiSourceInlineTypeInline,
 		Filename:    filepath.Base(arg),
 		Content:     string(data),
 		Vendor:      optPtr(vendor),

@@ -188,8 +188,13 @@ class NoteLinksResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    self_link: str = Field(serialization_alias="self")
-    resource: str | None = None
+    self_link: str = Field(
+        serialization_alias="self", examples=[f"{ex.BASE_URL}/notes/{ex.NOTE_ID}"]
+    )
+    resource: str | None = Field(
+        default=None,
+        examples=[f"{ex.BASE_URL}/inspect?operation_id={ex.REGISTRY_OPERATION_ID}"],
+    )
 
 
 class NoteResponse(BaseModel):
@@ -197,18 +202,21 @@ class NoteResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    note_id: str
-    resource: NoteResourceResponse
-    type: NoteType | None
-    body: str
-    confidence: NoteConfidence | None
-    confidence_source: str
-    source: NoteSource | None
-    created_by: str
-    related_execution_id: str | None
-    revision: int
-    created_at: datetime
-    updated_at: datetime
+    note_id: str = Field(examples=[ex.NOTE_ID])
+    # ``NoteResourceResponse._serialize`` emits one resource field, so the model
+    # serialises to a bare object with no properties the example composer can
+    # read; the example for it has to be written here.
+    resource: NoteResourceResponse = Field(examples=[{"operation_id": ex.REGISTRY_OPERATION_ID}])
+    type: NoteType | None = Field(examples=[NoteType.auth_quirk])
+    body: str = Field(examples=[_EX_NOTE_BODY])
+    confidence: NoteConfidence | None = Field(examples=[NoteConfidence.observed])
+    confidence_source: str = Field(examples=["client"])
+    source: NoteSource | None = Field(examples=[NoteSource.agent])
+    created_by: str = Field(examples=[ex.AGENT_ID])
+    related_execution_id: str | None = Field(examples=[ex.EXECUTION_ID])
+    revision: int = Field(examples=[3])
+    created_at: datetime = Field(examples=["2026-01-15T09:30:00Z"])
+    updated_at: datetime = Field(examples=["2026-01-20T14:05:00Z"])
     links: NoteLinksResponse = Field(serialization_alias="_links")
 
 
@@ -216,5 +224,5 @@ class NoteListResponse(BaseModel):
     """Cursor-paginated list of notes."""
 
     data: list[NoteResponse]
-    has_more: bool
-    next_cursor: str | None = None
+    has_more: bool = Field(examples=[True])
+    next_cursor: str | None = Field(default=None, examples=[ex.CURSOR])

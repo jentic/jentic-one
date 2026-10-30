@@ -920,8 +920,17 @@ class AuthCodeConnectChallengeResponse(BaseModel):
     """
 
     kind: Literal["authorization_code"] = "authorization_code"
-    authorize_url: str
-    state: str
+    authorize_url: str = Field(
+        description="Vendor authorization URL to open in the browser that called this endpoint.",
+        examples=["https://vendor.example.com/oauth/authorize?client_id=…&state=…"],
+    )
+    state: str = Field(
+        description=(
+            "Opaque CSRF state bound to this challenge; the callback accepts it only "
+            "from the browser that started the flow."
+        ),
+        examples=["Jq8Yk2mN4pR7sT1vW3xZ"],
+    )
 
 
 class DeviceAuthorizationConnectChallengeResponse(BaseModel):
@@ -933,10 +942,30 @@ class DeviceAuthorizationConnectChallengeResponse(BaseModel):
     """
 
     kind: Literal["device_authorization"] = "device_authorization"
-    user_code: str
-    verification_uri: str
-    verification_uri_complete: str | None = None
-    poll_interval_seconds: int | None = None
+    user_code: str = Field(
+        description="Code the user types at `verification_uri`.",
+        examples=["WDJB-MJHT"],
+    )
+    verification_uri: str = Field(
+        description="Where the user enters `user_code`.",
+        examples=["https://vendor.example.com/device"],
+    )
+    verification_uri_complete: str | None = Field(
+        default=None,
+        description=(
+            "`verification_uri` with `user_code` already embedded, when the vendor "
+            "supplies it (RFC 8628 §3.3.1); null when it does not."
+        ),
+        examples=["https://vendor.example.com/device?user_code=WDJB-MJHT"],
+    )
+    poll_interval_seconds: int | None = Field(
+        default=None,
+        description=(
+            "Minimum seconds to wait between polls, when the vendor supplies it; "
+            "null means use your own default."
+        ),
+        examples=[5],
+    )
 
 
 ConnectChallengeResponse = Annotated[

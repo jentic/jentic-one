@@ -63,6 +63,7 @@ from jentic_one.broker.core.errors import (
 )
 from jentic_one.broker.core.headers import (
     REGION_MISMATCH_HINT,
+    TRACESTATE_HEADER,
     JenticHeader,
     header_safe_value,
 )
@@ -73,6 +74,7 @@ from jentic_one.shared.broker.execution import (
     StreamingOutcome,
 )
 from jentic_one.shared.logging import mark_response_aborted
+from jentic_one.shared.tracing import JENTIC_TRACESTATE_KEY, pack_jentic_tracestate
 
 __all__ = [
     "OutcomeStreamingResponse",
@@ -180,6 +182,19 @@ def _metadata_headers(
     # surfaced via header — the streamed upstream body stays verbatim.
     if status_code in (401, 403) and ctx_req.has_server_variable:
         metadata[JenticHeader.HINT.value] = REGION_MISMATCH_HINT
+    # Echo the jentic= tracestate member, identically to the buffered sync route
+    # (``routers/execute._metadata_headers``): the header is declared on every
+    # successful response and streaming is the default sync path, so omitting it
+    # here would leave most 200s without it. ``pack_jentic_tracestate`` is pure —
+    # it reads only the request context, so the open upstream stream is irrelevant.
+    member = pack_jentic_tracestate(
+        execution_id=execution_id,
+        toolkit_id=ctx_req.toolkit_id,
+        vendor=ctx_req.api_vendor,
+        name=ctx_req.api_name,
+        version=ctx_req.api_version,
+    )
+    metadata[TRACESTATE_HEADER] = f"{JENTIC_TRACESTATE_KEY}={member}"
     return metadata
 
 

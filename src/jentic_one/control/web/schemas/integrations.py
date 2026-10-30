@@ -25,19 +25,41 @@ from jentic_one.shared.web.sensitive import SENSITIVE
 
 
 class VendorScopeResponse(BaseModel):
-    name: str
-    classification: Literal["read", "write", "admin"]
-    default: bool
-    description: str
+    name: str = Field(
+        description="Scope name as the vendor spells it, to send in a connect request.",
+        examples=["repo"],
+    )
+    classification: Literal["read", "write", "admin"] = Field(
+        description="How much the scope grants, for showing risk on a connect screen.",
+        examples=["write"],
+    )
+    default: bool = Field(
+        description="Whether the platform requests this scope unless the caller opts out.",
+        examples=[True],
+    )
+    description: str = Field(
+        description="What the scope allows, for display next to its name.",
+        examples=["Full control of private repositories."],
+    )
 
 
 class VendorFlowResponse(BaseModel):
-    kind: str
+    kind: str = Field(
+        description="An OAuth flow the vendor supports: `authorization_code` "
+        "or `device_authorization`.",
+        examples=["authorization_code"],
+    )
 
 
 class VendorAuthCapabilitiesResponse(BaseModel):
-    vendor: str
-    display_name: str
+    vendor: str = Field(
+        description="Vendor registry key, as passed in the path.",
+        examples=[ex.VENDOR_KEY],
+    )
+    display_name: str = Field(
+        description="Human-facing vendor name, for a connect screen.",
+        examples=["GitHub"],
+    )
     flows: list[VendorFlowResponse]
     scopes: list[VendorScopeResponse]
 
@@ -262,10 +284,16 @@ class IntegrationsConnectRequest(BaseModel):
 
 
 class IntegrationsConnectResponse(BaseModel):
-    session_id: str
-    approval_url: str
-    poll_token: str
-    resolved_flow: str
+    session_id: str = Field(examples=[ex.CONNECT_SESSION_ID])
+    approval_url: str = Field(
+        examples=[f"{ex.BASE_URL}/app/connect-sessions/{ex.CONNECT_SESSION_ID}"]
+    )
+    poll_token: str = Field(
+        json_schema_extra=SENSITIVE,
+        description="Capability to poll the session's status; treat it as a secret.",
+        examples=[ex.OPAQUE_TOKEN],
+    )
+    resolved_flow: str = Field(examples=["authorization_code"])
     revision_id: str | None = Field(
         default=None,
         description=(
@@ -482,9 +510,10 @@ class ConnectOptionsResponse(BaseModel):
     vendor: str = Field(examples=["googleapis.com"])
     name: str = Field(examples=["gmail"])
     version: str = Field(examples=["v1"])
-    display_name: str | None = None
+    display_name: str | None = Field(default=None, examples=["Gmail"])
     api_target_supported: bool = Field(
-        description="Whether `:connect` takes this API as a target on this instance."
+        description="Whether `:connect` takes this API as a target on this instance.",
+        examples=[True],
     )
     schemes: list[ConnectSchemeOptionResponse]
 
@@ -540,8 +569,15 @@ class EditConnectionResponse(BaseModel):
     """The opened edit session."""
 
     session_id: str = Field(description="ID of the edit session.", examples=[ex.CONNECT_SESSION_ID])
-    approval_url: str = Field(description="Review page to relay to the human approver.")
-    poll_token: str = Field(description="Capability to poll the session's status.")
+    approval_url: str = Field(
+        description="Review page to relay to the human approver.",
+        examples=[f"{ex.BASE_URL}/app/connect-sessions/{ex.CONNECT_SESSION_ID}"],
+    )
+    poll_token: str = Field(
+        json_schema_extra=SENSITIVE,
+        description="Capability to poll the session's status; treat it as a secret.",
+        examples=[ex.OPAQUE_TOKEN],
+    )
     revision_id: str = Field(
         description="ID of the session's current revision (`csr_…`).",
         examples=[ex.CONNECT_SESSION_REVISION_ID],
@@ -657,15 +693,18 @@ class ConnectSessionListResponse(BaseModel):
 
 
 class ReviewScopeResponse(BaseModel):
-    name: str
-    classification: Literal["read", "write", "admin"]
-    default: bool
-    requested: bool
-    description: str
+    name: str = Field(examples=["repo"])
+    classification: Literal["read", "write", "admin"] = Field(examples=["write"])
+    default: bool = Field(examples=[False])
+    requested: bool = Field(examples=[True])
+    description: str = Field(examples=["Full control of private repositories"])
 
 
-class ApiReferenceResponse(BaseModel):
-    """Where the vendor's OpenAPI lives in the registry.
+class SessionApiReferenceResponse(BaseModel):
+    """Where the vendor's OpenAPI lives in the registry, as a connect session sees it.
+
+    Distinct from the registry's own ``ApiReferenceResponse``: this one tolerates
+    an import still in flight, so ``name`` and ``version`` are nullable here.
 
     ``version`` is nullable because the catalog auto-importer runs
     asynchronously — the SPA's rules-page preview polls this endpoint
@@ -686,32 +725,39 @@ class ApiReferenceResponse(BaseModel):
 class ReviewProvenanceResponse(BaseModel):
     """Where an API target's live revision came from (registry data)."""
 
-    origin: str | None = None
-    catalog_api_id: str | None = None
-    submitted_by: str | None = None
-    source_url: str | None = None
-    revision_id: str
+    origin: str | None = Field(default=None, examples=["catalog"])
+    catalog_api_id: str | None = Field(default=None, examples=[ex.CATALOG_API_ID])
+    submitted_by: str | None = Field(default=None, examples=[ex.USER_ID])
+    source_url: str | None = Field(
+        default=None,
+        examples=["https://raw.githubusercontent.com/stripe/openapi/master/spec3.json"],
+    )
+    revision_id: str = Field(examples=[ex.REVISION_ID])
 
 
 class ReviewAgentResponse(BaseModel):
     """The agent the session binds and its owner."""
 
-    agent_id: str
-    name: str | None = None
-    owner_id: str | None = None
-    status: str
+    agent_id: str = Field(examples=[ex.AGENT_ID])
+    name: str | None = Field(default=None, examples=["Issue triage bot"])
+    owner_id: str | None = Field(default=None, examples=[ex.USER_ID])
+    status: str = Field(examples=["active"])
 
 
 class ReviewSchemeResponse(BaseModel):
     """The declared scheme an API target collects (snapshot from its spec)."""
 
-    type: Literal["api_key", "bearer", "basic", "oauth2"]
-    location: str | None = None
-    field_name: str | None = None
+    type: Literal["api_key", "bearer", "basic", "oauth2"] = Field(examples=["oauth2"])
+    location: str | None = Field(default=None, examples=["header"])
+    field_name: str | None = Field(default=None, examples=["Authorization"])
     # An OAuth scheme's authorize and token URLs, set only when the API's spec is
     # from the public catalog — offered to an approver bringing their own app.
-    authorization_url: str | None = None
-    token_url: str | None = None
+    authorization_url: str | None = Field(
+        default=None, examples=["https://github.com/login/oauth/authorize"]
+    )
+    token_url: str | None = Field(
+        default=None, examples=["https://github.com/login/oauth/access_token"]
+    )
 
 
 class EditConflict(BaseModel):
@@ -739,11 +785,11 @@ class ExistingCredentialResponse(BaseModel):
     agent in ``other_bound_agents`` too.
     """
 
-    credential_id: str
-    name: str
-    type: str
-    granted_scopes: list[str] | None = None
-    missing_scopes: list[str] | None = None
+    credential_id: str = Field(examples=[ex.CREDENTIAL_ID])
+    name: str = Field(examples=["GitHub (work)"])
+    type: str = Field(examples=["oauth2"])
+    granted_scopes: list[str] | None = Field(default=None, examples=[["repo"]])
+    missing_scopes: list[str] | None = Field(default=None, examples=[["read:user"]])
     other_bound_agents: list[EditAgentRef] = Field(
         default_factory=list,
         description="Other agents bound to the credential; added scopes reach them too.",
@@ -752,11 +798,13 @@ class ExistingCredentialResponse(BaseModel):
         description=(
             "Whether this viewer may use it: its grant covers the request, or the missing "
             "scopes can be consented and the viewer may widen it."
-        )
+        ),
+        examples=[True],
     )
     needs_vendor_consent: bool = Field(
         default=False,
         description="Binding it first runs a vendor consent for missing_scopes.",
+        examples=[True],
     )
 
 
@@ -799,8 +847,12 @@ class EditRuleSetView(BaseModel):
 
     id: str = Field(examples=[ex.RULE_SET_ID])
     name: str = Field(examples=["Stripe read-only"])
-    curated: bool = Field(description="A curated set is never changed; an edit copies it.")
-    created_by: str | None = Field(default=None, description="The set's owner.")
+    curated: bool = Field(
+        description="A curated set is never changed; an edit copies it.", examples=[False]
+    )
+    created_by: str | None = Field(
+        default=None, description="The set's owner.", examples=[ex.USER_ID]
+    )
     rules: list[EditRuleView]
 
 
@@ -811,23 +863,24 @@ class EditCurrentAccess(BaseModel):
     rule_set: EditRuleSetView | None = Field(
         default=None, description="The attached shared rule set; its rules apply instead."
     )
-    suspended: bool
-    granted_scopes: list[str] | None = None
+    suspended: bool = Field(examples=[False])
+    granted_scopes: list[str] | None = Field(default=None, examples=[["gmail.readonly"]])
 
 
 class EditResultAccess(BaseModel):
     """What confirming the current revision leaves in place."""
 
     target: Literal["binding", "rule_set"] = Field(
-        description="Whether the edit changes the binding's own rules or its shared rule set."
+        description="Whether the edit changes the binding's own rules or its shared rule set.",
+        examples=["binding"],
     )
     rules: list[EditRuleView]
-    scopes: list[str]
+    scopes: list[str] = Field(examples=[["gmail.readonly", "gmail.send"]])
     scope_notes: dict[str, EditScopeNote] = Field(
         default_factory=dict,
         description="Each scope the change adds or removes: who asked for it, and why.",
     )
-    suspended: bool
+    suspended: bool = Field(examples=[False])
 
 
 class EditBindingRef(BaseModel):
@@ -852,7 +905,8 @@ class ReviewEditResponse(BaseModel):
     current: EditCurrentAccess
     result: EditResultAccess
     widens_access: bool = Field(
-        description="True when the change could let the agent do more than today."
+        description="True when the change could let the agent do more than today.",
+        examples=[True],
     )
     other_bound_agents: list[EditAgentRef] = Field(
         default_factory=list,
@@ -864,6 +918,7 @@ class ReviewEditResponse(BaseModel):
     needs_vendor_consent: bool = Field(
         default=False,
         description="True when the result adds scopes, so confirming starts a vendor consent.",
+        examples=[True],
     )
     conflicts: list[EditConflict] = Field(
         default_factory=list,
@@ -875,13 +930,15 @@ class ReviewEditResponse(BaseModel):
 
 
 class ReviewSessionResponse(BaseModel):
-    session_id: str
-    state: str
-    vendor_key: str
-    vendor_display_name: str
-    resolved_flow: str
-    reason: str | None
-    requested_by_actor_id: str
+    session_id: str = Field(examples=[ex.CONNECT_SESSION_ID])
+    state: str = Field(examples=["created"])
+    vendor_key: str = Field(examples=[ex.VENDOR_KEY])
+    vendor_display_name: str = Field(examples=["GitHub"])
+    resolved_flow: str = Field(examples=["authorization_code"])
+    reason: str | None = Field(
+        examples=["Needs read access to triage issues in the platform repo."]
+    )
+    requested_by_actor_id: str = Field(examples=[ex.AGENT_ID])
     scopes: list[ReviewScopeResponse]
     # Captured verbatim from ``IntegrationsConnectRequest.requested_permission_rules``
     # so the approve page can render them as pre-filled rows.
@@ -889,17 +946,17 @@ class ReviewSessionResponse(BaseModel):
     # Where the vendor's OpenAPI lives once imported — SPA needs this
     # to hit ``/apis/{vendor}/{name}/{version}/operations`` on the
     # rules-page preview.
-    api_reference: ApiReferenceResponse
-    target_kind: Literal["vendor", "api"] = "vendor"
-    requested_scopes: list[str] = Field(default_factory=list)
+    api_reference: SessionApiReferenceResponse
+    target_kind: Literal["vendor", "api"] = Field(default="vendor", examples=["vendor"])
+    requested_scopes: list[str] = Field(default_factory=list, examples=[["repo", "read:user"]])
     provenance: ReviewProvenanceResponse | None = None
     agent: ReviewAgentResponse | None = None
     scheme: ReviewSchemeResponse | None = None
-    pinned_hosts: list[str] | None = None
+    pinned_hosts: list[str] | None = Field(default=None, examples=[["api.github.com"]])
     # Echo on ``:confirm`` with ``expected_agent_id``; a mismatch is 409
     # ``review_stale``.
-    digest: str
-    can_confirm: bool
+    digest: str = Field(examples=[ex.REVIEW_DIGEST])
+    can_confirm: bool = Field(examples=[True])
     existing_credentials: list[ExistingCredentialResponse] = Field(default_factory=list)
     # The current revision; every ``:confirm`` names it as ``revision_id``.
     revision: SessionRevisionRef | None = None
@@ -912,6 +969,7 @@ class ReviewSessionResponse(BaseModel):
             "(or, for an edit, the same binding), within the last 30 days; null when "
             "none. Lets the reviewer see that a request repeats one already rejected."
         ),
+        examples=["2026-01-10T16:45:00Z"],
     )
 
 
@@ -921,12 +979,42 @@ class SessionRevisionResponse(BaseModel):
     id: str = Field(examples=[ex.CONNECT_SESSION_REVISION_ID])
     number: int = Field(description="1 for the first ask, one more per amend.", examples=[1])
     created_by: str | None = Field(
-        default=None, description="Who began or amended the session; null for a rebase."
+        default=None,
+        description="Who began or amended the session; null for a rebase.",
+        examples=[ex.AGENT_ID],
     )
-    created_at: datetime
-    proposal: dict[str, Any] = Field(description="The ask as it was sent.")
+    created_at: datetime = Field(examples=["2026-01-15T09:30:00Z"])
+    proposal: dict[str, Any] = Field(
+        description=(
+            "The ask as it was sent, stored verbatim. Its keys depend on which flow "
+            "created the revision: an `:edit-connection` revision carries `rules`, "
+            "`scopes`, `resume` and `reason`, where `rules` and `scopes` each hold "
+            "either `set`, or `add` plus `remove`; a connect or `:amend` revision "
+            "carries `requested_scopes`, `requested_permission_rules` and `reason`. "
+            "Read `conflicts` here when present — a revision whose proposal reports "
+            "conflicts is not a no-op even if its digest matches the current one."
+        ),
+        examples=[
+            {
+                "requested_scopes": ["repo", "read:user"],
+                "requested_permission_rules": [],
+                "reason": "needs issue access",
+            }
+        ],
+    )
     result: dict[str, Any] = Field(
-        description="What confirming this revision would leave in place (rules, scopes, ...)."
+        description=(
+            "What confirming this revision would leave in place, as the comparison "
+            "baseline for the next amend: the effective scopes and permission rules "
+            "after the ask is applied. Compare it against the current revision's "
+            "`result` to see what a confirm would actually change."
+        ),
+        examples=[
+            {
+                "scopes": ["repo", "read:user"],
+                "rules": [],
+            }
+        ],
     )
 
 
@@ -1236,11 +1324,15 @@ class DeviceAuthorizationConfirmSessionResponse(BaseModel):
     across both entry points.
     """
 
-    kind: Literal["device_authorization"] = "device_authorization"
-    user_code: str
-    verification_uri: str
-    verification_uri_complete: str | None = None
-    poll_interval_seconds: int | None = None
+    kind: Literal["device_authorization"] = Field(
+        default="device_authorization", examples=["device_authorization"]
+    )
+    user_code: str = Field(examples=["WDJB-MJHT"])
+    verification_uri: str = Field(examples=["https://github.com/login/device"])
+    verification_uri_complete: str | None = Field(
+        default=None, examples=["https://github.com/login/device?user_code=WDJB-MJHT"]
+    )
+    poll_interval_seconds: int | None = Field(default=None, examples=[5])
 
 
 class AuthCodeConfirmSessionResponse(BaseModel):
@@ -1248,15 +1340,22 @@ class AuthCodeConfirmSessionResponse(BaseModel):
     lands server-side at ``/credentials/oauth/callback`` and the client
     observes it via ``/status``."""
 
-    kind: Literal["authorization_code"] = "authorization_code"
-    authorize_url: str
+    kind: Literal["authorization_code"] = Field(
+        default="authorization_code", examples=["authorization_code"]
+    )
+    authorize_url: str = Field(
+        examples=[
+            "https://github.com/login/oauth/authorize"
+            f"?client_id={ex.OAUTH_PUBLIC_CLIENT_ID}&state={ex.OAUTH_STATE}"
+        ]
+    )
 
 
 class ConnectedConfirmSessionResponse(BaseModel):
     """The confirm finished the session; ``credential_id`` is bound to the agent."""
 
-    kind: Literal["connected"] = "connected"
-    credential_id: str
+    kind: Literal["connected"] = Field(default="connected", examples=["connected"])
+    credential_id: str = Field(examples=[ex.CREDENTIAL_ID])
 
 
 ConfirmSessionResponse = Annotated[
@@ -1275,8 +1374,10 @@ ConfirmSessionResponse = Annotated[
 class StatusResponse(BaseModel):
     # ``applied``: an edit session whose change was confirmed (edit sessions
     # only; create sessions report ``connected``).
-    status: Literal["pending", "polling", "connected", "applied", "failed", "expired"]
-    connected_as: str | None = None
-    credential_id: str | None = None
-    bound_scopes: list[str] | None = None
-    error_code: str | None = None
+    status: Literal["pending", "polling", "connected", "applied", "failed", "expired"] = Field(
+        examples=["connected"]
+    )
+    connected_as: str | None = Field(default=None, examples=["octocat"])
+    credential_id: str | None = Field(default=None, examples=[ex.CREDENTIAL_ID])
+    bound_scopes: list[str] | None = Field(default=None, examples=[["repo", "read:user"]])
+    error_code: str | None = Field(default=None, examples=["access_denied"])

@@ -34,6 +34,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.directives import (
     approval_pending_limit_directive,
+    held_execution_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.errors import (
@@ -1312,7 +1313,11 @@ async def _handle_hold(
         held_execution_id=hold.approval_id,
         review_url=review_url,
         expires_at=hold.expires_at,
-        agent_directive=HELD_AGENT_DIRECTIVE,
+        agent_directive=held_execution_directive(
+            held_execution_id=hold.approval_id,
+            review_url=review_url,
+            instruction=HELD_AGENT_DIRECTIVE,
+        ),
         links=HeldExecutionAcceptedLinks(
             self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
         ),

@@ -99,7 +99,7 @@ def _build_response(request: Request, view: NoteView) -> NoteResponse:
     )
 
 
-@router.post("", status_code=201)
+@router.post("", summary="Create a note", status_code=201, response_model=NoteResponse)
 async def create_note(
     request: Request,
     body: NoteCreateRequest,
@@ -132,7 +132,7 @@ async def create_note(
     return JSONResponse(status_code=201, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("")
+@router.get("", summary="List notes", response_model=NoteListResponse)
 async def list_notes(
     request: Request,
     identity: Identity = get_current_identity(),
@@ -202,7 +202,7 @@ async def list_notes(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/{note_id}")
+@router.get("/{note_id}", summary="Get a note", response_model=NoteResponse)
 async def get_note(
     request: Request,
     note_id: Annotated[
@@ -228,7 +228,7 @@ async def get_note(
     )
 
 
-@router.patch("/{note_id}")
+@router.patch("/{note_id}", summary="Update a note", response_model=NoteResponse)
 async def update_note(
     request: Request,
     note_id: Annotated[
@@ -283,7 +283,7 @@ async def update_note(
     )
 
 
-@router.delete("/{note_id}", status_code=204)
+@router.delete("/{note_id}", summary="Delete a note", status_code=204)
 async def delete_note(
     request: Request,
     note_id: Annotated[

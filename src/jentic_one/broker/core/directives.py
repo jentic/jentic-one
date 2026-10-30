@@ -60,6 +60,29 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
     )
 
 
+def held_execution_directive(
+    *, held_execution_id: str, review_url: str, instruction: str
+) -> AgentDirective:
+    """The directive on a held (202) execution — a human must decide before the call runs.
+
+    The only ``AgentDirective`` the broker emits on a success-class response:
+    nothing failed, but the call waits on a reviewer, so the recovery vocabulary
+    is the same one the error taxonomy uses and ``prompt_human`` is the strategy
+    an agent already switches on. ``parameters`` carries the two ids the agent
+    acts with — the link to show its user, and the id to poll the outcome with —
+    so a caller reading only ``agent_directive`` has everything it needs.
+
+    ``instruction`` is the prose the hold lane owns
+    (``shared.jobs.hold.HELD_AGENT_DIRECTIVE``), kept there because the MCP lane
+    relays the same wording.
+    """
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"held_execution_id": held_execution_id, "review_url": review_url},
+        human_readable_instruction=instruction,
+    )
+
+
 def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
     """Render a ``vendor/name/version`` identity with ``*`` for unset axes.
 

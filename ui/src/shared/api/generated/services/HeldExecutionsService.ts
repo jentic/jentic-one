@@ -6,6 +6,7 @@ import type { DecideHeldExecutionRequest } from '../models/DecideHeldExecutionRe
 import type { HeldExecutionDetailResponse } from '../models/HeldExecutionDetailResponse';
 import type { HeldExecutionListResponse } from '../models/HeldExecutionListResponse';
 import type { HeldExecutionResponse } from '../models/HeldExecutionResponse';
+import type { HeldExecutionResultResponse } from '../models/HeldExecutionResultResponse';
 import type { HeldExecutionState } from '../models/HeldExecutionState';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -107,7 +108,12 @@ export class HeldExecutionsService {
      * at run time) returns the ``application/problem+json`` body explaining why.
      * Before the call has finished this answers ``409``; past its retention
      * window, ``410``.
-     * @returns any Successful Response
+     * @returns HeldExecutionResultResponse The finished call's outcome, in one of two bodies.
+     *
+     * - **The call ran** (approved and released): the execution document as `application/json` — `execution_id`, `status`, `http_status`, `duration_ms` and, when the upstream returned a body, `body_b64` (base64; the upstream payload is never inlined as JSON).
+     * - **The call never ran** (denied, its approval window lapsed, or its approved run interrupted): the `application/problem+json` body explaining why, with `type` `approval_denied`, `approval_expired`, `approval_required` or `approval_resume_failed`, plus `error_origin`. The first three of those carry a `held_execution` object (`id`, `state`); `approval_required` names no held row, so it has none — read `held_execution` only when it is present. The HTTP status stays `200`; the problem's own `status` member (403, or 409 for an interrupted approved run) says why.
+     *
+     * Decide which arm arrived from the response `Content-Type`.
      * @throws ApiError
      */
     public static getHeldExecutionResult({
@@ -117,7 +123,7 @@ export class HeldExecutionsService {
          * ID of the held execution.
          */
         heldExecutionId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<HeldExecutionResultResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/executions/holds/{held_execution_id}/result',
@@ -130,6 +136,7 @@ export class HeldExecutionsService {
                 403: `Forbidden`,
                 404: `Not Found`,
                 409: `Conflict`,
+                410: `The hold ran, but its recorded result is past the retention window and has been discarded. The outcome is unrecoverable: do not retry, and do not treat this as the call having failed.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

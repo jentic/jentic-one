@@ -195,6 +195,7 @@ export class PermissionRuleSetsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
+                409: `Another rule set in the same scope already uses the new name (\`rule_set_name_conflict\`). Nothing was renamed.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
