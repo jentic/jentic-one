@@ -1,8 +1,11 @@
 """Shared authorization-flow plumbing for the auth web routers.
 
-The pieces of the ``/authorize`` flow that more than one router needs —
-``authorize.py`` (the flow itself: IdP redirect, callback, consent) and
-``local_login.py`` (the local-account form that rejoins that flow, #1276):
+The pieces of the ``/authorize`` flow that more than one consumer needs.
+The flow's routers are ``authorize.py`` (IdP redirect, callback, the error
+page), ``approval.py`` (the approval-pending page's poll and inline
+decision), ``consent.py`` (the consent screen and its submit),
+``consent_agent.py`` (inline agent creation and the pending-agent poll) and
+``local_login.py`` (the local-account form that rejoins the flow, #1276):
 
 - the per-client-network rate-limit dependency for unauthenticated flow
   endpoints (plus the approval-status poll's own bucket),
@@ -15,8 +18,11 @@ The pieces of the ``/authorize`` flow that more than one router needs —
   submit both write through it),
 - the browser-page security-header posture and fonts URL.
 
-Routers keep their own templates, handlers, and read paths; only contracts
-shared *across* routers live here.
+Only contracts shared *across* consumers live here. The page markup lives
+in ``pages.py`` (``templates/``); the per-blob mint/consume wrappers and the
+consent handle's read paths live in ``consent_state.py``, which builds on the
+signer below; ``flow_pages.py`` pairs a mint with a render for the two pages
+that need one. Routers keep their handlers.
 """
 
 from __future__ import annotations
@@ -557,6 +563,19 @@ def verify_payload(
     if age > max_age or age < 0:
         raise InvalidGrantError(f"{purpose} token expired")
     return payload
+
+
+def error_redirect(
+    redirect_uri: str, error: str, state: str | None, description: str | None = None
+) -> RedirectResponse:
+    """The RFC 6749 §4.1.2.1 error redirect back to the client's ``redirect_uri``."""
+    params: dict[str, str] = {"error": error}
+    if state:
+        params["state"] = state
+    if description:
+        params["error_description"] = description
+    separator = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(url=f"{redirect_uri}{separator}{urlencode(params)}", status_code=302)
 
 
 # --- consent handle -------------------------------------------------------------

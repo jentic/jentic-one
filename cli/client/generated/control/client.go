@@ -12183,16 +12183,17 @@ type ClientInterface interface {
 
 	// ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -12204,12 +12205,11 @@ type ClientInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -12221,16 +12221,17 @@ type ClientInterface interface {
 
 	// ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -12242,12 +12243,11 @@ type ClientInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -12259,7 +12259,7 @@ type ClientInterface interface {
 
 	// ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
 	//
-	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	// Minimal tri-state poll for the pending-agent awaiting page.
 	//
 	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
 	// agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -16899,16 +16899,17 @@ func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalSta
 
 // ConsentAgentCreateWithBody Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -16920,12 +16921,11 @@ func (c *Client) ApprovalStatusEndpoint(ctx context.Context, params *ApprovalSta
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -16947,16 +16947,17 @@ func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType str
 
 // ConsentAgentCreateWithFormdataBody Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -16968,12 +16969,11 @@ func (c *Client) ConsentAgentCreateWithBody(ctx context.Context, contentType str
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -16995,7 +16995,7 @@ func (c *Client) ConsentAgentCreateWithFormdataBody(ctx context.Context, body Co
 
 // ConsentAgentStatus Poll pending-agent approval status (consent awaiting page)
 //
-// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+// Minimal tri-state poll for the pending-agent awaiting page.
 //
 // Anonymous but keyed by the signed “agent-status“ blob — never a bare
 // agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -29412,16 +29412,17 @@ type ClientWithResponsesInterface interface {
 
 	// ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -29433,12 +29434,11 @@ type ClientWithResponsesInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -29450,16 +29450,17 @@ type ClientWithResponsesInterface interface {
 
 	// ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
 	//
-	// Create the consenting user's first agent from the zero-agents consent page (P4).
+	// Create the consenting user's first agent from the zero-agents consent page.
 	//
 	// The form is rendered only when the consenting user owns zero agents in
-	// any status (the G12(b) first-run dead-end). This submit verifies the signed
-	// single-use ``agent-create`` blob (bound to the consent handle AND the
-	// authenticated subject — no ambient credential is honored, so a cross-site
-	// form cannot drive it: it would need both the unguessable handle and a
-	// blob minted for that very handle), re-validates the handle and the D7
-	// client gate, provisions the user row if deferred provisioning left none
-	// (an affirmative user action, unlike rendering), re-checks the zero-agents
+	// any status — otherwise consent is a first-run dead end. This submit
+	// verifies the signed single-use ``agent-create`` blob (bound to the consent
+	// handle AND the authenticated subject — no ambient credential is honored,
+	// so a cross-site form cannot drive it: it would need both the unguessable
+	// handle and a blob minted for that very handle), re-validates the handle
+	// and the client approval+active gate, provisions the user row if deferred
+	// provisioning left none (an affirmative user action, unlike rendering),
+	// re-checks the zero-agents
 	// predicate (an agent appearing in between skips creation — idempotent),
 	// creates the agent through the same ``AgentService.create`` path as the
 	// SPA (owner = the consenting user, default agent scopes, same audit +
@@ -29471,12 +29472,11 @@ type ClientWithResponsesInterface interface {
 	// client → ``access_denied``; an invalid agent name → the form re-rendered
 	// with the error inline and a fresh blob.
 	//
-	// Creation posture (security review — the hybrid): the arm is decided
-	// server-side AFTER the subject is resolved/provisioned, against the same
-	// effective-permission math as POST /agents' ``agents:write`` gate. A
-	// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-	// unpermissioned one gets a PENDING agent (the POST /register posture) and
-	// the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+	// Creation posture: the arm is decided server-side AFTER the subject is
+	// resolved/provisioned, against the same effective-permission math as POST
+	// /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+	// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+	// posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
 	// makes N parallel submits (N distinct blobs from N renders) create exactly
 	// one agent — losers re-enter consent, which renders the picker or the
 	// awaiting page as appropriate.
@@ -29488,7 +29488,7 @@ type ClientWithResponsesInterface interface {
 
 	// ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
 	//
-	// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+	// Minimal tri-state poll for the pending-agent awaiting page.
 	//
 	// Anonymous but keyed by the signed ``agent-status`` blob — never a bare
 	// agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -48842,16 +48842,17 @@ func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Con
 
 // ConsentAgentCreateWithBodyWithResponse Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -48863,12 +48864,11 @@ func (c *ClientWithResponses) ApprovalStatusEndpointWithResponse(ctx context.Con
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -48886,16 +48886,17 @@ func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context
 
 // ConsentAgentCreateWithFormdataBodyWithResponse Create the consenting user's first agent inline (consent page)
 //
-// Create the consenting user's first agent from the zero-agents consent page (P4).
+// Create the consenting user's first agent from the zero-agents consent page.
 //
 // The form is rendered only when the consenting user owns zero agents in
-// any status (the G12(b) first-run dead-end). This submit verifies the signed
-// single-use “agent-create“ blob (bound to the consent handle AND the
-// authenticated subject — no ambient credential is honored, so a cross-site
-// form cannot drive it: it would need both the unguessable handle and a
-// blob minted for that very handle), re-validates the handle and the D7
-// client gate, provisions the user row if deferred provisioning left none
-// (an affirmative user action, unlike rendering), re-checks the zero-agents
+// any status — otherwise consent is a first-run dead end. This submit
+// verifies the signed single-use “agent-create“ blob (bound to the consent
+// handle AND the authenticated subject — no ambient credential is honored,
+// so a cross-site form cannot drive it: it would need both the unguessable
+// handle and a blob minted for that very handle), re-validates the handle
+// and the client approval+active gate, provisions the user row if deferred
+// provisioning left none (an affirmative user action, unlike rendering),
+// re-checks the zero-agents
 // predicate (an agent appearing in between skips creation — idempotent),
 // creates the agent through the same “AgentService.create“ path as the
 // SPA (owner = the consenting user, default agent scopes, same audit +
@@ -48907,12 +48908,11 @@ func (c *ClientWithResponses) ConsentAgentCreateWithBodyWithResponse(ctx context
 // client → “access_denied“; an invalid agent name → the form re-rendered
 // with the error inline and a fresh blob.
 //
-// Creation posture (security review — the hybrid): the arm is decided
-// server-side AFTER the subject is resolved/provisioned, against the same
-// effective-permission math as POST /agents' “agents:write“ gate. A
-// permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-// unpermissioned one gets a PENDING agent (the POST /register posture) and
-// the awaiting-approval page. A per-subject “set_if_absent“ slot claim
+// Creation posture: the arm is decided server-side AFTER the subject is
+// resolved/provisioned, against the same effective-permission math as POST
+// /agents' “agents:write“ gate. A permissioned user gets ACTIVE + a 303
+// re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+// posture) and the awaiting-approval page. A per-subject “set_if_absent“ slot claim
 // makes N parallel submits (N distinct blobs from N renders) create exactly
 // one agent — losers re-enter consent, which renders the picker or the
 // awaiting page as appropriate.
@@ -48930,7 +48930,7 @@ func (c *ClientWithResponses) ConsentAgentCreateWithFormdataBodyWithResponse(ctx
 
 // ConsentAgentStatusWithResponse Poll pending-agent approval status (consent awaiting page)
 //
-// Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+// Minimal tri-state poll for the pending-agent awaiting page.
 //
 // Anonymous but keyed by the signed “agent-status“ blob — never a bare
 // agent id, so the endpoint cannot be used to enumerate or probe agents:
