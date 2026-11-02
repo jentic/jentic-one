@@ -66,11 +66,13 @@ describe('CredentialGroupCard', () => {
 			}),
 		]);
 		const group = screen.getByTestId('credential-group');
-		// The shared Card surface (its edge is what reads on a surface-1 sheet).
+		// The shared Card surface: it lifts off the sheet by tone, as the single
+		// credential cards beside it do, with the theme's card edge and no border.
 		expect(group).toHaveAttribute('data-surface', 'card');
 		expect(group.tagName).toBe('SECTION');
 		expect(getComputedStyle(group).outlineStyle).toBe('solid');
 		expect(getComputedStyle(group).outlineWidth).toBe('1px');
+		expect(getComputedStyle(group).borderTopWidth).toBe('0px');
 		// Still a region landmark, named by its header.
 		const heading = within(group).getByRole('heading', { level: 3 });
 		expect(screen.getByRole('region', { name: heading.textContent ?? '' })).toBe(group);
