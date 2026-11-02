@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
@@ -363,6 +363,59 @@ describe('BindAgentDialog — what the agent may call', () => {
 		expect(within(plain).queryByRole('group', { name: 'Build rules' })).toBeNull();
 		expect(plain).not.toHaveTextContent(/not available/);
 		await waitFor(() => expect(within(plain).getByLabelText('Path pattern')).toBeVisible());
+	});
+
+	it('Escape on the "Apply changes?" prompt keeps editing — the Bind dialog and its draft stay', async () => {
+		serveRules();
+		worker.use(
+			http.get('/apis/stripe/stripe-api/1.0.0/operations', () =>
+				HttpResponse.json({
+					data: [
+						{
+							operation_id: 'listCharges',
+							method: 'GET',
+							path: '/v1/charges',
+							name: 'List charges',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const onClose = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<BindAgentDialog
+				open
+				onClose={onClose}
+				credentials={[CRED]}
+				apiLabel="Stripe"
+				apiReference={{ vendor: 'stripe', name: 'stripe-api', version: '1.0.0' }}
+			/>,
+		);
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /Custom rules/ }));
+		const editor = screen.getByTestId('bind-agent-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		const ops = await within(editor).findByRole('list', { name: 'Operations' });
+		const allow = within(
+			within(ops).getByRole('group', { name: 'Access for GET /v1/charges' }),
+		).getByRole('button', { name: 'Allow' });
+		await user.click(allow);
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
+		// Escape makes the browser fire `cancel` at the topmost open modal — the
+		// prompt; a synthetic key press never reaches its close watcher, so fire it
+		// the same way.
+		guard.dispatchEvent(new Event('cancel', { cancelable: true }));
+		await waitFor(() => expect(guard).not.toHaveAttribute('open'));
+		// The prompt's own promise: Escape keeps editing. The outer dialog is
+		// untouched and the staged choice is still there.
+		expect(onClose).not.toHaveBeenCalled();
+		expect(screen.getByRole('dialog', { name: 'Bind to an agent' })).toHaveAttribute('open');
+		expect(allow).toHaveAttribute('aria-pressed', 'true');
+		expect(ruleCalls).toHaveLength(0);
 	});
 
 	it('Custom rules needs at least one rule before Bind is enabled', async () => {

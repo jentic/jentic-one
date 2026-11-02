@@ -1,4 +1,4 @@
-import { act, fireEvent, renderWithProviders, screen } from '@/__tests__/test-utils';
+import { act, fireEvent, renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
 import { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
 
@@ -33,6 +33,22 @@ describe('Tooltip', () => {
 		expect(tip).toHaveTextContent('the full value');
 
 		await user.unhover(screen.getByText('trigger'));
+		expect(screen.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('a tap opens the bubble on a touch screen, a tap away closes it; a mouse press is not a tap', async () => {
+		renderWithProviders(
+			<Tooltip content="why this is disabled">
+				<span>touch-trigger</span>
+			</Tooltip>,
+		);
+		const trigger = screen.getByText('touch-trigger');
+		fireEvent.pointerDown(trigger, { pointerType: 'touch' });
+		expect(await screen.findByRole('tooltip')).toHaveTextContent('why this is disabled');
+		fireEvent.pointerDown(document.body, { pointerType: 'touch' });
+		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+		// A mouse press opens nothing: hover already owns that bubble.
+		fireEvent.pointerDown(trigger, { pointerType: 'mouse' });
 		expect(screen.queryByRole('tooltip')).toBeNull();
 	});
 
