@@ -547,6 +547,9 @@ async def test_stream_open_failure_persists_one_failed_record(
     assert record.trace_id == _TRACE_ID
     events = await _events(integration_context, execution_id)
     assert [e.type for e in events] == [EventType.EXECUTION_FAILED]
+    # A real pre-header failure is the operator's business; only a cancelled
+    # call — the server's own doing — is recorded without this.
+    assert events[0].requires_action is True
     circuit_events = await _circuit_events(integration_context, f"127.0.0.1:{upstream.port}")
     assert len(circuit_events) == (1 if mode == "ok" else 0)
     assert _unhandled(served) == []

@@ -345,12 +345,22 @@ async def _deliver_outcome(
     outcome: StreamingOutcome,
     on_complete: Callable[[StreamingOutcome], Awaitable[None]] | None,
 ) -> None:
-    """Hand ``outcome`` to the completion callback; a callback failure is logged, never raised."""
+    """Hand ``outcome`` to the completion callback; a callback failure never reaches the caller.
+
+    Both hand-off sites run from a ``finally`` (or an ``except`` that re-raises)
+    and owe the caller its own outcome afterwards — the response already sent,
+    or the mapped problem+json of the failure that ended the call. A callback
+    that raises must not replace it, so a ``CancelledError`` out of the
+    callback is logged and swallowed along with every other ``Exception``: the
+    callback's job is to hand the record write to the app's background-task
+    registry, which outlives the request task, so no work is left here for a
+    cancellation to stop. ``KeyboardInterrupt``/``SystemExit`` propagate.
+    """
     if on_complete is None:
         return
     try:
         await on_complete(outcome)
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         logger.error(
             "streaming_outcome_callback_failed",
             execution_id=outcome.execution_id,
@@ -374,11 +384,14 @@ async def _record_pre_header_failure(
     A cancellation here comes from server shutdown or an outer cancel — uvicorn
     does not cancel a handler when its client disconnects — and the streaming
     path serves non-idempotent calls, so the request may already have reached
-    the upstream: it must not go unrecorded.
+    the upstream: it must not go unrecorded. It is marked ``cancelled``, so the
+    record is written without the action-required event and repeated-failure
+    accounting a real failure gets: a rolling restart with streams in flight is
+    the server's doing, not the agent's.
 
     ``circuit_open`` is set for a breaker refusal that holds the breaker's
-    per-host report claim, so the record write raises the same rate-limited
-    ``upstream.circuit_open`` event the buffered path does.
+    per-host report claim, so the persistence path raises the same
+    rate-limited ``upstream.circuit_open`` event the buffered path does.
 
     The callback returns promptly (the router's only schedules the write on the
     app's background-task registry), so the error response never waits on the
@@ -391,6 +404,7 @@ async def _record_pre_header_failure(
         duration_ms=int((time.perf_counter() - started_at_perf) * 1000),
         error=_pre_header_error(exc),
         circuit_open=isinstance(exc, CircuitOpenError) and exc.report,
+        cancelled=isinstance(exc, asyncio.CancelledError),
     )
     await _deliver_outcome(outcome, on_complete)
 
@@ -433,25 +447,22 @@ async def open_streaming_response(
     stack = AsyncExitStack()
     try:
         result = await stack.enter_async_context(runner.stream(request))
-    except (Exception, asyncio.CancelledError) as exc:
-        # The stack close runs first (the upstream slot is released even if the
-        # hand-off raises), the hand-off in a ``finally`` so a close that fails
-        # still records the call. ``raise`` re-raises ``exc`` unchanged.
-        try:
-            await stack.aclose()
-        finally:
+    except BaseException as exc:
+        # ``enter_async_context`` registers its unwind callback only once
+        # ``__aenter__`` returns, so a hand-off that raises leaves the stack
+        # empty: whatever the runner opened it has already released itself on
+        # the way out, and there is nothing to close here. A mapped failure or
+        # a cancellation is recorded — the call may have reached the upstream —
+        # while a ``KeyboardInterrupt``/``SystemExit`` means the process is
+        # going down, so it gets out of the way without touching the database.
+        # The hand-off never raises, so ``raise`` re-raises ``exc`` unchanged.
+        if isinstance(exc, Exception | asyncio.CancelledError):
             await _record_pre_header_failure(
                 exc,
                 execution_id=execution_id,
                 started_at_perf=start_perf,
                 on_complete=background_callback,
             )
-        raise
-    except BaseException:
-        # A non-``Exception``, non-cancellation interrupt (``KeyboardInterrupt``,
-        # ``SystemExit``): the process is going down, so release the upstream
-        # slot and get out of the way without touching the database.
-        await stack.aclose()
         raise
 
     outcome = StreamingOutcome(

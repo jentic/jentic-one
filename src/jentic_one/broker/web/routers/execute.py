@@ -85,6 +85,7 @@ from jentic_one.broker.services.execution.authorization import (
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
     default_broker,
+    emit_circuit_open_event,
     persist_streaming_execution,
     run_execution,
 )
@@ -176,6 +177,10 @@ _streaming_persist_pending = _meter.create_up_down_counter(
 )
 _PENDING_WAITING = {"state": "waiting"}
 _PENDING_IN_FLIGHT = {"state": "in_flight"}
+# The ``error`` recorded for an outcome that has no upstream status and names
+# no failure — a breach of the ``StreamingOutcome`` contract by an injected
+# broker, recorded rather than mistaken for a completed call.
+_MISSING_OUTCOME_ERROR = "server_error: missing_outcome_error"
 _REASON_WRITE_ERROR = {"reason": "write_error"}
 _REASON_BACKLOG_TIMEOUT = {"reason": "backlog_timeout"}
 _REASON_CANCELLED = {"reason": "cancelled"}
@@ -310,6 +315,39 @@ async def _acquire_persist_slot(
     return True
 
 
+async def _emit_streaming_circuit_event(
+    outcome: StreamingOutcome,
+    ctx: Context,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+) -> None:
+    """Raise ``upstream.circuit_open`` for a streaming fast-fail, in its own transaction.
+
+    The refusal that reaches here holds the breaker's per-host report claim,
+    which is consumed on the request and good for one event per cooldown: every
+    later refusal in that cooldown carries ``report=False``, so an event lost
+    here is the operator's only notice for the whole cooldown. It therefore
+    runs before the execution record and in a transaction of its own — neither
+    a wait for a persist slot nor a failure writing the record can take it
+    down — while still off the request, so the 503 never waits on the admin
+    database. Its own failure is logged, never raised; a cancellation (the
+    task's timeout, the shutdown drain) propagates to the supervisor.
+    """
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_circuit_open_event(
+                session, ctx_req, actor_id=actor_id, actor_type=actor_type
+            )
+    except Exception:
+        logger.error(
+            "streaming_circuit_event_failed",
+            execution_id=outcome.execution_id,
+            trace_id=ctx_req.trace_id,
+            exc_info=True,
+        )
+
+
 async def _persist_streaming_outcome(
     outcome: StreamingOutcome,
     ctx: Context,
@@ -337,17 +375,32 @@ async def _persist_streaming_outcome(
     It runs after the streamed body has been sent, or after a call that ended
     before any response existed, so its write is never part of the response's
     ``Server-Timing`` field. An outcome with no ``http_status`` (the stream
-    never opened, or was cancelled first) always carries an ``error`` and
-    records as FAILED.
+    never opened, or was cancelled first) records as FAILED, whether or not it
+    named the failure; a circuit fast-fail's ``upstream.circuit_open`` event is
+    written first, ahead of the slot wait.
     """
+    error_msg = outcome.error
+    if error_msg is None and outcome.http_status is None:
+        # The seam's invariant: an outcome with no upstream status names the
+        # failure that ended the call before a response existed. An outcome
+        # that breaks it still describes a call that reached no upstream, so it
+        # records FAILED under a placeholder — never COMPLETED — and the breach
+        # is logged where the injected broker that caused it can be found.
+        logger.error(
+            "streaming_outcome_missing_error",
+            execution_id=outcome.execution_id,
+            trace_id=ctx_req.trace_id,
+        )
+        error_msg = _MISSING_OUTCOME_ERROR
     status = (
         ExecutionStatus.FAILED
-        if outcome.error or (outcome.http_status is not None and outcome.http_status >= 400)
+        if error_msg or (outcome.http_status is not None and outcome.http_status >= 400)
         else ExecutionStatus.COMPLETED
     )
-    error_msg = outcome.error or (
-        f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
-    )
+    if status is ExecutionStatus.FAILED and error_msg is None:
+        error_msg = f"Upstream returned {outcome.http_status}"
+    if outcome.circuit_open:
+        await _emit_streaming_circuit_event(outcome, ctx, ctx_req, actor_id, actor_type)
     try:
         semaphore = _streaming_persist_gate(ctx).semaphore
         acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
@@ -373,7 +426,7 @@ async def _persist_streaming_outcome(
                 origin=origin,
                 security_config=ctx.config.security,
                 repeated_failure_counter=repeated_failure_counter,
-                circuit_open=outcome.circuit_open,
+                cancelled=outcome.cancelled,
             )
     except asyncio.CancelledError:
         _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,7 +12,8 @@ from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution import service as service_module
 from jentic_one.broker.services.execution.service import default_broker, run_execution
-from jentic_one.shared.models import ExecutionStatus
+from jentic_one.broker.web.routers.execute import _emit_streaming_circuit_event
+from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.schemas import OperationInfo
@@ -265,38 +265,29 @@ async def test_a_failing_report_claim_still_answers_circuit_open_unreported() ->
 async def test_streaming_circuit_fast_fail_emits_the_same_event() -> None:
     """A streaming circuit fast-fail raises ``upstream.circuit_open`` through the shared helper.
 
-    The rate limit is the breaker's per-host report claim, carried to the
-    record write as ``StreamingOutcome.circuit_open``: an outcome without it
-    (any other pre-header failure) raises no circuit event.
+    Off the request and in a transaction of its own, so it carries the same
+    type, severity and host payload as the buffered path's event.
     """
-    with (
-        patch.object(service_module, "record_execution", new_callable=AsyncMock),
-        patch.object(service_module, "_emit_execution_lifecycle", new_callable=AsyncMock),
-        patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit,
-    ):
-        for circuit_open, host in ((True, "api.example.com"), (False, "other.example.com")):
-            await service_module.persist_streaming_execution(
-                AsyncMock(),
-                execution_id="exec_stream_circuit",
-                started_at=datetime.now(UTC),
-                status=ExecutionStatus.FAILED,
-                http_status=None,
-                duration_ms=0,
-                error="circuit_open" if circuit_open else "upstream_timeout",
-                ctx_req=_ctx_req(host=host),
-                actor_id="agt_abc123",
-                actor_type="agent",
-                circuit_open=circuit_open,
-            )
-
-    circuit_calls = [
-        c
-        for c in mock_emit.call_args_list
-        if c.kwargs.get("type") == EventType.UPSTREAM_CIRCUIT_OPEN
-    ]
-    assert len(circuit_calls) == 1
-    assert circuit_calls[0].kwargs["data"] == {"host": "api.example.com"}
-    assert (
-        circuit_calls[0].kwargs["severity"]
-        in EVENT_TYPE_SEVERITIES[EventType.UPSTREAM_CIRCUIT_OPEN]
+    mock_session = AsyncMock()
+    mock_tx = AsyncMock()
+    mock_tx.__aenter__.return_value = mock_session
+    mock_tx.__aexit__.return_value = False
+    mock_ctx = MagicMock()
+    mock_ctx.admin_db.transaction.return_value = mock_tx
+    outcome = StreamingOutcome(
+        execution_id="exec_stream_circuit",
+        http_status=None,
+        error="circuit_open",
+        circuit_open=True,
     )
+
+    with patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit:
+        await _emit_streaming_circuit_event(outcome, mock_ctx, _ctx_req(), "agt_abc123", "agent")
+
+    mock_emit.assert_awaited_once()
+    emitted = mock_emit.await_args_list[0]
+    call_kwargs = emitted.kwargs
+    assert emitted.args[0] is mock_session
+    assert call_kwargs["type"] == EventType.UPSTREAM_CIRCUIT_OPEN
+    assert call_kwargs["data"] == {"host": "api.example.com"}
+    assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.UPSTREAM_CIRCUIT_OPEN]

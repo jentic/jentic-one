@@ -69,17 +69,23 @@ _execution_duration = _meter.create_histogram(
 )
 
 
-async def _emit_circuit_open_event(
+async def emit_circuit_open_event(
     session: Any, ctx_req: ExecuteRequestContext, *, actor_id: str, actor_type: str
 ) -> None:
     """Emit the ``upstream.circuit_open`` event for a circuit fast-fail.
 
     Shared by the buffered and streaming paths so either one raises the same
-    operator-facing event. The rate limit is the breaker's own per-host claim
+    operator-facing event. The buffered path emits it in the request's own
+    transaction; the streaming path, whose error response must not wait on the
+    admin database, emits it off the request before and independently of the
+    execution record (see ``_emit_streaming_circuit_event`` in the router).
+
+    The rate limit is the breaker's own per-host claim
     (``CircuitOpenError.report``), checked by the caller: of every refusal an
     open circuit causes, across every process sharing the state backend, one
-    per cooldown reports it. A failed emit is logged, never raised — the
-    caller's 503 is not replaced by an event-write error.
+    per cooldown reports it — so an emit that does not happen is the only
+    operator notice for that whole cooldown. A failed emit is logged, never
+    raised — the caller's 503 is not replaced by an event-write error.
     """
     host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
     try:
@@ -254,7 +260,7 @@ async def run_execution(
             # The breaker marks one refusal per host per open period as the one
             # that reports it, across every process sharing the state backend.
             if isinstance(exc, CircuitOpenError) and exc.report:
-                await _emit_circuit_open_event(
+                await emit_circuit_open_event(
                     session, ctx_req, actor_id=actor_id, actor_type=actor_type
                 )
         raise
@@ -340,7 +346,7 @@ async def persist_streaming_execution(
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
     repeated_failure_counter: RepeatedFailureCounter | None = None,
-    circuit_open: bool = False,
+    cancelled: bool = False,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
@@ -354,9 +360,11 @@ async def persist_streaming_execution(
     pre-header failure timed no upstream round trip, so a sample would pull the
     latency distribution toward the broker's own fast-fail).
 
-    ``circuit_open`` marks a breaker refusal holding the breaker's per-host
-    report claim; it also raises ``upstream.circuit_open``, exactly as the
-    buffered path does.
+    ``cancelled`` marks a call the server abandoned (the shutdown drain, an
+    outer cancel) rather than one that failed: the record is still FAILED —
+    ``ExecutionStatus`` has no neutral member, and a non-idempotent call may
+    already have reached the upstream — but it raises no action-required event
+    and feeds no repeated-failure detection.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
@@ -416,9 +424,8 @@ async def persist_streaming_execution(
         repeated_failure_counter=repeated_failure_counter,
         error_tags=error_tags,
         origin=origin,
+        cancelled=cancelled,
     )
-    if circuit_open:
-        await _emit_circuit_open_event(session, ctx_req, actor_id=actor_id, actor_type=actor_type)
 
 
 async def _persist(
@@ -473,12 +480,20 @@ async def _emit_execution_lifecycle(
     repeated_failure_counter: RepeatedFailureCounter | None = None,
     error_tags: set[EventTag] | None = None,
     origin: str | None = None,
+    cancelled: bool = False,
 ) -> None:
     """Emit EXECUTION_COMPLETED/EXECUTION_FAILED events for the sync and streaming paths.
 
     On the FAILED branch this also drives ``execution.repeated_failure`` detection
     when ``security_config`` is supplied (the sync + streaming router paths pass it;
     the async-worker path detects repeated failures in its own handler).
+
+    ``cancelled`` says the FAILED record describes a call the server abandoned —
+    its shutdown drain, an outer cancel — not an upstream or broker failure. The
+    event is still emitted, so the record has its lifecycle entry, but without
+    ``requires_action`` and without feeding repeated-failure detection: a rolling
+    restart with N streams in flight would otherwise put N items in the operator's
+    action inbox and count N failures against actors that did nothing wrong.
 
     ``error_tags`` (FAILED branch only) rides along on the EXECUTION_FAILED event —
     e.g. an upstream 401/403 tags the failure with its third-party ``ErrorSource``
@@ -517,7 +532,7 @@ async def _emit_execution_lifecycle(
                 type=EventType.EXECUTION_FAILED,
                 severity=EventSeverity.ERROR,
                 summary=f"Execution failed: {sanitized}",
-                requires_action=True,
+                requires_action=not cancelled,
                 execution_id=execution_id,
                 trace_id=event_trace_id,
                 created_by=actor_id,
@@ -528,7 +543,7 @@ async def _emit_execution_lifecycle(
     except Exception:
         logger.warning("emit_execution_event_failed", execution_id=execution_id)
 
-    if status == ExecutionStatus.FAILED and security_config is not None:
+    if status == ExecutionStatus.FAILED and security_config is not None and not cancelled:
         await maybe_emit_repeated_failure(
             session,
             actor_id=actor_id,

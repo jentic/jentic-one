@@ -280,8 +280,13 @@ upstream fails (connection refused, a TLS failure, a timeout), the circuit
 breaker fast-fails it, or the request is cancelled — records one `FAILED` row
 with no HTTP status, named by the problem `type` the caller received (or
 `cancelled`), handed to the same registry alongside the error response, which
-never waits on it. A circuit fast-fail also raises the rate-limited
-`UPSTREAM_CIRCUIT_OPEN` event, as on the buffered path. Such a failure counts
+never waits on it. A cancelled call's row carries an `EXECUTION_FAILED` event
+that is *not* action-required and feeds no repeated-failure detection — a
+rolling restart with streams in flight is the server's doing, not the agent's.
+A circuit fast-fail also raises the rate-limited `UPSTREAM_CIRCUIT_OPEN` event,
+as on the buffered path, written ahead of the record and in its own
+transaction: the breaker reports an open circuit once per cooldown, so that
+event has no second chance. Such a failure counts
 on `broker.executions.total` but adds no `broker.execution.duration_ms`
 sample — it timed no upstream round trip. Lifecycle events
 (`EXECUTION_COMPLETED` /
