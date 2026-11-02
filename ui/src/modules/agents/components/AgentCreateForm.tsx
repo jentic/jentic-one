@@ -18,6 +18,7 @@ import {
 	agentNameError,
 	duplicateAgentName,
 } from '@/modules/agents/lib/agentName';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
 export interface AgentCreateFormOptions {
 	/** Whether the hosting surface is open — transient errors clear on each open. */
@@ -26,11 +27,17 @@ export interface AgentCreateFormOptions {
 	onCreated?: (agent: AgentEntity) => void;
 }
 
-/** The draft starts empty: the register routes' command name names a different agent. */
+/**
+ * The draft starts empty: the register routes' command name names a different
+ * agent. Its permissions start as the platform's default agent set — the same
+ * grants an approved self-registration gets — shown in the form, where the
+ * operator can trim or extend them. An empty list is sent only when the
+ * operator cleared it: an agent created with no permissions can't call anything.
+ */
 export function useAgentCreateForm({ open, onCreated }: AgentCreateFormOptions) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
-	const [permissions, setPermissions] = useState<string[]>([]);
+	const [permissions, setPermissions] = useState<string[]>(() => [...DEFAULT_AGENT_PERMISSIONS]);
 	const [error, setError] = useState<string | null>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
 	const create = useCreateAgent();
@@ -54,7 +61,7 @@ export function useAgentCreateForm({ open, onCreated }: AgentCreateFormOptions) 
 			});
 			setName('');
 			setDescription('');
-			setPermissions([]);
+			setPermissions([...DEFAULT_AGENT_PERMISSIONS]);
 			setError(null);
 			onCreated?.(agent);
 		} catch {

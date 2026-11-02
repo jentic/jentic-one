@@ -6,8 +6,11 @@
  * Detection is the landing's: the live agent stream invalidates the roster on
  * every `agent.*` event, and while the stream is down or lagging the roster is
  * polled every few seconds as the fallback — only while the panel is open on
- * its register tab and has no approved agent yet. Every opening starts fresh:
- * a new opening time and roster snapshot, nothing tracked, and a fresh name suggestion.
+ * its register tab and has no approved agent yet. Each opening takes a new
+ * opening time, roster snapshot and name suggestion, and picks up the agent
+ * the last opening was finishing if it still waits for approval — closing the
+ * panel doesn't forget it. Approved or denied meanwhile, it isn't picked up,
+ * and `startOver` drops it on request.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -75,12 +78,24 @@ export function useRegisterPanel({
 	if (open !== wasOpen) {
 		setWasOpen(open);
 		if (open) {
+			const waiting = agents.some((a) => a.id === trackedId && a.status === 'pending');
 			setOpenedAt(Date.now());
 			setKnownAtOpen(new Set(agents.map((a) => a.id)));
-			setTrackedId(null);
-			nameDraft.reset();
+			// The waiting agent keeps the name its command ran with, so it isn't
+			// read as someone else's arrival under a new suggestion.
+			if (!waiting) {
+				setTrackedId(null);
+				nameDraft.reset();
+			}
 		}
 	}
+	/** Listen for a new agent: the one on screen stays pending in the fleet. */
+	const startOver = (): void => {
+		setOpenedAt(Date.now());
+		setKnownAtOpen(new Set(agents.map((a) => a.id)));
+		setTrackedId(null);
+		nameDraft.reset();
+	};
 
 	const { commandName } = nameDraft;
 	const deniedId = deny.isSuccess ? (deny.variables?.id ?? null) : null;
@@ -95,7 +110,9 @@ export function useRegisterPanel({
 	const agent = open ? view.agent : null;
 	const phase = open ? view.phase : 'listening';
 	if ((phase === 'approved') !== approved) setApproved(phase === 'approved');
-	if ((phase === 'listening') !== listening) setListening(phase === 'listening');
+	// Only an open panel moves it: closed, the phase reads "listening", which
+	// would re-settle the suggestion past the waiting agent's own name.
+	if (open && (phase === 'listening') !== listening) setListening(phase === 'listening');
 
 	const agentId = agent?.id ?? null;
 	useEffect(() => {
@@ -136,5 +153,6 @@ export function useRegisterPanel({
 		/** Open on a register route with no agent yet: arrivals are being watched. */
 		listening: open && active && phase === 'listening',
 		checkNow: () => query.refetch(),
+		startOver,
 	};
 }

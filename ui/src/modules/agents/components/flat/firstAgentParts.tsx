@@ -42,7 +42,7 @@ import { useCopyToClipboard } from '@/shared/lib/useCopyToClipboard';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { smartInitials } from '@/shared/lib/smartInitials';
 import { ROUTES } from '@/shared/app/routes';
-import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
+import { AGENTS_WRITE, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
@@ -53,7 +53,8 @@ import {
 } from '@/modules/agents/api';
 import { DuplicateNameHint } from '@/modules/agents/components/DuplicateNameHint';
 import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
-import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
+import { REGISTER_NAME_MAX_LENGTH, registerNameError } from '@/modules/agents/lib/registerCommand';
+import { registerNameWasTyped } from '@/modules/agents/lib/useRegisterName';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
@@ -167,7 +168,8 @@ export function RegisterCommand({
 }) {
 	const inputId = useId();
 	const hintId = `${inputId}-duplicate`;
-	const nameError = agentNameError(name);
+	// The CLI's own rule, not the server's: this name goes on the command.
+	const nameError = registerNameError(name);
 	const target = useRegisterTarget();
 	const mcp = route === 'mcp';
 	const verb = mcp ? 'setup' : 'register';
@@ -225,7 +227,7 @@ export function RegisterCommand({
 						value={name}
 						onChange={(e) => onNameChange(e.target.value)}
 						error={nameError ?? undefined}
-						maxLength={AGENT_NAME_MAX_LENGTH}
+						maxLength={REGISTER_NAME_MAX_LENGTH}
 						spellCheck={false}
 						autoComplete="off"
 						// Only while shown: an explicit `undefined` would drop the error's own link.
@@ -287,25 +289,21 @@ export function CommandBlock({
 			});
 		}
 	};
+	// The command is text first — selectable, so it can be copied by hand where
+	// the clipboard API is unavailable (a plain-HTTP install) — with one Copy
+	// button in the block's title bar, not a block that is all button.
 	return (
-		<Button
-			variant="ghost"
-			onClick={() => void onCopy()}
+		<div
+			role="group"
+			aria-label={`The ${verb} command`}
 			data-testid={`${testIdPrefix}-block`}
 			data-copied={copied || undefined}
 			className={cn(
-				'group bg-code relative block h-auto w-full overflow-hidden rounded-lg p-0 text-left font-normal',
-				'hover:bg-code shadow-[inset_0_0_0_1px_hsl(var(--hairline-field))] hover:shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.35)]',
-				'active:scale-[0.995] motion-reduce:active:scale-100',
+				'group bg-code relative block w-full overflow-hidden rounded-lg text-left font-normal',
+				'shadow-[inset_0_0_0_1px_hsl(var(--hairline-field))]',
 			)}
 		>
-			<span className="sr-only">
-				{copied ? `Copied the ${verb} command: ` : `Copy the ${verb} command: `}
-			</span>
-			<span
-				aria-hidden="true"
-				className="border-hairline-field flex h-[34px] items-center gap-2 border-b pr-2 pl-3"
-			>
+			<span className="border-hairline-field flex h-[34px] items-center gap-2 border-b pr-2 pl-3">
 				<span aria-hidden="true" className="flex shrink-0 items-center gap-1.5">
 					{[0, 1, 2].map((i) => (
 						<span key={i} className="bg-foreground-faint/35 size-2 rounded-full" />
@@ -314,27 +312,24 @@ export function CommandBlock({
 				<SectionLabel className="ml-1.5 min-w-0 flex-1 truncate">
 					where your agent runs
 				</SectionLabel>
-				<span
-					aria-hidden="true"
-					className="text-foreground-faint hidden text-[11px] font-medium opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 sm:inline"
-				>
-					{copied ? '' : 'Click to copy'}
-				</span>
 				{/* The quoting is POSIX (sh, bash, zsh) — not PowerShell or cmd. */}
 				<span
-					className="text-foreground-faint hidden font-mono text-[10.5px] sm:inline group-hover:sm:hidden group-focus-visible:sm:hidden"
+					className="text-foreground-faint hidden font-mono text-[10.5px] sm:inline"
 					data-testid={`${testIdPrefix}-shell`}
 				>
 					POSIX shell
 				</span>
-				<span
-					aria-hidden="true"
+				<Button
+					variant="ghost"
+					size="xs"
+					onClick={() => void onCopy()}
+					aria-label={`${copied ? 'Copied' : 'Copy'} the ${verb} command: ${commandText(tokens)}`}
 					data-testid={`${testIdPrefix}-copy`}
 					className={cn(
-						'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold shadow-xs transition-colors duration-150',
+						'h-7 gap-1.5 rounded-md px-2.5 text-xs font-semibold shadow-xs transition-colors duration-150',
 						copied
-							? 'bg-success/15 text-success'
-							: 'bg-surface-tonal text-foreground group-hover:bg-primary group-hover:text-primary-foreground',
+							? 'bg-success/15 text-success hover:bg-success/15 hover:text-success'
+							: 'bg-surface-tonal text-foreground hover:bg-primary hover:text-primary-foreground',
 					)}
 				>
 					<AnimatePresence mode="wait" initial={false}>
@@ -354,7 +349,7 @@ export function CommandBlock({
 						</motion.span>
 					</AnimatePresence>
 					{copied ? 'Copied' : 'Copy'}
-				</span>
+				</Button>
 			</span>
 			<AnimatePresence>
 				{copied && !reduced && (
@@ -375,7 +370,7 @@ export function CommandBlock({
 				initial={reduced ? false : { clipPath: 'inset(0 100% 0 0)' }}
 				animate={{ clipPath: 'inset(0 0% 0 0)' }}
 				transition={{ duration: COMMAND_REVEAL_S, ease: EASE_OUT_SOFT, delay: 0.1 }}
-				className="text-foreground/90 block py-3 pr-3.5 pl-[calc(0.875rem+2ch)] [text-indent:-2ch] font-mono text-sm leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
+				className="text-foreground/90 block py-3 pr-3.5 pl-[calc(0.875rem+2ch)] [text-indent:-2ch] font-mono text-sm leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap select-text"
 			>
 				<span className="text-success select-none">$</span>
 				{commandWordGroups(tokens).map((group, i) => (
@@ -392,7 +387,7 @@ export function CommandBlock({
 					</span>
 				))}
 			</motion.span>
-		</Button>
+		</div>
 	);
 }
 
@@ -407,7 +402,15 @@ const CLI_INSTALL = {
  * trigger at the foot of the card, collapsed by default, that opens onto the
  * copyable install commands and the docs.
  */
-export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
+export function CliInstallHint({
+	reducedMotion,
+	route = 'cli',
+}: {
+	reducedMotion: boolean;
+	/** The command above: `jentic setup` on the MCP route, which the hint must not
+	 * then suggest "instead". */
+	route?: 'cli' | 'mcp';
+}) {
 	const [open, setOpen] = useState(false);
 	const bodyId = useId();
 	return (
@@ -448,10 +451,24 @@ export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
 							<CodeSnippet label="Homebrew" code={CLI_INSTALL.brew} />
 							<CodeSnippet label="Install script" code={CLI_INSTALL.script} />
 							<p className="text-muted-foreground text-xs leading-relaxed">
-								Setting up a local coding agent? Run{' '}
-								<code className="text-foreground/90 font-mono">jentic setup</code>{' '}
-								instead — it registers too, and adds an isolated account and the
-								agent skills.{' '}
+								{route === 'mcp' ? (
+									<>
+										<code className="text-foreground/90 font-mono">
+											jentic setup
+										</code>{' '}
+										registers the agent and also adds an isolated account and
+										the agent skills.{' '}
+									</>
+								) : (
+									<>
+										Setting up a local coding agent? Run{' '}
+										<code className="text-foreground/90 font-mono">
+											jentic setup
+										</code>{' '}
+										instead — it registers too, and adds an isolated account and
+										the agent skills.{' '}
+									</>
+								)}
 								<AppLink
 									href={`${ROUTES.docs}#installation`}
 									data-no-transition
@@ -721,9 +738,20 @@ const PROGRESS: Record<Exclude<FirstAgentPhase, 'listening'>, { step: number; la
  * segments (done, current, to come) and the current step's label. The words
  * carry it for assistive tech; the segments are drawn for the eye.
  */
-function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'listening'> }) {
+function StepProgress({
+	phase,
+	approvedElsewhere,
+}: {
+	phase: Exclude<FirstAgentPhase, 'listening'>;
+	/** Another user approved it (the bell, a second admin): the step says so. */
+	approvedElsewhere: boolean;
+}) {
 	const { step, label } = PROGRESS[phase];
 	const states = STEP_STATES[phase];
+	const title = (i: number): string =>
+		approvedElsewhere && STEPS[i].id === 'approve'
+			? 'Approved by someone else'
+			: STEPS[i].title;
 	return (
 		<div className="flex min-w-0 items-center gap-2.5">
 			<ol
@@ -744,7 +772,7 @@ function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'listening'> 
 						)}
 					>
 						<span className="sr-only">
-							{STEPS[i].title}
+							{title(i)}
 							{state === 'done' && ' (done)'}
 						</span>
 					</li>
@@ -807,6 +835,9 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
+	const viewer = useOptionalCurrentUser();
+	const approvedBy = agent.status === 'active' ? agent.attribution.approvedBy : null;
+	const approvedElsewhere = approvedBy != null && viewer != null && approvedBy !== viewer.id;
 	// Approval makes the requested permissions live (or the defaults, when there
 	// are none), so Approve waits until what it grants is read and on screen — the
 	// catalogue included, since it tells which requested permissions count.
@@ -823,7 +854,7 @@ export function AgentDetails({
 
 	return (
 		<div data-testid="arrival-card">
-			{progress && <StepProgress phase={phase} />}
+			{progress && <StepProgress phase={phase} approvedElsewhere={approvedElsewhere} />}
 			{/* The agent card's own head: the round avatar, the name with its
 			    status glyph and word, and one facts line under it. */}
 			<header className={cn('flex items-start gap-3.5 sm:gap-4', progress && 'mt-4')}>
@@ -957,7 +988,10 @@ function ArrivalWarnings({
 	expectedName: string | null;
 	morePending: number;
 }) {
-	const nameDiffers = expectedName != null && expectedName !== agentName;
+	// A name the operator typed into a register command anywhere this session —
+	// the panel they closed mid-flow included — is theirs, not a stranger's.
+	const nameDiffers =
+		expectedName != null && expectedName !== agentName && !registerNameWasTyped(agentName);
 	if (!nameDiffers && morePending === 0) return null;
 	return (
 		<div
@@ -1042,6 +1076,16 @@ function AgentFactsLine({
 				)}{' '}
 				· {signsIn}
 			</span>
+			{/* The owner rides on the facts line, with the registration it came from
+			    (approving sets it) — not as a row of its own below the next step. */}
+			{agent.ownerId && (
+				<>
+					<FactSep />
+					<span data-testid="agent-owner-fact">
+						Owner <ActorLabel actorId={agent.ownerId} />
+					</span>
+				</>
+			)}
 			<FactSep />
 			<span
 				data-testid="agent-id-fact"
@@ -1092,7 +1136,7 @@ function AgentFacts({
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
-	const extras = keyInfo.data || agent.ownerId || agent.parentAgentId || agent.description;
+	const extras = keyInfo.data || agent.parentAgentId || agent.description;
 
 	return (
 		<div
@@ -1104,11 +1148,6 @@ function AgentFacts({
 					{keyInfo.data && (
 						<Fact label="Key ID">
 							<span className="font-mono">{keyInfo.data.id}</span>
-						</Fact>
-					)}
-					{agent.ownerId && (
-						<Fact label="Owner">
-							<ActorLabel actorId={agent.ownerId} />
 						</Fact>
 					)}
 					{agent.parentAgentId && (

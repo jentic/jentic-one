@@ -25,6 +25,8 @@ export const EASE_OUT_SOFT = [0.22, 1, 0.36, 1] as const;
 
 export const GHOST_CAPTION_TITLE = 'Nothing here yet';
 export const GHOST_CAPTION_SUB = 'you have no agents — this is where they will appear';
+/** The caption once an agent is waiting: "no agents" would contradict the card above. */
+export const GHOST_CAPTION_SUB_ARRIVED = 'no active agents yet — approved agents appear here';
 
 const SLOT = 'border-hairline-field shrink-0 border-[1.5px] border-dashed';
 
@@ -87,7 +89,7 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 						{GHOST_CAPTION_TITLE}
 					</span>
 					<span className="text-foreground-faint text-[14px] leading-6">
-						{GHOST_CAPTION_SUB}
+						{arrived ? GHOST_CAPTION_SUB_ARRIVED : GHOST_CAPTION_SUB}
 					</span>
 				</div>
 				{/* The clear band the landing card's top edge lands in. */}

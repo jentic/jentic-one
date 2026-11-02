@@ -133,7 +133,7 @@ export function FirstAgentLanding({
 				data-testid="first-agent-card"
 				// The top margin seats the card's edge in the ghost frame's clear band; it stays
 				// near-constant because the frame above is a fixed pixel stack.
-				className="bg-surface-1 rounded-panel animate-rise relative z-[1] mx-auto mt-[clamp(4rem,8vh,4.5rem)] max-w-[960px] overflow-hidden [--field-bg:var(--surface-field)]"
+				className="bg-surface-1 rounded-panel animate-rise relative z-[1] mx-auto mt-[clamp(3.5rem,8vh,4.5rem)] max-w-[960px] overflow-hidden [--field-bg:var(--surface-field)]"
 			>
 				<AnimatePresence mode="popLayout" initial={false}>
 					<motion.div
@@ -237,8 +237,8 @@ function WaysIn({
 	};
 	return (
 		<>
-			<div className="px-5 pt-6 sm:px-7">
-				<span className="text-foreground-sub bg-surface-tonal/70 mb-3 inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1.5 text-xs font-semibold">
+			<div className="short:pt-4 px-5 pt-6 sm:px-7">
+				<span className="text-foreground-sub bg-surface-tonal/70 short:mb-2 mb-3 inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1.5 text-xs font-semibold">
 					<span
 						aria-hidden="true"
 						className="size-4 rounded-full border-[1.5px] border-dashed border-[hsl(var(--control-edge)/0.7)]"
@@ -261,7 +261,7 @@ function WaysIn({
 					Listening for new agents…
 				</p>
 			</div>
-			<div className="grid gap-5 px-5 pt-4 pb-6 sm:px-7 md:grid-cols-[300px_minmax(0,1fr)]">
+			<div className="short:pt-3 short:pb-4 grid gap-5 px-5 pt-4 pb-6 sm:px-7 md:grid-cols-[300px_minmax(0,1fr)]">
 				<div className="grid content-start gap-1.5">
 					<p className="text-foreground-faint pb-1 pl-1 text-[10.5px] leading-none font-bold tracking-[0.09em] uppercase">
 						Connect with
@@ -300,8 +300,10 @@ function WaysIn({
 					data-method={method}
 					className="bg-field flex min-w-0 flex-col rounded-xl"
 				>
-					{/* One grid cell for every pane, so the well keeps the tallest's height. */}
-					<div className="grid px-5 pt-5">
+					{/* One grid cell for every pane, so the well keeps the tallest's height.
+					    `minmax(0,1fr)`: a pane's unbroken command line must shrink with the
+					    column, not widen it past the card on a phone. */}
+					<div className="short:pt-4 grid grid-cols-[minmax(0,1fr)] px-5 pt-5">
 						{methods.map((m) => {
 							const c = copy[m];
 							return (
@@ -379,7 +381,7 @@ function WaysIn({
 							);
 						})}
 					</div>
-					<div className="mt-auto flex flex-col items-start gap-3 px-5 pt-4 pb-4 sm:flex-row sm:items-center sm:justify-between">
+					<div className="short:py-2.5 mt-auto flex flex-col items-start gap-3 px-5 pt-4 pb-4 sm:flex-row sm:items-center sm:justify-between">
 						<span className="text-foreground-faint text-xs">
 							Opens the New agent panel
 						</span>
@@ -401,7 +403,7 @@ function WaysIn({
 // ---------------------------------------------------------------------------
 
 const TILE =
-	'group bg-surface-1 hover:bg-surface-tonal focus-visible:bg-surface-tonal rounded-panel flex items-center gap-3 px-3 py-2.5 text-left transition-[background-color] duration-[160ms] ease-(--ease-out-soft)';
+	'group bg-surface-1 hover:bg-surface-tonal focus-visible:bg-surface-tonal rounded-panel flex items-center gap-3 px-3 py-2.5 short:py-2 text-left transition-[background-color] duration-[160ms] ease-(--ease-out-soft)';
 
 function Shortcuts() {
 	const [uploadOpen, setUploadOpen] = useState(false);
@@ -420,7 +422,7 @@ function Shortcuts() {
 	return (
 		<div
 			data-testid="landing-shortcuts"
-			className="relative z-[1] mx-auto mt-3 grid max-w-[960px] gap-2 sm:grid-cols-3"
+			className="short:mt-2 relative z-[1] mx-auto mt-3 grid max-w-[960px] gap-2 sm:grid-cols-3"
 		>
 			{shortcuts.map(([Icon, title, detail, href]) => {
 				const body = (

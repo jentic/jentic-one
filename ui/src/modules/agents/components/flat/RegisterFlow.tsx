@@ -165,7 +165,7 @@ export function RegisterFlow({
 							exit={{ opacity: 0 }}
 							transition={fade}
 						>
-							<CliInstallHint reducedMotion={reducedMotion} />
+							<CliInstallHint reducedMotion={reducedMotion} route={route} />
 						</motion.div>
 					)}
 				</AnimatePresence>

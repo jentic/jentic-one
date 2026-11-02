@@ -18,7 +18,14 @@ import {
 } from 'react';
 import { motion, useReducedMotionConfig, type Transition } from 'framer-motion';
 import { Pencil, RefreshCw, Terminal, X } from 'lucide-react';
-import { Button, McpIcon, SheetFooter, SheetPrimitive, holdSheetForHandoff } from '@/shared/ui';
+import {
+	Button,
+	McpIcon,
+	SheetFooter,
+	SheetPrimitive,
+	holdSheetForHandoff,
+	toast,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import type { AgentEntity, useApproveAgent, useDenyAgent } from '@/modules/agents/api';
@@ -198,6 +205,9 @@ export function NewAgentPanel({
 		leave((a) => onExit(a, exit), exit.kind !== 'skip', subject);
 	/** Once "Create" has made an agent, closing answers its first API as "Skip for now". */
 	const close = () => {
+		// Mid hand-off to the tray (an approval landing), Escape or the backdrop
+		// would cancel the step just chosen: the hand-off closes this sheet itself.
+		if (handingOff) return;
 		if (createdAgent) exitWith(createdAgent, { kind: 'skip' });
 		else onClose();
 	};
@@ -208,26 +218,26 @@ export function NewAgentPanel({
 	useEffect(() => {
 		if (createdId) document.getElementById(createdTitleId)?.focus({ preventScroll: true });
 	}, [createdId, createdTitleId]);
-	// Over a fleet, an approval this panel asked for hands off to the tray as it lands.
+	// Over a fleet, the agent on screen turning active hands off to the tray as
+	// it lands — whoever approved it: Approve here, the bell, another admin.
 	const finished =
 		agent?.status === 'active'
 			? agent
 			: createdAgent?.status === 'active'
 				? createdAgent
 				: null;
-	const approvedHere = finished != null && approve.isSuccess && approve.variables === finished.id;
 	// Held on its approval until the tray takes over: the first-API step never paints.
-	const handingOff = !offerFirstApi && approvedHere ? finished : null;
+	const handingOff = !offerFirstApi && open && finished ? finished : null;
 	const holdOnApproval = (a: AgentEntity | null): AgentEntity | null =>
 		a && handingOff?.id === a.id ? { ...a, status: 'pending' } : a;
 	const handedRef = useRef<string | null>(null);
 	useLayoutEffect(() => {
-		if (offerFirstApi || !open || !approvedHere || !finished) return;
-		if (handedRef.current === finished.id) return;
-		handedRef.current = finished.id;
-		toAddApis(finished);
+		if (!handingOff) return;
+		if (handedRef.current === handingOff.id) return;
+		handedRef.current = handingOff.id;
+		toAddApis(handingOff);
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- once per approval
-	}, [offerFirstApi, open, approvedHere, finished?.id]);
+	}, [handingOff?.id]);
 	const createdApproving =
 		createdAgent != null &&
 		approve.variables === createdAgent.id &&
@@ -285,11 +295,24 @@ export function NewAgentPanel({
 
 	const route = tab === 'mcp' ? 'mcp' : 'cli';
 	const [checking, setChecking] = useState(false);
-	// `refetch` resolves on failure too, so the spinner always clears.
+	// `refetch` resolves on failure too, so the spinner always clears — and a
+	// failure is said, not swallowed: "Listening…" over a dead server is a lie.
 	const checkNow = async () => {
 		setChecking(true);
-		await Promise.all([register.checkNow(), new Promise((r) => setTimeout(r, 500))]);
+		const [result] = await Promise.all([
+			register.checkNow(),
+			new Promise((r) => setTimeout(r, 500)),
+		]);
 		setChecking(false);
+		if (result.isError) {
+			toast({
+				id: 'register-check-now',
+				title: "Couldn't reach the server",
+				description:
+					'The agent list could not be read. Check the connection and try again.',
+				variant: 'error',
+			});
+		}
 	};
 	const bodies: Record<Pane, ReactNode> = {
 		register: (
@@ -339,6 +362,20 @@ export function NewAgentPanel({
 					>
 						{agent ? 'Close' : 'Cancel'}
 					</Button>
+					{agent?.status === 'pending' && (
+						<Button
+							variant="secondary"
+							onClick={() => {
+								register.startOver();
+								requestAnimationFrame(() =>
+									registerNameRef.current?.focus({ preventScroll: true }),
+								);
+							}}
+							data-testid="footer-register-another"
+						>
+							Register another agent
+						</Button>
+					)}
 					{!agent && (
 						<Button
 							variant="secondary"
@@ -396,7 +433,7 @@ export function NewAgentPanel({
 										</span>
 									}
 									title="Create it here"
-									detail="Nothing to install. It's created active and can sign in at once — next you give it its APIs, then hand it an API key or connect it over MCP."
+									detail="Nothing to install. It's created active; next you give it its APIs, then an API key (or MCP with one) is how it signs in."
 								/>
 								<div className="mt-5">
 									<AgentCreateFields form={form} existingNames={register.names} />

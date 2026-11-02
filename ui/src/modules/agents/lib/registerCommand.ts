@@ -83,6 +83,25 @@ export function registerCommand(options: RegisterCommandOptions): string {
 	return commandText(registerCommandTokens(options));
 }
 
+/** The most characters `register --name` / `setup --name` accept. */
+export const REGISTER_NAME_MAX_LENGTH = 64;
+
+/** `register --name`'s own check: lowercase letters, digits and hyphens, a
+ * letter or digit first, up to 64 — a name the CLI refuses never reaches the
+ * server, so the field must refuse it first. */
+const REGISTER_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** Why `name` can't go on a `register`/`setup` command, or `null` when it can. */
+export function registerNameError(name: string): string | null {
+	const trimmed = name.trim();
+	if (!trimmed) return 'A name is required.';
+	if (REGISTER_NAME.test(trimmed)) return null;
+	const slug = configName(trimmed);
+	return `The CLI takes lowercase letters, digits and hyphens only, up to ${REGISTER_NAME_MAX_LENGTH}${
+		slug ? ` — try ${slug}` : ''
+	}.`;
+}
+
 /** The CLI's config-name rule (`config.SanitizeName`): lowercase, `[a-z0-9-]`, ≤ 64.
  * Its output also passes `register --name`'s check (`^[a-z0-9][a-z0-9-]{0,63}$`). */
 export function configName(s: string): string {
@@ -95,9 +114,10 @@ export function configName(s: string): string {
 		.replace(/-+$/, '');
 }
 
-/** The context `jentic register`/`setup` creates: `<env>-<name>`, env being the URL
- * host's first label, with `localhost` read as `127.0.0.1` (`cmdcore/register_derive.go`). */
-export function cliContextName(url: string, name: string): string {
+/** The environment name `jentic register`/`setup` derive for an instance URL:
+ * the host's first label, with `localhost` read as `127.0.0.1`
+ * (`cmdcore/register_derive.go`); `default` when there is no host to read. */
+export function cliEnvName(url: string): string {
 	let host = '';
 	try {
 		host = new URL(url).hostname.replace(/^\[|\]$/g, '');
@@ -105,6 +125,39 @@ export function cliContextName(url: string, name: string): string {
 		// A scheme-less URL has no host to the CLI either.
 	}
 	if (host === 'localhost') host = '127.0.0.1';
-	const env = configName(host.split('.')[0]) || 'default';
-	return configName(`${env}-${name}`);
+	return configName(host.split('.')[0]) || 'default';
+}
+
+/** The context `jentic register`/`setup` creates: `<env>-<name>`. */
+export function cliContextName(url: string, name: string): string {
+	return configName(`${cliEnvName(url)}-${name}`);
+}
+
+/** Stands in for the key itself in a command an operator pastes. */
+export const API_KEY_PLACEHOLDER = '<api-key>';
+
+/**
+ * The commands that give an agent CREATED HERE a CLI identity: `jentic
+ * register` would register a second agent, so its API key is stored as the
+ * identity instead — the environment for this instance, the identity holding
+ * the key, and the context `jentic mcp --context` pins (named as `register`
+ * would name it, {@link cliContextName}). `apiKey` defaults to a placeholder.
+ */
+export function apiKeyWiringCommands(options: {
+	url: string;
+	brokerUrl?: string | null;
+	name: string;
+	apiKey?: string;
+}): string[] {
+	const { url, brokerUrl, name, apiKey = API_KEY_PLACEHOLDER } = options;
+	const env = cliEnvName(url);
+	const broker =
+		brokerUrl === undefined
+			? ''
+			: ` --broker-url ${brokerUrl === null ? BROKER_URL_PLACEHOLDER : shellArg(brokerUrl)}`;
+	return [
+		`jentic env add ${shellArg(env)} --url ${shellArg(url)}${broker}`,
+		`jentic identity add ${shellArg(name)} --env ${shellArg(env)} --api-key ${shellArg(apiKey)}`,
+		`jentic context create ${shellArg(cliContextName(url, name))} --env ${shellArg(env)} --identity ${shellArg(name)}`,
+	];
 }
