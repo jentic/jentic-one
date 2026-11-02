@@ -51,27 +51,23 @@ export interface EntityUsageRow {
 
 /**
  * How an agents-lens row's name resolved: `resolved` (the directory named it),
- * `loading` (the directory is still being read), `unknown` (no actor by that
- * id — deleted, or never listed), `hidden` (an agent the caller may not see).
+ * `loading` (the directory is still being read), `unknown` (the directory holds
+ * no actor by that id). Usage is read by org admins, who see every actor, so
+ * an id the directory lacks is gone or foreign, never merely out of view.
  */
-export type ActorNameResolution = 'resolved' | 'loading' | 'unknown' | 'hidden';
+export type ActorNameResolution = 'resolved' | 'loading' | 'unknown';
 
 /**
- * A row whose actor has no name to show yet or at all (`loading`, `unknown`):
- * its label is the actor's id, set in mono like every other unresolved id. A
- * `hidden` row reads as a sentence, so it keeps the text face.
+ * A row whose actor has no name to show yet or at all: its label is the
+ * actor's id, set in mono like every other unresolved id.
  */
 export function isUnnamedActor(row: Pick<EntityUsageRow, 'actor'>): boolean {
-	return row.actor?.resolution === 'loading' || row.actor?.resolution === 'unknown';
+	return row.actor != null && row.actor.resolution !== 'resolved';
 }
-
-/** The label of an agent the caller may not see. */
-export const HIDDEN_AGENT_LABEL = 'Agent (not visible to you)';
 
 /** What {@link withActorNames} needs from the actor directory. */
 export interface ActorNameSource {
 	resolve: (id: string) => string | undefined;
-	isHidden: (id: string) => boolean;
 	isLoading: boolean;
 	/** Fleet-aware agent initials by actor id (`smartInitials`). */
 	initials: ReadonlyMap<string, string>;
@@ -183,14 +179,6 @@ export function withActorNames(
 				label: name,
 				actor: { id, type, resolution: 'resolved' },
 				initials: type === AGENT_ACTOR_TYPE ? source.initials.get(id) : undefined,
-			};
-		}
-		if (type === AGENT_ACTOR_TYPE && source.isHidden(id)) {
-			return {
-				...row,
-				label: HIDDEN_AGENT_LABEL,
-				actor: { id, type, resolution: 'hidden' },
-				initials: UNKNOWN_INITIALS,
 			};
 		}
 		return {

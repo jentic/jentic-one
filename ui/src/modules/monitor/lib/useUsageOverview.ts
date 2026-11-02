@@ -90,7 +90,6 @@ export function useUsageOverview({ enabled }: { enabled: boolean }): UsageOvervi
 		() =>
 			withActorNames(agentRows, {
 				resolve: directory.resolve,
-				isHidden: directory.isHidden,
 				isLoading: directory.isLoading,
 				initials: agentInitials,
 			}),

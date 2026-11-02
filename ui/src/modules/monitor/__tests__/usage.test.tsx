@@ -16,7 +16,6 @@ import { renderWithProviders } from '@/__tests__/test-utils';
 import type { UsageResponse } from '@/modules/monitor/api';
 import { smartInitials, shortActorId } from '@/shared/lib';
 import {
-	HIDDEN_AGENT_LABEL,
 	isUnnamedActor,
 	usageToEntityRows,
 	withActorNames,
@@ -75,10 +74,9 @@ describe('usageToEntityRows (group_by=agent)', () => {
 describe('withActorNames', () => {
 	const directory = (
 		names: Record<string, string>,
-		{ hidden = [] as string[], isLoading = false, initials = new Map<string, string>() } = {},
+		{ isLoading = false, initials = new Map<string, string>() } = {},
 	): ActorNameSource => ({
 		resolve: (id) => names[id],
-		isHidden: (id) => hidden.includes(id),
 		isLoading,
 		initials,
 	});
@@ -126,17 +124,6 @@ describe('withActorNames', () => {
 		expect(isUnnamedActor(row)).toBe(true);
 	});
 
-	it('says an agent the caller may not see is not visible', () => {
-		const [row] = withActorNames(
-			usageToEntityRows(agentUsage([`agent/${AGENT_A}`])),
-			directory({}, { hidden: [AGENT_A] }),
-		);
-		expect(row.label).toBe(HIDDEN_AGENT_LABEL);
-		expect(row.actor?.resolution).toBe('hidden');
-		// A sentence, not an id: it keeps the text face.
-		expect(isUnnamedActor(row)).toBe(false);
-	});
-
 	it("names a user row by the user's display name", () => {
 		const [row] = withActorNames(
 			usageToEntityRows(agentUsage(['user/usr_admin_1'])),
@@ -172,7 +159,6 @@ describe('UsageBreakdown', () => {
 	it('labels a named agent row, its avatar and its link by the name', async () => {
 		const rows = withActorNames(usageToEntityRows(agentUsage(['agent/agnt_6accc351d881'])), {
 			resolve: (id) => (id === 'agnt_6accc351d881' ? 'support-triage' : undefined),
-			isHidden: () => false,
 			isLoading: false,
 			initials: new Map([['agnt_6accc351d881', 'ST']]),
 		});
@@ -194,7 +180,6 @@ describe('UsageBreakdown', () => {
 			usageToEntityRows(agentUsage(['agent/agnt_6accc351d881e4d9'])),
 			{
 				resolve: () => undefined,
-				isHidden: () => false,
 				isLoading: false,
 				initials: new Map(),
 			},
