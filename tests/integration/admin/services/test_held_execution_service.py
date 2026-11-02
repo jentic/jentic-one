@@ -143,6 +143,7 @@ async def _hold(
     path: str = "/v1/charges",
     ttl_seconds: int = 3600,
     max_pending: int = 10,
+    agent_reason: str | None = None,
 ) -> HoldOutcome:
     payload = {
         "method": "POST",
@@ -168,6 +169,7 @@ async def _hold(
             payload={ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(payload))},
             ttl_seconds=ttl_seconds,
             max_pending=max_pending,
+            agent_reason=agent_reason,
         )
 
 
@@ -509,6 +511,22 @@ async def test_detail_shows_the_agent_owner_and_the_held_request(
     assert detail.request.method == "POST"
     assert detail.request.url == "https://api.example.com/v1/charges?expand=all"
     assert detail.request.body == _BODY.decode()
+
+
+async def test_the_agent_reason_is_on_the_list_row_and_the_detail(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    reason = "Customer 4821 asked for a replacement order"
+    with_reason = await _hold(ctx, actors.agent, agent_reason=reason)
+    without = await _hold(ctx, actors.agent, path="/v1/refunds")
+
+    rows = {v.id: v for v in (await svc.list_all(identity=actors.owner)).data}
+    assert rows[with_reason.approval_id].agent_reason == reason
+    assert rows[without.approval_id].agent_reason is None
+    detail = await svc.get(with_reason.approval_id, identity=actors.owner)
+    assert detail.agent_reason == reason
 
 
 async def test_jobs_cancel_refuses_a_held_job_and_leaves_its_approval_pending(

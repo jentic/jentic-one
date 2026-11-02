@@ -103,6 +103,11 @@ type ExecuteRequest struct {
 	// POST/PUT is de-duplicated by the broker and treated as replayable by the
 	// SDK transport's retry policy.
 	IdempotencyKey string
+	// Reason, when set, is the agent's own account of why it makes this call,
+	// stamped percent-encoded as Jentic-Reason. The broker reads it only when
+	// the call is held for human approval, where the reviewer sees it next to
+	// the request; it is never forwarded to the upstream API.
+	Reason string
 }
 
 // ExecuteResult is the UX-free outcome of a brokered call: the relayed status,

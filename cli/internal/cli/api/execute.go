@@ -46,6 +46,7 @@ type executeOptions struct {
 	brokerHost     string
 	revision       string
 	idempotencyKey string
+	reason         string
 	wait           bool
 	timeout        time.Duration
 	// heldExecutionID names the held execution whose finished outcome
@@ -162,6 +163,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 	cmd.Flags().StringVar(&opts.brokerHost, "broker-host", config.DefaultBrokerHost, "broker target host as host[:port] (no scheme; use --broker-scheme)")
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "pin to a specific revision ID for inspect")
 	cmd.Flags().StringVar(&opts.idempotencyKey, "idempotency-key", "", "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker")
+	cmd.Flags().StringVar(&opts.reason, "reason", "", "why you are making this call, in plain words; a reviewer reads it if the call is held for approval (sent as Jentic-Reason, at most 1024 characters)")
 	cmd.Flags().BoolVar(&opts.wait, "wait", false, "when the call is held for human approval, wait for the decision and print the result")
 	addHeldTimeoutFlag(cmd, &opts.timeout, "how long --wait follows a held call before exiting 3 (TIMEOUT_PENDING): a duration (30s, 1m) or seconds (30); max 5m, 0 checks once")
 	planFlags(cmd)
@@ -318,6 +320,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		Token:          token,
 		SessionID:      sessionIDFromContext(cmd),
 		IdempotencyKey: opts.idempotencyKey,
+		Reason:         opts.reason,
 	})
 	if err != nil {
 		return err

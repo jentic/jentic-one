@@ -68,7 +68,7 @@ class HeldExecution(AuditableMixin, AdminBase):
     operation_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     path: Mapped[str] = mapped_column(Text, nullable=False)
-    # SHA-256 of (agent_id, credential_id, method, path, canonical body).
+    # SHA-256 of (agent_id, credential_id, method, path, canonical query, canonical body).
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     matched_rule_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     state: Mapped[str] = mapped_column(
@@ -78,5 +78,8 @@ class HeldExecution(AuditableMixin, AdminBase):
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
     decision_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # The agent's own stated reason for the call (the ``Jentic-Reason`` request
+    # header), unverified; null when it gave none. Not in ``request_fingerprint``.
+    agent_reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     execution_id: Mapped[str | None] = mapped_column(String(30), nullable=True)

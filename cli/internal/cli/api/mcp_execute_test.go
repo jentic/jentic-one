@@ -944,6 +944,51 @@ func TestMCPExecuteRead_GetRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMCPExecute_ReasonRidesAsPercentEncodedHeader: the `reason` argument is
+// the agent's own words for a reviewer, stamped as Jentic-Reason —
+// percent-encoded UTF-8 (ASCII on the wire; "+" literal, "%" escaped, as the
+// broker's unquote reads them back). A caller-supplied header wins, and no
+// argument means no header.
+func TestMCPExecute_ReasonRidesAsPercentEncodedHeader(t *testing.T) {
+	var got []string
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Jentic-Reason"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer broker.Close()
+	s := stampedTestMCPServer(t)
+	ctx := activeCtxWithBroker("http://127.0.0.1:8000", broker.URL)
+
+	calls := []struct{ tool, args string }{
+		{"execute", `{"operation_id":"POST:/v1/pets","body":{"name":"Bob"},"reason":"Customer 4821 asked: 50% off + a refund (café)"}`},
+		{"execute_read", `{"operation_id":"GET:/v1/pets","reason":"ignored","headers":{"Jentic-Reason":"mine"}}`},
+		{"execute_read", `{"operation_id":"GET:/v1/pets"}`},
+	}
+	for _, c := range calls {
+		handle := s.handleExecute
+		if c.tool != "execute" {
+			handle = s.handleExecuteRead
+		}
+		res, err := handle(ctx, callToolRequest(c.tool, c.args))
+		if err != nil {
+			t.Fatalf("%s: %v", c.tool, err)
+		}
+		if res.IsError {
+			t.Fatalf("%s: unexpected soft error: %s", c.tool, toolResultText(res))
+		}
+	}
+	want := []string{"Customer%204821%20asked:%2050%25%20off%20+%20a%20refund%20%28caf%C3%A9%29", "mine", ""}
+	if len(got) != len(want) {
+		t.Fatalf("broker saw %d calls, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("call %d: Jentic-Reason = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 // TestMCPExecute_BrokerLegHonorsCAPinAndHook pins §3.7.2: the broker leg is
 // built by clictx (CA-pinned to the environment's ca_cert_path, fail-closed)
 // with the session's attribution hook composed over it — the User-Agent

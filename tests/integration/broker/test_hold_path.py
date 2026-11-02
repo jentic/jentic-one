@@ -61,7 +61,7 @@ async def clean(integration_context: Context) -> AsyncGenerator[None, None]:
     await _truncate()
 
 
-def _request(body: bytes) -> Request:
+def _request(body: bytes, reason: str | None = None) -> Request:
     sent = False
 
     async def receive() -> dict[str, Any]:
@@ -85,6 +85,8 @@ def _request(body: bytes) -> Request:
             (b"notion-version", b"2022-06-28"),
             (b"host", b"broker.local:8080"),
             (b"authorization", b"Bearer agent-token"),
+            # The reason as a client sends it: percent-encoded, so it is ASCII on the wire.
+            *([(b"jentic-reason", reason.encode("ascii"))] if reason is not None else []),
         ],
     }
     return Request(scope, receive)
@@ -118,9 +120,15 @@ def _authorization() -> ExecutionAuthorization:
 
 
 async def _hold(
-    ctx: Context, body: bytes = _BODY, query: str = "", agent: Identity = _AGENT
+    ctx: Context,
+    body: bytes = _BODY,
+    query: str = "",
+    agent: Identity = _AGENT,
+    reason: str | None = None,
 ) -> dict[str, Any]:
-    response = await _handle_hold(_request(body), _ctx_req(query), ctx, agent, _authorization())
+    response = await _handle_hold(
+        _request(body, reason), _ctx_req(query), ctx, agent, _authorization()
+    )
     assert response.status_code == 202
     assert response.headers["Preference-Applied"] == "respond-async"
     return dict(json.loads(bytes(response.body)))
@@ -368,3 +376,73 @@ async def test_a_different_query_or_body_files_a_new_hold(
         other_body["held_execution_id"],
     }
     assert len(ids) == 4
+
+
+async def _stored(ctx: Context, approval_id: str) -> tuple[HeldExecution, Event]:
+    """The hold row and its approval_requested event."""
+    async with ctx.admin_db.session() as session:
+        row = await session.get(HeldExecution, approval_id)
+        assert row is not None
+        (event,) = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return row, event
+
+
+async def test_the_agent_reason_is_stored_decoded_and_carried_on_the_event(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    envelope = await _hold(ctx, reason="Customer%204821%20asked%20for%20a%20refund")
+    row, event = await _stored(ctx, envelope["held_execution_id"])
+    assert row.agent_reason == "Customer 4821 asked for a refund"
+    assert event.data["agent_reason"] == "Customer 4821 asked for a refund"
+    # The agent's own words ride in the event's data, never in its summary line.
+    assert "refund" not in event.summary
+
+
+async def test_no_reason_header_leaves_the_reason_null(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    envelope = await _hold(ctx)
+    row, event = await _stored(ctx, envelope["held_execution_id"])
+    assert row.agent_reason is None
+    assert event.data["agent_reason"] is None
+
+
+async def test_a_reworded_retry_joins_its_hold_and_the_first_reason_stands(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx, reason="first%20reason")
+    again = await _hold(ctx, reason="a%20different%20reason")
+    assert again["held_execution_id"] == first["held_execution_id"]
+    row, _event = await _stored(ctx, first["held_execution_id"])
+    assert row.agent_reason == "first reason"
+
+
+async def test_a_retry_fills_the_reason_a_hold_was_filed_without(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx)
+    again = await _hold(ctx, reason="late%20but%20welcome")
+    assert again["held_execution_id"] == first["held_execution_id"]
+    row, _event = await _stored(ctx, first["held_execution_id"])
+    assert row.agent_reason == "late but welcome"
+
+
+async def test_a_reason_longer_than_the_column_is_cut_before_it_is_stored(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    envelope = await _hold(ctx, reason="x" * 5000)
+    row, _event = await _stored(ctx, envelope["held_execution_id"])
+    assert row.agent_reason == "x" * 1024

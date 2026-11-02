@@ -171,9 +171,15 @@ clients approve read-only tools more readily; it rejects any other HTTP
 method — use `execute` for those):
 
 ```
-execute {"operation_id": "POST:https://api.example.com/v1/things", "inputs": {"limit": 10}}
+execute {"operation_id": "POST:https://api.example.com/v1/things", "body": {"n": 1}, "reason": "Customer 4821 asked for a replacement order"}
 execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range}", "inputs": {"id": "ABC", "range": "A1:Z10"}}
 ```
+
+Give `reason` on every call that changes something: one plain sentence on
+why you are making it. If the call is held for human approval, the reviewer
+reads it next to the request. The server sends it as the `Jentic-Reason`
+header (percent-encoded; the broker keeps at most 1024 characters) and never
+forwards it to the upstream API.
 
 **The poll idiom.** A held or async execution does not answer inline. A
 202 HELD response (human approval required) returns a `held_execution_id`;

@@ -68,6 +68,7 @@ var executeParams = []paramSpec{
 	{name: "body", aliases: []string{"data"}, kind: paramJSON},
 	{name: "revision", kind: paramString},
 	{name: "idempotency_key", kind: paramString},
+	{name: "reason", kind: paramString},
 }
 
 // heldExecutionIDSpec names the held execution a held (202) execute carries;
@@ -233,6 +234,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 		Token:          token,
 		SessionID:      sdkclient.SanitizeSessionID(st.SessionID),
 		IdempotencyKey: stringArg(args, "idempotency_key"),
+		Reason:         stringArg(args, "reason"),
 	}
 	if len(body) > 0 {
 		bodyReader = bytes.NewReader(body)
@@ -1117,6 +1119,13 @@ func executeInputSchema(withBody bool) map[string]any {
 			"type":        "string",
 			"description": "Pin a specific revision ID for reproducibility (defaults to the current revision).",
 		},
+		"reason": map[string]any{
+			"type": "string",
+			"description": "Why you are making this call, in one plain sentence (e.g. \"Customer 4821 asked for a " +
+				"replacement order\"). Give it on every call that changes something: when the call is held for " +
+				"human approval, the reviewer reads it next to the request. Sent as the Jentic-Reason header; the " +
+				"broker keeps at most 1024 characters and never forwards it to the upstream API.",
+		},
 	}
 	if withBody {
 		props["body"] = map[string]any{
@@ -1178,7 +1187,9 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"inspect_operation → execute): always inspect the contract first, and never execute just " +
 					"to probe whether you have access (call whoami). " +
 					`Example: {"operation_id": "POST:https://api.example.com/v1/pets", "inputs": {"petId": "42", "limit": 10}, ` +
-					`"body": {"name": "Bob"}}. ` +
+					`"body": {"name": "Bob"}, "reason": "Customer 4821 asked for a replacement order"}. ` +
+					"Give reason on every call that changes something — one plain sentence on why; if the call is " +
+					"held for human approval, the reviewer reads it next to the request. " +
 					"Returns {status, headers, body, execution_id}: any HTTP status, including upstream " +
 					"4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an " +
 					"error result with recovery directions instead. A 202 response with status \"held\" means " +

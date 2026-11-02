@@ -1301,6 +1301,7 @@ func TestExecuteSendsCorrelationAndIdempotencyHeaders(t *testing.T) {
 		"--json",
 		"--data", `{"name":"x"}`,
 		"--idempotency-key", "idem-abc-123",
+		"--reason", "Customer 4821 asked: 50% off + a refund (café)",
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -1314,6 +1315,10 @@ func TestExecuteSendsCorrelationAndIdempotencyHeaders(t *testing.T) {
 	}
 	if v := got.Get("Idempotency-Key"); v != "idem-abc-123" {
 		t.Errorf("Idempotency-Key = %q, want idem-abc-123", v)
+	}
+	// Percent-encoded UTF-8: ASCII on the wire, "+" literal, "%" escaped.
+	if v := got.Get("Jentic-Reason"); v != "Customer%204821%20asked:%2050%25%20off%20+%20a%20refund%20%28caf%C3%A9%29" {
+		t.Errorf("Jentic-Reason = %q, want the percent-encoded reason", v)
 	}
 	tp := got.Get("traceparent")
 	if !strings.HasPrefix(tp, "00-") || len(tp) != len("00-")+32+1+16+1+2 {

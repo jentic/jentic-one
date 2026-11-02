@@ -55,6 +55,8 @@ _DROP_TOOLKIT_STARTED_INDEX_HEAD = "d4b8e2f6a901"  # pragma: allowlist secret
 _EXTERNAL_IDENTITIES_ISSUER_HEAD = "e5c9f3a7b802"  # pragma: allowlist secret
 #: The assertion ``jti`` replay table, stacked on the external-identities issuer column.
 _ASSERTION_JTIS_HEAD = "bf1a695f4db0"  # pragma: allowlist secret
+#: ``held_executions.agent_reason`` (nullable column; reversible).
+_AGENT_REASON_HEAD = "9a6c75a2965b"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -228,6 +230,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_DROP_TOOLKIT_STARTED_INDEX_HEAD],
         [_EXTERNAL_IDENTITIES_ISSUER_HEAD],
         [_ASSERTION_JTIS_HEAD],
+        [_AGENT_REASON_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)

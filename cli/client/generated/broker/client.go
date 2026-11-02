@@ -501,6 +501,9 @@ type JenticCredentialId = string
 // JenticCredentialName Examples: Stripe prod key
 type JenticCredentialName = string
 
+// JenticReason Examples: Customer%204821%20asked%20for%20a%20replacement%20order
+type JenticReason = string
+
 // JenticRevision Examples: ["stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"], ["stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c","shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d"]
 type JenticRevision = []string
 
@@ -717,6 +720,15 @@ type ExecuteDeleteParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // ExecuteGetParams defines parameters for ExecuteGet.
@@ -789,6 +801,15 @@ type ExecuteGetParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // ExecuteHeadParams defines parameters for ExecuteHead.
@@ -861,6 +882,15 @@ type ExecuteHeadParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // ExecuteOptionsParams defines parameters for ExecuteOptions.
@@ -933,6 +963,15 @@ type ExecuteOptionsParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // ExecutePatchParams defines parameters for ExecutePatch.
@@ -1005,6 +1044,15 @@ type ExecutePatchParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // ExecutePostParams defines parameters for ExecutePost.
@@ -1077,6 +1125,15 @@ type ExecutePostParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // ExecutePutParams defines parameters for ExecutePut.
@@ -1149,6 +1206,15 @@ type ExecutePutParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+
+	// JenticReason Why the agent is making this call, in its own words. Send it on
+	// any call that changes something: when the call is held for human
+	// approval, the reviewer sees it next to the request. Percent-encode
+	// it as UTF-8 (a header carries ASCII only); at most 1024 characters
+	// after decoding (longer text is cut, control characters other than
+	// newline and tab are dropped). Consumed by the broker — never
+	// forwarded upstream, and dropped when the call runs straight away.
+	JenticReason *JenticReason `json:"Jentic-Reason,omitempty"`
 }
 
 // AsAsyncQueuedResponse returns the union data inside the ExecuteAsync as a AsyncQueuedResponse
@@ -1755,6 +1821,17 @@ func NewExecuteDeleteRequestWithBody(server string, upstreamUrl UpstreamUrl, par
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
+		}
+
 	}
 
 	return req, nil
@@ -1846,6 +1923,17 @@ func NewExecuteGetRequest(server string, upstreamUrl UpstreamUrl, params *Execut
 			}
 
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
 		}
 
 	}
@@ -1941,6 +2029,17 @@ func NewExecuteHeadRequest(server string, upstreamUrl UpstreamUrl, params *Execu
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
+		}
+
 	}
 
 	return req, nil
@@ -2032,6 +2131,17 @@ func NewExecuteOptionsRequest(server string, upstreamUrl UpstreamUrl, params *Ex
 			}
 
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
 		}
 
 	}
@@ -2129,6 +2239,17 @@ func NewExecutePatchRequestWithBody(server string, upstreamUrl UpstreamUrl, para
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
+		}
+
 	}
 
 	return req, nil
@@ -2224,6 +2345,17 @@ func NewExecutePostRequestWithBody(server string, upstreamUrl UpstreamUrl, param
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
 		}
 
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
+		}
+
 	}
 
 	return req, nil
@@ -2317,6 +2449,17 @@ func NewExecutePutRequestWithBody(server string, upstreamUrl UpstreamUrl, params
 			}
 
 			req.Header.Set("Jentic-Credential-Id", headerParam4)
+		}
+
+		if params.JenticReason != nil {
+			var headerParam5 string
+
+			headerParam5, err = runtime.StyleParamWithOptions("simple", false, "Jentic-Reason", *params.JenticReason, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Jentic-Reason", headerParam5)
 		}
 
 	}

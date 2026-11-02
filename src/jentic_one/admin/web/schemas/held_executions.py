@@ -90,6 +90,14 @@ class HeldExecutionResponse(BaseModel):
     decision_reason: str | None = Field(
         default=None, description="Reviewer's reason.", examples=["Not this account"]
     )
+    agent_reason: str | None = Field(
+        default=None,
+        description=(
+            "Why the agent says it made the call, in its own words (its Jentic-Reason "
+            "request header). Unverified; null when the agent gave no reason."
+        ),
+        examples=["Customer 4821 asked for a replacement order"],
+    )
     trace_id: str | None = Field(
         default=None, description="Trace id of the held call.", examples=[ex.TRACE_ID]
     )

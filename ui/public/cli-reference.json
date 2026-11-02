@@ -2189,6 +2189,11 @@
               "usage": "stream response body directly to stdout"
             },
             {
+              "name": "reason",
+              "type": "string",
+              "usage": "why you are making this call, in plain words; a reviewer reads it if the call is held for approval (sent as Jentic-Reason, at most 1024 characters)"
+            },
+            {
               "name": "revision",
               "type": "string",
               "usage": "pin to a specific revision ID for inspect"
