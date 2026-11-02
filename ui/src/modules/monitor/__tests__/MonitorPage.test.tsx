@@ -618,7 +618,7 @@ describe('MonitorPage', () => {
 		expect(eu.querySelector('[data-initials]')).toHaveAttribute('data-initials', 'STE');
 		// A deleted agent: its short id, with the whole id on its link.
 		expect(
-			screen.getByRole('row', { name: `View executions for agnt_…dead (${GONE})` }),
+			screen.getByRole('row', { name: `View executions for ${GONE}` }),
 		).toBeInTheDocument();
 		// Nowhere does a whole id stand in for a name.
 		expect(screen.queryByText(A)).not.toBeInTheDocument();
@@ -626,7 +626,13 @@ describe('MonitorPage', () => {
 
 		// The volume chart's legend, on its Agents lens: names and fleet letters.
 		await user.click(toggle('Volume chart grouping', 'Agents'));
-		const legend = await screen.findByRole('button', { name: 'support-triage' });
+		const legend = await waitFor(() => {
+			const chip = screen
+				.getAllByTestId('legend-chip')
+				.find((c) => c.textContent?.includes('support-triage'));
+			if (!chip) throw new Error('no legend chip for support-triage');
+			return chip;
+		});
 		expect(within(legend).getByTestId('entity-mark')).toHaveTextContent('ST');
 		const marks = screen.getAllByTestId('entity-mark').map((m) => m.textContent);
 		expect(marks).toEqual(expect.arrayContaining(['ST', 'STE', '?']));

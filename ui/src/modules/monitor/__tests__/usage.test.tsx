@@ -210,7 +210,7 @@ describe('UsageBreakdown', () => {
 		expect(await screen.findByText('agnt_…e4d9')).toBeInTheDocument();
 		expect(
 			screen.getByRole('row', {
-				name: 'View executions for agnt_…e4d9 (agnt_6accc351d881e4d9)',
+				name: 'View executions for agnt_6accc351d881e4d9',
 			}),
 		).toBeInTheDocument();
 	});

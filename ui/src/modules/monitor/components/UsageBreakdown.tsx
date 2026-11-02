@@ -347,7 +347,7 @@ function BreakdownRow({
 					isAgent={isAgent}
 				/>
 				{/* An actor with no name to show reads as its short id, in mono like
-				    every other unresolved id; the full id names the row's link. */}
+				    every other unresolved id; the whole id, once, names the row's link. */}
 				<span
 					className={cn(
 						'text-foreground min-w-0 flex-1 truncate text-sm font-medium',
@@ -434,7 +434,7 @@ function BreakdownRow({
 			href={href}
 			role="row"
 			className={className}
-			aria-label={`View executions for ${unnamed && row.actor ? `${row.label} (${row.actor.id})` : row.label}`}
+			aria-label={`View executions for ${unnamed && row.actor ? row.actor.id : row.label}`}
 		>
 			{content}
 		</AppLink>

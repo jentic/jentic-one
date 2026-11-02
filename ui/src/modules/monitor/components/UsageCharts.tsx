@@ -472,10 +472,12 @@ export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps
 							exit={{ opacity: 0 }}
 							transition={{ duration: 0.2 }}
 						>
+							{/* A chip is a key, not a control: pointing at it (or reaching
+							    its cut-off name by keyboard) brings its series forward. */}
 							{legend.map((seg) => (
-								<button
+								<span
 									key={seg.key}
-									type="button"
+									data-testid="legend-chip"
 									className={cn(
 										'flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 transition-opacity',
 										hoveredSegKey && hoveredSegKey !== seg.key
@@ -484,6 +486,8 @@ export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps
 									)}
 									onMouseEnter={() => setHoveredSegKey(seg.key)}
 									onMouseLeave={() => setHoveredSegKey(null)}
+									onFocus={() => setHoveredSegKey(seg.key)}
+									onBlur={() => setHoveredSegKey(null)}
 								>
 									<EntityMark
 										tone={seg.tone}
@@ -491,10 +495,10 @@ export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps
 										initials={seg.initials}
 										lens={lens}
 									/>
-									{/* A name can run long; the chip keeps to a budget. */}
+									{/* A name can run long; the chip keeps to a budget, and
+									    a cut-off name is a tab stop that shows the whole. */}
 									<TruncateWithTooltip
 										inline
-										focusable={false}
 										dir="auto"
 										className={cn(
 											'text-foreground max-w-[24ch] text-[11px]',
@@ -503,7 +507,7 @@ export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps
 									>
 										{seg.label}
 									</TruncateWithTooltip>
-								</button>
+								</span>
 							))}
 						</motion.div>
 					</AnimatePresence>

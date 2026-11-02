@@ -428,24 +428,25 @@ function BubbleTooltip({
 					className="mt-px h-5 w-5 text-[8px]"
 				/>
 				<div className="min-w-0 flex-1">
+					{/* The whole name, wrapped: nothing inside a hover bubble can be
+					    hovered for more. An actor with no name reads its whole id here,
+					    where there is room for it, once rather than short and long. */}
 					<p
 						className={cn(
-							'text-foreground truncate text-sm font-medium',
+							'text-foreground text-sm font-medium [overflow-wrap:anywhere]',
 							isUnnamedActor(item) && 'font-mono text-xs',
 						)}
 						dir="auto"
 					>
-						{item.label}
+						{isUnnamedActor(item) && item.actor ? item.actor.id : item.label}
 					</p>
 					{/* A named actor keeps its id within reach, muted, for correlating. */}
-					{item.actor && item.actor.resolution !== 'loading' && (
+					{item.actor?.resolution === 'resolved' && (
 						<p
 							className="text-muted-foreground truncate font-mono text-[10px]"
 							data-testid="bubble-tooltip-id"
 						>
-							{item.actor.resolution === 'resolved'
-								? shortActorId(item.actor.id)
-								: item.actor.id}
+							{shortActorId(item.actor.id)}
 						</p>
 					)}
 				</div>
