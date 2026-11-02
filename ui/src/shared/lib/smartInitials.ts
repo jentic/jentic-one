@@ -26,6 +26,11 @@ interface Named {
 	createdAt: string;
 }
 
+/** Code points, so a name's first "letter" is never half an emoji. */
+const chars = (s: string): string[] => Array.from(s);
+const take = (s: string, n: number): string => chars(s).slice(0, n).join('');
+const first = (s: string): string => chars(s)[0] ?? '';
+
 function words(name: string): string[] {
 	return name
 		.toLowerCase()
@@ -43,33 +48,27 @@ export function initialsCandidates(name: string): string[] {
 		// whatever follows it (M34, M34S, R2).
 		const num = w[digitAt].replace(/\D/g, '');
 		const after = w.slice(digitAt + 1);
-		const tail = after.map((x) => x[0]).join('');
-		const tail2 = after.map((x) => x.slice(0, 2)).join('');
-		const lead = digitAt > 0 ? w[0][0] : (w[0].match(/[a-z]/)?.[0] ?? '');
-		const lead2 =
-			digitAt > 1
-				? w
-						.slice(0, 2)
-						.map((x) => x[0])
-						.join('')
-				: lead;
+		const tail = after.map(first).join('');
+		const tail2 = after.map((x) => take(x, 2)).join('');
+		const lead = digitAt > 0 ? first(w[0]) : (w[0].match(/[a-z]/)?.[0] ?? '');
+		const lead2 = digitAt > 1 ? w.slice(0, 2).map(first).join('') : lead;
 		return capped([lead + num + tail, lead + num + tail2, lead2 + num + tail]);
 	}
 	const [a, b = '', c = ''] = w;
-	if (!b) return capped([a.slice(0, 2), a.slice(0, 3), a.slice(0, 4)]);
+	if (!b) return capped([take(a, 2), take(a, 3), take(a, 4)]);
 	return capped([
-		a[0] + b[0],
-		a[0] + b[0] + (c[0] ?? ''),
-		a.slice(0, 2) + b[0],
-		a[0] + b.slice(0, 2),
-		a.slice(0, 3) + b[0],
-		a[0] + b.slice(0, 3),
+		first(a) + first(b),
+		first(a) + first(b) + first(c),
+		take(a, 2) + first(b),
+		first(a) + take(b, 2),
+		take(a, 3) + first(b),
+		first(a) + take(b, 3),
 	]);
 }
 
 /** Caps every candidate's length. */
 function capped(list: string[]): string[] {
-	return list.map((c) => c.slice(0, MAX_INITIALS)).filter(Boolean);
+	return list.map((c) => take(c, MAX_INITIALS)).filter(Boolean);
 }
 
 /** Creation instant in ms; an absent or unreadable time sorts after every real one. */
@@ -121,7 +120,7 @@ function firstFree(list: readonly string[], taken: ReadonlySet<string>): string 
 	if (free !== undefined) return free;
 	for (let n = 2; ; n++) {
 		const digits = String(n);
-		const numbered = list[0].slice(0, Math.max(1, MAX_INITIALS - digits.length)) + digits;
+		const numbered = take(list[0], Math.max(1, MAX_INITIALS - digits.length)) + digits;
 		if (!taken.has(numbered)) return numbered;
 	}
 }

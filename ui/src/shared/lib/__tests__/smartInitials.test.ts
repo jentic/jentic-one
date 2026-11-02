@@ -150,4 +150,11 @@ describe('smartInitials', () => {
 	it('copes with a leading number', () => {
 		expect(read('2fa-bot')).toEqual(['F2B']);
 	});
+
+	it('keeps an emoji whole rather than cutting it to half a glyph', () => {
+		expect(read('🚀-launcher', '🚀🚀', 'ops-🛰-relay')).toEqual(['🚀L', '🚀🚀', 'O🛰']);
+		// A lone surrogate is the one thing `encodeURIComponent` throws on.
+		for (const v of read('🚀-launcher', '🚀🚀'))
+			expect(() => encodeURIComponent(v)).not.toThrow();
+	});
 });
