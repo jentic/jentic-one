@@ -408,11 +408,11 @@ def mcp_stdio_session_key(actor_id: str, session_id: str) -> str:
 
     The id is an untrusted client header, and the dedupe — the shared-state
     claim, the table lookup and the partial unique index behind it — keys on
-    the stored value alone. Unnamespaced, whichever actor emitted first for a
-    given id claimed it for everyone, so another owner's agent using the same
-    id (a shared orchestrator makes that ordinary) silently got no event and
-    that owner lost the visibility. The HTTP sibling is actor-scoped by
-    construction for the same reason.
+    the stored value alone. Unnamespaced, whichever actor emits first for a
+    given id claims it for everyone: another owner's agent using the same id
+    (a shared orchestrator makes that ordinary) gets no event, and that owner
+    loses the visibility. The HTTP sibling is actor-scoped by construction for
+    the same reason.
     """
     return f"stdio:{actor_id}:{session_id}"
 

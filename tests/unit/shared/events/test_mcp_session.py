@@ -793,8 +793,8 @@ async def test_two_owners_agents_sharing_a_session_id_both_emit() -> None:
     """The stored id is namespaced by actor, so neither claims it globally.
 
     The dedupe keys on that value alone — the claim, the table lookup and the
-    unique index behind them — so whichever actor emitted first for a given
-    id used to silence every other owner's agent for it.
+    unique index behind them — so without the namespace whichever actor
+    emitted first for a given id silences every other owner's agent for it.
     """
     ctx = _fake_ctx()
     with patch(

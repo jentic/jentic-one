@@ -442,8 +442,8 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 	});
 
 	it('says so when bringing a stale request up to date is refused', async () => {
-		// Unhandled, the rejection was silent: the banner kept offering an
-		// action that appeared to do nothing.
+		// A refusal has to say so: unhandled, the rejection is silent and the
+		// banner goes on offering an action that appears to do nothing.
 		const seeded = seedEdit(editBlock());
 		seeded.stale = true;
 		worker.use(
