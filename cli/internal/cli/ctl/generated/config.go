@@ -2057,6 +2057,13 @@ type MetricsConfig struct {
 
 	// Exporter corresponds to the JSON schema field "exporter".
 	Exporter MetricsConfigExporter `json:"exporter" yaml:"exporter" mapstructure:"exporter"`
+
+	// Explicit histogram bucket boundaries (milliseconds, strictly increasing, all >
+	// 0) for the request-latency histograms listed in docs/operations/monitoring.md;
+	// seconds-unit histograms get the list divided by 1000. Must be identical on
+	// every process whose series are aggregated together. As an env var, a
+	// comma-separated list.
+	LatencyBucketsMs []float64 `json:"latency_buckets_ms" yaml:"latency_buckets_ms" mapstructure:"latency_buckets_ms"`
 }
 
 type MetricsConfigExporter string
@@ -2107,6 +2114,32 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["exporter"]; !ok || v == nil {
 		plain.Exporter = "otlp"
+	}
+	if v, ok := raw["latency_buckets_ms"]; !ok || v == nil {
+		plain.LatencyBucketsMs = []float64{
+			1.0,
+			2.0,
+			5.0,
+			10.0,
+			15.0,
+			20.0,
+			25.0,
+			50.0,
+			100.0,
+			250.0,
+			500.0,
+			1000.0,
+			2500.0,
+			5000.0,
+			10000.0,
+			30000.0,
+		}
+	}
+	if plain.LatencyBucketsMs != nil && len(plain.LatencyBucketsMs) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "latency_buckets_ms", 1)
+	}
+	if len(plain.LatencyBucketsMs) > 64 {
+		return fmt.Errorf("field %s length: must be <= %d", "latency_buckets_ms", 64)
 	}
 	*j = MetricsConfig(plain)
 	return nil
