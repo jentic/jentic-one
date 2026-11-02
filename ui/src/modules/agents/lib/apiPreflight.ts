@@ -6,7 +6,7 @@
  * with the operator.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import { apiRefKey, apiScopeCovers, catalogImportRef } from '@/shared/credentials/lib/apiIdentity';
+import { apiScopeCovers, catalogImportRef, pickKey } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 import { credentialsBindableBy, type BindViewer } from '@/shared/credentials/lib/bindAuthority';
@@ -40,7 +40,8 @@ export interface ExistingAccount {
 }
 
 export interface PreflightItem {
-	/** `vendor/name` identity — the picker's selection key for this API. */
+	/** The API's identity as its import registers it ({@link pickKey}) — the
+	 * picker's selection key, and what makes two picks the same API. */
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
@@ -150,7 +151,7 @@ function newCredentialIsOneClick(api: SelectedApi, managedOAuthAvailable: boolea
 
 /** Classify one pick. */
 export function preflightApi(api: SelectedApi, inputs: PreflightInputs): PreflightItem {
-	const key = apiRefKey(api);
+	const key = pickKey(api);
 	const importsApi = api.source === 'catalog' && !api.registered;
 	const existing = accountsServingApi(inputs.bindings, api);
 
@@ -183,9 +184,20 @@ export function defaultChoice(item: Pick<PreflightItem, 'covering'>): Credential
 		: null;
 }
 
-/** Classify a whole selection, preserving pick order. */
+/**
+ * Classify a whole selection, preserving pick order. Two picks that import as
+ * one API (a catalog entry and the workspace API it registers as, or two
+ * entries that import alike) are one item — the first — since a second
+ * credential for one API makes every unnamed call to it a 409.
+ */
 export function preflightApis(apis: SelectedApi[], inputs: PreflightInputs): PreflightItem[] {
-	return apis.map((api) => preflightApi(api, inputs));
+	const seen = new Set<string>();
+	return apis.flatMap((api) => {
+		const item = preflightApi(api, inputs);
+		if (seen.has(item.key)) return [];
+		seen.add(item.key);
+		return [item];
+	});
 }
 
 /** Which accounts the agent already reaches an API through, e.g. `Added via

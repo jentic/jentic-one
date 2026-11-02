@@ -27,7 +27,7 @@ import {
 	SheetPrimitive,
 } from '@/shared/ui';
 import { useNoAuthPicks, type SelectedApi, type VendorSummary } from '@/shared/credentials/api';
-import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
+import { apiRefKey, pickKey, sharedApiLabels } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker, ImportSpecDialog, CreateCredentialFlow } from '@/shared/credentials/components';
 import {
 	addedViaLabel,
@@ -114,15 +114,21 @@ export function AddApisTray({
 		}
 	}, [agentId]);
 
-	// Seed-from-props syncs only when the seed itself changes, never on `open`. The
-	// draft is a view of the queue's batch, so a seed withdrawn without a commit
-	// (the tray was closed; the batch waits in the queue) clears it too.
+	// Seed-from-props syncs only when the seed itself changes, never on `open`. A
+	// seed withdrawn without a commit (the tray was dismissed; the batch waits in
+	// the queue) leaves the picks alone — a dismissal is a peek, not a discard —
+	// and the next seed joins its picks to what was ticked meanwhile, so nothing
+	// ticked on top of a Resume setup is lost to an Escape.
 	const lastSeedRef = useRef(seed);
 	useEffect(() => {
 		if (lastSeedRef.current === seed) return;
 		lastSeedRef.current = seed;
-		setPicks(seed?.picks ?? []);
-		setLocked(seed?.added ?? []);
+		if (!seed) return;
+		setPicks((current) => {
+			const keys = new Set(seed.picks.map(pickKey));
+			return [...seed.picks, ...current.filter((p) => !keys.has(pickKey(p)))];
+		});
+		setLocked(seed.added);
 	}, [seed]);
 	const editingBatch = seed != null;
 
@@ -136,10 +142,12 @@ export function AddApisTray({
 	);
 	const items = useMemo(() => preflightApis(picks, preflightInputs), [picks, preflightInputs]);
 
-	const lockedKeys = useMemo(() => new Set(locked.map(apiRefKey)), [locked]);
+	// Picks key by the identity their import registers (`pickKey`), so a catalog
+	// entry and the workspace API it imports as are one pick, never two credentials.
+	const lockedKeys = useMemo(() => new Set(locked.map(pickKey)), [locked]);
 	// Locked rows read ticked (they are in the batch) as well as disabled.
 	const selectedKeys = useMemo(
-		() => new Set([...picks.map(apiRefKey), ...lockedKeys]),
+		() => new Set([...picks.map(pickKey), ...lockedKeys]),
 		[picks, lockedKeys],
 	);
 
@@ -164,19 +172,19 @@ export function AddApisTray({
 	};
 
 	const remove = (key: string): void =>
-		setPicks((current) => current.filter((p) => apiRefKey(p) !== key));
+		setPicks((current) => current.filter((p) => pickKey(p) !== key));
 
 	const toggle = (api: SelectedApi): void => {
-		const key = apiRefKey(api);
-		if (picks.some((p) => apiRefKey(p) === key)) remove(key);
+		const key = pickKey(api);
+		if (picks.some((p) => pickKey(p) === key)) remove(key);
 		else setPicks((current) => [...current, api]);
 	};
 
 	// Append, never toggle: re-uploading an API already picked must not drop it.
 	const addImported = (apis: SelectedApi[]): void =>
 		setPicks((current) => {
-			const keys = new Set([...current.map(apiRefKey), ...lockedKeys]);
-			return [...current, ...apis.filter((api) => !keys.has(apiRefKey(api)))];
+			const keys = new Set([...current.map(pickKey), ...lockedKeys]);
+			return [...current, ...apis.filter((api) => !keys.has(pickKey(api)))];
 		});
 
 	const preflightReady = credentialsSource.complete && !credentialsSource.error && !bindingsError;
@@ -199,6 +207,10 @@ export function AddApisTray({
 
 	const duplicating = useMemo(() => items.filter((i) => i.existing.length > 0), [items]);
 	const recordShown = locked.length > 0 || duplicating.length > 0;
+	const recordShared = useMemo(
+		() => sharedApiLabels([...locked, ...duplicating.map((i) => i.api)]),
+		[locked, duplicating],
+	);
 
 	return (
 		<SheetPrimitive
@@ -287,12 +299,18 @@ export function AddApisTray({
 							{/* Already added by an earlier pass: a record, not a choice. */}
 							{locked.map((api) => (
 								<li
-									key={apiRefKey(api)}
+									key={pickKey(api)}
 									data-testid="tray-selection-added"
 									className="flex items-center gap-2"
 								>
 									<span className="text-foreground min-w-0 flex-1 truncate">
 										{api.label}
+										{recordShared.has(api.label.trim().toLowerCase()) && (
+											<span className="text-foreground-faint font-mono">
+												{' '}
+												· {api.vendor}
+											</span>
+										)}
 									</span>
 									<span className="text-success inline-flex shrink-0 items-center gap-1.5 font-medium">
 										<Check
@@ -307,6 +325,12 @@ export function AddApisTray({
 								<li key={item.key} className="min-w-0">
 									<span className="text-foreground block truncate">
 										{item.api.label}
+										{recordShared.has(item.api.label.trim().toLowerCase()) && (
+											<span className="text-foreground-faint font-mono">
+												{' '}
+												· {item.api.vendor}
+											</span>
+										)}
 									</span>
 									<span data-testid="tray-added-via" className="block truncate">
 										{addedViaLabel(item.existing)} — this adds another
