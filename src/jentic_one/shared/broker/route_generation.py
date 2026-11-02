@@ -8,7 +8,8 @@ route cached in **the process that commits it** stale at once, without the
 registry importing the broker.
 
 The registry repositories call :func:`mark_routes_changed` on the session that
-performs such a write. When that session's outermost transaction commits, the
+performs such a write, **after** the statement that changes routing has run and
+only if it changed a row. When that session's outermost transaction commits, the
 generation returned by :func:`route_generation` advances; caches stamp each
 entry with the generation read before their lookup ran, so an entry filled
 from pre-commit state is never served once the write is visible. A rollback of
@@ -17,6 +18,19 @@ neither bumps nor discards: its RELEASE does not make the write visible, and
 rolling it back leaves any mark set earlier in the outer transaction in place
 (a mark set inside a rolled-back savepoint survives too, which only costs one
 spurious invalidation).
+
+Marking after the write is what makes the rollback guarantee hold.
+``after_rollback`` is dispatched only for a session that began a DBAPI
+transaction (``Session.rollback()`` is a pass-through otherwise, and
+``after_soft_rollback`` is skipped with it), so a mark set before any statement
+would survive its own rollback and bump on the session's next commit.
+
+**Granularity.** The counter is one process-wide integer, so any routing write
+invalidates every route cached in the process, not just the affected API's. A
+URL-index write against a draft revision cannot change an unpinned answer (those
+read only ``Api.current_revision_id``) yet still bumps it, so a process that
+continuously imports catalogue specs can keep its cache cold. Scoping the
+generation per API or revision is #1695 follow-up work.
 
 **Scope.** The counter is per process, and the broker always runs as its own
 process (``python -m jentic_one`` refuses to bundle it with another surface),
@@ -55,7 +69,6 @@ def mark_routes_changed(session: AsyncSession | Session) -> None:
     session.info[_ROUTES_CHANGED_KEY] = True
 
 
-@event.listens_for(Session, "after_commit")
 def _bump_on_commit(session: Session) -> None:
     # SQLAlchemy dispatches after_commit for a savepoint RELEASE too; the write
     # is visible to other connections only once the outermost transaction commits.
@@ -65,9 +78,22 @@ def _bump_on_commit(session: Session) -> None:
         bump_route_generation()
 
 
-@event.listens_for(Session, "after_rollback")
 def _discard_on_rollback(session: Session) -> None:
     # A savepoint rollback leaves the outer transaction (and its mark) alive.
     if session.in_nested_transaction():
         return
     session.info.pop(_ROUTES_CHANGED_KEY, None)
+
+
+def install_route_generation_listeners() -> None:
+    """Arm the commit/rollback hooks that advance the routing generation.
+
+    Called from wiring when a process builds a discovery cache. The listeners go
+    on the ``Session`` class, whose dispatch every session in the process
+    inherits, so arming them is scoped to processes that can serve a route
+    rather than paid by every control, admin and auth commit. Idempotent.
+    """
+    if not event.contains(Session, "after_commit", _bump_on_commit):
+        event.listen(Session, "after_commit", _bump_on_commit)
+    if not event.contains(Session, "after_rollback", _discard_on_rollback):
+        event.listen(Session, "after_rollback", _discard_on_rollback)

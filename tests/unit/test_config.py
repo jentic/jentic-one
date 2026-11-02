@@ -316,6 +316,9 @@ def test_broker_discovery_cache_defaults_yaml_and_env_overrides(
         {"discovery_cache_ttl_s": 300, "discovery_cache_negative_ttl_s": 301},
         # A cached miss may not outlive a cached hit: rejected, never clamped.
         {"discovery_cache_ttl_s": 1, "discovery_cache_negative_ttl_s": 30},
+        # With the cache off no cache is built, so a negative TTL would be
+        # silently inert: rejected rather than quietly dropped.
+        {"discovery_cache_ttl_s": 0, "discovery_cache_negative_ttl_s": 30},
         {"discovery_cache_max_entries": 0},
     ],
 )
@@ -329,8 +332,8 @@ def test_broker_discovery_cache_rejects_invalid_values(broker: dict[str, Any]):
     [
         {"discovery_cache_ttl_s": 300, "discovery_cache_negative_ttl_s": 300},
         {"discovery_cache_ttl_s": 2, "discovery_cache_negative_ttl_s": 2},
-        # With the cache off the negative TTL is unused, so any in-range value boots.
-        {"discovery_cache_ttl_s": 0, "discovery_cache_negative_ttl_s": 30},
+        # The cache off, with the negative TTL left at its 0 default.
+        {"discovery_cache_ttl_s": 0, "discovery_cache_negative_ttl_s": 0},
     ],
 )
 def test_broker_discovery_cache_accepts_boundary_values(broker: dict[str, Any]):

@@ -53,7 +53,11 @@ from jentic_one.registry.services.api_service import ApiService
 from jentic_one.registry.services.overlay_service import OverlayService
 from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.broker.route_generation import route_generation
+from jentic_one.shared.broker.route_generation import (
+    install_route_generation_listeners,
+    mark_routes_changed,
+    route_generation,
+)
 from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -64,6 +68,18 @@ from jentic_one.wiring import InProcessRegistryResolver, build_discovery_cache
 from tests.harness.db_round_trips import trace_round_trips
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _route_generation_listeners() -> None:
+    """Arm the generation hooks, which only a process that builds a cache gets.
+
+    Wiring arms them in `build_discovery_cache`, so tests that drive the
+    generation directly must not depend on another test having built a cache
+    first.
+    """
+    install_route_generation_listeners()
+
 
 VENDOR = "cache-example"
 NAME = "routes"
@@ -520,6 +536,71 @@ async def test_outer_rollback_after_a_savepoint_discards_the_mark(
     async with registry_db.session() as session:
         stmt = select(Api.current_revision_id).where(Api.id == seeded["api_id"])
         assert (await session.execute(stmt)).scalar_one() == seeded["live"]
+
+
+async def test_losing_compare_and_set_does_not_invalidate(
+    registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
+) -> None:
+    """A CAS that moves no row backs off, so it must not flush the process's routes."""
+    start = route_generation()
+    async with registry_db.transaction() as session:
+        flipped = await ApiRepository.compare_and_set_current_revision(
+            session,
+            seeded["api_id"],
+            expected_revision_id=uuid.uuid4(),  # never the current pointer
+            new_revision_id=seeded["draft"],
+        )
+        assert flipped == 0
+
+    assert route_generation() == start
+
+
+async def test_winning_compare_and_set_invalidates(
+    registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
+) -> None:
+    start = route_generation()
+    async with registry_db.transaction() as session:
+        flipped = await ApiRepository.compare_and_set_current_revision(
+            session,
+            seeded["api_id"],
+            expected_revision_id=seeded["live"],
+            new_revision_id=seeded["draft"],
+        )
+        assert flipped == 1
+
+    assert route_generation() == start + 1
+
+
+async def test_mark_before_any_statement_would_survive_its_rollback(
+    registry_db: DatabaseSession, seeded: dict[str, uuid.UUID]
+) -> None:
+    """Why the repositories mark *after* their write, never before.
+
+    ``after_rollback`` fires only for a session that began a DBAPI transaction
+    (``Session.rollback()`` is a pass-through otherwise, and
+    ``after_soft_rollback`` is skipped with it). A mark set before the first
+    statement therefore outlives its own rollback and bumps on the session's
+    next commit — so the repositories must not set one that early.
+    """
+    start = route_generation()
+    async with registry_db.session() as session:
+        mark_routes_changed(session)
+        await session.rollback()
+        assert route_generation() == start
+        # A rollback that never reached the DB did not clear the mark, so this
+        # unrelated commit would carry it.
+        await session.execute(select(Api.id).where(Api.id == seeded["api_id"]))
+        await session.commit()
+    assert route_generation() == start + 1, "the mark survived the rollback, as documented"
+
+    # The repositories never create that window: every mark follows its write.
+    start = route_generation()
+    async with registry_db.session() as session:
+        await ApiRepository.clear_current_revision(session, seeded["api_id"])
+        await session.rollback()
+        await session.execute(select(Api.id).where(Api.id == seeded["api_id"]))
+        await session.commit()
+    assert route_generation() == start
 
 
 # --- Through the execute route: pins are checked per caller -----------------

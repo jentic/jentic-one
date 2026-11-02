@@ -6,11 +6,15 @@ registry write changes what the URL resolves to, so :class:`DiscoveryCache`
 serves repeat lookups from memory:
 
 - **Key.** Everything the lookup reads from the request: the upper-cased
-  method, the URL's scheme, authority and path, and the pinned ``revision_id``
-  (``None`` means "the API's live revision"). The scheme and host are
-  lower-cased and a default port (``:80`` for http, ``:443`` for https) is
-  dropped, exactly as the lookup normalises them; the query string and fragment
-  are left out because a resolution never depends on them. Keys are ``sha256``
+  method, the URL's host and path, and the pinned ``revision_id`` (``None``
+  means "the API's live revision"). The host is lower-cased and a default port
+  (``:80`` for http, ``:443`` for https) is dropped, exactly as the lookup
+  normalises it. The scheme is read only to pick which default port to strip
+  and is not itself part of the key, and userinfo is dropped, because the
+  lookup takes its host from ``urlparse(...).hostname`` and matches on method,
+  host, path and segment count alone — so ``http://h/p`` and ``https://h/p``
+  resolve identically and share one entry. The query string and fragment are
+  left out because a resolution never depends on them. Keys are ``sha256``
   digests; values hold the matched operation, including its path parameters
   (raw URL path segments).
 - **Freshness.** The TTL is the freshness bound. A hit is served only while its
@@ -28,6 +32,12 @@ serves repeat lookups from memory:
 - **Memory.** An LRU bound of ``max_entries``; each entry's size is bounded only
   by the request URL's length. Concurrent misses for one key share a single
   lookup (:class:`SingleFlight`).
+- **Eviction is process-wide and unpartitioned.** Distinct path-parameter values
+  each take an entry, so one caller walking a parameterised route past
+  ``max_entries`` evicts the routes cached for every other identity in the
+  process, costing them a registry lookup each. Only
+  ``broker.discovery_cache.evictions`` signals it. Per-caller admission or
+  partitioning is #1695 follow-up work.
 
 **Tenancy.** The lookup takes no caller identity, so its answer is the same for
 every caller, and one cache is shared by every identity in the process. The
@@ -133,6 +143,10 @@ class DiscoveryCache:
             del self._entries[key]
 
         async def _load() -> ResolveResult | None:
+            # Counted here, not before the flight: single-flighted waiters run
+            # no registry lookup, so counting them as misses would report a 0 %
+            # hit rate for one real lookup.
+            _cache_misses.add(1)
             # Stamped with the pre-lookup time and generation, so an entry never
             # outlives its TTL measured from when its DB read began, and a read
             # that raced a routing commit is never stored.
@@ -140,17 +154,19 @@ class DiscoveryCache:
             value = await load()
             ttl = self._ttl_s if value is not None else self._negative_ttl_s
             if ttl > 0 and self._generation() == generation:
-                entry = _Entry(value=value, generation=generation, expires_at=started + ttl)
-                self._store(key, entry)
+                self._store(
+                    key, _Entry(value=value, generation=generation, expires_at=started + ttl)
+                )
             return value
 
-        _cache_misses.add(1)
         # The generation is part of the flight key: a lookup that starts after a
         # routing commit never joins one that started before it.
         value = await self._single_flight.do(f"{generation}:{key}", _load)
         return _copy(value)
 
     def _store(self, key: str, entry: _Entry) -> None:
+        # Assignment appends on the miss path (``resolve`` has already dropped any
+        # stale entry for the key), and re-seats an existing key as most-recent.
         self._entries[key] = entry
         self._entries.move_to_end(key)
         while len(self._entries) > self._max_entries:
@@ -161,7 +177,11 @@ class DiscoveryCache:
 def _cache_key(*, method: str, url: str, revision_id: uuid.UUID | None) -> str:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
-    userinfo, at, hostport = parts.netloc.rpartition("@")
+    # Userinfo is dropped and the scheme is not keyed on: the lookup reads the
+    # host via ``urlparse(...).hostname`` and uses the scheme only to choose the
+    # default port to strip, so two URLs that differ only in scheme or userinfo
+    # resolve to the same operation and must share one entry.
+    _userinfo, _at, hostport = parts.netloc.rpartition("@")
     hostport = hostport.lower()
     default_port = _DEFAULT_PORT_SUFFIX.get(scheme)
     if default_port is not None and hostport.endswith(default_port):
@@ -169,8 +189,7 @@ def _cache_key(*, method: str, url: str, revision_id: uuid.UUID | None) -> str:
     raw = "\x00".join(
         (
             method.upper(),
-            scheme,
-            f"{userinfo}{at}{hostport}",
+            hostport,
             parts.path,
             revision_id.hex if revision_id is not None else "",
         )

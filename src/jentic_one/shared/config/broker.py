@@ -387,7 +387,19 @@ class BrokerConfig(BaseModel):
 
     @model_validator(mode="after")
     def _negative_discovery_ttl_within_ttl(self) -> BrokerConfig:
-        """A cached miss must never outlive a cached hit while the cache is on."""
+        """A cached miss must never outlive a cached hit, nor be set with no cache.
+
+        With ``discovery_cache_ttl_s`` at 0 no cache is built at all, so a
+        non-zero negative TTL would be silently inert — rejected rather than
+        quietly dropped.
+        """
+        if self.discovery_cache_negative_ttl_s > 0 and self.discovery_cache_ttl_s == 0:
+            raise ValueError(
+                "broker.discovery_cache_negative_ttl_s "
+                f"({self.discovery_cache_negative_ttl_s}) has no effect while "
+                "broker.discovery_cache_ttl_s is 0 (the cache is disabled); set "
+                "it to 0 or enable the cache"
+            )
         if 0 < self.discovery_cache_ttl_s < self.discovery_cache_negative_ttl_s:
             raise ValueError(
                 "broker.discovery_cache_negative_ttl_s "

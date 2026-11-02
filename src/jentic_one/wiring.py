@@ -45,6 +45,7 @@ from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
+from jentic_one.shared.broker.route_generation import install_route_generation_listeners
 from jentic_one.shared.config import BrokerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -130,9 +131,14 @@ def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
 
 
 def build_discovery_cache(broker: BrokerConfig) -> DiscoveryCache | None:
-    """The route-discovery cache the broker config asks for, or ``None`` when disabled."""
+    """The route-discovery cache the broker config asks for, or ``None`` when disabled.
+
+    Arming the routing-generation listeners here keeps them off the commit path of
+    processes that serve no routes (a standalone control or admin surface).
+    """
     if broker.discovery_cache_ttl_s <= 0:
         return None
+    install_route_generation_listeners()
     return DiscoveryCache(
         ttl_s=broker.discovery_cache_ttl_s,
         negative_ttl_s=broker.discovery_cache_negative_ttl_s,

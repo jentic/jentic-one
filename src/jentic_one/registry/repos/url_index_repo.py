@@ -227,10 +227,10 @@ class UrlIndexRepository:
 
     @staticmethod
     async def delete_for_revision(session: AsyncSession, revision_id: uuid.UUID) -> None:
-        mark_routes_changed(session)
         await session.execute(
             delete(OperationURLIndex).where(OperationURLIndex.revision_id == revision_id)
         )
+        mark_routes_changed(session)
         await session.flush()
 
     @staticmethod
@@ -243,7 +243,6 @@ class UrlIndexRepository:
         entry: URLIndexEntry,
         created_by: str,
     ) -> None:
-        mark_routes_changed(session)
         stmt = insert(OperationURLIndex).values(
             operation_id=operation_id,
             revision_id=revision_id,
@@ -271,6 +270,7 @@ class UrlIndexRepository:
             },
         )
         await session.execute(stmt)
+        mark_routes_changed(session)
         await session.flush()
 
     @staticmethod

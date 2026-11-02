@@ -208,8 +208,14 @@ class ApiRepository:
 
     @staticmethod
     async def clear_current_revision(session: AsyncSession, api_id: uuid.UUID) -> None:
-        mark_routes_changed(session)
-        await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(Api).where(Api.id == api_id).values(current_revision_id=None)
+            ),
+        )
+        if result.rowcount:
+            mark_routes_changed(session)
         await session.flush()
 
     @staticmethod
@@ -229,7 +235,6 @@ class ApiRepository:
         backs off instead of clobbering. ``expected_revision_id`` may be ``None`` to assert
         the API currently has no served revision.
         """
-        mark_routes_changed(session)
         result = cast(
             "CursorResult[Any]",
             await session.execute(
@@ -238,6 +243,10 @@ class ApiRepository:
                 .values(current_revision_id=new_revision_id)
             ),
         )
+        # Only a winning CAS moved the served revision; a loser (rowcount 0) backs
+        # off, so it must not invalidate the process's cached routes.
+        if result.rowcount:
+            mark_routes_changed(session)
         await session.flush()
         return result.rowcount
 
@@ -364,7 +373,6 @@ class ApiRepository:
         revision -> table cascade has removed the referencing rows, so the
         delete is refused even though nothing would be left dangling.
         """
-        mark_routes_changed(session)
         await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
         await session.flush()
         await session.execute(delete(ApiRevision).where(ApiRevision.api_id == api_id))
@@ -373,5 +381,7 @@ class ApiRepository:
             "CursorResult[Any]",
             await session.execute(delete(Api).where(Api.id == api_id)),
         )
+        if result.rowcount:
+            mark_routes_changed(session)
         await session.flush()
         return result.rowcount

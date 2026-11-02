@@ -83,7 +83,6 @@ async def test_hit_serves_repeat_lookup_without_loading() -> None:
     [
         ("POST", URL, None),
         ("GET", "https://other.acme.com/v1/pets/42", None),
-        ("GET", "http://api.acme.com/v1/pets/42", None),
         ("GET", "https://api.acme.com:8443/v1/pets/42", None),
         ("GET", "https://api.acme.com/v1/pets/43", None),
         ("GET", URL, uuid.uuid4()),
@@ -284,10 +283,17 @@ async def test_cancelled_leader_stores_nothing_and_a_waiter_reruns_once() -> Non
         "https://API.Acme.COM/v1/pets/42",
         "HTTPS://api.acme.com/v1/pets/42",
         "https://api.acme.com:443/v1/pets/42",
+        # The lookup matches on method, host, path and segment count alone: it
+        # takes the host from `urlparse(...).hostname` (so userinfo is invisible)
+        # and reads the scheme only to pick the default port to strip.
+        "http://api.acme.com/v1/pets/42",
+        "http://api.acme.com:80/v1/pets/42",
+        "https://user@api.acme.com/v1/pets/42",
+        "https://user:pw@api.acme.com/v1/pets/42",  # pragma: allowlist secret
     ],
 )
-async def test_scheme_host_case_and_default_port_share_an_entry(variant: str) -> None:
-    """The key normalises exactly what the lookup normalises (case, default port)."""
+async def test_lookup_equivalent_urls_share_an_entry(variant: str) -> None:
+    """The key normalises exactly what the lookup normalises, and no more."""
     cache, _ = _cache()
     load, calls = _counting_loader(_result())
 
@@ -302,11 +308,10 @@ async def test_scheme_host_case_and_default_port_share_an_entry(variant: str) ->
     [
         "http://api.acme.com:443/v1/pets/42",  # 443 is not http's default port
         "https://api.acme.com:4430/v1/pets/42",
-        "https://user@api.acme.com/v1/pets/42",
         "https://api.acme.com/V1/pets/42",  # the path is case-sensitive
     ],
 )
-async def test_non_default_authority_or_path_case_keeps_its_own_entry(variant: str) -> None:
+async def test_non_default_port_or_path_case_keeps_its_own_entry(variant: str) -> None:
     cache, _ = _cache()
     load, calls = _counting_loader(_result())
 
