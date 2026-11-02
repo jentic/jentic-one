@@ -231,6 +231,9 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 	// the model chose can never replace the agent's token on the outbound
 	// broker leg. The hosted mount merges the same way round
 	// (mcp/execute.py); over stdio these headers are model-supplied input.
+	// The other headers an agent must not choose for itself are stamped later
+	// still: the MCP server's attributionTransport.RoundTrip sets User-Agent
+	// and the session id on every attempt, after this builder has run.
 	req.Header.Del("Authorization")
 	req.Header.Set("Authorization", "Bearer "+r.Token)
 
