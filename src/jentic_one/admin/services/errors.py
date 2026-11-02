@@ -278,14 +278,6 @@ class ExecutionNotFoundError(NotFoundError):
         self.execution_id = execution_id
 
 
-class ExecutionRetentionElapsedError(NotFoundError):
-    """Raised when an execution record has been removed due to retention policy."""
-
-    def __init__(self, execution_id: str) -> None:
-        super().__init__(f"Execution '{execution_id}' retention period has elapsed")
-        self.execution_id = execution_id
-
-
 class AuditEntryNotFoundError(NotFoundError):
     """Raised when an audit entry does not exist."""
 

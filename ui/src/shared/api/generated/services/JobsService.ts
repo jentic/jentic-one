@@ -92,7 +92,7 @@ export class JobsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                404: `No job with this id is visible to the caller. A job belonging to another actor, or one whose retention window has expired, is indistinguishable from one that never existed.`,
+                404: `No job with this id is visible to the caller. A job belonging to another actor is indistinguishable from one that never existed.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -102,6 +102,11 @@ export class JobsService {
     /**
      * Get a job's result
      * Get the result of a completed job — polymorphic by kind.
+     *
+     * Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+     * running, failed or cancelled), and ``410`` once an
+     * approved execution's result is past
+     * ``held_executions.result_retention_seconds``.
      * @returns any The completed job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:
      *
      * - **`kind=import`**: `revisions`, one entry per API revision the import produced, each with `api` (the API object), `revision_id` and `state`.
@@ -129,7 +134,9 @@ export class JobsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                404: `No job with this id is visible to the caller, or its retention window has expired and the result is gone. Both are indistinguishable from a job that never existed.`,
+                404: `No job with this id is visible to the caller. A job belonging to another actor is indistinguishable from one that never existed.`,
+                409: `Conflict`,
+                410: `Gone`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

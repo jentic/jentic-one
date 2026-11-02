@@ -537,9 +537,8 @@ _PROSE_CODE_EXEMPTIONS: dict[tuple[str, str], str] = {
     ("submitOverlay", "512"): "overlay action-count limit, not a status code",
     # Describes the 429 its sibling `:connect` answers, not this operation.
     ("rejectConnectSession", "429"): "documents the rejection cooldown seen on :connect",
-    # The 403/409 here are the Problem Details body's own `status` member for a
+    # The 403 here is the Problem Details body's own `status` member for a
     # call that never ran; the HTTP status of this response stays 200.
-    ("getJobResult", "409"): "problem document's own status member, HTTP stays 200",
     ("getJobResult", "403"): "problem document's own status member, HTTP stays 200",
 }
 

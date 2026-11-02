@@ -29,6 +29,7 @@ from jentic_one.shared.web.openapi_responses import (
     HELD_EXECUTION_PROBLEM_CONTENT,
     PROBLEM_JSON,
     conflict,
+    gone,
     not_found,
     with_responses,
 )
@@ -123,9 +124,8 @@ async def list_jobs(
     "/jobs/{job_id}",
     summary="Get a job",
     responses=not_found(
-        "No job with this id is visible to the caller. A job belonging to another actor, "
-        "or one whose retention window has expired, is indistinguishable from one that "
-        "never existed."
+        "No job with this id is visible to the caller. A job belonging to another actor "
+        "is indistinguishable from one that never existed."
     ),
 )
 async def get_job(
@@ -205,14 +205,15 @@ _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
 @router.get(
     "/jobs/{job_id}/result",
     summary="Get a job's result",
-    responses={
-        **_JOB_RESULT_RESPONSE,
-        **not_found(
-            "No job with this id is visible to the caller, or its retention window has "
-            "expired and the result is gone. Both are indistinguishable from a job that "
-            "never existed."
+    responses=with_responses(
+        _JOB_RESULT_RESPONSE,
+        not_found(
+            "No job with this id is visible to the caller. A job belonging to another actor "
+            "is indistinguishable from one that never existed."
         ),
-    },
+        conflict(),
+        gone(),
+    ),
 )
 async def get_job_result(
     job_id: Annotated[
@@ -221,7 +222,13 @@ async def get_job_result(
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
-    """Get the result of a completed job — polymorphic by kind."""
+    """Get the result of a completed job — polymorphic by kind.
+
+    Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
+    running, failed or cancelled), and ``410`` once an
+    approved execution's result is past
+    ``held_executions.result_retention_seconds``.
+    """
     view = await result_svc.get(job_id, identity=identity)
     if view.kind == JobKind.EXECUTION and view.content_type:
         return Response(content=view.raw_body, media_type=view.content_type)
