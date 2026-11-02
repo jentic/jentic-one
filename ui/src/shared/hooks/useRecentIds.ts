@@ -8,7 +8,8 @@
  * no longer exist are the caller's to skip. Storage that is missing, throws or
  * holds something unreadable reads as an empty history. A different
  * `storageKey` reads that key's own history — one key's list is never written
- * under another.
+ * under another. Another tab's write to the key is read back (the `storage`
+ * event), so two tabs extend one history rather than overwrite each other's.
  */
 import { useEffect, useState } from 'react';
 import { readLocalPreference, writeLocalPreference } from '@/shared/lib/localPreference';
@@ -60,8 +61,28 @@ export function useRecentIds(
 		ids = lead(base, current, cap);
 		setState({ storageKey, current, cap, ids });
 	}
+	// An empty history forgets the key rather than storing `[]`, so a clear
+	// made in another tab is not undone here.
 	useEffect(() => {
-		writeLocalPreference(storageKey, JSON.stringify(ids));
+		writeLocalPreference(storageKey, ids.length ? JSON.stringify(ids) : null);
 	}, [storageKey, ids]);
+	// Another document wrote the key (or cleared storage, `key === null`): fold
+	// its history in under this tab's current id. The event never fires for
+	// this document's own writes, and an unchanged list is kept as it is, so
+	// two tabs settle rather than ping-pong.
+	useEffect(() => {
+		const onStorage = (event: StorageEvent) => {
+			if (event.storageArea !== window.localStorage) return;
+			if (event.key !== null && event.key !== storageKey) return;
+			setState((prev) => {
+				const next = lead(readIds(storageKey), prev.current, prev.cap);
+				const same =
+					next.length === prev.ids.length && next.every((id, i) => id === prev.ids[i]);
+				return same ? prev : { ...prev, ids: next };
+			});
+		};
+		window.addEventListener('storage', onStorage);
+		return () => window.removeEventListener('storage', onStorage);
+	}, [storageKey]);
 	return ids;
 }

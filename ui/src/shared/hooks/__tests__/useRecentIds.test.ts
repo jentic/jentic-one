@@ -1,10 +1,11 @@
 /**
  * useRecentIds — most-recently-current ids, newest first, persisted per
  * storage key: the current id leads in the render it becomes current, the
- * list is capped and de-duplicated, and unreadable storage reads as empty.
+ * list is capped and de-duplicated, unreadable storage reads as empty, and
+ * another tab's write to the key is folded in.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useRecentIds } from '@/shared/hooks/useRecentIds';
 
 const KEY = 'test.recentIds';
@@ -99,6 +100,41 @@ describe('useRecentIds', () => {
 	it('drops entries that are not non-empty strings', () => {
 		window.localStorage.setItem(KEY, JSON.stringify(['a', 1, '', null, 'b']));
 		expect(render({ current: null }).result.current).toEqual(['a', 'b']);
+	});
+
+	/** What the browser dispatches in this tab when another tab writes `key`. */
+	function otherTabWrote(key: string | null, ids: string[] | null) {
+		if (key !== null) {
+			if (ids === null) window.localStorage.removeItem(key);
+			else window.localStorage.setItem(key, JSON.stringify(ids));
+		} else window.localStorage.clear();
+		act(() => {
+			window.dispatchEvent(
+				new StorageEvent('storage', {
+					key,
+					newValue: ids === null ? null : JSON.stringify(ids),
+					storageArea: window.localStorage,
+				}),
+			);
+		});
+	}
+
+	it("folds another tab's write into the history, under this tab's current id", async () => {
+		const { result } = render({ current: 'a' });
+		otherTabWrote(KEY, ['x', 'a', 'y']);
+		expect(result.current).toEqual(['a', 'x', 'y']);
+		await waitFor(() => expect(stored(KEY)).toEqual(['a', 'x', 'y']));
+		// A clear of storage elsewhere leaves only what is current here.
+		otherTabWrote(null, null);
+		expect(result.current).toEqual(['a']);
+	});
+
+	it("ignores another tab's write to a different key", () => {
+		const { result, renders } = render({ current: 'a' });
+		const before = renders.length;
+		otherTabWrote(OTHER, ['x']);
+		expect(result.current).toEqual(['a']);
+		expect(renders.length).toBe(before);
 	});
 
 	it('re-reads a new storage key and does not write the old history under it', async () => {
