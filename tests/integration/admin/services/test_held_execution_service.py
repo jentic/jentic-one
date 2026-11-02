@@ -48,13 +48,14 @@ from jentic_one.admin.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.jobs.handlers import JobHandlerRegistry
+from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     HoldOutcome,
     PendingApprovalLimitError,
     file_hold,
 )
+from jentic_one.shared.jobs.wakeup import JobWakeup
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState, JobKind, JobStatus
 from jentic_one.shared.models.events import EventType
@@ -1051,3 +1052,69 @@ async def test_a_held_execution_never_reaches_a_job_that_is_not_its_held_executi
         assert rows[hold.approval_id]["execution_status"] is None
         assert result.status_code == 404, caller.sub
         assert "import result" not in result.text
+
+
+async def test_approving_a_held_execution_wakes_cross_process_worker_via_pg_notify(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """Approving a hold emits ``NOTIFY jentic_jobs`` so a parked worker claims it."""
+    ctx = integration_context
+    if ctx.admin_db.backend.dialect_name == "sqlite":
+        pytest.skip("Postgres LISTEN/NOTIFY cross-process approval wake-up")
+
+    denied_hold = await _hold(ctx, actors.agent, path="/v1/deny-no-wake")
+    approved_hold = await _hold(ctx, actors.agent, path="/v1/approve-wake")
+    first_empty_poll = asyncio.Event()
+    claimed_done = asyncio.Event()
+    seen: list[str] = []
+    notified: list[str] = []
+
+    class _RecordingExecutionHandler:
+        async def execute(self, job_id: str, db: Any, **_: Any) -> JobResultPayload:
+            seen.append(job_id)
+            claimed_done.set()
+            return JobResultPayload(body={"status": "completed", "ok": True})
+
+    class _ObservedWorker(WorkerLoop):
+        async def _claim_next(self) -> Any:
+            job = await super()._claim_next()
+            if job is None:
+                first_empty_poll.set()
+            return job
+
+        def _on_pg_notify(self, connection: Any, pid: int, channel: str, payload: object) -> None:
+            notified.append(str(payload))
+            super()._on_pg_notify(connection, pid, channel, payload)
+
+    registry = JobHandlerRegistry()
+    registry.register(JobKind.EXECUTION, _RecordingExecutionHandler())
+    worker = _ObservedWorker(
+        ctx.admin_db,
+        registry,
+        worker_config=WorkerConfig(poll_interval_s=60.0),
+        wakeup=JobWakeup(),
+    )
+    task = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(worker._listening.wait(), timeout=5.0)
+        await asyncio.wait_for(first_empty_poll.wait(), timeout=5.0)
+
+        # Denying a hold transitions the job to FAILED, not QUEUED — no NOTIFY.
+        await HeldExecutionService(ctx).decide(
+            denied_hold.approval_id,
+            DecideInput(decision=ApprovalDecision.DENY),
+            identity=actors.owner,
+        )
+        # Approving releases the job to QUEUED and emits NOTIFY jentic_jobs, 'execution'.
+        await HeldExecutionService(ctx).decide(
+            approved_hold.approval_id,
+            DecideInput(decision=ApprovalDecision.APPROVE),
+            identity=actors.owner,
+        )
+        await asyncio.wait_for(claimed_done.wait(), timeout=5.0)
+    finally:
+        worker.stop()
+        await asyncio.wait_for(task, timeout=5.0)
+
+    assert notified == [str(JobKind.EXECUTION)]
+    assert seen == [approved_hold.job_id]

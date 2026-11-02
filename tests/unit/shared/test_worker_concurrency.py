@@ -20,7 +20,7 @@ import structlog
 
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
-from jentic_one.shared.jobs.wakeup import JobWakeup
+from jentic_one.shared.jobs.wakeup import JOB_NOTIFY_CHANNEL, JobWakeup, notify_job_enqueued
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models.jobs import JobKind
 
@@ -537,3 +537,361 @@ def test_wakeup_notify_drops_subscribers_from_closed_loops() -> None:
     asyncio.run(subscribe())  # the loop is closed once run() returns
     wakeup.notify()
     assert wake not in wakeup._subscribers
+
+
+class _FakeNotifySession:
+    """Minimal session double recording statements executed by ``notify_job_enqueued``."""
+
+    def __init__(self, dialect_name: str) -> None:
+        self.bind = SimpleNamespace(dialect=SimpleNamespace(name=dialect_name))
+        self.executed: list[tuple[str, dict[str, Any]]] = []
+
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> None:
+        self.executed.append((str(stmt), dict(params or {})))
+
+
+async def test_notify_job_enqueued_emits_pg_notify_on_postgres() -> None:
+    """On Postgres, ``notify_job_enqueued`` issues ``SELECT pg_notify('jentic_jobs', :payload)``."""
+    session = _FakeNotifySession("postgresql")
+    await notify_job_enqueued(session, JobKind.EXECUTION)  # type: ignore[arg-type]
+    await notify_job_enqueued(session)  # type: ignore[arg-type]
+
+    assert session.executed == [
+        ("SELECT pg_notify('jentic_jobs', :payload)", {"payload": "execution"}),
+        ("SELECT pg_notify('jentic_jobs', :payload)", {"payload": ""}),
+    ]
+
+
+async def test_notify_job_enqueued_is_noop_for_pg_notify_on_sqlite() -> None:
+    """On SQLite, ``notify_job_enqueued`` executes no ``pg_notify`` statement."""
+    session = _FakeNotifySession("sqlite")
+    await notify_job_enqueued(session, JobKind.IMPORT)  # type: ignore[arg-type]
+
+    assert session.executed == []
+
+
+class _FakeListenConn:
+    """In-memory stand-in for a dedicated ``asyncpg`` listener connection."""
+
+    def __init__(self, *, add_listener_error: BaseException | None = None) -> None:
+        self.listeners: dict[str, list[Callable[..., None]]] = {}
+        self.termination_listeners: list[Callable[[Any], None]] = []
+        self.removed_channels: list[str] = []
+        self.closed = False
+        self.terminated = False
+        self._add_listener_error = add_listener_error
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    def add_termination_listener(self, cb: Callable[[Any], None]) -> None:
+        self.termination_listeners.append(cb)
+
+    def remove_termination_listener(self, cb: Callable[[Any], None]) -> None:
+        if cb in self.termination_listeners:
+            self.termination_listeners.remove(cb)
+
+    async def add_listener(self, channel: str, cb: Callable[..., None]) -> None:
+        if self._add_listener_error is not None:
+            raise self._add_listener_error
+        self.listeners.setdefault(channel, []).append(cb)
+
+    async def remove_listener(self, channel: str, cb: Callable[..., None]) -> None:
+        self.removed_channels.append(channel)
+        if channel in self.listeners and cb in self.listeners[channel]:
+            self.listeners[channel].remove(cb)
+
+    async def close(self) -> None:
+        self.closed = True
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.closed = True
+
+    def deliver(self, payload: str, *, channel: str = JOB_NOTIFY_CHANNEL) -> None:
+        for cb in list(self.listeners.get(channel, ())):
+            cb(self, 1234, channel, payload)
+
+    def simulate_drop(self) -> None:
+        self.closed = True
+        for cb in list(self.termination_listeners):
+            cb(self)
+
+
+class _ListeningScriptedWorker(_ScriptedWorker):
+    """``_ScriptedWorker`` with a scripted sequence of listener connection outcomes."""
+
+    def __init__(
+        self,
+        body: Callable[[_Job], Awaitable[None]],
+        outcomes: list[_FakeListenConn | BaseException],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(body, **kwargs)
+        self._outcomes = list(outcomes)
+        self.listen_sleeps: list[float] = []
+        self.connect_attempts = 0
+        self.exhausted = asyncio.Event()
+
+    async def _open_listen_connection(self) -> Any:
+        self.connect_attempts += 1
+        outcome = self._outcomes.pop(0)
+        if not self._outcomes:
+            self.exhausted.set()
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    async def _listen_sleep(self, delay_s: float) -> None:
+        self.listen_sleeps.append(delay_s)
+        await _yield_loop(2)
+
+    def _jitter(self) -> float:
+        return 1.0
+
+
+async def test_pg_notify_wakes_worker_on_matching_kind_and_ignores_unrelated_kind() -> None:
+    """A ``NOTIFY jentic_jobs`` wakes the loop when its payload matches a registered handler.
+
+    Payloads for unregistered kinds are ignored so a surface-scoped worker does
+    not poll on notifications meant for another surface. An empty payload wakes
+    unconditionally.
+    """
+    conn = _FakeListenConn()
+    ran_first = asyncio.Event()
+    ran_second = asyncio.Event()
+    seen: list[str] = []
+
+    async def body(job: _Job) -> None:
+        seen.append(job.id)
+        if len(seen) == 1:
+            ran_first.set()
+        elif len(seen) == 2:
+            ran_second.set()
+
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[conn],
+        config=WorkerConfig(poll_interval_s=60.0),
+    )
+    task = asyncio.create_task(worker.run())
+    await asyncio.wait_for(worker.polled_empty.wait(), timeout=_PROMPT_S)
+    await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+    initial_claims = worker.claims
+
+    # Unrelated kind ("import" when only EXECUTION is registered) is ignored.
+    conn.deliver(JobKind.IMPORT)
+    await _yield_loop()
+    assert not worker._wake.is_set()
+    assert worker.claims == initial_claims
+
+    # Matching kind ("execution") wakes the parked worker immediately.
+    worker.polled_empty.clear()
+    worker.queue.append(_Job(id="exec-1", kind=JobKind.EXECUTION))
+    conn.deliver(JobKind.EXECUTION)
+    await asyncio.wait_for(ran_first.wait(), timeout=_PROMPT_S)
+    await asyncio.wait_for(worker.polled_empty.wait(), timeout=_PROMPT_S)
+
+    # Empty payload ("") also wakes the parked worker immediately.
+    worker.queue.append(_Job(id="exec-2", kind=JobKind.EXECUTION))
+    conn.deliver("")
+    await asyncio.wait_for(ran_second.wait(), timeout=_PROMPT_S)
+
+    worker.stop()
+    await asyncio.wait_for(task, timeout=_PROMPT_S)
+    assert seen == ["exec-1", "exec-2"]
+    assert conn.removed_channels == [JOB_NOTIFY_CHANNEL]
+    assert conn.closed is True
+
+
+async def test_listen_failure_falls_back_to_polling_and_recovers_with_backoff() -> None:
+    """When LISTEN cannot be established (e.g. cold start or pgbouncer), polling continues."""
+    rejected = _FakeListenConn(
+        add_listener_error=RuntimeError("LISTEN is not supported in transaction pooling mode")
+    )
+    recovered_conn = _FakeListenConn()
+    ran = asyncio.Event()
+
+    async def body(job: _Job) -> None:
+        ran.set()
+
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[OSError("connection refused"), rejected, recovered_conn],
+        jobs=[_Job(id="polled-while-listen-down")],
+        config=WorkerConfig(
+            poll_interval_s=60.0,
+            reconnect_backoff_base_s=1.0,
+            reconnect_backoff_max_s=4.0,
+        ),
+    )
+    with structlog.testing.capture_logs() as logs:
+        task = asyncio.create_task(worker.run())
+        await asyncio.wait_for(ran.wait(), timeout=_PROMPT_S)
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        worker.stop()
+        await asyncio.wait_for(task, timeout=_PROMPT_S)
+
+    # The connection that failed inside add_listener was still closed cleanly.
+    assert rejected.closed is True
+    assert recovered_conn.closed is True
+    assert worker.listen_sleeps == [1.0, 2.0]
+    warnings = [e for e in logs if e["event"] == "worker_listen_unavailable"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    recovered = [e for e in logs if e["event"] == "worker_listen_recovered"]
+    assert len(recovered) == 1
+    assert recovered[0]["failed_attempts"] == 2
+
+
+async def test_listen_disconnect_reconnects_and_stop_cleans_up_connection() -> None:
+    """A dropped LISTEN connection reconnects with backoff and wakes on the new connection."""
+    first_conn = _FakeListenConn()
+    second_conn = _FakeListenConn()
+    ran = asyncio.Event()
+
+    async def body(job: _Job) -> None:
+        ran.set()
+
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[first_conn, second_conn],
+        config=WorkerConfig(
+            poll_interval_s=60.0,
+            reconnect_backoff_base_s=1.5,
+            reconnect_backoff_max_s=10.0,
+        ),
+    )
+    with structlog.testing.capture_logs() as logs:
+        task = asyncio.create_task(worker.run())
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        await asyncio.wait_for(worker.polled_empty.wait(), timeout=_PROMPT_S)
+
+        # Simulate the first LISTEN connection dropping mid-flight.
+        first_conn.simulate_drop()
+        await asyncio.wait_for(worker.exhausted.wait(), timeout=_PROMPT_S)
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+
+        # Notifications on the reconnected listener wake the worker.
+        worker.queue.append(_Job(id="after-reconnect"))
+        second_conn.deliver(JobKind.EXECUTION)
+        await asyncio.wait_for(ran.wait(), timeout=_PROMPT_S)
+
+        worker.stop()
+        await asyncio.wait_for(task, timeout=_PROMPT_S)
+
+    assert worker.listen_sleeps == [1.5]
+    assert second_conn.removed_channels == [JOB_NOTIFY_CHANNEL]
+    assert second_conn.closed is True
+    assert worker._listen_task is None
+    assert not worker._listening.is_set()
+    assert len([e for e in logs if e["event"] == "worker_listen_unavailable"]) == 1
+    assert len([e for e in logs if e["event"] == "worker_listen_recovered"]) == 1
+
+
+async def test_close_listen_connection_terminates_on_error_or_cancellation() -> None:
+    """A failing or cancelled listener close falls back to ``conn.terminate()``."""
+
+    class _BrokenCloseConn(_FakeListenConn):
+        async def remove_listener(self, channel: str, cb: Callable[..., None]) -> None:
+            raise OSError("broken pipe")
+
+    class _CancelledCloseConn(_FakeListenConn):
+        async def remove_listener(self, channel: str, cb: Callable[..., None]) -> None:
+            raise asyncio.CancelledError
+
+    worker = WorkerLoop(
+        db=_FakeDb(),  # type: ignore[arg-type]
+        handler_registry=JobHandlerRegistry(),
+    )
+    broken = _BrokenCloseConn()
+    await worker._close_listen_connection(broken)
+    assert broken.terminated is True
+
+    cancelled = _CancelledCloseConn()
+    with pytest.raises(asyncio.CancelledError):
+        await worker._close_listen_connection(cancelled)
+    assert cancelled.terminated is True
+
+
+async def test_stop_listener_waits_for_in_flight_close_when_cancelled() -> None:
+    """Cancelling ``_listen_task`` after ``stop()`` entered ``finally`` still awaits close."""
+    close_started = asyncio.Event()
+    release_close = asyncio.Event()
+
+    class _SlowCloseConn(_FakeListenConn):
+        async def close(self) -> None:
+            close_started.set()
+            await release_close.wait()
+            await super().close()
+
+    conn = _SlowCloseConn()
+
+    async def body(job: _Job) -> None:
+        return None
+
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[conn],
+        config=WorkerConfig(poll_interval_s=60.0),
+    )
+    worker._running = True
+    listen_task = asyncio.create_task(worker._listen_loop())
+    worker._listen_task = listen_task
+    await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+
+    worker._signal_listen_stop()
+    await asyncio.wait_for(close_started.wait(), timeout=_PROMPT_S)
+
+    stop_task = asyncio.create_task(worker._stop_listener())
+    await _yield_loop(5)
+    assert not stop_task.done(), "_stop_listener must wait until _close_listen_connection finishes"
+
+    release_close.set()
+    await asyncio.wait_for(stop_task, timeout=_PROMPT_S)
+    assert conn.closed is True
+    assert conn.terminated is False
+
+
+async def test_listen_error_redacts_embedded_url_credentials_and_omits_traceback() -> None:
+    """Listener errors carrying DSN userinfo redact the credentials and omit ``exc_info``."""
+    recovered_conn = _FakeListenConn()
+
+    async def body(job: _Job) -> None:
+        return None
+
+    dsn_error = (
+        "connect failed for "
+        "postgresql://admin:s3cr3tPass@db.internal:5432/app"  # pragma: allowlist secret
+    )
+    worker = _ListeningScriptedWorker(
+        body,
+        outcomes=[
+            RuntimeError(dsn_error),
+            recovered_conn,
+        ],
+        config=WorkerConfig(poll_interval_s=60.0),
+    )
+    with structlog.testing.capture_logs() as logs:
+        task = asyncio.create_task(worker.run())
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        worker.stop()
+        await asyncio.wait_for(task, timeout=_PROMPT_S)
+
+    [warning] = [e for e in logs if e["event"] == "worker_listen_unavailable"]
+    assert "s3cr3tPass" not in str(warning)
+    assert "postgresql://***REDACTED***@db.internal:5432/app" in warning["error"]
+    [backoff] = [e for e in logs if e["event"] == "worker_listen_reconnect_backoff"]
+    assert backoff["exc_info"] is False
+
+
+def test_on_pg_notify_ignores_named_kind_when_no_handlers_are_registered() -> None:
+    """A worker with an empty handler registry ignores kind-scoped notifications."""
+    worker = WorkerLoop(
+        db=_FakeDb(),  # type: ignore[arg-type]
+        handler_registry=JobHandlerRegistry(),
+    )
+    worker._on_pg_notify(None, 1, JOB_NOTIFY_CHANNEL, JobKind.EXECUTION)
+    assert not worker._wake.is_set()
+    worker._on_pg_notify(None, 1, JOB_NOTIFY_CHANNEL, "")
+    assert worker._wake.is_set()

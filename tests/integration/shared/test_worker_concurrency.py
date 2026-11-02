@@ -338,3 +338,172 @@ async def test_sqlite_concurrency_request_runs_slow_jobs_serially_without_failur
         }
     finally:
         await db.close()
+
+
+async def test_cross_process_enqueue_wakes_worker_via_pg_listen_notify(
+    admin_db: DatabaseSession, second_admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """On Postgres, ``enqueue_job`` on one pool wakes a worker on another pool via LISTEN/NOTIFY.
+
+    The worker uses an isolated ``JobWakeup()`` instance rather than the
+    process-wide ``job_wakeup``, so only the Postgres ``NOTIFY jentic_jobs``
+    delivered on commit can wake it from its 60 s poll wait.
+    """
+    if _is_sqlite(admin_db):
+        pytest.skip("Postgres LISTEN/NOTIFY cross-process wake-up")
+
+    first_empty_poll = asyncio.Event()
+
+    class _ObservedWorker(WorkerLoop):
+        async def _claim_next(self) -> Any:
+            job = await super()._claim_next()
+            if job is None:
+                first_empty_poll.set()
+            return job
+
+    handler = _RecordingHandler(expected=1)
+    worker = _ObservedWorker(
+        admin_db,
+        _registry(handler),
+        worker_config=WorkerConfig(poll_interval_s=60.0),
+        wakeup=JobWakeup(),
+    )
+    task = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        await asyncio.wait_for(first_empty_poll.wait(), timeout=_PROMPT_S)
+        async with second_admin_db.transaction() as session:
+            job_id = await enqueue_job(session, JobKind.EXECUTION, created_by="user-1")
+        await asyncio.wait_for(handler.all_seen.wait(), timeout=_PROMPT_S)
+    finally:
+        await _stop(worker, task)
+
+    assert handler.seen == [job_id]
+    assert not worker._listening.is_set()
+    assert worker._listen_task is None
+
+
+async def test_cross_process_enqueue_of_unhandled_kind_does_not_wake_worker(
+    admin_db: DatabaseSession, second_admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A Postgres notification for an unregistered job kind is ignored without polling."""
+    if _is_sqlite(admin_db):
+        pytest.skip("Postgres LISTEN/NOTIFY payload filtering")
+
+    first_empty_poll = asyncio.Event()
+    import_notified = asyncio.Event()
+    notified_payloads: list[str] = []
+    empty_polls = 0
+
+    class _ObservedWorker(WorkerLoop):
+        async def _claim_next(self) -> Any:
+            nonlocal empty_polls
+            job = await super()._claim_next()
+            if job is None:
+                empty_polls += 1
+                first_empty_poll.set()
+            return job
+
+        def _on_pg_notify(self, connection: Any, pid: int, channel: str, payload: object) -> None:
+            notified_payloads.append(str(payload))
+            super()._on_pg_notify(connection, pid, channel, payload)
+            if payload == str(JobKind.IMPORT):
+                import_notified.set()
+
+    handler = _RecordingHandler(expected=1)
+    worker = _ObservedWorker(
+        admin_db,
+        _registry(handler),
+        worker_config=WorkerConfig(poll_interval_s=60.0),
+        wakeup=JobWakeup(),
+    )
+    task = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        await asyncio.wait_for(first_empty_poll.wait(), timeout=_PROMPT_S)
+        assert empty_polls == 1
+
+        # Enqueue an IMPORT job (unhandled by this worker) on the second pool.
+        async with second_admin_db.transaction() as session:
+            await enqueue_job(session, JobKind.IMPORT, created_by="user-1")
+        await asyncio.wait_for(import_notified.wait(), timeout=_PROMPT_S)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert empty_polls == 1, "unhandled kind notification must not trigger a poll"
+
+        # Enqueue an EXECUTION job (handled) — wakes and completes immediately.
+        async with second_admin_db.transaction() as session:
+            exec_id = await enqueue_job(session, JobKind.EXECUTION, created_by="user-1")
+        await asyncio.wait_for(handler.all_seen.wait(), timeout=_PROMPT_S)
+    finally:
+        await _stop(worker, task)
+
+    assert notified_payloads == [str(JobKind.IMPORT), str(JobKind.EXECUTION)]
+    assert handler.seen == [exec_id]
+
+
+async def test_pg_notify_is_discarded_when_enqueuing_transaction_rolls_back(
+    admin_db: DatabaseSession, second_admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A rolled-back transaction delivers no Postgres ``NOTIFY`` to listening workers."""
+    if _is_sqlite(admin_db):
+        pytest.skip("Postgres transactional NOTIFY rollback semantics")
+
+    committed_notified = asyncio.Event()
+    notified_payloads: list[str] = []
+
+    class _ObservedWorker(WorkerLoop):
+        def _on_pg_notify(self, connection: Any, pid: int, channel: str, payload: object) -> None:
+            notified_payloads.append(str(payload))
+            super()._on_pg_notify(connection, pid, channel, payload)
+            if payload == str(JobKind.IMPORT):
+                committed_notified.set()
+
+    handler = _RecordingHandler()
+    worker = _ObservedWorker(
+        admin_db,
+        _registry(handler),
+        worker_config=WorkerConfig(poll_interval_s=60.0),
+        wakeup=JobWakeup(),
+    )
+    task = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(worker._listening.wait(), timeout=_PROMPT_S)
+        with pytest.raises(RuntimeError, match="abort enqueue"):
+            async with second_admin_db.transaction() as session:
+                await enqueue_job(session, JobKind.EXECUTION, created_by="user-1")
+                raise RuntimeError("abort enqueue")
+
+        async with second_admin_db.transaction() as session:
+            await enqueue_job(session, JobKind.IMPORT, created_by="user-1")
+        await asyncio.wait_for(committed_notified.wait(), timeout=_PROMPT_S)
+    finally:
+        await _stop(worker, task)
+
+    assert notified_payloads == [str(JobKind.IMPORT)]
+
+
+async def test_sqlite_worker_does_not_start_pg_listener(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """On SQLite, ``WorkerLoop`` disables ``LISTEN`` and relies on in-process wake-up + polling."""
+    if not _is_sqlite(admin_db):
+        pytest.skip("SQLite-only listener check")
+
+    handler = _RecordingHandler(expected=1)
+    worker = WorkerLoop(
+        admin_db,
+        _registry(handler),
+        worker_config=WorkerConfig(poll_interval_s=60.0),
+    )
+    assert worker._can_listen() is False
+    task = asyncio.create_task(worker.run())
+    try:
+        assert worker._listen_task is None
+        async with admin_db.transaction() as session:
+            job_id = await enqueue_job(session, JobKind.EXECUTION, created_by="user-1")
+        await asyncio.wait_for(handler.all_seen.wait(), timeout=_PROMPT_S)
+    finally:
+        await _stop(worker, task)
+
+    assert handler.seen == [job_id]
