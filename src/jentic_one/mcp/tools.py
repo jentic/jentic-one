@@ -2247,6 +2247,43 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
             next_tool="show_access",
             extra={"unknown_scopes": exc.unknown},
         )
+    # The three refusals the generic arm's "fix the request, then retry" is
+    # wrong for: the request as sent is fine, and what has to happen next is
+    # not another call of this tool.
+    if isinstance(exc, RevisionChangedError):
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"{what} was refused: {exc}",
+            actionable=(
+                "Someone changed this request at the same moment. Send amend_request again "
+                "with the same fields: it resolves against the request as it is now."
+            ),
+            next_tool="amend_request",
+            extra={"retryable": True, "current_revision_id": exc.current_revision_id},
+        )
+    if isinstance(exc, SessionClosedError):
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"{what} was refused: {exc}",
+            actionable=(
+                "This request is closed — a human approved, rejected or cancelled it, so no "
+                "change to it can land. Read your access with show_access; ask again only if "
+                "it still lacks what you need."
+            ),
+            next_tool="show_access",
+            extra={"retryable": False, "session_id": exc.session_id},
+        )
+    if isinstance(exc, TooManyRevisionsError):
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"{what} was refused: {exc}",
+            actionable=(
+                "This request holds as many revisions as one request may, so it cannot be "
+                "changed again. Only your operator can move it now, by approving or rejecting "
+                "it — say what you still need and wait for their decision."
+            ),
+            extra={"retryable": False, "limit": exc.limit},
+        )
     return ToolError(
         CODE_RESOLVE_FAILED,
         f"{what} was refused: {exc}",

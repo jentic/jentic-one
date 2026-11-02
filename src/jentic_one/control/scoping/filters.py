@@ -61,25 +61,34 @@ AccessFilterProvider = Callable[[Identity, type], "ColumnElement[bool] | None"]
 _ACCESS_FILTER_PROVIDERS: list[AccessFilterProvider] = []
 
 
+def own_agent_visibility(identity: Identity) -> AgentVisibility:
+    """The agents a caller may enumerate on its own account.
+
+    Its own agents and itself (when the caller is an agent), plus its owner's
+    agents when it holds ``owner:agents:read`` — the same agent visibility the
+    admin surface applies. The tail of :func:`bound_agent_visibility`, which a
+    caller that has already ruled out admin and creator reaches directly.
+    """
+    owner_ids = [identity.sub]
+    if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
+        owner_ids.append(identity.parent_actor_id)
+    return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+
+
 def bound_agent_visibility(
     credential_created_by: str | None, identity: Identity
 ) -> AgentVisibility | None:
     """Bound agents the caller may enumerate on a credential; ``None`` means all.
 
     ``org:admin`` and the credential's creator see every bound agent. Anyone
-    else sees the agents it owns and itself (when the caller is an agent),
-    plus its owner's agents when it holds ``owner:agents:read`` — the same
-    agent visibility the admin surface applies. Shared by every surface that
-    names the agents a credential reaches, so one rule governs them all.
+    else sees what :func:`own_agent_visibility` allows. Shared by every surface
+    that names the agents a credential reaches, so one rule governs them all.
     """
     if ORG_ADMIN in identity.permissions:
         return None
     if credential_created_by is not None and credential_created_by == identity.sub:
         return None
-    owner_ids = [identity.sub]
-    if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
-        owner_ids.append(identity.parent_actor_id)
-    return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+    return own_agent_visibility(identity)
 
 
 def register_access_filter_provider(provider: AccessFilterProvider) -> None:

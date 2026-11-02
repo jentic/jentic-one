@@ -24,7 +24,13 @@ from jentic_one.control.services.integrations.connect_session_service import (
     SessionAmend,
 )
 from jentic_one.control.services.integrations.edits import EditRequest
-from jentic_one.control.services.integrations.errors import EditOpenError, UnknownRuleError
+from jentic_one.control.services.integrations.errors import (
+    EditOpenError,
+    RevisionChangedError,
+    SessionClosedError,
+    TooManyRevisionsError,
+    UnknownRuleError,
+)
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
@@ -159,6 +165,31 @@ async def test_a_wrong_picture_of_access_points_at_show_access() -> None:
     assert directive["parameters"]["access_url"] == (
         "https://one.example.com/credentials/cred_1/agents/agnt_1/permissions"
     )
+
+
+async def test_a_refusal_that_no_retry_can_fix_says_so() -> None:
+    """The generic arm tells the agent to fix the request and retry.
+
+    These three refuse a request that is fine as sent: the recovery is a
+    different call, or a human, so each carries its own step and says whether
+    a retry can work at all.
+    """
+    cases = [
+        (RevisionChangedError("cs_e", "csr_9", 9), "amend_request", True),
+        (SessionClosedError("cs_e"), "show_access", False),
+        (TooManyRevisionsError("cs_e", 50), "", False),
+    ]
+    for error, next_tool, retryable in cases:
+        _FakeService.error = error
+        result = await dispatch_tool_call(
+            _env(), "amend_request", {"session_id": "cs_e", "reason": "still need it"}
+        )
+        assert result.is_error, error
+        payload = _payload(result)
+        assert payload["error_code"] == "RESOLVE_FAILED", error
+        assert payload.get("next_tool", "") == next_tool, error
+        assert payload["retryable"] is retryable, error
+        assert "then retry" not in payload["actionable_step"], error
 
 
 async def test_set_with_add_is_invalid_params() -> None:
