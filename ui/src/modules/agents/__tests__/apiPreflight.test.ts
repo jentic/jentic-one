@@ -364,6 +364,42 @@ describe('preflightApi — a pick whose spec declares no authentication', () => 
 		);
 		expect(items.map((i) => i.outcome)).toEqual(['no-auth', 'form']);
 	});
+
+	it('two picks that import as one API are one item — never two credentials for it', () => {
+		// The workspace API, the catalog entry it was imported from, and a second
+		// catalog entry that registers the same identity.
+		const workspace = makePick({
+			vendor: 'github-com',
+			name: 'api-github-com',
+			label: 'GitHub',
+		});
+		const entry = makePick({
+			source: 'catalog',
+			vendor: 'github.com',
+			name: 'github.com/api.github.com',
+			apiId: 'github.com/api.github.com',
+			registered: true,
+			label: 'github.com',
+		});
+		const twin = makePick({
+			source: 'catalog',
+			vendor: 'github.com',
+			name: 'api.github.com',
+			apiId: 'api.github.com',
+			label: 'api.github.com',
+		});
+		const other = makePick({
+			source: 'catalog',
+			vendor: 'github.com',
+			name: 'github.com/ghec',
+			apiId: 'github.com/ghec',
+			label: 'GHEC',
+		});
+		const items = preflightApis([workspace, entry, twin, other], inputs());
+		expect(items.map((i) => i.key)).toEqual(['github-com/api-github-com', 'github-com/ghec']);
+		// The first pick of the pair is the one kept.
+		expect(items[0].api).toBe(workspace);
+	});
 });
 
 describe('anotherCredentialWarning', () => {

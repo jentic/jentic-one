@@ -461,8 +461,49 @@ describe('AddApisTray — multi-select picks, handed to the queue', () => {
 		expect(screen.queryByRole('checkbox', { name: /github/i })).toBeNull();
 
 		await user.type(screen.getByRole('textbox', { name: 'Search APIs' }), 'github');
-		expect(await row(/github\.com\/api\.github\.com/)).toBeInTheDocument();
+		// `api.github.com` and `github.com/api.github.com` import as one API, so
+		// the REST API lists once; GHEC is its own.
+		expect(await row(/api\.github\.com/)).toBeInTheDocument();
 		expect(await row(/github\.com\/ghec/)).toBeInTheDocument();
+		expect(screen.getAllByRole('checkbox', { name: /api\.github\.com/ })).toHaveLength(1);
+	});
+
+	it('one API never lists twice: a workspace API hides its catalog twin, and two entries that import alike collapse', async () => {
+		// `github.com/api.github.com` is already imported as `github-com/api-github-com`;
+		// `api.github.com` imports as the same identity. Two picks for one API would
+		// make two credentials, and every unnamed call to it a 409.
+		resetApisStore([
+			...WORKSPACE_APIS,
+			makeMockApi({ vendor: 'github-com', name: 'api-github-com', displayName: 'GitHub' }),
+		]);
+		worker.use(liveGithubCatalog);
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness />);
+		await user.type(screen.getByRole('textbox', { name: 'Search APIs' }), 'github');
+		expect(await row(/github\.com\/ghec/)).toBeInTheDocument();
+		// One row for the GitHub REST API: the workspace one.
+		expect(screen.getAllByRole('checkbox', { name: /GitHub|api\.github\.com/ })).toHaveLength(
+			1,
+		);
+		expect(
+			screen.queryByRole('checkbox', { name: /github\.com\/api\.github\.com/ }),
+		).toBeNull();
+	});
+
+	it('two catalog entries that import alike are one row, so one pick', async () => {
+		worker.use(liveGithubCatalog);
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness onContinue={onContinue} />);
+		await user.type(screen.getByRole('textbox', { name: 'Search APIs' }), 'github');
+		expect(await row(/github\.com\/ghec/)).toBeInTheDocument();
+		const rest = screen.getAllByRole('checkbox', { name: /api\.github\.com/ });
+		expect(rest).toHaveLength(1);
+		await user.click(rest[0]);
+		await waitFor(() => expect(continueButton()).toBeEnabled());
+		await user.click(continueButton());
+		const items = onContinue.mock.calls[0][0] as PreflightItem[];
+		expect(items.map((i) => i.key)).toEqual(['github-com/api-github-com']);
 	});
 
 	it('a search that finds nothing offers the spec upload instead of a dead end', async () => {
