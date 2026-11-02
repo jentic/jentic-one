@@ -54,6 +54,15 @@ def _identity(perms: list[str]) -> Identity:
     return Identity(sub="usr_x", email="x@test.local", permissions=perms)
 
 
+@pytest.fixture(autouse=True)
+def _unregistered_identity() -> Any:
+    """The gate's identity lookup finds nothing; the row selection is integration-tested."""
+    with patch.object(
+        CatalogService, "_registered_identity_in", new_callable=AsyncMock, return_value=None
+    ) as lookup:
+        yield lookup
+
+
 @pytest.mark.asyncio
 async def test_no_local_api_is_ordinary_import() -> None:
     """No registered API for the spec_url → nothing to supersede, plain import."""
