@@ -55,7 +55,11 @@ import {
 	matchesAgent,
 	plural,
 } from '@/modules/agents/lib/stripSummary';
-import { STRIP_RECENT_STORAGE_KEY, recentFirst } from '@/modules/agents/lib/stripOrder';
+import {
+	SETTLED_STATUSES,
+	STRIP_RECENT_STORAGE_KEY,
+	railOrder,
+} from '@/modules/agents/lib/stripOrder';
 import { AgentHoverCard, type AgentFacts } from '@/modules/agents/components/flat/AgentHoverCard';
 import { AgentPicker } from '@/modules/agents/components/flat/AgentPicker';
 import { useStripLinkage } from '@/modules/agents/components/flat/useStripLinkage';
@@ -159,14 +163,6 @@ export function returnedTabScrollLeft({
 	if (tabEnd <= viewport - endInset) return 0;
 	return Math.min(Math.max(0, tabStart - startInset), Math.max(0, maxScrollLeft));
 }
-
-/** Non-active states whose verdict is in: their tabs read struck through.
- * `pending` is still in motion, so crossing it out would state the opposite. */
-const SETTLED_STATUSES: ReadonlySet<ActorStatus> = new Set<ActorStatus>([
-	'rejected',
-	'disabled',
-	'archived',
-]);
 
 /** How far the rail quiets each status glyph. Hues come from `STATUS_TINT`. */
 const TAB_STATUS_QUIETING: Record<ActorStatus, string> = {
@@ -443,16 +439,19 @@ export function AgentStrip({
 
 	// The scroll list: the filter's matches less the pinned selection. Pending
 	// tabs lead, so DOM order and arrow-key traversal agree with the groups;
-	// the rest are recent first, so the agent just left sits next to the pin
-	// (`stripOrder`). The history persists across reloads.
+	// the rest are recent first, so the agent just left sits next to the pin,
+	// with settled agents closing the rail (`stripOrder`). The history persists
+	// across reloads; its first id that is not pinned is the agent just left.
 	const recent = useRecentIds(STRIP_RECENT_STORAGE_KEY, selectedId);
 	const list = useMemo(() => {
 		const matched = agents.filter((a) => a.id !== selectedId && matchesAgent(a, filter));
+		const justLeft = recent.find((id) => id !== selectedId);
 		return {
 			pending: matched.filter((a) => a.status === 'pending'),
-			rest: recentFirst(
+			rest: railOrder(
 				matched.filter((a) => a.status !== 'pending'),
 				recent,
+				justLeft,
 			),
 		};
 	}, [agents, filter, selectedId, recent]);

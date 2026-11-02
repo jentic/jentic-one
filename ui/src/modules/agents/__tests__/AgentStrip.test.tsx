@@ -763,6 +763,24 @@ describe('AgentStrip', () => {
 			expect(railRest().slice(0, 2)).toEqual(['echo', 'bravo']);
 		});
 
+		it('drops a settled agent to the tail once the next switch is made', async () => {
+			const user = userEvent.setup();
+			const fleet = FLEET.map((a) =>
+				a.id === 'echo' ? { ...a, status: 'rejected' as const } : a,
+			);
+			renderStrip({ agents: fleet }, true);
+			// Settled agents close the rail from the start.
+			expect(railRest().slice(-1)).toEqual(['echo']);
+			await user.click(railTab('echo'));
+			await user.click(railTab('charlie'));
+			// Just left: echo sits beside the pin for this switch.
+			expect(railRest().slice(0, 2)).toEqual(['echo', 'alpha']);
+			await user.click(railTab('delta'));
+			// One switch on, it is history no longer: live agents lead, echo closes.
+			expect(railRest().slice(0, 2)).toEqual(['charlie', 'alpha']);
+			expect(railRest().slice(-1)).toEqual(['echo']);
+		});
+
 		it('brings the rail back to its start, so the agent just left lands in view', async () => {
 			const user = userEvent.setup();
 			// Narrow enough that the rail overflows, wide enough that alpha's
