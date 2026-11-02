@@ -105,6 +105,7 @@ import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-n
 import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
+	AmendedSession,
 	AmendEditBody,
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
@@ -1701,15 +1702,37 @@ function EditApproveFlow({
 	// writes nothing, so bring it up to date before the reviewer studies the
 	// diff; once they are reading, the changed-request banner offers it
 	// instead, so the diff never moves under them unasked.
-	// Adopted like the reviewer's own change, not bannered as one someone else
-	// made: they asked for this revision, so it is the one they review.
+	// What the reviewer has in front of them, read inside the callback so the
+	// mount effect below keeps one identity.
+	const shownRevision = useRef(shown.revision);
+	shownRevision.current = shown.revision;
 	const rebase = useCallback(async (): Promise<void> => {
-		const rebased = await rebaseMutation.mutateAsync();
-		setOwnRevision(rebased.revision_id);
+		const from = shownRevision.current;
+		let rebased: AmendedSession;
+		try {
+			rebased = await rebaseMutation.mutateAsync();
+		} catch (err) {
+			// A refusal (the request closed under them, the chain full, the
+			// bucket spent) leaves the diff as it is and says so: the banner
+			// still offers the action, so saying nothing read as a dead button.
+			setError(err instanceof Error ? err.message : 'The request couldn’t be updated.');
+			return;
+		}
+		setError(null);
+		// Adopted as the revision under review only when the rebase appended
+		// onto the one being read, or returned that one unchanged: they asked
+		// for it, so it is theirs. Rebased over an amend they have not seen,
+		// it stays bannered as someone else's change — adopting it would clear
+		// that acknowledgement and re-enable Approve for an ask never shown.
+		if (rebased.revision_id === from.id || rebased.revision_number === from.number + 1) {
+			setOwnRevision(rebased.revision_id);
+		}
 	}, [rebaseMutation]);
 	// Only what the first read said: going stale later belongs to the banner,
-	// so the diff never moves while they are reading it.
-	const openedStale = useRef(session.stale === true);
+	// so the diff never moves while they are reading it. Only for a reviewer
+	// who can approve, too: for anyone else the write would charge their page
+	// open to the connect bucket for an action they cannot take.
+	const openedStale = useRef(session.stale === true && session.can_confirm);
 	const askedToRebase = useRef(false);
 	useEffect(() => {
 		if (!openedStale.current || askedToRebase.current) return;
@@ -1949,7 +1972,7 @@ function EditApproveFlow({
 					agentId={byAgent ? shown.binding.agent_id : undefined}
 					afterApprove={staleApprove}
 					stale={session.stale === true}
-					onUpdate={session.stale ? (): void => void rebase() : undefined}
+					onUpdate={session.stale && canConfirm ? (): void => void rebase() : undefined}
 					updating={rebaseMutation.isPending}
 					onReview={changed ? showLatest : undefined}
 					onHistory={(): void => setHistoryOpen(true)}
@@ -2741,8 +2764,10 @@ function RequestChangedBanner({
 				</p>
 				{stale && (
 					<p className="text-xs">
-						The changes below are against the access as it was. Bring the request up to
-						date to review it against the access as it is now.
+						The changes below are against the access as it was.
+						{onUpdate
+							? ' Bring the request up to date to review it against the access as it is now.'
+							: ' Whoever approves it can bring it up to date first.'}
 					</p>
 				)}
 				{change && (

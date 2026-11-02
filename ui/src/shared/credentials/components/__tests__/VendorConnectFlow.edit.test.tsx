@@ -284,7 +284,12 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 			editBlock({
 				current: {
 					rules: [READ, DENY],
-					rule_set: { id: 'prs_shared', name: 'Mail team', curated: false },
+					rule_set: {
+						id: 'prs_shared',
+						name: 'Mail team',
+						curated: false,
+						rules: [READ, DENY],
+					},
 					suspended: false,
 					granted_scopes: ['gmail.readonly'],
 				},
@@ -408,6 +413,73 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		} finally {
 			worker.events.removeListener('request:start', record);
 		}
+	});
+
+	it('leaves a stale request alone for a viewer who cannot approve it', async () => {
+		// The rebase is a write against the connect bucket, so a bystander's
+		// page open must not spend it on an action they cannot take.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		seeded.can_confirm = false;
+		const rebases: Request[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.endsWith(':rebase')) rebases.push(request);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderApprove(seeded.session_id);
+			await screen.findByRole('region', { name: 'Rule changes' });
+			expect(
+				screen.getByText(/The access this request was opened against has changed/),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByRole('button', { name: 'Update to current access' }),
+			).not.toBeInTheDocument();
+			expect(rebases).toEqual([]);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	});
+
+	it('says so when bringing a stale request up to date is refused', async () => {
+		// Unhandled, the rejection was silent: the banner kept offering an
+		// action that appeared to do nothing.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		worker.use(
+			http.post('/connect-sessions/:sessionId\\:rebase', () =>
+				HttpResponse.json(
+					{ title: 'Too Many Requests', detail: 'Rate limit exceeded.' },
+					{ status: 429 },
+				),
+			),
+		);
+		renderApprove(seeded.session_id);
+		expect(await screen.findByText('Rate limit exceeded.')).toBeInTheDocument();
+		expect(screen.getByText('Revision 1')).toBeInTheDocument();
+	});
+
+	it('banners a rebase that lands over an amend the reviewer has not seen', async () => {
+		// Adopted as their own revision, the acknowledgement of the amend
+		// disappeared and Approve came back for an ask never shown to them.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		worker.use(
+			http.post('/connect-sessions/:sessionId\\:rebase', () => {
+				seeded.edit = editBlock({ revision: { id: 'csr_3', number: 3 } });
+				seeded.stale = false;
+				return HttpResponse.json({
+					session_id: seeded.session_id,
+					revision_id: 'csr_3',
+					revision_number: 3,
+				});
+			}),
+		);
+		renderApprove(seeded.session_id);
+		expect(
+			await screen.findByText('This request changed while you were reviewing it.'),
+		).toBeInTheDocument();
+		expect(screen.getByText('Revision 1')).toBeInTheDocument();
 	});
 
 	it('offers the update when the access moves while the reviewer is reading', async () => {

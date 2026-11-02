@@ -219,14 +219,10 @@ export function useStartIntegrationConnect() {
 }
 
 /**
- * A reviewer's change to a request's rules (or an edit's scopes), saved as a
- * revision of the request. The review and its history are re-read so the new
- * revision shows as the one to approve.
- */
-/**
  * Bring an open edit up to date with its binding. Reads report ``stale`` and
- * write nothing, so the client asks for the rebase: on opening the review,
- * and from the changed-request banner while it is open.
+ * write nothing, so the client asks for the rebase: on opening a review the
+ * caller can approve, and from the changed-request banner while it is open.
+ * It is a write against the connect bucket, so never on a bystander's read.
  */
 export function useRebaseConnectSession(sessionId: string, pollToken?: string) {
 	const client = useQueryClient();
@@ -241,6 +237,11 @@ export function useRebaseConnectSession(sessionId: string, pollToken?: string) {
 	});
 }
 
+/**
+ * A reviewer's change to a request's rules (or an edit's scopes), saved as a
+ * revision of the request. The review and its history are re-read so the new
+ * revision shows as the one to approve.
+ */
 export function useAmendConnectSession(sessionId: string) {
 	const client = useQueryClient();
 	return useMutation<AmendedSession, Error, AmendSessionBody>({
