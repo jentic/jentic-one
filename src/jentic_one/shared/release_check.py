@@ -8,10 +8,10 @@ SSRF-guarded ``fetch_json`` helper rather than introducing a new egress path or
 pushing the value in from the CLI.
 
 Fetch-on-read with a per-process TTL cache (no background job, no DB): the first
-read after the TTL expires triggers one GitHub request; concurrent readers wait
-on a single-flight lock so a burst of pollers still makes at most one request.
-Every failure degrades to ``None`` ("latest unknown", no banner) — the version
-probe must never break the app.
+read after the TTL expires triggers one GitHub request; concurrent readers share
+that single in-flight fetch, so a burst of pollers still makes at most one
+request. Every failure degrades to ``None`` ("latest unknown", no banner) — the
+version probe must never break the app.
 
 Gated by config: runs only when ``release_check.enabled`` and the backend is
 ``local`` (a self-hosted install the operator can actually update), and
@@ -20,13 +20,10 @@ Gated by config: runs only when ``release_check.enabled`` and the backend is
 
 from __future__ import annotations
 
-import asyncio
-import time
-from dataclasses import dataclass
-
 import structlog
 
 from jentic_one.registry.services.catalog.fetch import CatalogFetchError, fetch_json
+from jentic_one.shared.cache import AsyncTTLCache
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.version_compare import normalize_release
 
@@ -44,27 +41,24 @@ _log = structlog.get_logger(__name__)
 _RELEASE_URL = "https://api.github.com/repos/{repo}/releases/latest"
 
 
-@dataclass(slots=True)
-class _CacheEntry:
-    """A resolved latest-release version and when it was cached (monotonic)."""
-
-    version: str | None
-    cached_at: float
-
-
 class ReleaseChecker:
     """Resolves the latest published release, cached in-process with a TTL.
 
     One instance is held on the application ``Context`` so the cache and its
-    single-flight lock are shared across all requests on this process. Safe to
+    in-flight fetch are shared across all requests on this process. Safe to
     construct eagerly; it performs no I/O until :meth:`latest_version` is called.
     """
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
-        self._entry: _CacheEntry | None = None
-        # Coalesces a burst of concurrent readers into a single GitHub request.
-        self._lock = asyncio.Lock()
+        # A size-1 cache: the one key is the configured repo. A failed fetch is
+        # cached as ``None`` for the TTL too, so an outage is not re-probed per read.
+        # The TTL is read from live config on every store, the same read
+        # :meth:`latest_version` gates on, so the two can never disagree.
+        self._cache: AsyncTTLCache[str, str | None] = AsyncTTLCache(
+            ttl_for=lambda _version: self._config.release_check.cache_ttl_seconds,
+            max_entries=1,
+        )
 
     async def latest_version(self) -> str | None:
         """Return the latest release as bare ``X.Y.Z``, or ``None`` if unknown.
@@ -79,21 +73,7 @@ class ReleaseChecker:
         if not cfg.enabled or ttl <= 0 or self._config.server.backend != "local":
             return None
 
-        now = time.monotonic()
-        entry = self._entry
-        if entry is not None and (now - entry.cached_at) < ttl:
-            return entry.version
-
-        async with self._lock:
-            # Re-check under the lock: a concurrent caller may have just refreshed
-            # while we waited, so we don't stampede GitHub.
-            entry = self._entry
-            now = time.monotonic()
-            if entry is not None and (now - entry.cached_at) < ttl:
-                return entry.version
-            version = await self._fetch_latest(cfg.repo)
-            self._entry = _CacheEntry(version=version, cached_at=time.monotonic())
-            return version
+        return await self._cache.get_or_load(cfg.repo, lambda: self._fetch_latest(cfg.repo))
 
     async def _fetch_latest(self, repo: str) -> str | None:
         """Fetch + normalise the latest release tag; ``None`` on any failure."""

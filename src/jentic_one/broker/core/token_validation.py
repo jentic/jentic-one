@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import time
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
-from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import TokenResolverProtocol
+from jentic_one.shared.cache import AsyncTTLCache
 
 DEFAULT_CACHE_TTL_SECONDS = 30
 # Hard ceiling on cached token verdicts. The key is a fixed-width sha256 digest,
@@ -23,14 +21,6 @@ DEFAULT_CACHE_TTL_SECONDS = 30
 DEFAULT_MAX_CACHE_ENTRIES = 10_000
 
 
-@dataclass(slots=True)
-class _CacheEntry:
-    """A cached token resolution result (positive or negative)."""
-
-    resolved: Identity | None
-    cached_at: float
-
-
 @dataclass
 class CachedTokenValidator:
     """Validates opaque tokens via a resolver with short-TTL in-process caching.
@@ -38,23 +28,24 @@ class CachedTokenValidator:
     Caches both positive and negative results, keyed on a ``sha256`` digest of the
     token (never the attacker-controlled raw string) under a hard ``max_entries``
     LRU bound. Concurrent misses for the same digest are coalesced into one
-    resolver lookup (:class:`SingleFlight`). Entries past their ``expires_at`` are
-    treated as inactive regardless of TTL.
+    resolver lookup, and an invalidation that lands mid-lookup is not undone by
+    it (:class:`~jentic_one.shared.cache.AsyncTTLCache`). Entries past their
+    ``expires_at`` are treated as inactive regardless of TTL.
     """
 
     resolver: TokenResolverProtocol
     cache_ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS
     max_entries: int = DEFAULT_MAX_CACHE_ENTRIES
-    _cache: OrderedDict[str, _CacheEntry] = field(
-        default_factory=OrderedDict, init=False, repr=False
-    )
-    _single_flight: SingleFlight[Identity | None] = field(
-        default_factory=SingleFlight, init=False, repr=False
-    )
+    _cache: AsyncTTLCache[str, Identity | None] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.max_entries < 1:
-            raise ValueError("max_entries must be >= 1")
+        # AsyncTTLCache rejects a non-positive bound.
+        self._cache = AsyncTTLCache(
+            ttl_seconds=self.cache_ttl_seconds,
+            max_entries=self.max_entries,
+            metrics_scope="broker",
+            metrics_prefix="broker.token_cache",
+        )
 
     async def validate(self, token: str) -> Identity:
         """Resolve and validate a token.
@@ -63,33 +54,11 @@ class CachedTokenValidator:
         unknown — the broker edge maps that to a uniform 401.
         """
         cache_key = hashlib.sha256(token.encode()).hexdigest()
-        now = time.monotonic()
-
-        entry = self._cache.get(cache_key)
-        if entry is not None and (now - entry.cached_at) < self.cache_ttl_seconds:
-            # Mark as most-recently-used so hot tokens survive eviction.
-            self._cache.move_to_end(cache_key)
-            return self._check_active(entry.resolved)
-
-        async def _load() -> Identity | None:
-            # Stamped with the leader's pre-lookup time, so a verdict never
-            # outlives the TTL measured from when its DB read began.
-            started = time.monotonic()
-            resolved = await self.resolver.resolve_access_token(token)
-            self._store(cache_key, _CacheEntry(resolved=resolved, cached_at=started))
-            return resolved
-
-        # Concurrent misses for one token (cold start, TTL expiry) share a single
-        # resolver lookup; a raised lookup reaches every waiter and is not cached.
-        resolved = await self._single_flight.do(cache_key, _load)
+        # A raised lookup reaches every coalesced waiter and is not cached.
+        resolved = await self._cache.get_or_load(
+            cache_key, lambda: self.resolver.resolve_access_token(token)
+        )
         return self._check_active(resolved)
-
-    def _store(self, cache_key: str, entry: _CacheEntry) -> None:
-        """Insert/refresh an entry, evicting the LRU entry past ``max_entries``."""
-        self._cache[cache_key] = entry
-        self._cache.move_to_end(cache_key)
-        while len(self._cache) > self.max_entries:
-            self._cache.popitem(last=False)
 
     def _check_active(self, resolved: Identity | None) -> Identity:
         if resolved is None:
@@ -102,8 +71,7 @@ class CachedTokenValidator:
 
     def invalidate(self, token: str) -> None:
         """Remove a token from the cache (useful for testing)."""
-        cache_key = hashlib.sha256(token.encode()).hexdigest()
-        self._cache.pop(cache_key, None)
+        self._cache.invalidate(hashlib.sha256(token.encode()).hexdigest())
 
     def invalidate_actor(self, actor_id: str) -> None:
         """Evict cached token verdicts for ``actor_id`` and any negative entries (#1837).
@@ -113,13 +81,9 @@ class CachedTokenValidator:
         evicted alongside the actor's positive entries so re-enabling an agent
         takes effect immediately.
         """
-        stale = [
-            key
-            for key, entry in self._cache.items()
-            if entry.resolved is None or entry.resolved.sub == actor_id
-        ]
-        for key in stale:
-            self._cache.pop(key, None)
+        self._cache.invalidate_where(
+            lambda _key, resolved: resolved is None or resolved.sub == actor_id
+        )
 
     def clear(self) -> None:
         """Clear the entire cache."""
@@ -130,12 +94,6 @@ class ActorStatusProtocol(Protocol):
     """Answers whether an actor may currently act (``ActorStatusResolver`` satisfies it)."""
 
     async def is_active(self, *, actor_id: str, actor_type: str) -> bool: ...
-
-
-@dataclass(slots=True)
-class _StatusEntry:
-    active: bool
-    cached_at: float
 
 
 @dataclass
@@ -153,38 +111,26 @@ class CachedActorStatus:
     resolver: ActorStatusProtocol
     cache_ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS
     max_entries: int = DEFAULT_MAX_CACHE_ENTRIES
-    _cache: OrderedDict[tuple[str, str], _StatusEntry] = field(
-        default_factory=OrderedDict, init=False, repr=False
-    )
-    _single_flight: SingleFlight[bool] = field(default_factory=SingleFlight, init=False, repr=False)
+    _cache: AsyncTTLCache[tuple[str, str], bool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.max_entries < 1:
-            raise ValueError("max_entries must be >= 1")
+        # AsyncTTLCache rejects a non-positive bound.
+        self._cache = AsyncTTLCache(
+            ttl_seconds=self.cache_ttl_seconds,
+            max_entries=self.max_entries,
+            metrics_scope="broker",
+            metrics_prefix="broker.actor_status_cache",
+        )
 
     async def is_active(self, *, actor_id: str, actor_type: str) -> bool:
-        key = (actor_type, actor_id)
-        entry = self._cache.get(key)
-        if entry is not None and (time.monotonic() - entry.cached_at) < self.cache_ttl_seconds:
-            self._cache.move_to_end(key)
-            return entry.active
-
-        async def _load() -> bool:
-            started = time.monotonic()
-            active = await self.resolver.is_active(actor_id=actor_id, actor_type=actor_type)
-            self._cache[key] = _StatusEntry(active=active, cached_at=started)
-            self._cache.move_to_end(key)
-            while len(self._cache) > self.max_entries:
-                self._cache.popitem(last=False)
-            return active
-
-        return await self._single_flight.do(f"{actor_type}:{actor_id}", _load)
+        return await self._cache.get_or_load(
+            (actor_type, actor_id),
+            lambda: self.resolver.is_active(actor_id=actor_id, actor_type=actor_type),
+        )
 
     def invalidate_actor(self, actor_id: str) -> None:
         """Evict cached status verdicts for ``actor_id`` across actor types (#1837)."""
-        stale = [key for key in self._cache if key[1] == actor_id]
-        for key in stale:
-            self._cache.pop(key, None)
+        self._cache.invalidate_where(lambda key, _active: key[1] == actor_id)
 
     def clear(self) -> None:
         """Clear every cached verdict."""

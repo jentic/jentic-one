@@ -49,6 +49,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_tracing_facade.py`](test_tracing_facade.py) — OTel instrumentation lives only in `shared/tracing.py`
 - [`test_no_import_time_otel_providers.py`](test_no_import_time_otel_providers.py) — no test module installs a global OTel provider at import time
 - [`test_jwks_single_source.py`](test_jwks_single_source.py) — JWKS key operations consolidated in `shared/auth/jwks.py`
+- [`test_cache_primitive_single_source.py`](test_cache_primitive_single_source.py) — TTL caches are the one primitive in `shared/cache/ttl_lru.py`, imported from `shared.cache`
 - [`test_no_stdlib_logging.py`](test_no_stdlib_logging.py) — no stdlib `logging.getLogger` in application code
 
 ## Database and ORM

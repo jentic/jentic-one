@@ -27,9 +27,9 @@ from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.cache import AsyncTTLCache
 from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import encode_catalog_cursor
-from jentic_one.shared.ttl_cache import AsyncTTLCache
 from jentic_one.shared.web.deps import resolve_identity
 from tests.web.conftest import noop_lifespan
 

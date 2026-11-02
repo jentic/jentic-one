@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from jentic_one.shared.cache import AsyncTTLCache
 from jentic_one.shared.config import AppConfig, load_config
 from jentic_one.shared.crypto import EncryptionService
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.provider_config_store import load_provider_configs
 from jentic_one.shared.release_check import ReleaseChecker
 from jentic_one.shared.state import SharedStateBackend, build_state_backend
-from jentic_one.shared.ttl_cache import AsyncTTLCache
 
 if TYPE_CHECKING:
     from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
@@ -302,10 +302,16 @@ class Context:
         """
         if self._catalog_preview_cache is None:
             cfg = self._config.catalog
+            # A zero TTL or entry bound disables caching, failures included; the
+            # cache expresses that as a zero TTL because its store requires a
+            # positive entry bound. Nothing is stored, so every call loads —
+            # though concurrent previews of one spec URL still share a single
+            # fetch, which is the single-flight coalescing, not the cache.
+            disabled = cfg.preview_cache_max_entries <= 0 or cfg.preview_cache_ttl_seconds <= 0
             self._catalog_preview_cache = AsyncTTLCache(
-                max_entries=cfg.preview_cache_max_entries,
-                ttl_seconds=cfg.preview_cache_ttl_seconds,
-                failure_ttl_seconds=cfg.preview_cache_failure_ttl_seconds,
+                max_entries=max(1, cfg.preview_cache_max_entries),
+                ttl_seconds=0 if disabled else cfg.preview_cache_ttl_seconds,
+                failure_ttl_seconds=0 if disabled else cfg.preview_cache_failure_ttl_seconds,
             )
         return self._catalog_preview_cache
 

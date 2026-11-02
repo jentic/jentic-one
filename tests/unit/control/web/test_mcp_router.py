@@ -16,10 +16,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jentic_one.control.services.mcp.service import McpService, _ThrottleWindow
+from jentic_one.control.services.mcp.service import McpService
 from jentic_one.control.web.deps import get_mcp_service
 from jentic_one.control.web.routers.mcp import router
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.cache import RecentKeys
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.events import McpConfigRuntime
 from jentic_one.shared.web.deps import resolve_identity
@@ -97,7 +98,7 @@ def test_report_rejects_unknown_runtime() -> None:
 
 
 def test_throttle_window_accepts_once_per_key() -> None:
-    w = _ThrottleWindow(window_seconds=3600)
+    w: RecentKeys[tuple[str, str]] = RecentKeys(ttl_seconds=3600, max_keys=100)
     assert w.try_accept(("agnt_a", "cursor")) is True
     assert w.try_accept(("agnt_a", "cursor")) is False
     # Different runtime and different actor each get their own slot.
@@ -106,14 +107,15 @@ def test_throttle_window_accepts_once_per_key() -> None:
 
 
 def test_throttle_window_expires() -> None:
-    w = _ThrottleWindow(window_seconds=0.0)  # everything expires immediately
+    # everything expires immediately
+    w: RecentKeys[tuple[str, str]] = RecentKeys(ttl_seconds=0.0, max_keys=100)
     assert w.try_accept(("agnt_a", "cursor")) is True
     assert w.try_accept(("agnt_a", "cursor")) is True
 
 
 def test_throttle_window_release_frees_the_slot() -> None:
     """A failed event write releases its slot so the next report can record."""
-    w = _ThrottleWindow(window_seconds=3600)
+    w: RecentKeys[tuple[str, str]] = RecentKeys(ttl_seconds=3600, max_keys=100)
     key = ("agnt_a", "cursor")
     assert w.try_accept(key) is True
     w.release(key)
