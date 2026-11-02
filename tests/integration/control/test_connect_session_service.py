@@ -92,6 +92,7 @@ from jentic_one.control.services.integrations.errors import (
     RevisionChangedError,
     RevisionRequiredError,
     RuleSetConfirmForbiddenError,
+    RulesRequiredError,
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
@@ -2644,6 +2645,68 @@ async def test_a_revision_chain_is_read_page_by_page(
     assert seen == [1, 2, 3, 4, 5]
 
 
+async def test_a_page_boundary_never_skips_a_revision_the_clock_disagrees_about(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """The page is keyed on ``number``, the one order the chain guarantees.
+
+    ``created_at`` is stamped by the application clock on one revision writer
+    and by the database clock on another, so a chain can hold two revisions
+    whose timestamps disagree with the order they were written in. A page
+    boundary taken there drops one.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    for number in range(2, 6):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason=f"take {number}"),
+        )
+    # The timestamps now run backwards against the numbers.
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    async with ctx.control_db.transaction() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ConnectSessionRevision).where(
+                        ConnectSessionRevision.session_id == created.session_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            await session.execute(
+                update(ConnectSessionRevision)
+                .where(ConnectSessionRevision.id == row.id)
+                .values(created_at=base - timedelta(minutes=row.number))
+            )
+
+    seen: list[int] = []
+    cursor: str | None = None
+    while True:
+        page, has_more, cursor = await svc.list_revisions(
+            created.session_id,
+            poll_token=created.poll_token,
+            identity=_AGENT_IDENTITY,
+            limit=2,
+            cursor=cursor,
+        )
+        seen.extend(r.number for r in page)
+        if not has_more:
+            break
+        assert cursor is not None
+    assert seen == [1, 2, 3, 4, 5]
+
+
 async def test_an_amend_losing_to_a_concurrent_writer_is_a_conflict(
     integration_context: Context,
     seed_test_vendors: None,
@@ -3171,6 +3234,38 @@ async def test_a_refused_apply_leaves_no_open_session_behind(
                     agent_id=_AGENT_ID,
                     identity=_USER_IDENTITY,
                     request=EditRequest(add_scopes=["repo"]),
+                    apply=True,
+                )
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
+
+
+async def test_a_widening_apply_that_strips_every_rule_spends_no_quota(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """The pre-check carries every refusal the widening branch can raise.
+
+    Stripping the rules is default deny, and it is refused while building the
+    change the widening branch writes the session for first. The pre-check
+    covered the scope and rule-set refusals only, so this one still left an
+    open session behind against the agent's quota.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        for _ in range(3):
+            with pytest.raises(RulesRequiredError):
+                await svc.create_edit_session(
+                    credential_id=credential_id,
+                    agent_id=_AGENT_ID,
+                    identity=_USER_IDENTITY,
+                    request=EditRequest(add_scopes=["repo"], set_rules=[]),
                     apply=True,
                 )
     async with ctx.control_db.session() as session:

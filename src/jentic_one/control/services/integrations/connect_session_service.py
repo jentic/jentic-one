@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -697,6 +697,16 @@ def _edit_conflicts(dropped: list[str]) -> list[dict[str, str]]:
     Everything else in it applies to the binding as it is, whatever moved since.
     """
     return [{"kind": "missing_rule", "rule_id": rule_id} for rule_id in dict.fromkeys(dropped)]
+
+
+def _require_rules_present(baseline: Mapping[str, Any], rules: Sequence[Any]) -> None:
+    """Refuse an empty rule list where the binding has rules today.
+
+    Stripping every rule is default deny: the agent could call nothing. A
+    binding that already has none stays editable (its scopes, its resume).
+    """
+    if not rules and target_rules(baseline)[1]:
+        raise RulesRequiredError()
 
 
 def _rules_moved(before: Mapping[str, Any], live: Mapping[str, Any]) -> bool:
@@ -1939,12 +1949,15 @@ class ConnectSessionService:
         )
         if row.state not in open_states:
             raise _session_closed(row)
+        # Before the rebase a read of this session would do, so a refused
+        # amend has written nothing at all: resolving onto a moved binding
+        # appends a revision of its own.
+        await self._require_revision_room(row)
         row = await self._refresh_edit(row)
         current = await self._current_revision(row)
         if current is None:
             raise _session_closed(row)
-        if current.number >= _MAX_SESSION_REVISIONS:
-            raise TooManyRevisionsError(row.id, _MAX_SESSION_REVISIONS)
+        await self._require_revision_room(row, current=current)
 
         fields: dict[str, Any]
         if row.intent == INTENT_EDIT:
@@ -2216,11 +2229,13 @@ class ConnectSessionService:
         if apply:
             await self._require_agent_binding_allowed(agent_id, identity, late_bound=False)
             if new_scopes:
-                # Everything this apply can still be refused for, before the
-                # session exists: a refusal used to leave an open session
-                # against the agent's quota, so a handful of them denied the
-                # agent any further request at all.
+                # Everything this apply can be refused for, before the session
+                # exists: a refusal that leaves an open session behind spends
+                # the agent's quota, and a handful of them stop it asking at
+                # all. The widening branch writes the session before it builds
+                # the change, so each of these runs here too.
                 self._require_rule_set_change_allowed(baseline, identity)
+                _require_rules_present(baseline, result["rules"])
                 await self._require_consent_allowed(
                     credential,
                     agent_id,
@@ -2228,7 +2243,7 @@ class ConnectSessionService:
                     scopes=result["scopes"],
                     granted=set(baseline.get("granted_scopes") or []),
                 )
-            if not new_scopes:
+            else:
                 return await self._apply_edit_now(
                     credential=credential,
                     agent_id=agent_id,
@@ -2820,15 +2835,44 @@ class ConnectSessionService:
         return ConsentSource(handler_cls=handler_cls, app=app, key=key, entry=entry)
 
     async def _write_change(
-        self, session: Any, row: ConnectSession, change: dict[str, Any]
+        self,
+        session: Any,
+        row: ConnectSession,
+        change: dict[str, Any],
+        *,
+        refuse_if_rules_moved: bool = True,
     ) -> None:
         """Write an approved change's rules, record its outcome and close the session.
 
         ``keep_rules`` leaves the rules as they are (the approved ones were for
         rules that moved since).
+
+        The rules are replaced by a delete and re-insert, and whether they may
+        be replaced was decided by a read before this transaction. So the
+        binding is locked here and the rules are read again inside it: two
+        landings would otherwise both pass their own check and the later one
+        would revert the earlier, with both recording success.
+        ``refuse_if_rules_moved`` says what to do when they have moved: a
+        confirm refuses so its approver re-reads, while a landing grant keeps
+        the rules it found and leaves the rule change to be reviewed again.
         """
         assert row.agent_id is not None
-        if change.get("keep_rules"):
+        writes_rules = not change.get("keep_rules")
+        if writes_rules:
+            await AgentPermissionRuleRepository.acquire_binding_lock(
+                session, row.agent_id, row.credential_id
+            )
+            if row.baseline is not None and await self._rules_moved_in(session, row):
+                if refuse_if_rules_moved:
+                    raise BaselineChangedError(row.id, row.current_revision_id or "", None)
+                _logger.info(
+                    "connect_session.edit_rules_kept_moved_under_write",
+                    session_id=row.id,
+                    credential_id=row.credential_id,
+                )
+                change = {**change, "keep_rules": True, "detach_rule_set": False}
+                writes_rules = False
+        if not writes_rules:
             pass  # rewriting them would also re-id them under other open edits
         elif change["rule_set_id"] is not None:
             await PermissionRuleSetRepository.replace_user_rules(
@@ -2996,11 +3040,7 @@ class ConnectSessionService:
         copy_curated = rule_set is not None and bool(rule_set["curated"])
         self._require_rule_set_change_allowed(baseline, identity)
         rules = [rule_to_write(r) for r in permission_rules]
-        _, before = target_rules(baseline)
-        # Stripping every rule is default deny: the agent could call nothing.
-        # A binding that already has none is left editable (its scopes, resume).
-        if not rules and before:
-            raise RulesRequiredError()
+        _require_rules_present(baseline, rules)
         granted = list(baseline.get("granted_scopes") or [])
         # The approved scopes exactly, so a removal narrows the grant; none
         # approved keeps it as it is.
@@ -3016,6 +3056,39 @@ class ConnectSessionService:
             "approved_by": identity.sub,
             "revision_id": revision_id,
         }
+
+    async def _rules_moved_in(self, session: Any, row: ConnectSession) -> bool:
+        """Whether the rules an edit changes have moved, read in ``session``.
+
+        The same comparison :func:`_rules_moved` makes, but on rows read inside
+        the caller's transaction, so the answer cannot go stale before the
+        write it guards.
+        """
+        assert row.baseline is not None and row.agent_id is not None
+        rule_set = row.baseline.get("rule_set")
+        live_rules: Sequence[Any]
+        if rule_set is not None:
+            live_rules = await PermissionRuleSetRepository.list_rules(session, rule_set["id"])
+        else:
+            live_rules = await AgentPermissionRuleRepository.list_rules(
+                session, row.agent_id, row.credential_id
+            )
+        was = [rule_content(r) for r in target_rules(row.baseline)[1]]
+        now = [
+            rule_content(
+                {
+                    "effect": r.effect,
+                    "methods": r.methods,
+                    "path": r.path,
+                    "match_mode": r.match_mode,
+                    "operations": r.operations,
+                    "comment": r.comment,
+                }
+            )
+            for r in live_rules
+            if not r.is_system
+        ]
+        return was != now
 
     async def _revision_conflicts(self, row: ConnectSession) -> list[dict[str, str]]:
         """The conflicts the session's current revision carries (none for a clean one)."""
@@ -3037,6 +3110,14 @@ class ConnectSessionService:
         live = await self._live_binding_snapshot(row)
         return live is not None and not baseline_matches(row.baseline, live)
 
+    async def _require_revision_room(
+        self, row: ConnectSession, *, current: ConnectSessionRevision | None = None
+    ) -> None:
+        """Refuse when the session already holds every revision it may."""
+        head = current if current is not None else await self._current_revision(row)
+        if head is not None and head.number >= _MAX_SESSION_REVISIONS:
+            raise TooManyRevisionsError(row.id, _MAX_SESSION_REVISIONS)
+
     async def rebase_session(
         self, session_id: str, *, poll_token: str | None, identity: Identity
     ) -> AmendedSession:
@@ -3054,6 +3135,7 @@ class ConnectSessionService:
         _require_confirm_kind(row, CONFIRM_KIND_EDIT)
         if row.state != "created":
             raise _session_closed(row)
+        await self._require_revision_room(row)
         row = await self._refresh_edit(row)
         current = await self._current_revision(row)
         if current is None:
@@ -3091,11 +3173,27 @@ class ConnectSessionService:
         try:
             async with self._ctx.control_db.transaction() as session:
                 await ConnectSessionRepository.acquire_revision_lock(session, row.id)
+                # Under the lock, from the row as it is now: the pointer this
+                # call arrived with predates the lock, so resolving it would
+                # rebase the ask an amend has since replaced and leave the
+                # chain headed by a revision that caller never sent.
+                locked = await ConnectSessionRepository.get_by_id(session, row.id)
+                if locked is None:
+                    raise SessionNotFoundError(row.id)
                 current = await ConnectSessionRevisionRepository.get_by_id(
-                    session, row.current_revision_id or "", session_id=row.id
+                    session, locked.current_revision_id or "", session_id=row.id
                 )
                 if current is None:
                     raise SessionNotFoundError(row.id)
+                if current.number >= _MAX_SESSION_REVISIONS:
+                    # The chain is full: leave it as it stands rather than
+                    # growing it past the ceiling on a reader's behalf.
+                    _logger.info(
+                        "connect_session.edit_rebase_skipped_at_cap",
+                        session_id=row.id,
+                        revision_id=current.id,
+                    )
+                    return current.id
                 request = EditRequest.from_proposal(current.proposal)
                 result, dropped = resolve_edit(live, request, lenient=True, previous=current.result)
                 proposal = {
@@ -3492,7 +3590,7 @@ class ConnectSessionService:
             return None
         async with self._ctx.control_db.session() as session:
             return await ConnectSessionRevisionRepository.get_by_id(
-                session, row.current_revision_id
+                session, row.current_revision_id, session_id=row.id
             )
 
     async def list_revisions(
@@ -3513,10 +3611,12 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
-        decoded = decode_cursor(cursor, id_kind="str") if cursor is not None else None
+        # The cursor names the revision the caller already has; the page
+        # continues after its number, which is what the chain is ordered on.
+        after = decode_cursor(cursor, id_kind="str").id if cursor is not None else None
         async with self._ctx.control_db.session() as session:
             page = await ConnectSessionRevisionRepository.list_for_session(
-                session, row.id, limit=limit + 1, cursor=decoded
+                session, row.id, limit=limit + 1, after_revision_id=after
             )
         has_more = len(page) > limit
         page = page[:limit]
@@ -3683,6 +3783,7 @@ class ConnectSessionService:
             )
         )
         rule_set = baseline.get("rule_set")
+        reached: dict[str, AgentView] = {}
         if rule_set is not None and not rule_set.get("curated"):
             async with self._ctx.admin_db.session() as admin_session:
                 rows = await PrerequisiteRepository.list_agents_for_rule_set(
@@ -3691,10 +3792,28 @@ class ConnectSessionService:
                     limit=_BOUND_AGENTS_LIMIT,
                     visible_to=visible_to,
                 )
-            ids |= {r.agent_id for r in rows if r.agent_id != row.agent_id}
+            # The set reaches bindings on other credentials, and owning this
+            # one says nothing about those: a row is named only when its own
+            # credential is readable by the caller.
+            candidates = {r.credential_id for r in rows if r.agent_id != row.agent_id}
+            async with self._ctx.control_db.session() as session:
+                readable = await CredentialRepository.visible_ids(
+                    session,
+                    sorted(candidates),
+                    filters=build_access_filters(identity, Credential),
+                )
+            for r in rows:
+                if r.agent_id == row.agent_id or r.credential_id not in readable:
+                    continue
+                reached[r.agent_id] = AgentView(
+                    agent_id=r.agent_id,
+                    name=r.agent_name,
+                    owner_id=None,
+                    status=r.agent_status,
+                )
         views: list[AgentView] = []
-        for other_id in sorted(ids):
-            view = await self._agent_view(other_id)
+        for other_id in sorted(ids | reached.keys()):
+            view = reached.get(other_id) or await self._agent_view(other_id)
             views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
         return views
 
@@ -5498,7 +5617,7 @@ class ConnectSessionService:
                             in_session=session,
                         )
                     if not reopen:
-                        await self._write_change(session, row, change)
+                        await self._write_change(session, row, change, refuse_if_rules_moved=False)
         except TokenEndpointMovedError as exc:
             return await self._fail_token_endpoint_moved(row, exc)
         if not won:

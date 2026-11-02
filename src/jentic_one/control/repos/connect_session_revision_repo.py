@@ -9,8 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.connect_session_revisions import ConnectSessionRevision
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
-from jentic_one.shared.db.keyset import asc_keyset_predicate
-from jentic_one.shared.pagination import Cursor
 
 
 class ConnectSessionRevisionRepository:
@@ -84,28 +82,31 @@ class ConnectSessionRevisionRepository:
         session_id: str,
         *,
         limit: int | None = None,
-        cursor: Cursor | None = None,
+        after_revision_id: str | None = None,
     ) -> list[ConnectSessionRevision]:
         """The session's revisions, oldest first.
 
+        Ordered and paged on ``number``, which is monotonic within the session
+        and carries the unique ``(session_id, number)`` index. ``created_at``
+        would not do: it is stamped by the app clock on one path and the
+        database clock on another, so two revisions of one session can compare
+        out of order and a page boundary taken there would skip one.
+
         ``limit`` bounds the page; the caller asks for one more than the page
-        size to learn whether more remain. ``cursor`` continues after a
-        position, keyed on ``(created_at, id)`` ascending like the chain
-        itself, so a chain longer than one page is read whole page by page.
+        size to learn whether more remain. ``after_revision_id`` continues
+        after a revision the caller already has, resolved to its number in the
+        same statement.
         """
         stmt = select(ConnectSessionRevision).where(ConnectSessionRevision.session_id == session_id)
-        if cursor is not None:
-            stmt = stmt.where(
-                asc_keyset_predicate(
-                    ConnectSessionRevision.created_at,
-                    ConnectSessionRevision.id,
-                    cursor.timestamp,
-                    cursor.id,
-                )
+        if after_revision_id is not None:
+            after = (
+                select(ConnectSessionRevision.number)
+                .where(ConnectSessionRevision.id == after_revision_id)
+                .where(ConnectSessionRevision.session_id == session_id)
+                .scalar_subquery()
             )
-        stmt = stmt.order_by(
-            ConnectSessionRevision.created_at.asc(), ConnectSessionRevision.id.asc()
-        )
+            stmt = stmt.where(ConnectSessionRevision.number > after)
+        stmt = stmt.order_by(ConnectSessionRevision.number.asc())
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await session.execute(stmt)

@@ -32,6 +32,7 @@ from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.integrations import connect_session_service
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectedConfirmResult,
     ConnectSessionService,
@@ -52,6 +53,7 @@ from jentic_one.control.services.integrations.errors import (
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
     SessionClosedError,
+    TooManyRevisionsError,
     UnknownRuleError,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -998,3 +1000,144 @@ async def test_the_reviewer_edits_the_request_as_a_revision_of_their_own(
         ("allow", "/v1/send"),
         ("allow", "/v2/"),
     ]
+
+
+async def test_a_full_revision_chain_grows_no_further_however_it_is_touched(
+    integration_context: Context, binding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the cap the chain stops growing, whichever caller touches it.
+
+    An amend resolves the ask onto the live binding before it writes, and so
+    appends a revision of its own: asked for room only afterwards, it could
+    grow the chain past the ceiling and still refuse the caller. A caller's
+    ``:rebase`` is refused for the same reason, and the rebase a confirm does
+    for itself stops at the head it finds rather than appending past it.
+    """
+    monkeypatch.setattr(connect_session_service, "_MAX_SESSION_REVISIONS", 2)
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    second = await svc.amend_session(
+        created.session_id,
+        identity=_AGENT_IDENTITY,
+        amend=SessionAmend(fields=frozenset({"reason"}), reason="take 2"),
+    )
+    # The binding moves under the full chain, so a rebase has work to do.
+    await CredentialService(ctx).replace_agent_permissions(
+        binding, _AGENT, [_READ | {"path": "/v2/"}], identity=_OWNER
+    )
+
+    with pytest.raises(TooManyRevisionsError) as capped:
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="once more"),
+        )
+    assert capped.value.limit == 2
+    with pytest.raises(TooManyRevisionsError):
+        await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
+    # The confirm's own rebase keeps the head it has: the ask is stale and its
+    # approver has to ask again, which is what the cap is for.
+    with pytest.raises(BaselineChangedError) as stale:
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=second.revision_id,
+            permission_rules=[_SEND],
+            resume=False,
+        )
+    assert stale.value.current_revision_id == second.revision_id
+
+    async with ctx.control_db.session() as session:
+        revisions = await ConnectSessionRevisionRepository.list_for_session(
+            session, created.session_id
+        )
+    assert [r.number for r in revisions] == [1, 2]
+
+
+async def test_a_rule_set_edit_names_no_agent_bound_on_a_credential_the_reader_cannot_read(
+    integration_context: Context, binding: str
+) -> None:
+    """Owning the edited credential confers no sight of the others the set governs.
+
+    The shared-set reach query returns bindings on every credential, so the
+    rows it returns are filtered by what the reader may read, exactly as the
+    credential's own bound-agent list is.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    rule_set_id = await _attach_rule_set(ctx, binding, curated=False)
+    # A stranger's agent, on the stranger's own credential, under the same set.
+    theirs = await CredentialService(ctx).create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="cse stranger credential",
+            api=APIReference(vendor="acme-com", name="widgets", version="v1"),
+            token="sk-stranger",
+        ),
+        identity=_OTHER,
+    )
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                "VALUES ('agnt_cse_theirs', 'Theirs', :u, :u, 'approved')"
+            ),
+            {"u": _OTHER_SUB},
+        )
+        await AgentCredentialBindingRepository.bind(
+            session,
+            agent_id="agnt_cse_theirs",
+            credential_id=theirs.credential_id,
+            created_by=_OTHER_SUB,
+        )
+        await PrerequisiteRepository.set_binding_rule_set(
+            session,
+            agent_id="agnt_cse_theirs",
+            credential_id=theirs.credential_id,
+            rule_set_id=rule_set_id,
+        )
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    try:
+        review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+        assert review.edit is not None and review.edit.result["target"] == "rule_set"
+        assert review.edit.other_bound_agents == []
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_cse_theirs'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_cse_theirs'"))
+        async with ctx.control_db.transaction() as session:
+            await session.execute(delete(Credential).where(Credential.id == theirs.credential_id))
+
+
+async def test_a_confirm_whose_rules_move_under_its_own_write_is_refused(
+    integration_context: Context, binding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rules are read again inside the transaction that replaces them.
+
+    Whether they may be replaced is decided by a read taken before it, and
+    the write is a delete and re-insert with nothing to compare against. Two
+    landings would each pass their own check and the later would revert the
+    earlier, with both recording success. Here the check before the write is
+    made to miss the move, so only the one inside it can refuse.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    await CredentialService(ctx).replace_agent_permissions(
+        binding, _AGENT, [_READ | {"path": "/v2/"}], identity=_OWNER
+    )
+    monkeypatch.setattr(connect_session_service, "baseline_matches", lambda *args, **kwargs: True)
+    with pytest.raises(BaselineChangedError):
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=created.revision_id,
+            permission_rules=[_READ, _SEND],
+            resume=False,
+        )
+    assert await _rules(ctx, binding) == [("allow", "/v2/")]

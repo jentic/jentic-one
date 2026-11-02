@@ -19,6 +19,15 @@ from jentic_one.shared.db.types import UTCDateTime
 from jentic_one.shared.pagination import Cursor
 
 
+class RuleSetBoundAgentRow(NamedTuple):
+    """Result row for agents bound through a rule set, with the credential each uses."""
+
+    agent_id: str
+    agent_name: str
+    agent_status: str
+    credential_id: str
+
+
 class CredentialBoundAgentRow(NamedTuple):
     """Result row for agents directly bound to a credential."""
 
@@ -208,13 +217,16 @@ class PrerequisiteRepository:
         rule_set_id: str,
         limit: int = 50,
         visible_to: AgentVisibility | None = None,
-    ) -> list[CredentialBoundAgentRow]:
+    ) -> list[RuleSetBoundAgentRow]:
         """Agents whose binding points at a shared rule set, on any credential.
 
         Changing the set is one write to rows every one of those bindings
-        reads, so a review of such a change names them — the credential the
+        reads, so a review of such a change names them: the credential the
         edit was opened on is only part of its reach. ``visible_to`` narrows
-        the rows exactly as :meth:`list_agents_for_credential` does.
+        the rows exactly as :meth:`list_agents_for_credential` does, and the
+        credential each binding uses rides along so the caller can drop the
+        ones it may not read: owning one credential confers no visibility of
+        agents bound on another.
         """
         conditions = ["b.rule_set_id = :rule_set_id"]
         params: dict[str, object] = {"rule_set_id": rule_set_id, "limit": limit}
@@ -225,8 +237,7 @@ class PrerequisiteRepository:
             bind_params.append(bindparam("owner_ids", expanding=True))
 
         stmt = text(
-            "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id, "
-            "b.suspended_reason "
+            "SELECT a.id, a.name, a.status, b.credential_id "
             "FROM agent_credential_bindings b "
             "JOIN agents a ON a.id = b.agent_id "
             f"WHERE {' AND '.join(conditions)} "
@@ -235,9 +246,8 @@ class PrerequisiteRepository:
         )
         if bind_params:
             stmt = stmt.bindparams(*bind_params)
-        typed = stmt.columns(bound_at=UTCDateTime(), suspended=Boolean())
-        result = await session.execute(typed, params)
-        return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
+        result = await session.execute(stmt, params)
+        return [RuleSetBoundAgentRow(*row) for row in result.fetchall()]
 
     @staticmethod
     async def get_agent_credential_binding(
