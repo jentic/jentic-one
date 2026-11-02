@@ -781,6 +781,28 @@ describe('AgentStrip', () => {
 			expect(railRest().slice(-1)).toEqual(['echo']);
 		});
 
+		it('hides the Waiting label once it has passed under the pin, instead of a cut-off word', async () => {
+			// A phone: the pin and its fade take most of the rail.
+			await page.viewport(375, 812);
+			renderStrip({}, true);
+			const label = screen.getByTestId('strip-pending-label');
+			const scroller = screen.getByTestId('strip-scroller');
+			expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+			expect(label).toHaveAttribute('data-behind-pin', 'false');
+			const scrollTo = async (x: number) => {
+				scroller.scrollLeft = x;
+				scroller.dispatchEvent(new Event('scroll'));
+				await new Promise((r) => requestAnimationFrame(() => r(null)));
+			};
+			await scrollTo(200);
+			await waitFor(() => expect(label).toHaveAttribute('data-behind-pin', 'true'));
+			// Faded by a short CSS transition (the OS reduced-motion setting, not
+			// framer's, is what cuts it), so the end state is awaited.
+			await waitFor(() => expect(getComputedStyle(label).opacity).toBe('0'));
+			await scrollTo(0);
+			await waitFor(() => expect(label).toHaveAttribute('data-behind-pin', 'false'));
+		});
+
 		it('brings the rail back to its start, so the agent just left lands in view', async () => {
 			const user = userEvent.setup();
 			// Narrow enough that the rail overflows, wide enough that alpha's

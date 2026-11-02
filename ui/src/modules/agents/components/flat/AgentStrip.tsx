@@ -593,6 +593,31 @@ export function AgentStrip({
 	const offLeft = linkage.left;
 	const chipShown = offLeft > 0 && !compact;
 
+	// The "Waiting" label heads its tabs; it is not one of them. Once it has
+	// passed under the pin's fade (its right edge within the fade's reach) it
+	// hides, rather than poking out past the pin as a cut-off word — which is
+	// where a switch leaves it when the agent just left was itself waiting and
+	// returns as the first tab after it. A per-frame attribute CSS reads, like
+	// the rail's scrolled state below.
+	const pendingLabelRef = useRef<HTMLSpanElement | null>(null);
+	// The `‹ N` chip widens the rail's covered start while it shows (as
+	// `revealTab` reads it); held in a ref so the per-frame reader stays stable.
+	const chipShownRef = useRef(chipShown);
+	chipShownRef.current = chipShown;
+	const markPendingLabel = useCallback(() => {
+		const label = pendingLabelRef.current;
+		if (!label) return;
+		const pinRight = pinRef.current?.getBoundingClientRect().right ?? Number.NEGATIVE_INFINITY;
+		const start = pinRight + (chipShownRef.current ? CHIP_PX : 0) + FADE_PX;
+		label.dataset.behindPin = String(label.getBoundingClientRect().right <= start);
+	}, []);
+	// Re-read once a switch has settled (the label flew with the tabs), when
+	// the pin's measured width or the chip moves the rail's start, and whenever
+	// the rail's tabs change under a scroll position that stays.
+	useEffect(() => {
+		if (!switching) markPendingLabel();
+	}, [switching, list, pinPx, chipShown, markPendingLabel]);
+
 	// "Something is behind the pin": a per-frame attribute, not React state, so
 	// scrolling re-renders nothing. CSS keys the pin's fade and lift off it.
 	useEffect(() => {
@@ -603,6 +628,7 @@ export function AgentStrip({
 		const update = () => {
 			raf = 0;
 			rail.dataset.railScrolled = String(sc.scrollLeft > 1);
+			markPendingLabel();
 		};
 		const onScroll = () => {
 			if (!raf) raf = requestAnimationFrame(update);
@@ -613,7 +639,7 @@ export function AgentStrip({
 			sc.removeEventListener('scroll', onScroll);
 			if (raf) cancelAnimationFrame(raf);
 		};
-	}, []);
+	}, [markPendingLabel]);
 
 	// Hairline once the bar is actually pinned: it watches ITSELF against a root
 	// inset one pixel past the sticky offset, which clips it only when pinned.
@@ -985,13 +1011,15 @@ export function AgentStrip({
 									<>
 										{/* Visual only — the sr-only tab suffix carries the state. */}
 										<motion.span
+											ref={pendingLabelRef}
 											aria-hidden="true"
 											data-testid="strip-pending-label"
+											data-behind-pin="false"
 											layout="position"
 											transition={{
 												layout: reduced ? { duration: 0 } : SWITCH_SPRING,
 											}}
-											className="text-warning flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium"
+											className="text-warning flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium transition-opacity duration-150 data-[behind-pin=true]:opacity-0 motion-reduce:transition-none"
 										>
 											<span className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
 											Waiting
