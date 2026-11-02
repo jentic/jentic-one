@@ -462,6 +462,29 @@ export function selfRegisterAgent(
 	return id;
 }
 
+/** The other admin a spec's out-of-band decision is attributed to. */
+export const OTHER_ADMIN = 'usr_00000000000000000000other';
+
+/**
+ * Specs: another admin's decision on a pending agent — the bell, a second
+ * browser — made in the store, with no request from the page under test.
+ * Approval grants the default permissions, as `:approve` does.
+ */
+export function decideAgentElsewhere(id: string, decision: 'approve' | 'deny'): void {
+	const row = agents.find((a) => a.id === id);
+	if (row?.status !== 'pending') return;
+	if (decision === 'approve') {
+		row.status = 'active';
+		row.approved_by = OTHER_ADMIN;
+		row.approved_at = now();
+		if ((actorPermissions[row.id] ?? []).length === 0)
+			actorPermissions[row.id] = [...DEFAULT_AGENT_PERMISSIONS];
+	} else {
+		row.status = 'rejected';
+		row.denied_by = OTHER_ADMIN;
+	}
+}
+
 /**
  * Mocked dev only, opt-in (the dev seed, plus `localStorage['agents.devBigFleet'] = '1'`):
  * grow the seed to a 38-agent fleet with the near-identical names a real one

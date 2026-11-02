@@ -216,6 +216,39 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		).toBeInTheDocument();
 	});
 
+	it('an agent created here gets its key stored as its identity — never `jentic register`, which would make a second agent', async () => {
+		seedExtraAgents([
+			{
+				id: 'agnt_ui_made',
+				name: 'ui-made',
+				status: 'active',
+				registered_by: 'usr_000000000000000000000admin',
+				owner_id: 'usr_000000000000000000000admin',
+			},
+		]);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_ui_made');
+		const sheet = await openSheet(user);
+		await sheet.findByText('Connect via MCP');
+		expect(await sheet.findByTestId('mcp-created-here')).toHaveTextContent(
+			'This agent was created here, so it has no CLI identity yet — and jentic register would register a second agent.',
+		);
+		// The wiring: environment, identity holding the key, the context the mcp
+		// command pins — against THIS instance, as `register` would have named them.
+		const wiring = await sheet.findByText(/jentic identity add ui-made/);
+		expect(wiring).toHaveTextContent('jentic env add jentic --url https://jentic.example.test');
+		expect(wiring).toHaveTextContent(
+			"jentic identity add ui-made --env jentic --api-key '<api-key>'",
+		);
+		expect(wiring).toHaveTextContent(
+			'jentic context create jentic-ui-made --env jentic --identity ui-made',
+		);
+		expect(sheet.getByText('jentic mcp --context jentic-ui-made')).toBeInTheDocument();
+		// No register prerequisite anywhere on the sheet.
+		expect(sheet.queryByText(/jentic register --url/)).toBeNull();
+		expect(sheet.queryByText('jentic setup')).toBeNull();
+	});
+
 	it('survives a set-but-unparseable canonical_base_url (scheme-less) without crashing', async () => {
 		// The backend allows an unparseable canonical_base_url with host: "" — a
 		// scheme-less value must degrade to the raw string, not throw in render.

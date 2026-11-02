@@ -17,6 +17,7 @@ import {
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import {
+	decideAgentElsewhere,
 	resetAgentsStore,
 	seedExtraAgents,
 	selfRegisterAgent,
@@ -369,6 +370,40 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		);
 	});
 
+	it('an approval made elsewhere while the panel watches hands off to the tray too', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await openRegister(user);
+		const [id] = await register(queryClient, 'my-first-agent');
+		await arrival();
+		let stepDrawn = false;
+		const observer = new MutationObserver(() => {
+			if (document.querySelector('[data-testid="first-api-panel"]')) stepDrawn = true;
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+
+		// The bell, or a second admin: approved with no click in this panel.
+		decideAgentElsewhere(id, 'approve');
+		await queryClient.invalidateQueries();
+
+		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(
+				within(tray).getByText(
+					(_, el) =>
+						el?.tagName === 'P' &&
+						/^Pick what my-first-agent should be able to call/.test(
+							el.textContent ?? '',
+						),
+				),
+			).toBeVisible(),
+		);
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
+		observer.disconnect();
+		// The GitHub step is the empty org's first-agent offer, never this.
+		expect(stepDrawn).toBe(false);
+	});
+
 	it('approve over a fleet hands the sheet to the Add-APIs tray, with no GitHub step', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
@@ -410,22 +445,6 @@ describe('Agents page — the New agent panel over a fleet', () => {
 			'true',
 		);
 		expect(isFirstRunDismissed(id)).toBe(true);
-	});
-
-	it('an approval made outside the panel leaves its card where it is', async () => {
-		const user = userEvent.setup();
-		const { queryClient } = renderPage();
-		await openRegister(user);
-		const [id] = await register(queryClient, 'my-first-agent');
-		await arrival();
-		await fetch(`/agents/${id}:approve`, { method: 'POST' });
-		await queryClient.invalidateQueries();
-
-		const firstApi = await within(panel()).findByTestId('first-api-panel');
-		expect(firstApi).toBeInTheDocument();
-		await new Promise((r) => setTimeout(r, 400));
-		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).toBeNull();
-		expect(within(panel()).getAllByRole('button', { name: 'Skip for now' })).toHaveLength(1);
 	});
 
 	it('denying the arrival returns to listening, keeping the typed name', async () => {
@@ -490,7 +509,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		expect(pollIntervals(queryClient)).not.toContain(FIRST_AGENT_POLL_MS);
 	});
 
-	it('closing mid-flow leaves the arrival pending in the fleet, and reopening starts fresh', async () => {
+	it('closing mid-flow leaves the arrival pending; reopening picks it up, and "Register another agent" starts fresh', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
 		const sheet = await openRegister(user);
@@ -508,11 +527,92 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		const banner = await screen.findByRole('region', { name: /Awaiting approval/i });
 		await waitFor(() => expect(banner).toHaveTextContent('and 2 more waiting'));
 
-		const reopened = await openDefault(user);
-		expect(registerTab()).toHaveAttribute('aria-selected', 'true');
-		expect(within(reopened).queryByTestId('arrival-card')).toBeNull();
+		// Reopened: the agent it was finishing, still waiting, is back — under
+		// the name it registered with, so nothing warns it is someone else's.
+		await openDefault(user);
+		const card = await arrival();
+		expect(card).toHaveTextContent('research-bot');
+		expect(within(card).queryByTestId('arrival-name-warning')).toBeNull();
+		expect(
+			within(panel()).getByRole('button', { name: 'Approve research-bot' }),
+		).toBeInTheDocument();
+
+		// Register another agent: the command again, on a fresh suggestion.
+		await user.click(within(panel()).getByTestId('footer-register-another'));
+		await waitFor(() => expect(within(panel()).queryByTestId('arrival-card')).toBeNull());
 		expect(status()).toHaveTextContent('Listening for new agents…');
+		expect(within(panel()).getByLabelText('Agent name')).toHaveValue('my-agent');
+		// research-bot is only set aside: still pending in the fleet.
+		expect(screen.getByRole('tab', { name: /research-bot/ })).toBeInTheDocument();
+	});
+
+	it('an arrival on the suggested name is picked up on reopen without a "not your name" warning', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		const sheet = await openRegister(user);
+		// Nothing typed: the command runs on the suggestion.
+		expect(within(sheet).getByLabelText('Agent name')).toHaveValue('my-agent');
+		await register(queryClient, 'my-agent');
+		await arrival();
+		await user.keyboard('{Escape}');
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
+
+		// Closed, the roster now holds "my-agent" — the suggestion must not move
+		// to "my-agent-2" under the agent the panel is still finishing.
+		await queryClient.invalidateQueries();
+		await openDefault(user);
+		const card = await arrival();
+		expect(card).toHaveTextContent('my-agent');
+		expect(within(card).queryByTestId('arrival-name-warning')).toBeNull();
+	});
+
+	it('an agent approved or denied while the panel was closed is not picked up again', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		for (const [name, decision] of [
+			['approved-meanwhile', 'approve'],
+			['denied-meanwhile', 'deny'],
+		] as const) {
+			await openRegister(user);
+			const [id] = await register(queryClient, name);
+			await arrival();
+			await user.keyboard('{Escape}');
+			await waitFor(() =>
+				expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull(),
+			);
+
+			decideAgentElsewhere(id, decision);
+			await queryClient.invalidateQueries();
+			const reopened = await openDefault(user);
+			await waitFor(() => expect(status()).toHaveTextContent('Listening for new agents…'));
+			expect(within(reopened).queryByTestId('arrival-card')).toBeNull();
+			// Not handed to the tray either: that approval was not this opening's.
+			expect(screen.queryByRole('dialog', { name: 'Add APIs' })).toBeNull();
+			await user.keyboard('{Escape}');
+			await waitFor(() =>
+				expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull(),
+			);
+		}
+	});
+
+	it('an arrival named in a panel closed mid-flow is the operator’s: no "not your name" warning', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		const sheet = await openRegister(user);
+		const input = within(sheet).getByLabelText('Agent name');
+		await user.clear(input);
+		await user.type(input, 'panel-bot');
+		await user.keyboard('{Escape}');
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New agent' })).toBeNull());
+
+		// Reopened on the suggestion ("my-agent"), the agent registered under the
+		// name typed before is still recognised as the operator's own.
+		const reopened = await openDefault(user);
 		expect(within(reopened).getByLabelText('Agent name')).toHaveValue('my-agent');
+		await register(queryClient, 'panel-bot');
+		const card = await arrival();
+		expect(card).toHaveTextContent('panel-bot');
+		expect(within(card).queryByTestId('arrival-name-warning')).toBeNull();
 	});
 
 	it('each opening starts on "Register from the CLI", and "n" opens it too', async () => {
@@ -555,7 +655,8 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		const sheet = await openRegister(user);
 		const input = within(sheet).getByLabelText('Agent name');
 		await user.clear(input);
-		await user.type(input, 'Support-Agent');
+		// Lowercase, as the CLI takes it; the duplicate check is case-insensitive anyway.
+		await user.type(input, 'support-agent');
 		const hint = within(sheet).getByTestId('agent-name-duplicate');
 		expect(hint).toHaveTextContent(
 			'An agent named support-agent already exists — pick a different name so you can tell them apart.',
@@ -564,7 +665,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		expect(input).not.toHaveAttribute('aria-invalid');
 		// The command still carries it: the backend accepts a duplicate.
 		expect(within(sheet).getByTestId('register-command')).toHaveTextContent(
-			/--name Support-Agent$/,
+			/--name support-agent$/,
 		);
 		await user.type(input, '-2');
 		expect(within(sheet).queryByTestId('agent-name-duplicate')).toBeNull();
@@ -580,5 +681,30 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		expect(within(sheet).getByRole('button', { name: 'Create' })).toBeEnabled();
 		await user.clear(name);
 		expect(within(sheet).queryByTestId('agent-name-duplicate')).toBeNull();
+	});
+
+	it('refuses a name the CLI refuses, and keeps the command on one that runs', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		const sheet = await openRegister(user);
+		const field = within(sheet).getByLabelText('Agent name');
+		const command = within(sheet).getByTestId('register-command');
+		await waitFor(() => expect(command).toHaveTextContent('--name my-agent'));
+		await user.clear(field);
+		await user.type(field, 'My Agent!');
+		// `register --name` takes `^[a-z0-9][a-z0-9-]{0,63}$`; the field says so and
+		// offers the slug, while the command keeps a name that runs.
+		expect(field).toBeInvalid();
+		expect(within(sheet).getByRole('alert')).toHaveTextContent(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64 — try my-agent.',
+		);
+		expect(command).toHaveTextContent('--name my-agent');
+		expect(command).not.toHaveTextContent('My Agent!');
+		await user.clear(field);
+		await user.type(field, 'repro-bot');
+		expect(field).not.toBeInvalid();
+		expect(command).toHaveTextContent('--name repro-bot');
+		// 64 is the most the field takes.
+		expect(field).toHaveAttribute('maxlength', '64');
 	});
 });

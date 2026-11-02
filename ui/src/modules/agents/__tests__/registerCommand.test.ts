@@ -1,11 +1,78 @@
 import { describe, it, expect } from 'vitest';
 import {
+	apiKeyWiringCommands,
 	cliContextName,
+	cliEnvName,
 	commandText,
 	registerCommand,
 	registerCommandTokens,
+	registerNameError,
 	shellArg,
 } from '@/modules/agents/lib/registerCommand';
+
+describe('apiKeyWiringCommands', () => {
+	it('stores the key as the identity of the context `register` would have created', () => {
+		expect(cliEnvName('https://jentic.example.test')).toBe('jentic');
+		expect(
+			apiKeyWiringCommands({ url: 'https://jentic.example.test', name: 'ui-made' }),
+		).toEqual([
+			'jentic env add jentic --url https://jentic.example.test',
+			"jentic identity add ui-made --env jentic --api-key '<api-key>'",
+			'jentic context create jentic-ui-made --env jentic --identity ui-made',
+		]);
+	});
+
+	it('carries the broker on a remote install, a placeholder when none is reported', () => {
+		expect(
+			apiKeyWiringCommands({
+				url: 'https://jentic.example.test',
+				brokerUrl: 'https://broker.example.test',
+				name: 'bot',
+			})[0],
+		).toBe(
+			'jentic env add jentic --url https://jentic.example.test --broker-url https://broker.example.test',
+		);
+		expect(
+			apiKeyWiringCommands({
+				url: 'https://jentic.example.test',
+				brokerUrl: null,
+				name: 'bot',
+			})[0],
+		).toMatch(/--broker-url '<broker-url>'$/);
+	});
+
+	it('quotes a key when given one, so a paste runs nothing else', () => {
+		// A pasted value carrying a command substitution.
+		const pasted = ['jak_a', '$(id)'].join('');
+		expect(
+			apiKeyWiringCommands({ url: 'https://j.test', name: 'bot', apiKey: pasted })[1],
+		).toBe(`jentic identity add bot --env j --api-key '${pasted}'`);
+	});
+});
+
+describe('registerNameError', () => {
+	it('accepts what `register --name` accepts: lowercase, digits, hyphens, up to 64', () => {
+		expect(registerNameError('my-agent')).toBeNull();
+		expect(registerNameError('bot2')).toBeNull();
+		expect(registerNameError('  a  ')).toBeNull();
+		expect(registerNameError('a'.repeat(64))).toBeNull();
+	});
+
+	it('refuses what the CLI refuses, and offers the slug it would take', () => {
+		expect(registerNameError('')).toBe('A name is required.');
+		expect(registerNameError('My Agent!')).toBe(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64 — try my-agent.',
+		);
+		expect(registerNameError('-lead')).toBe(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64 — try lead.',
+		);
+		expect(registerNameError('a'.repeat(65))).toMatch(/up to 64 — try a{64}\.$/);
+		// Nothing usable survives: no suggestion, no trailing dash.
+		expect(registerNameError('!!!')).toBe(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64.',
+		);
+	});
+});
 
 describe('shellArg', () => {
 	it.each([

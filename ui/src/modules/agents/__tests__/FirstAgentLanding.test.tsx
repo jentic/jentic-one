@@ -19,6 +19,7 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
+import { AuthProvider, useOptionalCurrentUser } from '@/shared/auth';
 import { CredentialType } from '@/shared/credentials/api';
 import {
 	makeMockApi,
@@ -30,6 +31,7 @@ import { formatTimestamp } from '@/shared/lib/utils';
 import { Toaster } from '@/shared/ui';
 import {
 	clearAgentsStore,
+	decideAgentElsewhere,
 	resetAgentsStore,
 	seedCredentialBindings,
 	seedExtraAgents,
@@ -400,8 +402,9 @@ describe('Agents page — zero agents', () => {
 			'Self-registered · signs in with its own keypair',
 		);
 		expect(within(screen.getByTestId('agent-id-fact')).getByText(id)).toBeInTheDocument();
-		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
+		for (const label of ['Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
+		expect(screen.queryByTestId('agent-owner-fact')).toBeNull();
 		// No permissions requested: approval grants the default agent permissions. Two of
 		// them act (capabilities:execute runs upstream calls,
 		// credentials:connect stores a credential): the summary calls them out,
@@ -428,6 +431,28 @@ describe('Agents page — zero agents', () => {
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 		expect(screen.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'pending');
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it('on a phone and a tablet the command box stays inside its card, Copy included', async () => {
+		for (const [w, h] of [
+			[375, 812],
+			[768, 1024],
+		] as const) {
+			await page.viewport(w, h);
+			const { unmount } = renderPage();
+			await landing();
+			const preview = screen.getByTestId('landing-preview');
+			const command = await screen.findByTestId('register-command');
+			await waitFor(() => expect(command).toHaveTextContent('--name'));
+			const card = preview.getBoundingClientRect();
+			const box = command.getBoundingClientRect();
+			expect(box.right).toBeLessThanOrEqual(card.right + 1);
+			// The card scrolls nothing sideways: the grid column shrank the pane.
+			expect(preview.scrollWidth).toBeLessThanOrEqual(preview.clientWidth);
+			const copy = screen.getByTestId('register-command-copy');
+			expect(copy.getBoundingClientRect().right).toBeLessThanOrEqual(card.right + 1);
+			unmount();
+		}
 	});
 
 	it('at 390px the agent ID wraps in full on its own row, and copies', async () => {
@@ -491,7 +516,13 @@ describe('Agents page — zero agents', () => {
 		});
 
 		const facts = within(screen.getByTestId('agent-facts'));
-		expect(facts.getByText('Owner')).toBeInTheDocument();
+		// The owner sits on the facts line beside the registration, not on a row of
+		// its own under the next step.
+		expect(screen.getByTestId('agent-owner-fact')).toHaveTextContent(/^Owner /);
+		expect(screen.getByTestId('agent-facts-line')).toContainElement(
+			screen.getByTestId('agent-owner-fact'),
+		);
+		expect(facts.queryByText('Owner')).toBeNull();
 		expect(screen.getByTestId('agent-provenance')).toHaveTextContent(
 			'signs in with an API key',
 		);
@@ -900,6 +931,48 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() => expect(steps()[2]).toHaveAttribute('aria-current', 'step'));
 		expect(steps().filter((li) => li.hasAttribute('aria-current'))).toHaveLength(1);
 		expect(progress()).toHaveAttribute('data-step', '3');
+	});
+
+	it('approved by another admin, the done step says so instead of "You approve it"', async () => {
+		// Signed in as the seed's admin, so the card can tell the approver apart.
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: 'usr_000000000000000000000admin',
+					email: 'admin@local',
+					first_name: 'Ad',
+					last_name: 'Min',
+					active: true,
+					permissions: ['org:admin'],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+		function ViewerReady() {
+			return useOptionalCurrentUser() ? <span data-testid="viewer-ready" hidden /> : null;
+		}
+		const { queryClient } = renderWithProviders(
+			<AuthProvider>
+				<ViewerReady />
+				<MotionConfig reducedMotion="never">
+					<AgentsPage />
+				</MotionConfig>
+			</AuthProvider>,
+		);
+		await screen.findByTestId('viewer-ready');
+		await landing();
+		const id = await arrive('my-first-agent', queryClient);
+
+		decideAgentElsewhere(id, 'approve');
+		await queryClient.invalidateQueries();
+		await screen.findByTestId('first-api-panel');
+		const steps = within(
+			screen.getByRole('list', { name: 'Registration progress' }),
+		).getAllByRole('listitem');
+		expect(steps[1]).toHaveTextContent('Approved by someone else (done)');
+		expect(steps[1]).not.toHaveTextContent('You approve it');
 	});
 
 	it('an approval made elsewhere reaches the card through the roster', async () => {

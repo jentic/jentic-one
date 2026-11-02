@@ -31,6 +31,7 @@ import {
 	seedMockApproval,
 } from '@/modules/agents/mocks/approvalsHandlers';
 import { dismissFirstRun } from '@/modules/agents/lib/firstRun';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 import {
 	makeMockCredential,
 	resetApisStore,
@@ -218,6 +219,8 @@ describe('AgentsPage — flat agents surface', () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
 		window.localStorage.clear();
+		// The Add-APIs batch waiting for Resume setup lives in session storage.
+		window.sessionStorage.clear();
 		resetAgentsStore();
 		seedComposedStores();
 		resetOrphanPurgeAttemptsForTest();
@@ -2011,23 +2014,31 @@ describe('AgentsPage — flat agents surface', () => {
 		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'granted-agent');
 
-		// The permissions section is an optional, collapsed disclosure.
-		await user.click(within(sheet).getByRole('button', { name: /Initial permissions/ }));
-		// Expand the Capabilities group, then tick one grantable permission.
-		await user.click(
-			await within(sheet).findByRole('button', { name: /Capabilities \d+\/\d+ permissions/ }),
+		// The permissions section is a collapsed disclosure that starts on the
+		// platform's default agent set, and says so.
+		const disclosure = within(sheet).getByRole('button', { name: /Initial permissions/ });
+		expect(within(disclosure).getByTestId('initial-permissions-summary')).toHaveTextContent(
+			`the default set (${DEFAULT_AGENT_PERMISSIONS.length})`,
 		);
-		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
+		await user.click(disclosure);
+		// Expand the Users group, then tick one grantable permission outside the defaults.
+		await user.click(
+			await within(sheet).findByRole('button', { name: /Users \d+\/\d+ permissions/ }),
+		);
+		await user.click(within(sheet).getByRole('checkbox', { name: 'users:read' }));
+		expect(within(disclosure).getByTestId('initial-permissions-summary')).toHaveTextContent(
+			`${DEFAULT_AGENT_PERMISSIONS.length + 1} selected`,
+		);
 
 		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
 		expect(postBody).toMatchObject({
 			name: 'granted-agent',
-			permissions: ['capabilities:execute'],
+			permissions: [...DEFAULT_AGENT_PERMISSIONS, 'users:read'],
 		});
 	});
 
-	it('omits permissions from the POST body when none are selected', async () => {
+	it('sends the default agent permissions unless the operator changes them', async () => {
 		const user = userEvent.setup();
 		let postBody: Record<string, unknown> | null = null;
 		worker.use(
@@ -2052,8 +2063,12 @@ describe('AgentsPage — flat agents surface', () => {
 		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
 
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
-		// The client normalises an empty selection to `permissions: null`.
-		expect(postBody).toMatchObject({ name: 'plain-agent', permissions: null });
+		// Untouched, the form grants what an approved self-registration gets — an
+		// agent with no permissions could call nothing.
+		expect(postBody).toMatchObject({
+			name: 'plain-agent',
+			permissions: [...DEFAULT_AGENT_PERMISSIONS],
+		});
 	});
 
 	it('creating an agent over a fleet flows straight into picking its APIs', async () => {
@@ -2539,6 +2554,29 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			await screen.findByRole('heading', { name: 'Set up 1 API for legacy-scraper' }),
 		).toBeInTheDocument();
 		expect(queueRows()).toEqual(['Notion:open']);
+	});
+
+	it('the waiting batch survives leaving the page: Resume setup is there after a remount', async () => {
+		const user = userEvent.setup();
+		const first = renderPage('/?agent=agnt_disabled_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		for (const name of ['Stripe', 'Notion']) await user.click(await trayRow(name));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Close' }));
+		await findResume('Stripe and Notion are picked, not set up yet.');
+
+		// Navigating away (another page, a reload) unmounts the agents surface.
+		first.unmount();
+		renderPage('/?agent=agnt_disabled_1');
+		await findResume('Stripe and Notion are picked, not set up yet.');
+		await user.click(screen.getByRole('button', { name: 'Resume setup' }));
+		expect(
+			await screen.findByRole('heading', { name: 'Set up 2 APIs for legacy-scraper' }),
+		).toBeInTheDocument();
 	});
 
 	it('with picks waiting, Add APIs still adds: the picker opens on them, and more join the batch', async () => {
