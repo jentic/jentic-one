@@ -18,6 +18,14 @@ describe('describeFromMethodAndPath — plain English from method and path', () 
 		['PUT', '/v1/listings/{id}/opening-hours', 'Update a listing opening hour'],
 		['POST', '/v1/promotions/{id}/activate', 'Activate a promotion'],
 		['GET', '/v1/instagram/verifyAccount', 'Verify an account'],
+		// Two paths that end alike read apart by their owner.
+		['DELETE', '/v1/devices/fcm/{token}', 'Delete an FCM'],
+		['DELETE', '/v1/users/{userId}/devices/fcm/{token}', "Delete a user's FCM"],
+		['GET', '/v1/users/{userId}/devices/fcm', "Get a user's device FCM"],
+		// A write to a state verb marks the resource, it doesn't perform the verb.
+		['PUT', '/v1/notifications/read', 'Mark notifications as read'],
+		['POST', '/v1/tasks/complete', 'Mark tasks as complete'],
+		['GET', '/v1/notifications/read', 'Read a notification'],
 		// 1lookup.io
 		['POST', '/hlr-lookup', 'Create an HLR lookup'],
 		['POST', '/ip', 'Create an IP'],

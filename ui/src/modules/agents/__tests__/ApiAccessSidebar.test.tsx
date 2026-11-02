@@ -26,6 +26,7 @@ import {
 	resetCredentialsStore,
 } from '@/shared/credentials/mocks/handlers';
 import { CredentialType, type ApiResponse } from '@/shared/credentials/api';
+import { draftRulesForPreset } from '@/shared/credentials/lib/accessPresets';
 import { AuthProvider } from '@/shared/auth';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
@@ -538,7 +539,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		);
 		// The Test row says the draft isn't what it tests.
 		expect(within(dialog).getByTestId('rule-tester-note')).toHaveTextContent(
-			'Checks the saved rules. Nothing is sent upstream — save to test your changes.',
+			"Checks the saved rules, action rules included — the path is read as the API's operation. Nothing is sent upstream — save to test your changes.",
 		);
 
 		await user.click(within(footer).getByRole('button', { name: /Discard changes/ }));
@@ -578,7 +579,8 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await editFirstRulePath(user, within(await editAccess(dialog)), 'post');
 		await user.click(inDialog.getByRole('button', { name: /Save rules/ }));
 		const saved = await within(dialog).findByTestId('rules-saved');
-		expect(saved).toHaveTextContent('Saved — these rules are live');
+		// Not "live": the broker keeps a binding's previous rules for up to its cache TTL.
+		expect(saved).toHaveTextContent('Saved — the broker applies them within 30 seconds');
 		expect(saved.closest('[aria-live="polite"]')).not.toBeNull();
 		const read = within(dialog).getByTestId('access-read-view');
 		expect(read).toContainElement(saved);
@@ -672,7 +674,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 
 	it('every count agrees: the summary counts the same actions as By action', async () => {
 		// Allow ids that aren't this API's operations (stale, or another version's)
-		// count in neither the summary nor By action.
+		// are not "set" in the summary or in By action; the summary names them out of date.
 		seedSlackOps([
 			op('chat.postMessage', 'post', '/chat.postMessage', 'Send a message'),
 			op('users.list', 'get', '/users.list', 'List users'),
@@ -687,7 +689,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const dialog = await openSidebar('Slack');
 		await waitFor(() =>
 			expect(within(dialog).getByTestId('access-summary')).toHaveTextContent(
-				'Custom rules — 1 action set.',
+				'Custom rules — 1 action set, 3 actions out of date.',
 			),
 		);
 		const editor = await editAccess(dialog);
@@ -697,11 +699,57 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 			'0 allow · 1 ask · 0 deny · 1 not set',
 		);
 		expect(within(editor).getByTestId('access-summary')).toHaveTextContent(
-			'Custom rules — 1 action set.',
+			'Custom rules — 1 action set, 3 actions out of date.',
 		);
 		await waitFor(() =>
 			expect(within(editor).getByTestId('access-counts')).toHaveTextContent(
 				'0 allowed1 ask1 denied (not set)',
+			),
+		);
+	});
+
+	it('an action rule the API no longer has: the read view warns and the status is not Ready', async () => {
+		// A re-import gives the API's operations new ids. A deny saved before it
+		// matches nothing, so the call it denied falls through to the path allow
+		// — the broker lets it run. The read view must say so, not "Ready".
+		seedSlackOps([op('chat.postMessage', 'post', '/chat.postMessage', 'Send a message')]);
+		setBindingPermissions('agnt_active_1', 'cred_slack_1', [
+			{ effect: 'deny', operations: ['chat.postMessage.rev1'] },
+			{ effect: 'allow', match_mode: 'prefix', methods: ['POST'], path: '/' },
+		]);
+		renderPage();
+		await screen.findByText('Slack bot token');
+		const dialog = await openSidebar('Slack');
+		const notice = await within(dialog).findByTestId('access-stale-actions');
+		expect(notice).toHaveTextContent(
+			'1 action in these rules is not in this version of the API.',
+		);
+		expect(notice).toHaveTextContent('falls through to the rules below');
+		expect(within(dialog).getByTestId('access-summary')).toHaveTextContent(
+			'Custom rules — 1 action out of date, 1 path rule.',
+		);
+		const chip = within(dialog).getByTestId('sidebar-status-chip');
+		expect(chip).toHaveAttribute('data-status', 'rules-outdated');
+		expect(chip).toHaveTextContent('Rules out of date');
+	});
+
+	it('no warning while every action rule names an action the API has', async () => {
+		seedSlackOps([op('chat.postMessage', 'post', '/chat.postMessage', 'Send a message')]);
+		setBindingPermissions('agnt_active_1', 'cred_slack_1', [
+			{ effect: 'deny', operations: ['chat.postMessage'] },
+			{ effect: 'allow', match_mode: 'prefix', methods: ['POST'], path: '/' },
+		]);
+		renderPage();
+		await screen.findByText('Slack bot token');
+		const dialog = await openSidebar('Slack');
+		await within(dialog).findByText('Custom rules — 1 action set, 1 path rule.');
+		expect(within(dialog).queryByTestId('access-stale-actions')).not.toBeInTheDocument();
+		// Not out of date — and, judged on this API's one operation (denied by
+		// action), not Ready either: nothing of Slack's gets through.
+		await waitFor(() =>
+			expect(within(dialog).getByTestId('sidebar-status-chip')).toHaveAttribute(
+				'data-status',
+				'blocked-all-denied',
 			),
 		);
 	});
@@ -730,7 +778,8 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		]);
 	});
 
-	it('an older saved order shows as a pending change, not a banner', async () => {
+	it('an older saved order is not a change of the operator’s: nothing pending until they edit', async () => {
+		seedSlackOps();
 		setBindingPermissions('agnt_active_1', 'cred_slack_1', [
 			{
 				effect: 'allow',
@@ -738,17 +787,60 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 				methods: ['POST'],
 				path: '/chat.',
 			},
-			{ effect: 'require-approval', operations: ['a', 'b', 'c'] },
+			{ effect: 'require-approval', operations: ['chat.postMessage'] },
 		]);
+		const user = userEvent.setup();
 		renderPage();
 		await screen.findByText('Slack bot token');
 		const dialog = await openSidebar('Slack');
-		await editAccess(dialog);
+		const editor = await editAccess(dialog);
+		// Opened and untouched: no save area, and Close editor leaves without asking.
+		expect(within(dialog).queryByTestId('access-commit')).not.toBeInTheDocument();
+		await user.click(within(editor).getByRole('button', { name: /Close editor/ }));
+		expect(within(dialog).getByTestId('access-read-view')).toBeInTheDocument();
+		expect(screen.queryByRole('dialog', { name: /Leave with/ })).toBeNull();
+
+		// Once edited, the save carries the canonical order too, and says so.
+		const again = await editAccess(dialog);
+		await user.click(await within(again).findByRole('button', { name: 'By path' }));
+		await editFirstRulePath(user, within(again), 'x');
 		expect(within(dialog).getByTestId('rules-diff-moved-ahead')).toHaveTextContent(
-			'Moves 3 action choices ahead of the path rules',
+			'Moves 1 action choice ahead of the path rules',
 		);
-		expect(within(dialog).getByTestId('rules-dirty-hint')).toHaveTextContent(
-			'1 unsaved change',
+	});
+
+	it('Custom rules with nothing in them cannot be saved — a save would deny everything', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('Slack bot token');
+		const dialog = await openSidebar('Slack');
+		const editor = await editAccess(dialog);
+		await user.click(within(editor).getAllByRole('button', { name: 'Delete rule' })[0]);
+		expect(within(dialog).getByRole('button', { name: /Save rules/ })).toBeDisabled();
+		expect(within(editor).getByTestId('rules-empty-reason')).toHaveTextContent(
+			'Custom rules need at least one rule — add one, or pick a preset.',
+		);
+	});
+
+	it('leaving with edits offers to save them, not only to discard', async () => {
+		const saves = recordSaves();
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('Slack bot token');
+		const dialog = await openSidebar('Slack');
+		const editor = await editAccess(dialog);
+		await editFirstRulePath(user, within(editor), 'x');
+		await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+		const guard = await screen.findByRole('dialog', {
+			name: /Leave with \d unsaved changes?\?/,
+		});
+		expect(guard).toHaveTextContent("Your changes to these rules aren't saved yet.");
+		expect(guard).not.toHaveTextContent(/Test runs against/);
+		await user.click(within(guard).getByTestId('leave-save'));
+		await waitFor(() => expect(saves).toHaveLength(1));
+		// Saved, then left: the sidebar is gone.
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Slack' })).not.toBeInTheDocument(),
 		);
 	});
 
@@ -814,9 +906,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const guard = await screen.findByRole('dialog', {
 			name: 'Leave with 2 unsaved changes?',
 		});
-		expect(guard).toHaveTextContent(
-			"Test runs against the saved rules, so it won't see your draft.",
-		);
+		expect(guard).toHaveTextContent("Your changes to these rules aren't saved yet.");
 		await user.click(within(guard).getByRole('button', { name: 'Keep editing' }));
 		await waitFor(() =>
 			expect(screen.queryByRole('dialog', { name: /Leave with/ })).not.toBeInTheDocument(),
@@ -990,7 +1080,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const dialog = await openSidebar('Slack');
 		const test = within(within(dialog).getByRole('region', { name: 'Test a request' }));
 		expect(test.getByTestId('rule-tester-note')).toHaveTextContent(
-			'Checks the saved rules. Nothing is sent upstream.',
+			"Checks the saved rules, action rules included — the path is read as the API's operation. Nothing is sent upstream.",
 		);
 
 		// The seeded rule allows POST /chat.* — a POST to /chat.postMessage
@@ -1002,6 +1092,46 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const verdict = await test.findByTestId('rule-verdict');
 		expect(verdict).toHaveTextContent('Allowed');
 		expect(verdict).toHaveTextContent('matched rule #1');
+	});
+
+	it('the tester reads the path as its operation, so a By action deny shows in the dry run', async () => {
+		// The broker resolves a request to its operation before it evaluates the
+		// rules; a dry run that sent only method + path would skip every action
+		// rule and answer from the path rules alone.
+		seedSlackOps();
+		setBindingPermissions('agnt_active_1', 'cred_slack_1', [
+			{ effect: 'deny', operations: ['chat.postMessage'] },
+			{ effect: 'allow', match_mode: 'prefix', methods: ['POST'], path: '/' },
+		]);
+		const sent: unknown[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			if (request.method === 'POST' && request.url.includes('permissions:test')) {
+				void request
+					.clone()
+					.json()
+					.then((b: unknown) => sent.push(b));
+			}
+		});
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('Slack bot token');
+		const inDialog = within(await openSidebar('Slack'));
+		await user.selectOptions(inDialog.getByLabelText('HTTP method'), 'POST');
+		await user.type(inDialog.getByLabelText('Request path'), '/chat.postMessage');
+		await user.click(inDialog.getByRole('button', { name: 'Test' }));
+
+		const verdict = await inDialog.findByTestId('rule-verdict');
+		expect(verdict).toHaveTextContent('Denied');
+		expect(verdict).toHaveTextContent('matched rule #1');
+		expect(inDialog.getByTestId('rule-tester-operation')).toHaveTextContent(
+			'as POST /chat.postMessage',
+		);
+		await waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toMatchObject({
+			method: 'POST',
+			path: '/chat.postMessage',
+			operation_id: 'chat.postMessage',
+		});
 	});
 
 	it('the tester reports a require-approval match as needing approval, not denied', async () => {
@@ -1190,6 +1320,128 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 				{ effect: 'require-approval', operations: ['archive'] },
 				{ effect: 'allow', operations: ['articlesearch'] },
 			]);
+		});
+
+		it('Save waits until the other API’s list is read — a save before that could drop its rules', async () => {
+			seedVendorWide([{ effect: 'require-approval', operations: ['archive'] }]);
+			// Archive's operations don't land until the test lets them.
+			let release!: () => void;
+			const held = new Promise<void>((r) => (release = r));
+			worker.use(
+				http.get('/apis/nytimes-com/archive/1.0.0/operations', async () => {
+					await held;
+					return HttpResponse.json({
+						data: [op('archive', 'get', '/{year}/{month}.json', 'Archive API')],
+						has_more: false,
+						next_cursor: null,
+					});
+				}),
+			);
+			const saves = recordSaves();
+			const user = userEvent.setup();
+			renderPage();
+			await screen.findByText('Article Search');
+			const dialog = await openSidebar('Article Search');
+			const editor = await editAccess(dialog);
+			const actions = await openActions(editor);
+			await user.click(choose(actions, 'GET /articlesearch.json', 'Allow'));
+			await user.click(within(editor).getByTestId('manage-apply'));
+			const save = within(dialog).getByRole('button', { name: /Save rules/ });
+			expect(save).toBeDisabled();
+			expect(within(editor).getByTestId('rules-catalog-reason')).toHaveTextContent(
+				'Reading the actions these rules name — save once they are known.',
+			);
+			release();
+			await waitFor(() => expect(save).toBeEnabled());
+			expect(within(editor).queryByTestId('rules-catalog-reason')).not.toBeInTheDocument();
+			await user.click(save);
+			await waitFor(() => expect(saves).toHaveLength(1));
+			expect(saves[0]).toEqual([
+				{ effect: 'require-approval', operations: ['archive'] },
+				{ effect: 'allow', operations: ['articlesearch'] },
+			]);
+		});
+
+		it('an other API’s list that can’t be read: its action ids are still kept on save', async () => {
+			seedVendorWide([{ effect: 'require-approval', operations: ['archive'] }]);
+			worker.use(createErrorHandler('get', '/apis/nytimes-com/archive/1.0.0/operations'));
+			const saves = recordSaves();
+			const user = userEvent.setup();
+			renderPage();
+			await screen.findByText('Article Search');
+			const dialog = await openSidebar('Article Search');
+			const editor = await editAccess(dialog);
+			const actions = await openActions(editor);
+			await user.click(choose(actions, 'GET /articlesearch.json', 'Allow'));
+			await user.click(within(editor).getByTestId('manage-apply'));
+			const save = within(dialog).getByRole('button', { name: /Save rules/ });
+			await waitFor(() => expect(save).toBeEnabled());
+			await user.click(save);
+			await waitFor(() => expect(saves).toHaveLength(1));
+			// Unreadable is not gone: Archive's id rides along, with its effect.
+			expect(saves[0]).toEqual([
+				{ effect: 'require-approval', operations: ['archive'] },
+				{ effect: 'allow', operations: ['articlesearch'] },
+			]);
+		});
+
+		it('a preset saved from Archive reads as that preset on Article Search, not as Custom rules', async () => {
+			seedVendorWide([
+				{ effect: 'require-approval', operations: ['archive'] },
+				...(draftRulesForPreset('read', []) as unknown as Record<string, unknown>[]),
+			]);
+			renderPage();
+			await screen.findByText('Article Search');
+			const dialog = await openSidebar('Article Search');
+			await waitFor(() =>
+				expect(within(dialog).getByTestId('access-summary')).toHaveTextContent(
+					'Read only — GET requests run, everything else is denied.',
+				),
+			);
+			// The editor opens on that preset too, Archive's action riding along.
+			const editor = await editAccess(dialog);
+			expect(within(editor).getByRole('radio', { name: 'Read only' })).toBeChecked();
+			expect(within(dialog).queryByTestId('access-commit')).not.toBeInTheDocument();
+		});
+
+		it('status is this API’s: Archive’s allow does not make Article Search Ready', async () => {
+			seedVendorWide([{ effect: 'allow', operations: ['archive'] }]);
+			renderPage();
+			await screen.findByText('Article Search');
+			const dialog = await openSidebar('Article Search');
+			await waitFor(() =>
+				expect(within(dialog).getByTestId('sidebar-status-chip')).toHaveAttribute(
+					'data-status',
+					'blocked-all-denied',
+				),
+			);
+			expect(within(dialog).getByTestId('sidebar-status-chip')).toHaveTextContent(
+				'Blocked · all denied',
+			);
+		});
+
+		it('another API’s action rule has no Remove here — a save keeps it, so the trash must not seem to take it', async () => {
+			seedVendorWide([
+				{ effect: 'require-approval', operations: ['archive'] },
+				{ effect: 'allow', operations: ['articlesearch'] },
+			]);
+			const user = userEvent.setup();
+			renderPage();
+			await screen.findByText('Article Search');
+			const dialog = await openSidebar('Article Search');
+			const editor = await editAccess(dialog);
+			await user.click(await within(editor).findByRole('button', { name: 'By path' }));
+			const theirs = await within(editor).findByTestId('manage-action-rule-ask');
+			await waitFor(() =>
+				expect(within(theirs).getByTestId('action-api')).toHaveTextContent('— on Archive'),
+			);
+			expect(
+				within(theirs).queryByRole('button', { name: 'Remove the Ask actions rule' }),
+			).toBeNull();
+			const ours = within(editor).getByTestId('manage-action-rule');
+			expect(
+				within(ours).getByRole('button', { name: 'Remove the Allow actions rule' }),
+			).toBeInTheDocument();
 		});
 
 		it('a preset chosen from Article Search still keeps Archive’s actions', async () => {

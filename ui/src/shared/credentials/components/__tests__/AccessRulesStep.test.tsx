@@ -864,6 +864,81 @@ describe('AccessRulesStep', () => {
 		expect(onRules).toHaveBeenLastCalledWith([]);
 	});
 
+	it('switching to a preset with choices staged settles them first — never left behind a folded panel', async () => {
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(<Host initial="custom" withApi />);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		await openList(user, editor);
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		await setAccess(user, list, 'POST /items', 'Ask');
+
+		await user.click(screen.getByRole('radio', { name: 'Read only' }));
+		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
+		expect(guard).toHaveTextContent('before switching preset');
+		// Still on Custom until the choice is settled.
+		expect(screen.getByRole('radio', { name: /Custom rules/ })).toBeChecked();
+		await user.click(within(guard).getByRole('button', { name: 'Discard' }));
+		await waitFor(() => expect(screen.getByRole('radio', { name: 'Read only' })).toBeChecked());
+	});
+
+	it('removing an action rule while choices are staged: Apply does not write it back', async () => {
+		stubOperations();
+		const onRules = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				onRules={onRules}
+				initialRules={[
+					{ effect: 'allow', methods: null, path: null, operations: ['listItems'] },
+				]}
+			/>,
+		);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		await openList(user, editor);
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		// One choice staged, not applied…
+		await setAccess(user, list, 'POST /items', 'Ask');
+		// …then the saved Allow rule is removed.
+		await user.click(
+			within(within(editor).getByTestId('t-action-rule')).getByRole('button', {
+				name: 'Remove the Allow actions rule',
+			}),
+		);
+		expect(onRules).toHaveBeenLastCalledWith([]);
+		expect(pressed(list, 'GET /items')).toBe('unset');
+		// Apply writes the staged Ask only — the removed Allow stays removed.
+		await applyChoices(user);
+		expect(onRules).toHaveBeenLastCalledWith([
+			{ effect: 'require-approval', methods: null, path: null, operations: ['createItem'] },
+		]);
+	});
+
+	it('375px: every By action row still shows its path, and the choices are finger-sized', async () => {
+		await page.viewport(375, 812);
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(<Host initial="custom" withApi />);
+		const editor = screen.getByTestId('t-custom-editor');
+		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		await openList(user, editor);
+		const list = await within(editor).findByRole('list', { name: 'Operations' });
+		const row = within(list).getAllByTestId('t-actions-row')[0];
+		const path = within(row).getByTitle('/items');
+		// The path has room to read (not a zero-width truncation), and names itself on hover.
+		expect(path.getBoundingClientRect().width).toBeGreaterThan(40);
+		expect(path).toHaveTextContent('/items');
+		// Allow · Ask · Deny are tappable targets.
+		const deny = within(accessFor(list, 'GET /items')).getByRole('button', { name: 'Deny' });
+		expect(deny.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+		// Nothing runs past the row.
+		expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+	});
+
 	it('By action: each row is Allow · Ask · Deny, unset by default; clicking the pressed one unsets it', async () => {
 		stubOperations();
 		const onRules = vi.fn();
