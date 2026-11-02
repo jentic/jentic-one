@@ -322,9 +322,13 @@ function phrase(ws: readonly string[]): string {
 	return ws.map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w)).join(' ');
 }
 
+/** Words spelt with a leading vowel but spoken with a consonant ("a user", "a unit"). */
+const SPOKEN_CONSONANT = /^u(?:ni|sa|se|ti)/;
+
 function article(ws: readonly string[]): string {
 	const first = ws[0] ?? '';
 	if (ACRONYMS.has(first)) return VOWEL_LETTER_NAMES.has(first[0]) ? 'an' : 'a';
+	if (SPOKEN_CONSONANT.test(first)) return 'a';
 	return /^[aeiou]/.test(first) ? 'an' : 'a';
 }
 
@@ -350,6 +354,10 @@ const PATH_VERBS = new Set([
 	'verify',
 ]);
 
+/** Path verbs that name a state a write puts the resource in, not an action on it:
+ * `PUT /notifications/read` marks notifications read; it doesn't read one. */
+const STATE_VERBS = new Set(['read', 'unread', 'complete', 'seen']);
+
 const isParam = (segment: string): boolean => /^\{.*\}$/.test(segment) || segment.startsWith(':');
 /** Version and mount segments that name no resource. */
 const isNoise = (segment: string): boolean => /^v\d+(\.\d+)*$/i.test(segment) || segment === 'api';
@@ -360,7 +368,11 @@ const isNoise = (segment: string): boolean => /^v\d+(\.\d+)*$/i.test(segment) ||
  * one item → "Get a board column", POST → "Create a board column", PUT/PATCH →
  * "Update a custom event", DELETE → "Delete an FCM device token". The last
  * resource segment names it (singular after a `{param}`, or for one-item
- * verbs); a trailing `…Id` segment reads "… by external ID".
+ * verbs); a trailing `…Id` segment reads "… by external ID". A resource that
+ * belongs to an earlier `{param}`'s owner is named with it — `/users/{id}/
+ * devices/fcm/{token}` is "a user's FCM" — so two paths that end alike read
+ * apart. A write to a state verb (`PUT /notifications/read`) marks the
+ * resource as that state rather than performing it.
  */
 export function describeFromMethodAndPath(method: string, path: string): string {
 	const m = method.toUpperCase();
@@ -377,13 +389,28 @@ export function describeFromMethodAndPath(method: string, path: string): string 
 		.slice(0, i)
 		.filter((s) => !isParam(s))
 		.pop();
+	// `/users/{userId}/devices/fcm/{token}`: a `{param}` further up (not the one
+	// right before the resource, which names the resource itself below) means
+	// the resource is one owner's — say whose.
+	let owner: string[] = [];
+	for (let j = i - 2; j >= 1; j -= 1) {
+		if (isParam(segs[j]) && !isParam(segs[j - 1])) {
+			owner = words(segs[j - 1]).map(singular);
+			break;
+		}
+	}
+	const owned = (text: string): string =>
+		owner.length > 0 ? `${article(owner)} ${phrase(owner)}'s ${text}` : text;
 	// `/promotions/{id}/activate`, `/instagram/verifyAccount`: the path names
 	// the verb itself.
 	const head = noun[0] ?? '';
 	if (PATH_VERBS.has(head)) {
 		const rest = noun.slice(1);
-		const owner = prev ? words(prev).map(singular) : [];
-		const object = rest.length > 0 ? rest : owner;
+		const ownerNoun = prev ? words(prev).map(singular) : [];
+		const object = rest.length > 0 ? rest : ownerNoun;
+		if (STATE_VERBS.has(head) && rest.length === 0 && prev && m !== 'GET' && m !== 'DELETE') {
+			return `Mark ${phrase(words(prev))} as ${head}`;
+		}
 		const lead = `${head.charAt(0).toUpperCase()}${head.slice(1)}`;
 		return object.length > 0 ? `${lead} ${article(object)} ${phrase(object)}` : lead;
 	}
@@ -408,9 +435,11 @@ export function describeFromMethodAndPath(method: string, path: string): string 
 					: m === 'DELETE'
 						? 'Delete'
 						: `${m.charAt(0)}${m.slice(1).toLowerCase()}`;
-	if (verb === 'List') return `List ${phrase(noun)}${suffix}`;
+	if (verb === 'List') return `List ${owned(phrase(noun))}${suffix}`;
 	const one = [...noun.slice(0, -1), singular(noun[noun.length - 1] ?? '')];
-	return `${verb} ${article(one)} ${phrase(one)}${suffix}`;
+	return owner.length > 0
+		? `${verb} ${owned(phrase(one))}${suffix}`
+		: `${verb} ${article(one)} ${phrase(one)}${suffix}`;
 }
 
 /** The first sentence of a description, trimmed to one readable line. */

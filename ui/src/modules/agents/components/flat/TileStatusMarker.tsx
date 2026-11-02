@@ -6,6 +6,7 @@
  * status, which offers a Retry beside its word.
  */
 import {
+	AlertTriangle,
 	CheckCircle2,
 	ChevronRight,
 	CircleHelp,
@@ -35,6 +36,7 @@ const TEXT_TONE = {
 	'blocked-all-denied': { tone: 'caution', icon: ShieldOff },
 	checking: { tone: 'muted', icon: undefined },
 	unavailable: { tone: 'muted', icon: CircleHelp },
+	'rules-outdated': { tone: 'warning', icon: AlertTriangle },
 	ready: { tone: 'success', icon: undefined },
 } as const;
 
@@ -46,6 +48,7 @@ const CHIP = {
 	'blocked-all-denied': { tone: 'caution', icon: ShieldOff },
 	checking: { tone: 'neutral', icon: Loader2 },
 	unavailable: { tone: 'neutral', icon: CircleHelp },
+	'rules-outdated': { tone: 'warning', icon: AlertTriangle },
 	ready: { tone: 'success', icon: CheckCircle2 },
 } as const;
 

@@ -60,6 +60,7 @@ import { DraftRuleTester } from '@/shared/credentials/components/RuleRequestTest
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
+	actionOwner,
 	describeActions,
 	siblingActions,
 	siblingActionsLine,
@@ -303,6 +304,12 @@ export function AccessRulesStep({
 			leaveActions(() => (setEditing(null), setBuild('path')), 'before switching to By path');
 		else setBuild('action');
 	};
+	/** A preset folds the Custom panel away — staged choices in it are settled
+	 * first, never left behind unreachable with Save disabled on their account. */
+	const switchPreset = (to: RulesPreset): void => {
+		if (to === 'custom' || to === preset) onPresetChange(to);
+		else leaveActions(() => onPresetChange(to), 'before switching preset');
+	};
 	const editActionRule = (g: keyof ActionGroups): void => {
 		setEditing(g);
 		setListOpen(true);
@@ -327,20 +334,52 @@ export function AccessRulesStep({
 	);
 	const actionRows = (['deny', 'ask', 'allow'] as const)
 		.filter((g) => groups[g].length > 0)
-		.map((g) => (
-			<ActionRuleRow
-				key={g}
-				operations={groups[g]}
-				effect={GROUP_EFFECT[g]}
-				catalog={actionCatalog}
-				disabled={disabled}
-				onEdit={actionsAvailable ? (): void => editActionRule(g) : undefined}
-				onRemove={(): void =>
-					onCustomRulesChange(joinCustomRules(pathRules, { ...groups, [g]: [] }))
-				}
-				testId={`${p}-action-rule${g === 'allow' ? '' : `-${g}`}`}
-			/>
-		));
+		.map((g) => {
+			// Another API's actions on this rule are not this panel's to remove: a
+			// save keeps them whatever happens here, so the trash must not seem to
+			// take them. It removes this API's own, and is absent on a rule that
+			// holds none of them.
+			const theirs = new Set(
+				describeActions(groups[g], actionCatalog)
+					.entries.filter((e) => actionOwner(e, actionCatalog) === 'other')
+					.map((e) => e.id),
+			);
+			const own = groups[g].filter((id) => !theirs.has(id));
+			return (
+				<ActionRuleRow
+					key={g}
+					operations={groups[g]}
+					effect={GROUP_EFFECT[g]}
+					catalog={actionCatalog}
+					disabled={disabled}
+					onEdit={actionsAvailable ? (): void => editActionRule(g) : undefined}
+					onRemove={
+						own.length === 0
+							? undefined
+							: (): void => {
+									const removed = new Set(own);
+									onCustomRulesChange(
+										joinCustomRules(pathRules, {
+											...groups,
+											[g]: groups[g].filter((id) => theirs.has(id)),
+										}),
+									);
+									// `staged` snapshots the groups, so the removed actions leave it
+									// too — otherwise Apply writes the rule straight back. A choice
+									// that moved one of them to another effect is the operator's and stays.
+									setStaged(
+										(s) =>
+											s && {
+												...s,
+												[g]: s[g].filter((id) => !removed.has(id)),
+											},
+									);
+								}
+					}
+					testId={`${p}-action-rule${g === 'allow' ? '' : `-${g}`}`}
+				/>
+			);
+		});
 	const editingHeader =
 		editing && editingIds ? (
 			<div
@@ -370,7 +409,7 @@ export function AccessRulesStep({
 			<RadioCardGroup<RulesPreset>
 				options={options}
 				value={preset}
-				onChange={onPresetChange}
+				onChange={switchPreset}
 				ariaLabelledBy={headingId}
 				disabled={disabled}
 				data-testid={`${p}-rules-preset`}
@@ -802,7 +841,8 @@ function ActionRuleRow({
 	catalog: ActionCatalog;
 	disabled: boolean;
 	onEdit?: () => void;
-	onRemove: () => void;
+	/** Absent when nothing on the rule is this API's to remove. */
+	onRemove?: () => void;
 	testId: string;
 }) {
 	const description = useMemo(() => describeActions(operations, catalog), [operations, catalog]);
@@ -831,16 +871,18 @@ function ActionRuleRow({
 							Edit
 						</Button>
 					)}
-					<Button
-						variant="ghost"
-						size="icon-xs"
-						aria-label={`Remove the ${EFFECT_RULE_NAME[effect] ?? 'Allow'} actions rule`}
-						disabled={disabled}
-						onClick={onRemove}
-						className="text-foreground-sub hover:bg-danger/10 hover:text-danger"
-					>
-						<Trash2 className="h-3.5 w-3.5" />
-					</Button>
+					{onRemove && (
+						<Button
+							variant="ghost"
+							size="icon-xs"
+							aria-label={`Remove the ${EFFECT_RULE_NAME[effect] ?? 'Allow'} actions rule`}
+							disabled={disabled}
+							onClick={onRemove}
+							className="text-foreground-sub hover:bg-danger/10 hover:text-danger"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+						</Button>
+					)}
 				</div>
 			</div>
 			{/* What is granted, in the By action checklist's own row: method,

@@ -68,10 +68,14 @@ export function AccessEditor({
 	onSave,
 	onClose,
 }: AccessEditorProps) {
-	const { toSave: draftRules, changes, dirty, invalid, saving } = draft;
+	const { toSave: draftRules, changes, dirty, invalid, empty, awaitingCatalog, saving } = draft;
 	const { staged } = unapplied;
 	const pending = dirty || staged > 0;
 	const stagedReasonId = useId();
+	const catalogReasonId = useId();
+	const saveReasons = [staged > 0 && stagedReasonId, awaitingCatalog && catalogReasonId]
+		.filter(Boolean)
+		.join(' ');
 	return (
 		<div className="space-y-3" data-testid="access-editor">
 			<AccessHeading credentialName={credentialName} />
@@ -152,9 +156,30 @@ export function AccessEditor({
 										before saving.
 									</span>
 								)}
+								{awaitingCatalog && (
+									// Until every list is read, whose each saved action is can't
+									// be told, and a save could drop another API's rules.
+									<span
+										className="text-foreground-sub block"
+										id={catalogReasonId}
+										data-testid="rules-catalog-reason"
+									>
+										Reading the actions these rules name — save once they are
+										known.
+									</span>
+								)}
 								{invalid && (
 									<span className="text-caution block">
 										An Allow or Ask rule needs a method, path or action.
+									</span>
+								)}
+								{empty && (
+									<span
+										className="text-caution block"
+										data-testid="rules-empty-reason"
+									>
+										Custom rules need at least one rule — add one, or pick a
+										preset.
 									</span>
 								)}
 							</div>
@@ -174,8 +199,10 @@ export function AccessEditor({
 									size="sm"
 									onClick={onSave}
 									loading={saving}
-									disabled={invalid || staged > 0 || !dirty}
-									aria-describedby={staged > 0 ? stagedReasonId : undefined}
+									disabled={
+										invalid || empty || staged > 0 || !dirty || awaitingCatalog
+									}
+									aria-describedby={saveReasons || undefined}
 								>
 									<Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save rules'}
 								</Button>

@@ -6,7 +6,7 @@
  * Viewing never changes anything; the one verb is "Edit access".
  */
 import type { ReactNode } from 'react';
-import { Check, Lock, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, Check, Lock, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { Button, TruncateWithTooltip } from '@/shared/ui';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import {
@@ -22,7 +22,13 @@ import {
 	type ActionCatalog,
 } from '@/shared/credentials/lib/actionRules';
 import { plural } from '@/modules/agents/lib/stripSummary';
+import { ownRules } from '@/modules/agents/lib/accessDraft';
 import { AccessCounts } from '@/modules/agents/components/flat/access/AccessCounts';
+
+/** How long the broker may keep serving a binding's previous rules after a
+ * save: its rule cache's TTL (`broker.rule_cache_ttl_seconds`, 30 by default).
+ * "Saved" must not read as "in force this instant". */
+const RULE_CACHE_SECONDS = 30;
 
 const PRESET_SENTENCE = {
 	read: 'Read only — GET requests run, everything else is denied.',
@@ -33,24 +39,27 @@ const PRESET_SENTENCE = {
 
 /**
  * The rules in one line, naming the preset in use — for Custom rules, how
- * many actions are set and how many path rules follow, never per-effect
- * numbers (the bar and By action's header carry those). Only this API's
- * actions count (`actionOwner`), exactly as By action counts them.
+ * many actions are set, how many are out of date (ids the API's live version
+ * no longer has, so they match nothing) and how many path rules follow, never
+ * per-effect numbers (the bar and By action's header carry those). Only this
+ * API's actions count (`actionOwner`), exactly as By action counts them.
  */
 export function savedRulesSentence(
 	rules: readonly PermissionRule[],
 	catalog: ActionCatalog,
 ): string {
-	const preset = presetForRules(rules);
+	// Another API's action rules on a shared credential are not this API's
+	// rules: a preset saved from that API's panel is still the preset here.
+	const own = ownRules(rules, catalog);
+	const preset = presetForRules(own.length > 0 ? own : rules);
 	if (preset === null) return 'No rules — every call is denied.';
 	if (preset !== 'custom') return PRESET_SENTENCE[preset];
 	const { pathRules, groups } = splitCustomRules(rules);
-	const set = describeActions(
-		[...groups.allow, ...groups.ask, ...groups.deny],
-		catalog,
-	).entries.filter((e) => actionOwner(e, catalog) === 'own').length;
+	const described = describeActions([...groups.allow, ...groups.ask, ...groups.deny], catalog);
+	const set = described.entries.filter((e) => actionOwner(e, catalog) === 'own').length;
 	const parts = [
 		set > 0 && `${actionCount(set)} set`,
+		described.missing > 0 && `${actionCount(described.missing)} out of date`,
 		pathRules.length > 0 && plural(pathRules.length, 'path rule'),
 	].filter(Boolean);
 	return parts.length > 0
@@ -145,6 +154,12 @@ export interface AccessReadViewProps {
 	ruleSetPanel?: ReactNode;
 	/** Platform-managed safety rules on this binding. */
 	systemRuleCount: number;
+	/**
+	 * Action-rule ids the API's live version no longer has. Such a rule matches
+	 * nothing, so a call it denied or held falls through to the rules after it —
+	 * the one thing a reader of the saved rules must not miss.
+	 */
+	staleActions: number;
 	/** The last save just landed (shown for a few seconds, then cleared by the host). */
 	justSaved: boolean;
 }
@@ -159,10 +174,34 @@ export function AccessReadView({
 	ruleSetName,
 	ruleSetPanel,
 	systemRuleCount,
+	staleActions,
 	justSaved,
 }: AccessReadViewProps) {
+	const one = staleActions === 1;
 	return (
 		<div className="space-y-4" data-testid="access-read-view">
+			{staleActions > 0 && (
+				<p
+					role="status"
+					className="bg-warning/10 text-foreground flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs"
+					data-testid="access-stale-actions"
+				>
+					<AlertTriangle
+						className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0"
+						aria-hidden="true"
+					/>
+					<span>
+						<strong>
+							{actionCount(staleActions)} in these rules {one ? 'is' : 'are'} not in
+							this version of the API.
+						</strong>{' '}
+						A rule names an action by an id that changes when the API is re-imported, so{' '}
+						{one ? 'that rule decides' : 'those rules decide'} nothing now — a call{' '}
+						{one ? 'it' : 'they'} denied or held falls through to the rules below. Open
+						Edit access and set {one ? 'it' : 'them'} again.
+					</span>
+				</p>
+			)}
 			{lockedReason && (
 				<p
 					className="bg-surface-inset text-foreground-sub flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs"
@@ -187,7 +226,7 @@ export function AccessReadView({
 								data-testid="rules-saved"
 							>
 								<Check className="text-success h-3.5 w-3.5" aria-hidden="true" />
-								Saved — these rules are live
+								Saved — the broker applies them within {RULE_CACHE_SECONDS} seconds
 							</span>
 						)}
 					</span>

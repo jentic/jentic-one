@@ -3,13 +3,16 @@
  * precedence so two lines on the same card can never contradict each other
  * (a green "Ready" beside "No rules — all calls blocked", say).
  *
- *   Suspended → Not serving → Sign-in needed → Checking / Unavailable → Blocked → Ready
+ *   Suspended → Not serving → Sign-in needed → Checking / Unavailable → Blocked
+ *     → Rules out of date → Ready
  *
  * A binding is default-deny: with no operator rules every call is refused, and
  * with only deny rules nothing is allowed either — both read as Blocked. Ready
  * is claimed only once the rules are READ: while they load the tile says
  * "Checking access…", and when the read fails it says "Status unavailable" — an
- * unknown binding may well be blocked, so it never looks healthy.
+ * unknown binding may well be blocked, so it never looks healthy. Nor is Ready
+ * claimed while an action rule names ids the API no longer has: that rule is
+ * not in force, so the binding reads "Rules out of date".
  */
 import type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api';
 
@@ -21,6 +24,7 @@ export type TileStatus =
 	| 'blocked-all-denied'
 	| 'checking'
 	| 'unavailable'
+	| 'rules-outdated'
 	| 'ready';
 
 export interface TileStatusInput {
@@ -32,6 +36,14 @@ export interface TileStatusInput {
 	awaitingConsent: boolean;
 	/** Operator-rule breakdown, or where its read stands (`undefined` = not read yet). */
 	rules: BindingRulesState | undefined;
+	/**
+	 * An action rule names operation ids the API's live version no longer has.
+	 * Ids change when the API is re-imported, so such a rule matches nothing:
+	 * a deny or ask it carried no longer stops the call, which falls through to
+	 * the rules after it. Known only where the API's operations are read (the
+	 * access sheet); a tile that cannot tell leaves it unset.
+	 */
+	staleActionRules?: boolean;
 }
 
 export function deriveTileStatus({
@@ -39,13 +51,17 @@ export function deriveTileStatus({
 	agentServing,
 	awaitingConsent,
 	rules,
+	staleActionRules = false,
 }: TileStatusInput): TileStatus {
 	if (suspended) return 'suspended';
 	if (!agentServing) return 'not-serving';
 	if (awaitingConsent) return 'sign-in-needed';
 	if (rules === 'error') return 'unavailable';
 	if (rules === undefined || rules === 'loading') return 'checking';
-	return rulesBlock(rules) ?? 'ready';
+	// Blocked outranks out-of-date: with nothing allowed no call gets through
+	// whatever the stale rule says. Past that, a stale rule means the rules on
+	// screen are not the rules in force, so the binding is never Ready.
+	return rulesBlock(rules) ?? (staleActionRules ? 'rules-outdated' : 'ready');
 }
 
 /** The breakdown itself, or `undefined` while it is loading or unreadable. */
@@ -81,6 +97,7 @@ export const TILE_STATUS_LABEL: Record<TileStatus, string> = {
 	'blocked-all-denied': 'Blocked · all denied',
 	checking: 'Checking access…',
 	unavailable: 'Status unavailable',
+	'rules-outdated': 'Rules out of date',
 	ready: 'Ready',
 };
 
@@ -100,6 +117,7 @@ export const TILE_STATUS_CARD_LABEL: Record<TileStatus, string> = {
 	'blocked-all-denied': 'Blocked',
 	checking: 'Checking',
 	unavailable: 'Unavailable',
+	'rules-outdated': 'Out of date',
 	ready: 'Ready',
 };
 

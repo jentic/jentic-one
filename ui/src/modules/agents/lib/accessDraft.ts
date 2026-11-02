@@ -128,8 +128,12 @@ export function draftChanges(
 	};
 }
 
-/** The operation ids of the saved rules that belong to another API the rule
- * list governs — the ones this panel never lists, so never changes. */
+/**
+ * The operation ids of the saved rules that belong to another API the rule
+ * list governs — the ones this panel never lists, so never changes. An id no
+ * list resolves (one still loading, or unreadable) may well be another API's,
+ * so it is kept too: a save must never take away a rule it cannot read.
+ */
 export function siblingActionIds(
 	saved: readonly PermissionRule[],
 	catalog: ActionCatalog,
@@ -137,9 +141,47 @@ export function siblingActionIds(
 	const ids = saved.flatMap((r) => r.operations ?? []);
 	return new Set(
 		describeActions(ids, catalog)
-			.entries.filter((e) => actionOwner(e, catalog) === 'other')
+			.entries.filter((e) => e.kind === 'unresolved' || actionOwner(e, catalog) === 'other')
 			.map((e) => e.id),
 	);
+}
+
+/**
+ * The saved rules as THIS API's panel reads them: an action rule whose every
+ * id is another API's (the same credential reaches it, so one list governs
+ * both) is left out, and one that mixes the two keeps this API's ids only. The
+ * preset a shared credential was given from the other API's panel then reads
+ * as that preset here, not as Custom rules with a stray action rule.
+ */
+export function ownRules(
+	rules: readonly PermissionRule[],
+	catalog: ActionCatalog,
+): PermissionRule[] {
+	const other = siblingActionIds(rules, catalog);
+	if (other.size === 0) return [...rules];
+	const own: PermissionRule[] = [];
+	for (const rule of rules) {
+		if (!isActionRule(rule)) {
+			own.push(rule);
+			continue;
+		}
+		const ids = (rule.operations ?? []).filter((id) => !other.has(id));
+		if (ids.length > 0) own.push({ ...rule, operations: ids });
+	}
+	return own;
+}
+
+/**
+ * Whether the saved action ids are still being resolved — a list of this
+ * API's or a sibling's operations is loading. Until it lands, whose each id is
+ * can't be told, so a save must wait.
+ */
+export function awaitingActionCatalog(
+	saved: readonly PermissionRule[],
+	catalog: ActionCatalog,
+): boolean {
+	const ids = saved.flatMap((r) => r.operations ?? []);
+	return ids.length > 0 && describeActions(ids, catalog).status === 'loading';
 }
 
 /**

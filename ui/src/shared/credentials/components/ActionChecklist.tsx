@@ -117,8 +117,9 @@ export function ActionChecklist({
 }: ActionChecklistProps) {
 	const scoped = useMemo(
 		() =>
+			// Numeric collation: `/resource/2` lists before `/resource/10`.
 			(only ? ops.filter((op) => only.has(op.operation_id)) : [...ops]).sort((a, b) =>
-				a.path.localeCompare(b.path),
+				a.path.localeCompare(b.path, undefined, { numeric: true }),
 			),
 		[ops, only],
 	);
@@ -165,7 +166,8 @@ export function ActionChecklist({
 			onChange={(to) => setAccess(ids, to)}
 			onClear={() => setAccess(ids, null)}
 			disabled={disabled}
-			className="shrink-0"
+			// Finger-sized segments on a phone; the compact ones from `sm` up.
+			className="shrink-0 max-sm:[&_button]:px-2.5 max-sm:[&_button]:py-1.5"
 		/>
 	);
 	const filtered = q.trim().length > 0;
@@ -294,16 +296,27 @@ export function ActionChecklist({
 									changed ? 'bg-caution' : 'bg-transparent',
 								)}
 							/>
-							<MethodBadge method={op.method} />
-							<span
-								className={cn(
-									'min-w-0 flex-1 truncate font-mono text-[11.5px]',
-									current === null ? 'text-foreground-sub' : 'text-foreground',
-								)}
-							>
-								{op.path}
+							{/* On a phone the plain-English line wraps under the path, so the
+							    path keeps its width (the one thing that says which action this
+							    is); from `sm` up both share the line. */}
+							<span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+								<MethodBadge method={op.method} />
+								<span
+									title={op.path}
+									className={cn(
+										'min-w-0 flex-1 basis-24 truncate font-mono text-[11.5px]',
+										current === null
+											? 'text-foreground-sub'
+											: 'text-foreground',
+									)}
+								>
+									{op.path}
+								</span>
+								<PlainText
+									value={plain.get(id)}
+									className="basis-full sm:max-w-[45%] sm:basis-auto"
+								/>
 							</span>
-							<PlainText value={plain.get(id)} className="max-w-[45%]" />
 							{changed && <span className="sr-only">(not applied)</span>}
 							{choice([id], current, `Access for ${action}`)}
 						</li>

@@ -17,8 +17,10 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+	Button,
 	ConfirmDialog,
 	DangerZone,
+	Dialog,
 	ErrorAlert,
 	SheetPrimitive,
 	Skeleton,
@@ -39,10 +41,13 @@ import {
 	CredentialDeleteDialog,
 	EditCredentialSheet,
 	useActionCatalog,
+	useAllowedOperationCount,
 	useUnappliedChoices,
 } from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
+import { splitCustomRules } from '@/shared/credentials/lib/accessPresets';
+import { describeActions } from '@/shared/credentials/lib/actionRules';
 import {
 	summarizeBindingRules,
 	useAgentBindingEffectiveRules,
@@ -67,7 +72,7 @@ import { AccessEditor } from '@/modules/agents/components/flat/access/AccessEdit
 import { CredentialSection } from '@/modules/agents/components/flat/access/CredentialSection';
 import { useAccessDraft } from '@/modules/agents/components/flat/access/useAccessDraft';
 
-/** How long "Saved — these rules are live" stays on the read view. */
+/** How long the "Saved" notice stays on the read view. */
 const SAVED_NOTICE_MS = 4000;
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
@@ -196,14 +201,6 @@ export function ApiAccessSidebar({
 				}
 			: summary;
 	}, [effective.rules, effective.ruleSet]);
-	const status = shown
-		? deriveTileStatus({
-				suspended: shown.suspended,
-				agentServing,
-				awaitingConsent: shown.awaitingConsent,
-				rules: effective.isError ? 'error' : (savedRuleSummary ?? 'loading'),
-			})
-		: 'ready';
 
 	// The rules as the broker applies them (read view), and the binding's own
 	// inline rules (the draft's seed).
@@ -230,6 +227,38 @@ export function ApiAccessSidebar({
 		[shown, siblingTiles],
 	);
 	const catalog = useActionCatalog(apiReference, { enabled: open, siblings: siblingRefs });
+	// Action rules name operations by id, and a re-import gives the API's
+	// operations new ids, so a rule saved before it matches nothing: the broker
+	// skips it and the call falls through to the rules after it. Counted only
+	// once every operation list is complete — an id is "gone" when no list has it.
+	const staleActions = useMemo(() => {
+		const { groups } = splitCustomRules(effectiveRules);
+		return describeActions([...groups.allow, ...groups.ask, ...groups.deny], catalog).missing;
+	}, [effectiveRules, catalog]);
+	// One credential may reach several APIs under one rule list, so the rule
+	// counts alone can read Ready here on another API's allow. Judged against
+	// THIS API's operations (the bar's own numbers) once they are read, so a
+	// binding that lets none of them through reads Blocked.
+	const apiCounts = useAllowedOperationCount(apiReference, effectiveRules, { enabled: open });
+	const perApiRules = useMemo(() => {
+		if (!savedRuleSummary || !apiCounts || savedRuleSummary.total === 0)
+			return savedRuleSummary;
+		return {
+			...savedRuleSummary,
+			allow: apiCounts.allowed,
+			ask: apiCounts.ask,
+			deny: apiCounts.denied,
+		};
+	}, [savedRuleSummary, apiCounts]);
+	const status = shown
+		? deriveTileStatus({
+				suspended: shown.suspended,
+				agentServing,
+				awaitingConsent: shown.awaitingConsent,
+				rules: effective.isError ? 'error' : (perApiRules ?? 'loading'),
+				staleActionRules: staleActions > 0,
+			})
+		: 'ready';
 	const othersPhrase = shown ? otherApisPhrase(shown, siblingTiles) : null;
 	const draft = useAccessDraft({
 		agentId: agent.id,
@@ -493,6 +522,7 @@ export function ApiAccessSidebar({
 				) : null
 			}
 			systemRuleCount={systemRuleCount}
+			staleActions={staleActions}
 			justSaved={justSaved}
 		/>
 	);
@@ -585,21 +615,57 @@ export function ApiAccessSidebar({
 
 			{/* Staged By action choices are settled first: Apply or Discard. */}
 			{unapplied.dialog}
-			{/* The leave guard: a draft is never dropped without saying so. */}
-			<ConfirmDialog
+			{/* The leave guard: a draft is never dropped without saying so — and a
+			    draft that can be saved can be saved from here, not only discarded. */}
+			<Dialog
 				open={guard != null}
-				title={`Leave with ${plural(changeCount, 'unsaved change')}?`}
-				body="Test runs against the saved rules, so it won't see your draft."
-				confirmLabel="Discard and leave"
-				cancelLabel="Keep editing"
-				onConfirm={() => {
-					const then = guard?.then;
-					setGuard(null);
-					stopEditing();
-					then?.();
-				}}
 				onClose={() => setGuard(null)}
-			/>
+				size="sm"
+				title={`Leave with ${plural(changeCount, 'unsaved change')}?`}
+				footer={
+					<>
+						<Button variant="ghost" onClick={() => setGuard(null)}>
+							Keep editing
+						</Button>
+						<Button
+							variant="secondary"
+							onClick={() => {
+								const then = guard?.then;
+								setGuard(null);
+								stopEditing();
+								then?.();
+							}}
+						>
+							Discard and leave
+						</Button>
+						<Button
+							loading={draft.saving}
+							disabled={
+								!draft.dirty ||
+								draft.invalid ||
+								draft.empty ||
+								draft.awaitingCatalog
+							}
+							onClick={() => {
+								const then = guard?.then;
+								draft.save(() => {
+									setGuard(null);
+									setEditing(false);
+									setJustSaved(true);
+									then?.();
+								});
+							}}
+							data-testid="leave-save"
+						>
+							Save and leave
+						</Button>
+					</>
+				}
+			>
+				<p className="text-muted-foreground text-sm leading-relaxed">
+					Your changes to these rules aren&apos;t saved yet.
+				</p>
+			</Dialog>
 
 			{/* A stateless confirm, so conditional mounting is the sanctioned lifecycle.
 			    States both blast radii: the binding and its rules go, the credential stays. */}
