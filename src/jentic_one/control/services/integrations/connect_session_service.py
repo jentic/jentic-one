@@ -2111,13 +2111,21 @@ class ConnectSessionService:
             requested_scopes=scopes,
         )
 
-    async def _emit_amended(self, row: ConnectSession, revision: ConnectSessionRevision) -> None:
+    async def _emit_amended(
+        self,
+        row: ConnectSession,
+        revision: ConnectSessionRevision,
+        *,
+        actor_id: str | None = None,
+    ) -> None:
         """Emit ``connect_session.amended`` so the reviewer knows the ask changed.
 
         A session with no agent is a person's own request, and it emits too:
-        the change belongs on their rail rather than nowhere. The same
-        condition used to drop the event entirely.
+        the change belongs on their rail rather than nowhere. ``actor_id`` names who moved
+        the request where the revision itself records no author — a rebase is
+        nobody's ask, but somebody asked for it.
         """
+        actor = actor_id or revision.created_by or row.initiator_actor_id
         try:
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
@@ -2138,10 +2146,8 @@ class ConnectSessionService:
                         "number": revision.number,
                     },
                     created_by=row.agent_id or row.initiator_actor_id,
-                    actor_id=revision.created_by or row.initiator_actor_id,
-                    actor_type=actor_type_label_from_id(
-                        revision.created_by or row.initiator_actor_id
-                    ),
+                    actor_id=actor,
+                    actor_type=actor_type_label_from_id(actor),
                 )
         except Exception:
             _logger.warning(
@@ -2226,6 +2232,9 @@ class ConnectSessionService:
         consent = await self._consent_source(credential)
         new_scopes = scopes_changed(baseline, result)
         self._require_scope_change(consent, baseline, result)
+        # What the apply path's pre-check validated, handed to the consent it
+        # then starts rather than resolved again.
+        allowed: ConsentSource | None = None
         if apply:
             await self._require_agent_binding_allowed(agent_id, identity, late_bound=False)
             if new_scopes:
@@ -2236,12 +2245,13 @@ class ConnectSessionService:
                 # the change, so each of these runs here too.
                 self._require_rule_set_change_allowed(baseline, identity)
                 _require_rules_present(baseline, result["rules"])
-                await self._require_consent_allowed(
+                allowed = await self._require_consent_allowed(
                     credential,
                     agent_id,
                     identity,
                     scopes=result["scopes"],
                     granted=set(baseline.get("granted_scopes") or []),
+                    resolved=consent,
                 )
             else:
                 return await self._apply_edit_now(
@@ -2327,7 +2337,12 @@ class ConnectSessionService:
                 confirmed_scopes=result["scopes"],
             )
             challenge = await self._begin_edit_consent(
-                row, change, identity=identity, browser_binding=browser_binding
+                row,
+                change,
+                identity=identity,
+                browser_binding=browser_binding,
+                credential=credential,
+                consent=allowed,
             )
         return CreatedEditSession(
             session_id=row.id,
@@ -2510,18 +2525,27 @@ class ConnectSessionService:
         *,
         identity: Identity,
         browser_binding: BrowserBindingClaim | None = None,
+        credential: Credential | None = None,
+        consent: ConsentSource | None = None,
     ) -> ConfirmResult:
-        """Hold ``change`` on the session and start the vendor consent for its scopes."""
+        """Hold ``change`` on the session and start the vendor consent for its scopes.
+
+        ``credential`` and ``consent`` come from the apply path, which read and
+        validated both before the session existed; a confirm arrives with
+        neither and resolves them here.
+        """
         assert row.agent_id is not None
-        async with self._ctx.control_db.session() as session:
-            credential = await CredentialRepository.get_by_id(session, row.credential_id)
+        if credential is None:
+            async with self._ctx.control_db.session() as session:
+                credential = await CredentialRepository.get_by_id(session, row.credential_id)
         granted = set((row.baseline or {}).get("granted_scopes") or [])
         # Only what the change adds is validated, as the open path does: a
         # scope the grant already holds is not re-checked, so a credential
         # carrying one the catalog dropped stays editable instead of wedging.
-        consent = await self._require_consent_allowed(
-            credential, row.agent_id, identity, scopes=change["scopes"], granted=granted
-        )
+        if consent is None:
+            consent = await self._require_consent_allowed(
+                credential, row.agent_id, identity, scopes=change["scopes"], granted=granted
+            )
         assert credential is not None  # _require_consent_allowed refuses a missing one
         handler_cls = consent.handler_cls
         # The agents the approver saw the widening reach: one that binds while
@@ -3005,13 +3029,19 @@ class ConnectSessionService:
         *,
         scopes: list[str],
         granted: set[str],
+        resolved: ConsentSource | None = None,
     ) -> ConsentSource:
         """Everything a scope change can be refused for, before anything is written.
 
         Shared by the consent itself and by the apply path's pre-check, so a
-        refused request never leaves an open session behind.
+        refused request never leaves an open session behind. ``resolved`` is
+        the source the caller already has: resolving it reads the credential's
+        registration and the vendor entry, and the apply path would otherwise
+        do that three times for one request.
         """
-        consent = await self._consent_source(credential) if credential is not None else None
+        consent = resolved
+        if consent is None and credential is not None:
+            consent = await self._consent_source(credential)
         if credential is None or consent is None:
             raise ScopesNotSupportedError()
         if consent.entry is not None:
@@ -3128,6 +3158,11 @@ class ConnectSessionService:
         carries any part of the ask the binding no longer fits as a conflict.
         Idempotent — a session already current comes back unchanged. Its
         initiator or a human who may confirm it, as an amend takes.
+
+        The revision it appends is nobody's ask, so it records no author (the
+        review renders it as the rebase it is). Who asked for it is recorded
+        where the question belongs: the audit entry and the event, as an amend
+        records them.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -3136,10 +3171,31 @@ class ConnectSessionService:
         if row.state != "created":
             raise _session_closed(row)
         await self._require_revision_room(row)
+        before = await self._current_revision(row)
         row = await self._refresh_edit(row)
         current = await self._current_revision(row)
         if current is None:
             raise _session_closed(row)
+        if before is None or before.id != current.id:
+            _logger.info(
+                "connect_session.rebased",
+                session_id=row.id,
+                revision_id=current.id,
+                number=current.number,
+                actor_id=identity.sub,
+            )
+            await record_audit_best_effort(
+                self._ctx,
+                action=AuditAction.UPDATE,
+                target_type=AuditTargetType.SESSION,
+                target_id=row.id,
+                actor_type=identity.actor_type.value,
+                actor_id=identity.sub,
+                origin=identity.origin.value,
+                before={"revision_id": before.id if before is not None else None},
+                after={"revision_id": current.id, "number": current.number},
+            )
+            await self._emit_amended(row, current, actor_id=identity.sub)
         return AmendedSession(
             session_id=row.id, revision_id=current.id, revision_number=current.number
         )
@@ -3212,9 +3268,10 @@ class ConnectSessionService:
                 )
                 await ConnectSessionRepository.update_fields(session, row.id, baseline=live)
         except DatabaseIntegrityError:
-            # Reading an edit rebases it, so two readers can rebase at once and
-            # the unique ``(session_id, number)`` index refuses the second. The
-            # rebase is the same either way: the one that landed stands.
+            # Two callers can ask for the rebase at once (a reviewer opening
+            # the review, the initiator amending), and the unique
+            # ``(session_id, number)`` index refuses the second. The rebase is
+            # the same either way: the one that landed stands.
             async with self._ctx.control_db.session() as session:
                 fresh = await ConnectSessionRepository.get_by_id(session, row.id)
             if fresh is None or fresh.current_revision_id is None:

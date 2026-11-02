@@ -2716,9 +2716,9 @@ async def test_an_amend_losing_to_a_concurrent_writer_is_a_conflict(
 ) -> None:
     """A revision index collision is the conflict it is, not an internal error.
 
-    The integrity handler asserted a dedupe key that an edit's write never
-    sets, so any collision there raised out of the app instead of telling the
-    caller its ask had moved.
+    An integrity handler that asserts a dedupe key an edit's write never sets
+    raises out of the app on any collision there, instead of telling the
+    caller its ask has moved.
     """
     ctx = integration_context
     svc = ConnectSessionService(ctx)
@@ -2760,7 +2760,7 @@ async def test_a_session_holds_only_so_many_revisions(
     clean_session_tables: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Nothing capped the chain, and every accepted amend also writes an audit row."""
+    """The chain is capped, and every accepted amend also writes an audit row."""
     monkeypatch.setattr(connect_session_service, "_MAX_SESSION_REVISIONS", 3)
     svc = ConnectSessionService(integration_context)
     created = await svc.create_session(
@@ -3206,9 +3206,9 @@ async def test_a_refused_apply_leaves_no_open_session_behind(
 ) -> None:
     """A refusal must not spend the agent's open-session quota.
 
-    The session was written before the checks that refuse it, so each refused
-    request left one open: a handful of them and the agent could open no
-    further request at all.
+    Written before the checks that refuse it, each refused request leaves one
+    open: a handful of them and the agent can open no further request at
+    all.
     """
     ctx = integration_context
     svc = ConnectSessionService(ctx)
@@ -3268,6 +3268,48 @@ async def test_a_widening_apply_that_strips_every_rule_spends_no_quota(
                     request=EditRequest(add_scopes=["repo"], set_rules=[]),
                     apply=True,
                 )
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
+
+
+async def test_a_rebase_is_for_an_edit_and_an_unknown_scope_is_refused_before_the_session(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Two bounds on the apply path and the rebase beside it.
+
+    ``:rebase`` resolves an edit's ask against its binding, so a vendor
+    connect — which has no binding to resolve against — is refused on its
+    kind. And the pre-check validates the scopes the consent would ask for,
+    not only the rule-set authority: refused later, the apply leaves an open
+    session against the agent's quota.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    with pytest.raises(ConfirmKindMismatchError):
+        await svc.rebase_session(created.session_id, poll_token=None, identity=_USER_IDENTITY)
+    await svc.cancel_session(
+        created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
+    )
+
+    credential_id = await _connected_device_credential(ctx, svc)
+    with (
+        patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)),
+        pytest.raises(ScopeValidationError),
+    ):
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["not:a:scope"]),
+            apply=True,
+        )
     async with ctx.control_db.session() as session:
         assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
 

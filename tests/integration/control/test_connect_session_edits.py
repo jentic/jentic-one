@@ -14,10 +14,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, text, update
+from sqlalchemy import delete, select, text, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
@@ -59,7 +61,9 @@ from jentic_one.control.services.integrations.errors import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.audit import AuditAction
 from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.models.events import EventType
 
 pytestmark = pytest.mark.integration
 
@@ -490,8 +494,8 @@ async def test_a_shared_rule_set_edit_names_every_agent_it_reaches(
 ) -> None:
     """One write to a shared set reaches every binding that points at it.
 
-    The affected-agent list was computed from the credential, so a reviewer
-    was shown nobody while approving a change to other agents' policy on
+    Computed from the credential alone, the affected-agent list shows a
+    reviewer nobody while they approve a change to other agents' policy on
     other credentials.
     """
     ctx = integration_context
@@ -529,15 +533,18 @@ async def test_a_shared_rule_set_edit_names_every_agent_it_reaches(
         )
 
     created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
-    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
-    assert review.edit is not None and review.edit.result["target"] == "rule_set"
-    assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_cse_shared"]
-
-    async with ctx.admin_db.transaction() as session:
-        await session.execute(
-            text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_cse_shared'")
-        )
-        await session.execute(text("DELETE FROM agents WHERE id = 'agnt_cse_shared'"))
+    try:
+        review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+        assert review.edit is not None and review.edit.result["target"] == "rule_set"
+        assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_cse_shared"]
+    finally:
+        # Outside the fixture's own wipe, so a failing assert must not leave
+        # the row for the next test in this module.
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id = 'agnt_cse_shared'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_cse_shared'"))
 
 
 async def test_the_review_names_no_agent_the_reader_may_not_see(
@@ -597,8 +604,8 @@ async def test_can_confirm_says_what_the_confirm_will_do(
 ) -> None:
     """The review must not offer an approval the confirm then refuses.
 
-    ``can_confirm`` answered on the agent and the state alone, so a reviewer
-    was shown an Approve that 403s on a rule set, or on a credential that is
+    Answering on the agent and the state alone, ``can_confirm`` shows a
+    reviewer an Approve that 403s on a rule set, or on a credential that is
     not theirs.
     """
     ctx = integration_context
@@ -986,6 +993,18 @@ async def test_the_reviewer_edits_the_request_as_a_revision_of_their_own(
             session, created.session_id
         )
     assert [r.created_by for r in revisions] == [_AGENT, _OWNER_SUB]
+    # The reviewer's change is on the rail too, named as theirs: an approver
+    # watching the request has to see that it moved.
+    async with ctx.admin_db.session() as session:
+        events = [
+            e
+            for e in (await session.execute(select(Event))).scalars().all()
+            if e.type == EventType.CONNECT_SESSION_AMENDED
+            and (e.data or {}).get("session_id") == created.session_id
+        ]
+    assert [(e.actor_id, (e.data or {})["revision_id"]) for e in events] == [
+        (_OWNER_SUB, revised.revision_id)
+    ]
 
     await svc.confirm_edit(
         created.session_id,
@@ -1141,3 +1160,103 @@ async def test_a_confirm_whose_rules_move_under_its_own_write_is_refused(
             resume=False,
         )
     assert await _rules(ctx, binding) == [("allow", "/v2/")]
+
+
+async def test_a_rebase_a_caller_asked_for_is_recorded_as_theirs(
+    integration_context: Context, binding: str
+) -> None:
+    """A caller-invoked write leaves a trail naming who asked for it.
+
+    The revision it appends records no author — it is nobody's ask, and the
+    review renders it as the rebase it is — so the audit entry and the event
+    are the only places the caller is named. A rebase with nothing to do
+    writes neither.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    await CredentialService(ctx).replace_agent_permissions(
+        binding, _AGENT, [_READ | {"path": "/v2/"}], identity=_OWNER
+    )
+    rebased = await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
+    assert rebased.revision_number == 2
+    # Already current: idempotent, and recorded once.
+    again = await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
+    assert (again.revision_id, again.revision_number) == (rebased.revision_id, 2)
+
+    async with ctx.admin_db.session() as session:
+        entries = [
+            e
+            for e in (await session.execute(select(AuditEntry))).scalars().all()
+            if e.target_id == created.session_id and e.action == AuditAction.UPDATE.value
+        ]
+        events = [
+            e
+            for e in (await session.execute(select(Event))).scalars().all()
+            if e.type == EventType.CONNECT_SESSION_AMENDED
+            and (e.data or {}).get("session_id") == created.session_id
+        ]
+    assert [(e.actor_id, (e.after or {}).get("revision_id")) for e in entries] == [
+        (_OWNER_SUB, rebased.revision_id)
+    ]
+    assert [(e.actor_id, (e.data or {})["revision_id"]) for e in events] == [
+        (_OWNER_SUB, rebased.revision_id)
+    ]
+    async with ctx.control_db.session() as session:
+        revisions = await ConnectSessionRevisionRepository.list_for_session(
+            session, created.session_id
+        )
+    assert [r.created_by for r in revisions] == [_AGENT, None]
+
+
+async def test_a_reviewer_who_does_not_own_the_credential_is_offered_no_approval(
+    integration_context: Context, binding: str
+) -> None:
+    """Read access to the request is not authority over the secret.
+
+    The agent's approver may read the request and reject it, but widening what
+    the agent does with a credential someone else created is that creator's
+    call, as the direct rule write is. The review has to say so, or it offers
+    an Approve the confirm refuses.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_created_by(session, binding, created_by="usr_cse_else")
+
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.can_confirm is False
+    with pytest.raises(EditBindingNotFoundError):
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=_OWNER,
+            revision_id=created.revision_id,
+            permission_rules=[_READ, _SEND],
+            resume=False,
+        )
+
+
+async def test_a_rebase_of_an_ended_request_is_the_uniform_refusal(
+    integration_context: Context, binding: str
+) -> None:
+    """``:rebase`` writes a revision, so it is bounded as the confirm it precedes.
+
+    Once the request has ended there is no session to bring up to date, and
+    the answer is the one every other read of an ended session gives, naming
+    nothing about it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    await svc.confirm_edit(
+        created.session_id,
+        poll_token=None,
+        identity=_OWNER,
+        revision_id=created.revision_id,
+        permission_rules=[_READ, _SEND],
+        resume=False,
+    )
+    with pytest.raises(InvalidPollTokenError):
+        await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
