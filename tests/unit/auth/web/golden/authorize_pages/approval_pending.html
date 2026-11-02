@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Awaiting approval | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f7f7;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+            max-width: 420px;
+            width: 100%;
+            padding: 32px;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .logo-text {
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0E1A1D;
+            letter-spacing: -0.5px;
+        }
+        .logo-text span {
+            color: #689296;
+        }
+        h1 {
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #0E1A1D;
+            text-align: center;
+            line-height: 1.4;
+        }
+        .app-name {
+            color: #305256;
+            font-weight: 700;
+        }
+        .description {
+            color: #689296;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        .panel {
+            background: #f5f7f7;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .panel p {
+            color: #305256;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 10px;
+        }
+        .panel .hint {
+            color: #689296;
+            font-size: 12px;
+        }
+        .client-details {
+            background: white;
+            border: 1px solid #E4EAEB;
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+        .client-details dt {
+            color: #689296;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 10px;
+            margin-top: 8px;
+        }
+        .client-details dt:first-child { margin-top: 0; }
+        .client-details dd {
+            color: #0E1A1D;
+            font-weight: 600;
+            word-break: break-all;
+        }
+        .panel a {
+            color: #305256;
+        }
+        .copy-row {
+            display: flex;
+            gap: 8px;
+        }
+        .copy-row input {
+            flex: 1;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid #E4EAEB;
+            border-radius: 6px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 12px;
+            color: #305256;
+            background: white;
+        }
+        .buttons {
+            display: flex;
+            gap: 12px;
+        }
+        button {
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+        button:disabled { opacity: 0.6; cursor: default; }
+        .buttons button { flex: 1; }
+        .deny {
+            background: #f5f7f7;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }
+        .deny:hover { background: #E4EAEB; }
+        .approve {
+            background: #305256;
+            color: white;
+        }
+        .approve:hover { background: #193238; }
+        .copy {
+            background: white;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }
+        .copy:hover { background: #E4EAEB; }
+        .status-line {
+            text-align: center;
+            font-size: 13px;
+            color: #689296;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <div class="logo-text">Jentic<span>One</span></div>
+        </div>
+        <h1><span class="app-name">Evil &lt;App&gt; &amp; &quot;Co&quot;</span> is awaiting administrator approval</h1>
+        <p class="description">
+            This page checks automatically and continues the connection
+            as soon as an administrator approves it.
+        </p>
+        <div class="panel" id="anon-panel">
+            <p>Ask your Jentic One admin to approve
+                <span class="app-name">Evil &lt;App&gt; &amp; &quot;Co&quot;</span> in the approval queue:</p>
+            <div class="copy-row">
+                <input id="queue-link" readonly value="https://auth.example.com/app/settings?tab=queue">
+                <button type="button" class="copy" id="copy-link">Copy</button>
+            </div>
+        </div>
+        <div class="panel" id="admin-panel" hidden>
+            <p>You are signed in as an administrator &mdash; review before
+                deciding. The name above is self-chosen by the client; these
+                details come from its registration:</p>
+            <dl class="client-details">
+                <dt>Redirect origins</dt>
+                <dd>cursor://callback<br>https://app.example.com<br>https://other.example.org</dd>
+                <dt>Client ID</dt>
+                <dd>oc_golden</dd>
+                <dt>Software ID</dt>
+                <dd>com.example.&lt;ide&gt;</dd>
+            </dl>
+            <p class="hint"><a href="https://auth.example.com/app/settings?tab=queue">Open the approval queue</a>
+                for the full registration record.</p>
+            <div class="buttons">
+                <button type="button" class="deny" id="btn-deny">Deny</button>
+                <button type="button" class="approve" id="btn-approve">Approve</button>
+            </div>
+        </div>
+        <div class="status-line" id="approval-status">Waiting for approval&hellip;</div>
+    </div>
+    <script id="approval-config" type="application/json">{"state": "<SIGNED>", "status_url": "/oauth/approval/status?st=<SIGNED>", "decision_url": "/oauth/approval/decision", "me_url": "/me", "resume_url": "/authorize?response_type=code&client_id=oc_golden&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb%3Ftenant%3Da%26x%3D%3Cy%3E&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&scope=openid+apis%3Aread&state=st%3C1%3E&nonce=n%261", "deny_redirect": "https://app.example.com/cb?tenant=a&x=\u003cy>&error=access_denied&state=st%3C1%3E", "poll_ms": 5000, "token_key": "jentic-one.access_token"}</script>
+    <script>
+(function () {
+    "use strict";
+    var cfg = JSON.parse(document.getElementById("approval-config").textContent);
+    var statusEl = document.getElementById("approval-status");
+    var adminPanel = document.getElementById("admin-panel");
+    var anonPanel = document.getElementById("anon-panel");
+    var settled = false;
+
+    function navigate(url) {
+        settled = true;
+        window.location.replace(url);
+    }
+
+    function isHttpUrl(url) {
+        return typeof url === "string" &&
+            (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
+    }
+
+    function onStatus(status) {
+        if (settled) { return; }
+        if (status === "approved") {
+            statusEl.textContent = "Approved — continuing…";
+            // Re-run the ORIGINAL authorize request; the client gate now
+            // passes, so the server 302s to the identity provider.
+            navigate(cfg.resume_url);
+        } else if (status === "denied") {
+            if (isHttpUrl(cfg.deny_redirect)) {
+                // Standard OAuth closure for the client: error=access_denied
+                // on its own registered redirect_uri.
+                navigate(cfg.deny_redirect);
+            } else {
+                settled = true;
+                statusEl.textContent =
+                    "An administrator denied this application. " +
+                    "You can close this page.";
+            }
+        }
+    }
+
+    // I2 clamp: a 400 (expired/invalid blob) re-runs /authorize to mint a
+    // fresh blob. A clock-skewed verifier could 400 fresh blobs too, so
+    // re-mints are capped per tab; any healthy poll answer resets the count.
+    var REMINT_KEY = "jentic-one.approval-remints";
+    var MAX_REMINTS = 3;
+    function remintOrStop() {
+        var count = 0;
+        try {
+            count = parseInt(window.sessionStorage.getItem(REMINT_KEY), 10) || 0;
+        } catch (e) { /* storage blocked */ }
+        if (count >= MAX_REMINTS) {
+            settled = true;
+            statusEl.textContent =
+                "This page could not verify its state. " +
+                "Retry the connection from your application.";
+            return;
+        }
+        try {
+            window.sessionStorage.setItem(REMINT_KEY, String(count + 1));
+        } catch (e) { /* storage blocked */ }
+        navigate(cfg.resume_url);
+    }
+    function clearRemints() {
+        try { window.sessionStorage.removeItem(REMINT_KEY); } catch (e) { /* blocked */ }
+    }
+
+    // Poll cadence: cfg.poll_ms steady-state. A 429 backs off to the
+    // server's Retry-After hint (or doubles the cadence when absent),
+    // clamped to [cfg.poll_ms, 60 s]; any non-429 answer resets it.
+    var pollDelay = cfg.poll_ms;
+    function schedule() {
+        if (!settled) { window.setTimeout(poll, pollDelay); }
+    }
+    function poll() {
+        if (settled) { return; }
+        fetch(cfg.status_url, { headers: { Accept: "application/json" } })
+            .then(function (resp) {
+                if (resp.status === 400) {
+                    remintOrStop();
+                    return null;
+                }
+                if (resp.status === 429) {
+                    var retryAfter = parseInt(resp.headers.get("Retry-After"), 10);
+                    var hinted = isNaN(retryAfter) ? 0 : retryAfter * 1000;
+                    pollDelay = Math.min(
+                        Math.max(hinted, pollDelay * 2, cfg.poll_ms), 60000);
+                    return null;
+                }
+                pollDelay = cfg.poll_ms;
+                if (resp.ok) {
+                    clearRemints();
+                    return resp.json();
+                }
+                return null;
+            })
+            .then(function (body) {
+                if (body && body.status) { onStatus(body.status); }
+                schedule();
+            })
+            .catch(function () { schedule(); });
+    }
+    poll();
+
+    // Admin detection: the operator SPA keeps its session as a bearer token
+    // in same-origin localStorage. If one is present and /me confirms the
+    // oauth-clients:write permission (or org:admin), reveal the inline
+    // decision panel. Anything else keeps the anonymous panel.
+    var token = null;
+    try { token = window.localStorage.getItem(cfg.token_key); } catch (e) { /* blocked */ }
+    if (token) {
+        fetch(cfg.me_url, { headers: { Authorization: "Bearer " + token } })
+            .then(function (resp) { return resp.ok ? resp.json() : null; })
+            .then(function (me) {
+                var permissions = (me && me.permissions) || [];
+                if (me && (me.admin === true ||
+                        permissions.indexOf("oauth-clients:write") !== -1)) {
+                    adminPanel.hidden = false;
+                    anonPanel.hidden = true;
+                }
+            })
+            .catch(function () { /* stay anonymous */ });
+    }
+
+    function decide(action, button) {
+        button.disabled = true;
+        fetch(cfg.decision_url, {
+            method: "POST",
+            headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ state: cfg.state, action: action }),
+        })
+            .then(function (resp) {
+                if (!resp.ok) { throw new Error("decision failed"); }
+                return resp.json();
+            })
+            .then(function (body) { onStatus(body.status); })
+            .catch(function () {
+                button.disabled = false;
+                statusEl.textContent =
+                    "Decision failed — try again or use the approval queue.";
+            });
+    }
+    document.getElementById("btn-approve").addEventListener("click", function () {
+        decide("approve", this);
+    });
+    document.getElementById("btn-deny").addEventListener("click", function () {
+        decide("deny", this);
+    });
+
+    document.getElementById("copy-link").addEventListener("click", function () {
+        var input = document.getElementById("queue-link");
+        input.select();
+        var self = this;
+        try {
+            navigator.clipboard.writeText(input.value).then(function () {
+                self.textContent = "Copied";
+            });
+        } catch (e) {
+            document.execCommand("copy");
+            self.textContent = "Copied";
+        }
+    });
+})();
+</script>
+</body>
+</html>

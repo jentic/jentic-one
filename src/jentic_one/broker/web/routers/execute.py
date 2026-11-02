@@ -20,7 +20,7 @@ import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
@@ -34,6 +34,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.directives import (
     approval_pending_limit_directive,
+    held_execution_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.errors import (
@@ -121,10 +122,12 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
+from jentic_one.shared.http.injection import apply_injection
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     HELD_AGENT_DIRECTIVE,
+    INBOUND_COOKIE_PAYLOAD_KEY,
     PendingApprovalLimitError,
     file_hold,
     review_page_path,
@@ -141,7 +144,7 @@ from jentic_one.shared.tracing import (
     current_trace_id,
     pack_jentic_tracestate,
 )
-from jentic_one.shared.url import apply_server_variables, has_host_server_variable
+from jentic_one.shared.url import has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
@@ -581,36 +584,35 @@ async def _resolve_credentials(
     )
 
 
+def _inbound_cookie(request: Request) -> str | None:
+    """The caller's ``Cookie`` header, every field line joined with ``; ``.
+
+    HTTP/2 lets a client split cookies over several ``cookie`` fields; joining
+    them keeps every cookie rather than only the first line.
+    """
+    return "; ".join(request.headers.getlist("cookie")) or None
+
+
 def _apply_injection(
     upstream_url: str,
     injection: InjectedAuth,
     request: Request,
     server_variable_defaults: dict[str, str] | None = None,
 ) -> tuple[str, dict[str, str]]:
-    """Apply injected auth to the outbound URL + headers.
+    """The outbound URL and forwarded headers with injected auth applied.
 
-    Server-variable creds are substituted into the URL template (remaining
-    declared placeholders fall back to their spec defaults); query-param
-    creds are merged into the URL query; cookie creds are **appended** to the
-    inbound ``Cookie`` header (never overwriting forwarded cookies).
+    Filters the inbound headers for forwarding, then applies ``injection``
+    through the shared :func:`~jentic_one.shared.http.injection.apply_injection`
+    the async worker also uses, so a call sent inline and the same call sent
+    with ``Prefer: respond-async`` reach the upstream alike.
     """
-    if injection.server_variables or server_variable_defaults:
-        upstream_url = apply_server_variables(
-            upstream_url, injection.server_variables, server_variable_defaults
-        )
-
-    if injection.query_params:
-        parsed = urlparse(upstream_url)
-        sep = "&" if parsed.query else ""
-        new_query = parsed.query + sep + urlencode(injection.query_params)
-        upstream_url = urlunparse(parsed._replace(query=new_query))
-
-    headers = dict(injection.headers)
-    if injection.cookies:
-        injected = "; ".join(f"{name}={value}" for name, value in injection.cookies.items())
-        existing = request.headers.get("cookie")
-        headers["Cookie"] = f"{existing}; {injected}" if existing else injected
-    return upstream_url, headers
+    return apply_injection(
+        forward_headers(request.headers, {}),
+        upstream_url,
+        injection,
+        inbound_cookie=_inbound_cookie(request),
+        server_variable_defaults=server_variable_defaults,
+    )
 
 
 def _resolve_broker(request: Request, runner: UpstreamRunner) -> Broker:
@@ -921,14 +923,13 @@ async def _execute_buffered(
             allowed_credential_ids=allowed_credential_ids,
             credential_id=request.headers.get("jentic-credential-id"),
         )
-        ctx_req.upstream_url, auth_headers = _apply_injection(
+        ctx_req.upstream_url, forwarded = _apply_injection(
             ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
         )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
         await _check_egress(ctx_req.upstream_url, ctx)
-    forwarded = forward_headers(request.headers, auth_headers)
 
     broker = _resolve_broker(request, runner)
     return await run_execution(
@@ -986,14 +987,13 @@ async def _handle_streaming(
             allowed_credential_ids=allowed_credential_ids,
             credential_id=request.headers.get("jentic-credential-id"),
         )
-        ctx_req.upstream_url, auth_headers = _apply_injection(
+        ctx_req.upstream_url, forwarded = _apply_injection(
             ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
         )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
         await _check_egress(ctx_req.upstream_url, ctx)
-    forwarded = forward_headers(request.headers, auth_headers)
 
     execution_id = mint_execution_id()
     started_at = datetime.now(UTC)
@@ -1114,12 +1114,15 @@ def _async_job_payload(
     allowed_credential_ids: list[str] | None = None,
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
+    inbound_cookie_enc: str | None = None,
 ) -> dict[str, Any]:
     """Build the job payload for an async (202) execution.
 
     ``headers`` are the request headers the run replays (see
     ``REPLAY_HEADERS``) — without them a JSON body would reach the upstream
-    with no ``Content-Type``.
+    with no ``Content-Type``. ``inbound_cookie_enc`` is the caller's
+    ``Cookie`` as platform-key ciphertext (see :func:`_captured_cookie`); the
+    worker decrypts it and applies it like the sync route.
 
     A standalone builder so the payload contract is unit-testable at the
     producer: the worker seams (handler forwarding, executor rebuild) each
@@ -1152,7 +1155,26 @@ def _async_job_payload(
         payload["body_b64"] = base64.b64encode(body).decode()
     if headers:
         payload["headers"] = dict(headers)
+    if inbound_cookie_enc:
+        payload[INBOUND_COOKIE_PAYLOAD_KEY] = inbound_cookie_enc
     return payload
+
+
+def _captured_cookie(request: Request, ctx: Context) -> str | None:
+    """The caller's ``Cookie`` encrypted for an async or held job payload.
+
+    The job sits in the admin DB until a worker claims it, so the cookie is
+    kept only as platform-key ciphertext. Without an encryption keyset there
+    is nowhere safe to keep it: the run is still queued, without the caller's
+    cookies, and the drop is logged.
+    """
+    cookie = _inbound_cookie(request)
+    if cookie is None:
+        return None
+    if not ctx.has_encryption_keyset:
+        logger.warning("async_execution_cookie_not_kept", reason="no_encryption_keyset")
+        return None
+    return ctx.encryption.encrypt(cookie)
 
 
 def _review_url(ctx: Context, request: Request, approval_id: str) -> str:
@@ -1184,7 +1206,9 @@ async def _handle_hold(
     claim. Filing, the approval row and ``execution.approval_requested`` share
     one admin-DB transaction; an identical pending request joins its existing
     hold (even at the cap), and an agent at its pending cap is otherwise denied
-    before anything is written.
+    before anything is written. The fingerprint a join matches on leaves out the
+    ``Cookie``, so a joined hold runs with the first request's captured cookie
+    and the joining request's cookie is not kept.
     """
     if not ctx.has_encryption_keyset:
         raise ApprovalHoldUnavailableError(
@@ -1208,6 +1232,7 @@ async def _handle_hold(
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
+        inbound_cookie_enc=_captured_cookie(request, ctx),
     )
     payload: dict[str, object] = {
         ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(raw_payload))
@@ -1288,7 +1313,11 @@ async def _handle_hold(
         held_execution_id=hold.approval_id,
         review_url=review_url,
         expires_at=hold.expires_at,
-        agent_directive=HELD_AGENT_DIRECTIVE,
+        agent_directive=held_execution_directive(
+            held_execution_id=hold.approval_id,
+            review_url=review_url,
+            instruction=HELD_AGENT_DIRECTIVE,
+        ),
         links=HeldExecutionAcceptedLinks(
             self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
         ),
@@ -1332,6 +1361,7 @@ async def _handle_async(
         allowed_credential_ids=allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
+        inbound_cookie_enc=_captured_cookie(request, ctx),
     )
 
     async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:

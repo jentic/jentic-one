@@ -844,7 +844,7 @@ def _include_control_plane_routes(
     app.get(
         "/health",
         operation_id="getHealth",
-        summary="Health",
+        summary="Liveness probe",
         tags=["System"],
         # Keep the wire body exactly ``{"status", "version"}`` — the
         # lockout-only ``reason`` member is never emitted as null.

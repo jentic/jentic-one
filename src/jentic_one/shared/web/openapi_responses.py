@@ -20,7 +20,88 @@ from typing import Any
 from jentic.problem_details import ProblemDetail
 from pydantic import BaseModel, ConfigDict, Field
 
+from jentic_one.shared.web.openapi_meta.examples import HELD_EXECUTION_ID
+
 PROBLEM_JSON = "application/problem+json"
+
+
+#: The ``application/problem+json`` arm of a result read, for a held call that
+#: never ran.
+#:
+#: Two reads return it — ``GET /executions/holds/{held_execution_id}/result``
+#: and ``GET /jobs/{job_id}/result`` — and both pass through the Broker problem
+#: body recorded when the call was denied, lapsed, or refused at run time
+#: (``shared/jobs/hold.py``). That body carries two RFC 9457 §3.2 extension
+#: members on top of the shared envelope: ``error_origin`` and
+#: ``held_execution``.
+#:
+#: They are declared in an ``allOf`` branch beside ``ProblemDetail`` rather
+#: than on ``components.schemas.ProblemDetail`` itself: that schema backs every
+#: error response in the spec, while these two members belong to this one
+#: passed-through Broker problem. The branch also makes them *evaluated*, which
+#: is what lets the example validate under the strict problem+json schema's
+#: ``unevaluatedProperties: false``.
+HELD_EXECUTION_PROBLEM_CONTENT: dict[str, Any] = {
+    "schema": {
+        "allOf": [
+            {"$ref": "#/components/schemas/ProblemDetail"},
+            {
+                "type": "object",
+                "properties": {
+                    "error_origin": {
+                        "type": "string",
+                        "enum": ["broker", "upstream"],
+                        "description": (
+                            "Who generated the error — `broker` (the Broker itself) or "
+                            "`upstream` (the external API answered with this error and the "
+                            "Broker mirrored it). A held call that never ran is always "
+                            "`broker`: the upstream was never reached."
+                        ),
+                        "examples": ["broker"],
+                    },
+                    "held_execution": {
+                        "type": "object",
+                        "description": (
+                            "The hold whose outcome this is. Every problem a hold records "
+                            "carries it (`approval_denied`, `approval_expired`, "
+                            "`approval_resume_failed`); an `approval_required` problem, "
+                            "raised at run time against a job that carries no hold, has "
+                            "none."
+                        ),
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "ID of the held execution.",
+                                "examples": [HELD_EXECUTION_ID],
+                            },
+                            "state": {
+                                "type": "string",
+                                "enum": ["approved", "denied", "expired"],
+                                "description": (
+                                    "The hold's terminal state, and so why the call never "
+                                    "ran: `denied` (a reviewer refused it), `expired` (its "
+                                    "approval window lapsed undecided) or `approved` (it was "
+                                    "released, but its run was interrupted and is not "
+                                    "re-run)."
+                                ),
+                                "examples": ["denied"],
+                            },
+                        },
+                        "required": ["id", "state"],
+                    },
+                },
+            },
+        ]
+    },
+    "example": {
+        "type": "approval_denied",
+        "title": "Execution approval denied",
+        "status": 403,
+        "detail": "A reviewer denied this held execution: Not this account",
+        "error_origin": "broker",
+        "held_execution": {"id": HELD_EXECUTION_ID, "state": "denied"},
+    },
+}
 
 
 class OAuthErrorResponse(BaseModel):

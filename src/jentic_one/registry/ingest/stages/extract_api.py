@@ -110,9 +110,17 @@ class CreateRevisionStage(BasePipelineStage):
             # stage crashed). Re-importing the same (api_id, spec_digest) would then
             # collide with uq_api_revisions_api_id_spec_digest. Replace a leftover
             # replaceable revision (draft/archived) so retries are idempotent.
-            await ApiRevisionRepository.delete_replaceable_by_digest(
+            replaced = await ApiRevisionRepository.delete_replaceable_by_digest(
                 ctx.session, api_id, spec_digest
             )
+            if replaced:
+                # Every revision row was counted by the ingest that created it (the
+                # row and its FinalizeStage increment commit together), so removing
+                # rows here must give their count back in the same transaction;
+                # otherwise ``revision_count`` drifts above the real row count.
+                await ApiRepository.apply_counts(
+                    ctx.session, api_id, revision_count_delta=-replaced
+                )
             # Anything still sharing the digest is an active (published/imported)
             # revision — a genuine conflict. Surface it as a readable error before we
             # attempt the insert, so callers see a clear message instead of a raw
@@ -124,9 +132,9 @@ class CreateRevisionStage(BasePipelineStage):
             held = await self._held_host_change(ctx, api_id)
             if held is not None:
                 # Server-host change guard: this catalog revision would change where the
-                # API's bound credentials are sent, and the caller is not an operator.
-                # Keep it as a DRAFT (origin preserved, nothing archived) so the current
-                # revision stays live until an operator promotes it. See
+                # API's bound credentials are sent, and the caller is not an organisation
+                # admin. Keep it as a DRAFT (origin preserved, nothing archived) so the
+                # current revision stays live until an organisation admin promotes it. See
                 # ``registry/ingest/host_change_guard.py``.
                 revision = await ApiRevisionRepository.create_draft(
                     ctx.session,

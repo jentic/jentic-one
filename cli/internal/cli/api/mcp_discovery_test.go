@@ -418,10 +418,15 @@ func TestMCPInspectOperation_RedactsSecretsInBody(t *testing.T) {
 // non-string value (here an object) is exactly the shape the byte-level reKV
 // backstop cannot catch (round-3 P0), so this distinguishes "full funnel
 // wired" from "byte backstop only".
+//
+// The nested object rides in `raw_spec`, one of the result's two free-form
+// `dict[str, object]` fields. `auth` is a typed `[]AuthInstruction` of scalars,
+// so an object there no longer decodes at all and the funnel is never reached —
+// the shape under test has to be one the client genuinely accepts.
 func TestMCPInspectOperation_RedactsNonStringSecretValues(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"method":"GET","url":"https://api.acme.com/v1/pets","auth":{"client_secret":{"value":"sk-nested-object-secret"}}}`))
+		_, _ = w.Write([]byte(`{"method":"GET","url":"https://api.acme.com/v1/pets","raw_spec":{"components":{"securitySchemes":{"client_secret":{"value":"sk-nested-object-secret"}}}}}`))
 	}))
 	defer srv.Close()
 

@@ -76,7 +76,7 @@ export class UsersService {
         });
     }
     /**
-     * List Users
+     * List users
      * List users with cursor-based pagination.
      *
      * Scoped to the caller: org admins see every user; anyone else sees only themselves.
@@ -120,7 +120,7 @@ export class UsersService {
         });
     }
     /**
-     * Create User
+     * Create a user and issue an invite
      * Create a new user and issue an invite token.
      * @returns UserCreatedResponse Successful Response
      * @throws ApiError
@@ -202,7 +202,7 @@ export class UsersService {
         });
     }
     /**
-     * Delete User
+     * Delete a user
      * Delete a user account (terminal-but-kept).
      *
      * The row is retained — the account is anonymized (tombstone email) and
@@ -243,7 +243,7 @@ export class UsersService {
         });
     }
     /**
-     * Get User
+     * Get a user
      * Get a user by ID.
      *
      * Scoped to the caller: org admins can read any user; anyone else only themselves.
@@ -277,7 +277,7 @@ export class UsersService {
         });
     }
     /**
-     * Update User
+     * Update a user
      * Update a user's profile fields.
      *
      * Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
@@ -320,7 +320,7 @@ export class UsersService {
         });
     }
     /**
-     * Set User Permissions
+     * Set a user's permissions
      * Set the assigned permissions for a user.
      *
      * A deleted user's permissions cannot be changed (409). When the new set
@@ -365,7 +365,7 @@ export class UsersService {
         });
     }
     /**
-     * Disable User
+     * Disable a user
      * Disable a user account.
      *
      * A deleted user is already permanently inactive and cannot be disabled (409).
@@ -399,7 +399,7 @@ export class UsersService {
         });
     }
     /**
-     * Enable User
+     * Enable a user
      * Enable a disabled user account.
      *
      * A deleted user cannot be re-enabled (409). Login sessions issued before the
@@ -434,7 +434,7 @@ export class UsersService {
         });
     }
     /**
-     * Reissue Invite
+     * Reissue a user's invite
      * Reissue an invite token for a user.
      * @returns InviteIssuedResponse Successful Response
      * @throws ApiError

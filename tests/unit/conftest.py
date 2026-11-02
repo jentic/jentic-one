@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+
+@pytest.fixture()
+def non_utc_local_time(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run with a local zone far from UTC, so a naive date read as local is wrong.
+
+    CI and containers run with ``TZ=UTC``, where reading a zone-less date as
+    local time happens to be right; this zone exposes the mistake.
+    """
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture

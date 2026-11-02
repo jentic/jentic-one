@@ -300,7 +300,7 @@ class RevisionService:
     ) -> None:
         """Refuse a promote that changes the server hosts of a credential-bound API.
 
-        Only called for callers without ``credentials:write``. Same rules as the
+        Only called for callers without ``org:admin``. Same rules as the
         catalog re-import guard (``registry/ingest/host_change_guard.py``); see
         ``pending_host_change`` for the baseline and the never-live case.
         """
@@ -412,8 +412,13 @@ class RevisionService:
                     revision_id, revision.state, [ApiRevisionState.ARCHIVED], "delete"
                 )
 
-            await ApiRevisionRepository.delete(session, revision_uuid)
-            await ApiRepository.apply_counts(session, api.id, revision_count_delta=-1)
+            # The row can vanish between the read above and this DELETE (an
+            # identical re-import replaces an archived revision and gives its
+            # count back), so the decrement follows what was actually deleted.
+            deleted = await ApiRevisionRepository.delete(session, revision_uuid)
+            if not deleted:
+                raise RevisionNotFoundError(revision_id, vendor, name, version)
+            await ApiRepository.apply_counts(session, api.id, revision_count_delta=-deleted)
 
         await record_audit_best_effort(
             self._ctx,

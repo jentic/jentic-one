@@ -252,6 +252,24 @@ change to its own access).
   `param="toolkit_id"`, the route and the caller's `actor_id` (never the
   value); use it to find the callers to update. The generated UI and Go
   clients no longer expose the parameter.
+- **A server-host change on an API with bound credentials needs `org:admin`.**
+  Promoting a draft whose server hosts differ from the API's live ones (or
+  move to plaintext `http`), pinning such a draft with `Jentic-Revision`, and
+  letting a catalog re-import with new hosts go current all need `org:admin`;
+  `credentials:write` no longer approves them. An organisation admin promotes
+  the draft. For anyone else the refusal depends on the path, so alert on all
+  three rather than on one error type:
+  - **Promote** is refused with `403 host_change_requires_operator`.
+  - **A catalog re-import** is kept as a draft and the live revision stays
+    served; nothing is refused.
+  - **A `Jentic-Revision` pin** to a held *catalog* draft (one that keeps its
+    `origin`) is refused with `403 unauthorized_revision_pin`, because the
+    draft is not the caller's own. In URL discovery that pin is skipped
+    instead, so the call answers `404 operation_not_found`. A pin to the
+    caller's *own* held draft is the `host_change_requires_operator` case.
+- **`submitted_by` on `POST /apis` is honoured only for `org:admin`.** For
+  anyone else the resulting revision is attributed to the caller, so a draft
+  can no longer be imported on another actor's behalf without `org:admin`.
 
 ## Upgrading to the pluggable shared-state release
 
@@ -449,6 +467,9 @@ pre-upgrade snapshot of every database first
   request, a caller without `credentials:write` gets `403
   host_change_requires_operator`. An operator holding `credentials:write`
   promotes or pins it.
+  **Superseded in 0.44.0:** the approver is now `org:admin`, and
+  `credentials:write` no longer promotes or pins such a draft. See
+  [Upgrading to 0.44.0](#upgrading-to-0440).
 - **Reads and verbs are scoped to the caller (#1507, #1508, #1518, #1522,
   #1525, #1528, #1532, #1534).** Without `org:admin`, a caller sees only its
   own and its agents' executions and events (both already in 0.41.1);

@@ -40,6 +40,24 @@ def is_duplicate_revision_conflict(exc: DatabaseIntegrityError) -> bool:
     return any(name in exc.detail for name in _DUPLICATE_REVISION_CONSTRAINTS)
 
 
+# The violation of ``uq_api_revisions_api_id_spec_digest`` alone, as Postgres
+# (constraint name) and SQLite (column list) report it.
+_DUPLICATE_DIGEST_CONSTRAINTS = (
+    "uq_api_revisions_api_id_spec_digest",
+    "UNIQUE constraint failed: api_revisions.api_id, api_revisions.spec_digest",
+)
+
+
+def is_duplicate_digest_conflict(exc: DatabaseIntegrityError) -> bool:
+    """True when ``exc`` means a revision with identical content already exists.
+
+    Narrower than :func:`is_duplicate_revision_conflict`: a lost race for the
+    one-active slot (``ix_api_revisions_one_active``) is not a match, since the
+    competing revision can hold different content.
+    """
+    return any(name in exc.detail for name in _DUPLICATE_DIGEST_CONSTRAINTS)
+
+
 async def _flush_new_revision(session: AsyncSession) -> None:
     """Flush a freshly added revision, surfacing constraint violations as a domain error.
 

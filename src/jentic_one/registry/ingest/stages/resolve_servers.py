@@ -62,8 +62,8 @@ async def _document_base(
     An overlay re-ingest never resolves (``NO_BASE``). It carries the base's
     ``source_url`` but not where that fetch's redirects ended, and the person
     confirming the overlay never sees a host it didn't write: resolving there
-    would give a host-less API new hosts without the ``credentials:write``
-    review a promote needs. Such an API is fixed by re-importing it from its
+    would give a host-less API new hosts without the ``org:admin`` review a
+    promote needs. Such an API is fixed by re-importing it from its
     URL and promoting the draft, or by an overlay that sets absolute servers.
 
     Every other source goes through the same content-host check: the built-in

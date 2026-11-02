@@ -13,9 +13,11 @@ emits it uniformly: a canonical ``Retry-After: <seconds>`` header plus a
 prompt then needs one rule: *"on ``wait``, sleep ``retry_after_seconds``."*
 
 Resolution order (first that yields a value wins):
-``Retry-After`` seconds -> ``Retry-After`` HTTP-date - now -> ``X-RateLimit-Reset``
-epoch - now -> ``None`` (caller supplies a backoff default). The result is clamped
-to ``>= 0`` and capped at an optional ``cap_s`` (the remaining deadline budget).
+``Retry-After`` (seconds or HTTP-date, parsed by the shared
+:func:`~jentic_one.shared.http.retry_after.parse_retry_after`) ->
+``X-RateLimit-Reset`` epoch - now -> ``None`` (caller supplies a backoff default).
+The result is clamped to ``>= 0`` and capped at an optional ``cap_s`` (the
+remaining deadline budget).
 """
 
 from __future__ import annotations
@@ -23,7 +25,8 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
+
+from jentic_one.shared.http.retry_after import parse_retry_after
 
 
 def parse_retry_after_seconds(
@@ -41,7 +44,7 @@ def parse_retry_after_seconds(
     """
     now = now_epoch if now_epoch is not None else datetime.now(UTC).timestamp()
 
-    seconds = _from_retry_after(_get(headers, "retry-after"), now=now)
+    seconds = parse_retry_after(_get(headers, "retry-after"), now_epoch=now)
     if seconds is None:
         seconds = _from_reset_epoch(_get(headers, "x-ratelimit-reset"), now=now)
     if seconds is None:
@@ -65,25 +68,6 @@ def _get(headers: Mapping[str, str], name: str) -> str | None:
         if key.lower() == lowered:
             return val
     return None
-
-
-def _from_retry_after(value: str | None, *, now: float) -> int | None:
-    """Parse ``Retry-After`` as integer seconds, else as an HTTP-date delta."""
-    if value is None:
-        return None
-    raw = value.strip()
-    if not raw:
-        return None
-    if raw.isdigit():
-        return int(raw)
-    # Not a bare integer → try the RFC 7231 HTTP-date form.
-    try:
-        when = parsedate_to_datetime(raw)
-    except (TypeError, ValueError):
-        return None
-    if when is None:
-        return None
-    return math.ceil(when.timestamp() - now)
 
 
 def _from_reset_epoch(value: str | None, *, now: float) -> int | None:

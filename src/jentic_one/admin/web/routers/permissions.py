@@ -57,6 +57,7 @@ async def list_permissions(
 
 @router.put(
     "/users/{user_id}/permissions",
+    summary="Set a user's permissions",
     responses=with_responses(
         not_found(),
         conflict(
