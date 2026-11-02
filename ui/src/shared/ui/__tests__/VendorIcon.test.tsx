@@ -5,6 +5,13 @@ import { VendorIcon } from '@/shared/ui/VendorIcon';
 const initialsOf = (root: Element | null) => root?.getAttribute('data-initials');
 
 describe('VendorIcon', () => {
+	it("paints explicit initials over the name's own", () => {
+		const { container } = renderWithProviders(
+			<VendorIcon name="Manuel Admin" initials="MAA" />,
+		);
+		expect(initialsOf(container.querySelector('[data-testid="vendor-mark"]'))).toBe('MAA');
+	});
+
 	it('renders two-letter initials from the name in the pastel tile', () => {
 		const { container } = renderWithProviders(<VendorIcon name="Stripe" />);
 		const tile = container.firstElementChild!;

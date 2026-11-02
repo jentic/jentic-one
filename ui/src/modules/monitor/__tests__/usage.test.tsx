@@ -124,14 +124,29 @@ describe('withActorNames', () => {
 		expect(isUnnamedActor(row)).toBe(true);
 	});
 
-	it("names a user row by the user's display name", () => {
-		const [row] = withActorNames(
+	it("names a user row by the user's display name, with letters apart from the agents'", () => {
+		const rows = usageToEntityRows(agentUsage([`agent/${AGENT_A}`, 'user/usr_admin_1']));
+		const [agent, user] = withActorNames(
+			rows,
+			directory(
+				{ [AGENT_A]: 'mailer', usr_admin_1: 'Manuel Admin' },
+				{
+					initials: new Map([
+						[AGENT_A, 'MA'],
+						['usr_admin_1', 'MAA'],
+					]),
+				},
+			),
+		);
+		expect(user.label).toBe('Manuel Admin');
+		expect(agent.initials).toBe('MA');
+		expect(user.initials).toBe('MAA');
+		// A user the fleet's pass did not reach reads the name's letters.
+		const [alone] = withActorNames(
 			usageToEntityRows(agentUsage(['user/usr_admin_1'])),
 			directory({ usr_admin_1: 'Ada Admin' }),
 		);
-		expect(row.label).toBe('Ada Admin');
-		// Users are not in the agent fleet: their avatar reads the name's letters.
-		expect(row.initials).toBeUndefined();
+		expect(alone.initials).toBeUndefined();
 	});
 
 	it('leaves retired service-account and Unattributed rows as they are', () => {

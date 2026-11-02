@@ -270,14 +270,14 @@ function EntityAvatar({
 }: {
 	tone: EntityTone;
 	label: string;
-	/** The row's own letters (an agent's fleet initials), over the label's. */
+	/** The row's own letters (its fleet initials), over the label's. */
 	initials?: string;
 	isAgent: boolean;
 }) {
 	const avatar = isAgent ? (
 		<AgentBadge id={tone.seed ?? undefined} name={label} initials={initials} size="sm" />
 	) : (
-		<VendorIcon name={label} vendor={tone.seed ?? label} size="sm" />
+		<VendorIcon name={label} vendor={tone.seed ?? label} initials={initials} size="sm" />
 	);
 	// The tone index the primitive will paint with (its own seed hash) …
 	const painted = tone.avatarTone ?? (isAgent ? null : avatarToneIndex(label));

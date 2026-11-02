@@ -45,7 +45,8 @@ export interface EntityUsageRow {
 	 * and how far its name resolved (see {@link withActorNames}).
 	 */
 	actor?: { id: string; type: string; resolution: ActorNameResolution };
-	/** The avatar letters, when they come from the fleet rather than the label. */
+	/** The avatar letters, when they come from the fleet rather than the label:
+	 * an agent's own, or the letters that set a user apart from the agents. */
 	initials?: string;
 }
 
@@ -69,15 +70,12 @@ export function isUnnamedActor(row: Pick<EntityUsageRow, 'actor'>): boolean {
 export interface ActorNameSource {
 	resolve: (id: string) => string | undefined;
 	isLoading: boolean;
-	/** Fleet-aware agent initials by actor id (`smartInitials`). */
+	/** Fleet-aware initials by actor id, agents and users (`useFleetInitials`). */
 	initials: ReadonlyMap<string, string>;
 }
 
 /** Shown on an avatar whose name is not known, rather than letters of an id. */
 const UNKNOWN_INITIALS = '?';
-
-/** The usage key's `actor_type` for an agent. */
-const AGENT_ACTOR_TYPE = 'agent';
 
 export function usageToOverview(usage: UsageResponse): UsageOverview {
 	const total = usage.stats.total ?? 0;
@@ -157,10 +155,12 @@ export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsage
  * Name the agents-lens rows: the usage rollup keys a row by
  * `actor_type/actor_id` and carries no name, so each live actor is looked up in
  * the actor directory the rest of the app labels actors from. A named row reads
- * its name, with the fleet's initials for an agent. While the directory loads,
- * or for an id it does not hold, the row reads the short id (`agnt_…e4d9`) —
- * never the whole id as if it were a name — with a `?` avatar. Retired
- * service-account and Unattributed rows have no live actor and stay as they are.
+ * its name, with the fleet's initials (an agent's own letters; a user's chosen
+ * apart from every agent's, so one chart never shows two avatars alike). While
+ * the directory loads, or for an id it does not hold, the row reads the short
+ * id (`agnt_…e4d9`) — never the whole id as if it were a name — with a `?`
+ * avatar. Retired service-account and Unattributed rows have no live actor and
+ * stay as they are.
  */
 export function withActorNames(
 	rows: readonly EntityUsageRow[],
@@ -178,7 +178,7 @@ export function withActorNames(
 				...row,
 				label: name,
 				actor: { id, type, resolution: 'resolved' },
-				initials: type === AGENT_ACTOR_TYPE ? source.initials.get(id) : undefined,
+				initials: source.initials.get(id),
 			};
 		}
 		return {
