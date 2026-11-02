@@ -160,6 +160,24 @@ interface HandoffEntry {
 }
 const handoffs = new Map<string, HandoffEntry>();
 
+/**
+ * The element now standing where a detached opener stood: the one carrying
+ * the same id, else the same test id, else the same accessible label.
+ */
+function focusSuccessor(detached: HTMLElement): HTMLElement | null {
+	if (detached.id) {
+		const byId = document.getElementById(detached.id);
+		if (byId) return byId;
+	}
+	for (const attr of ['data-testid', 'aria-label']) {
+		const value = detached.getAttribute(attr);
+		if (!value) continue;
+		const found = document.querySelector<HTMLElement>(`[${attr}="${CSS.escape(value)}"]`);
+		if (found) return found;
+	}
+	return null;
+}
+
 /** Prune idle flows: `returnFocus` would otherwise pin a detached opener's tree for the module's life. */
 function pruneHandoffs(): void {
 	const now = performance.now();
@@ -470,7 +488,14 @@ export function SheetPrimitive({
 				) {
 					return;
 				}
-				if (elementToFocus?.isConnected) elementToFocus.focus();
+				// The opener may have re-rendered into a new node while a flow of
+				// several sheets ran (an agent card redrawn by the data it changed):
+				// its successor — same id, test id or label — takes the focus, so it
+				// never falls to <body>.
+				const target = elementToFocus.isConnected
+					? elementToFocus
+					: focusSuccessor(elementToFocus);
+				target?.focus();
 			}, 10);
 			return (): void => clearTimeout(timer);
 		}

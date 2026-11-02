@@ -8,6 +8,7 @@ import {
 	useRef,
 	useState,
 	type FocusEvent,
+	type PointerEvent,
 	type ReactElement,
 	type ReactNode,
 } from 'react';
@@ -150,6 +151,18 @@ export function Tooltip({
 		[reveal],
 	);
 
+	/** A tap toggles the bubble: a touch screen has no hover to arm it, and the
+	 *  disabled-reason tooltips would otherwise be unreachable there. A mouse
+	 *  press is not a tap — hover already opened its bubble. */
+	const tapToggle = useCallback(
+		(event: PointerEvent<HTMLElement>) => {
+			if (event.pointerType !== 'touch') return;
+			if (show) close();
+			else reveal();
+		},
+		[show, close, reveal],
+	);
+
 	// Never leak a pending open timer if the trigger unmounts mid-delay.
 	useEffect(() => clearTimer, [clearTimer]);
 
@@ -174,14 +187,23 @@ export function Tooltip({
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') close();
 		};
+		// A tap away dismisses a tap-opened bubble (no blur fires for it).
+		const onPointerDownOutside = (e: globalThis.PointerEvent) => {
+			if (e.pointerType !== 'touch') return;
+			const target = e.target as Node | null;
+			if (triggerRef.current?.contains(target) || bubbleRef.current?.contains(target)) return;
+			close();
+		};
 		window.addEventListener('scroll', onReflow, true);
 		window.addEventListener('resize', onReflow);
 		document.addEventListener('keydown', onKeyDown);
+		document.addEventListener('pointerdown', onPointerDownOutside, true);
 		return () => {
 			if (rafId !== null) window.cancelAnimationFrame(rafId);
 			window.removeEventListener('scroll', onReflow, true);
 			window.removeEventListener('resize', onReflow);
 			document.removeEventListener('keydown', onKeyDown);
+			document.removeEventListener('pointerdown', onPointerDownOutside, true);
 		};
 	}, [show, measure, close]);
 
@@ -231,6 +253,7 @@ export function Tooltip({
 			tabIndex={interactiveChild ? undefined : 0}
 			aria-describedby={interactiveChild ? undefined : tooltipId}
 			onPointerMove={openDelayed}
+			onPointerDown={tapToggle}
 			onMouseLeave={leave}
 			onFocus={revealOnFocus}
 			onBlur={close}
