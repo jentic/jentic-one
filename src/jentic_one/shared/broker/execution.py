@@ -101,14 +101,27 @@ class ExecutionOutcome:
 
 @dataclass
 class StreamingOutcome:
-    """Captures the final state of a streaming execution for persistence."""
+    """Captures the final state of a streaming execution for persistence.
+
+    ``http_status`` is the upstream status line, or ``None`` when no upstream
+    response exists to attribute a status to: the stream failed to open
+    (connect/TLS failure, an open circuit, a timeout before the response
+    headers) or the call was cancelled before the headers arrived.
+
+    ``circuit_open`` marks a stream the circuit breaker refused *and* whose
+    refusal holds the breaker's per-host report claim, so the record write
+    raises the same rate-limited ``upstream.circuit_open`` event the buffered
+    path does. Both default so an injected broker that constructs a
+    ``StreamingOutcome`` positionally keeps working.
+    """
 
     execution_id: str
-    http_status: int
+    http_status: int | None
     started_at_perf: float = field(default_factory=time.perf_counter)
     duration_ms: int = 0
     error: str | None = None
     bytes_transferred: int = 0
+    circuit_open: bool = False
 
 
 @runtime_checkable

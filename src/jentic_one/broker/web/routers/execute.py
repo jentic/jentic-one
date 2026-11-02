@@ -334,12 +334,15 @@ async def _persist_streaming_outcome(
     timeout and a cancellation (its timeout or the shutdown drain) are each
     logged and counted on ``broker.streaming_execution.persist_failures`` by
     ``reason``.
-    It runs after the streamed body has been sent, so its write is never
-    part of the response's ``Server-Timing`` field.
+    It runs after the streamed body has been sent, or after a call that ended
+    before any response existed, so its write is never part of the response's
+    ``Server-Timing`` field. An outcome with no ``http_status`` (the stream
+    never opened, or was cancelled first) always carries an ``error`` and
+    records as FAILED.
     """
     status = (
         ExecutionStatus.FAILED
-        if outcome.error or outcome.http_status >= 400
+        if outcome.error or (outcome.http_status is not None and outcome.http_status >= 400)
         else ExecutionStatus.COMPLETED
     )
     error_msg = outcome.error or (
@@ -370,6 +373,7 @@ async def _persist_streaming_outcome(
                 origin=origin,
                 security_config=ctx.config.security,
                 repeated_failure_counter=repeated_failure_counter,
+                circuit_open=outcome.circuit_open,
             )
     except asyncio.CancelledError:
         _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")
@@ -968,11 +972,14 @@ async def _handle_streaming(
 
     Persistence is best-effort and never holds the response: once the
     streaming body ends — completed, failed mid-body, or cut off by a client
-    disconnect — the completion callback schedules ``_persist_streaming_outcome``
-    exactly once on the app's background-task registry and returns, once the
-    request has released its admission slot, so an aborted response's connection
-    closes without waiting on the database. A DB failure, timeout or shutdown
-    cancellation is logged + counted and never affects the already-sent response.
+    disconnect — or the stream ends before its response headers (it fails to
+    open or is cancelled, recording a FAILED outcome with no upstream status),
+    the completion callback schedules ``_persist_streaming_outcome`` exactly
+    once on the app's background-task registry and returns, once the request
+    has released its admission slot. Neither an aborted response's connection
+    nor a pre-header 5xx — a circuit-open fast-fail included — waits on the
+    database. A DB failure, timeout or shutdown cancellation is logged +
+    counted and never affects the response.
     """
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
@@ -1008,8 +1015,21 @@ async def _handle_streaming(
 
     background_tasks = get_background_tasks(request.app)
     persist_timeout_s = ctx.config.broker.streaming_persist_timeout_s
+    persisted = False
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:
+        # One record per execution id, whichever delivery comes first. The
+        # default broker delivers once; an injected broker that delivers again
+        # breaks the seam's contract, so the drop is logged, not silent.
+        nonlocal persisted
+        if persisted:
+            logger.warning(
+                "streaming_outcome_duplicate_ignored",
+                execution_id=outcome.execution_id,
+                trace_id=ctx_req.trace_id,
+            )
+            return
+        persisted = True
         persist = _persist_streaming_outcome(
             outcome,
             ctx,

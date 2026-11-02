@@ -69,6 +69,34 @@ _execution_duration = _meter.create_histogram(
 )
 
 
+async def _emit_circuit_open_event(
+    session: Any, ctx_req: ExecuteRequestContext, *, actor_id: str, actor_type: str
+) -> None:
+    """Emit the ``upstream.circuit_open`` event for a circuit fast-fail.
+
+    Shared by the buffered and streaming paths so either one raises the same
+    operator-facing event. The rate limit is the breaker's own per-host claim
+    (``CircuitOpenError.report``), checked by the caller: of every refusal an
+    open circuit causes, across every process sharing the state backend, one
+    per cooldown reports it. A failed emit is logged, never raised — the
+    caller's 503 is not replaced by an event-write error.
+    """
+    host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
+    try:
+        await emit_event(
+            session,
+            type=EventType.UPSTREAM_CIRCUIT_OPEN,
+            severity=EventSeverity.WARNING,
+            summary=f"Circuit breaker opened for upstream {host}",
+            created_by=actor_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            data={"host": host},
+        )
+    except Exception:
+        logger.warning("emit_circuit_event_failed", host=host)
+
+
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
     """Build the default pipeline around the given runner + default post stages.
 
@@ -226,20 +254,9 @@ async def run_execution(
             # The breaker marks one refusal per host per open period as the one
             # that reports it, across every process sharing the state backend.
             if isinstance(exc, CircuitOpenError) and exc.report:
-                host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-                try:
-                    await emit_event(
-                        session,
-                        type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                        severity=EventSeverity.WARNING,
-                        summary=f"Circuit breaker opened for upstream {host}",
-                        created_by=actor_id,
-                        actor_id=actor_id,
-                        actor_type=actor_type,
-                        data={"host": host},
-                    )
-                except Exception:
-                    logger.warning("emit_circuit_event_failed", host=host)
+                await _emit_circuit_open_event(
+                    session, ctx_req, actor_id=actor_id, actor_type=actor_type
+                )
         raise
 
     result = outcome.result
@@ -323,16 +340,28 @@ async def persist_streaming_execution(
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
     repeated_failure_counter: RepeatedFailureCounter | None = None,
+    circuit_open: bool = False,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called once after the streaming response body ends, on every outcome
-    (completed, failed mid-body, client disconnect). Shares metrics
-    instrumentation with the buffered path for observability parity.
+    Called once per streaming execution, on every outcome: after the response
+    body ends (completed, failed mid-body, client disconnect), or when the call
+    ends before any response exists — the stream failed to open or was
+    cancelled first, and ``http_status`` is ``None``. Shares metrics
+    instrumentation with the buffered path for observability parity: every
+    execution counts on ``broker.executions.total``, and only one with an
+    upstream response adds a ``broker.execution.duration_ms`` sample (a
+    pre-header failure timed no upstream round trip, so a sample would pull the
+    latency distribution toward the broker's own fast-fail).
+
+    ``circuit_open`` marks a breaker refusal holding the breaker's per-host
+    report claim; it also raises ``upstream.circuit_open``, exactly as the
+    buffered path does.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
-    _execution_duration.record(duration_ms, {"operation": operation_id or ""})
+    if http_status is not None:
+        _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 
     logger.info(
         "execution_recorded",
@@ -388,6 +417,8 @@ async def persist_streaming_execution(
         error_tags=error_tags,
         origin=origin,
     )
+    if circuit_open:
+        await _emit_circuit_open_event(session, ctx_req, actor_id=actor_id, actor_type=actor_type)
 
 
 async def _persist(
