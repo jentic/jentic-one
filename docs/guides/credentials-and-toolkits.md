@@ -254,8 +254,11 @@ lazy and single-flight: a per-credential advisory lock (Postgres) or process
 lock (SQLite) plus a double-check after acquiring, so concurrent calls
 trigger one upstream refresh. Tokens are considered stale ahead of expiry by
 a configurable skew, and the fresh tokens are re-encrypted before persisting.
-A revoked grant (`invalid_grant`) maps to `401 credential_needs_reconnect`
-with a prompt-human directive; a transient IdP failure maps to `502`.
+A revoked grant (`invalid_grant`) maps to `424 credential_needs_reconnect`
+with a prompt-human directive — the caller's own token is valid, so the status
+is the failed-dependency one its sibling credential failures use rather than a
+401 that would send the caller off re-authenticating itself; a transient IdP
+failure maps to `502`.
 
 ## What's audited
 

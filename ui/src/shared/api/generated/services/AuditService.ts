@@ -10,7 +10,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class AuditService {
     /**
-     * List Audit Entries
+     * List audit entries
      * List audit entries with optional filters.
      *
      * Scoped to the caller: their own entries plus those made by agents they own.
@@ -85,7 +85,7 @@ export class AuditService {
         });
     }
     /**
-     * Get Audit Entry
+     * Get an audit entry
      * Get a single audit entry by ID.
      * @returns AuditResponse Successful Response
      * @throws ApiError

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationInspectResult } from '../models/OperationInspectResult';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -14,7 +15,7 @@ export class InspectService {
      * reference: the identity to use in credential scopes, revision pins and
      * other API references. `api.display_name` (optional) is a human-readable
      * label only.
-     * @returns any Successful Response
+     * @returns OperationInspectResult The resolved operation, rendered in the format negotiated from `Accept`. `application/json` (the default, and what `**` or an absent `Accept` gets) returns the structured result below. `text/markdown` returns the same result as a human-readable Markdown page, and `application/openapi+yaml` as a single-operation OpenAPI document — both are plain text, with no JSON envelope. Any other requested media type answers `406`.
      * @throws ApiError
      */
     public static inspectOperation({
@@ -39,7 +40,7 @@ export class InspectService {
          * Level of detail to return; only `summary` is currently supported.
          */
         detail?: 'summary' | 'full',
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OperationInspectResult> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/inspect',
@@ -53,6 +54,7 @@ export class InspectService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                406: `The \`Accept\` header asked for a media type this endpoint cannot render. It serves \`application/json\`, \`text/markdown\` and \`application/openapi+yaml\` only (plus \`*/*\` and an absent header, which both get JSON). Nothing is resolved: re-request with one of those three.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

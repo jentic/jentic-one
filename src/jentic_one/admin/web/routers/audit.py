@@ -44,7 +44,7 @@ def _audit_response(view: AuditView) -> AuditResponse:
     )
 
 
-@router.get("/audit")
+@router.get("/audit", summary="List audit entries")
 async def list_audit_entries(
     identity: Identity = get_current_identity(required_permissions=["audit:read"]),
     audit_svc: AuditService = Depends(get_audit_service),
@@ -120,7 +120,7 @@ async def list_audit_entries(
     )
 
 
-@router.get("/audit/{audit_id}")
+@router.get("/audit/{audit_id}", summary="Get an audit entry")
 async def get_audit_entry(
     audit_id: Annotated[
         str, Path(description="ID of the audit entry.", openapi_examples=ex.example(ex.AUDIT_ID))

@@ -3,8 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiImportRequest } from '../models/ApiImportRequest';
+import type { ApiImportResponse } from '../models/ApiImportResponse';
 import type { ApiListResponse } from '../models/ApiListResponse';
 import type { ApiResponse } from '../models/ApiResponse';
+import type { ApiRevisionListResponse } from '../models/ApiRevisionListResponse';
+import type { ApiRevisionResponse } from '../models/ApiRevisionResponse';
 import type { ApiUpdateRequest } from '../models/ApiUpdateRequest';
 import type { SecuritySchemeListResponse } from '../models/SecuritySchemeListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -12,7 +15,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ApIsService {
     /**
-     * List Apis
+     * List registered APIs
      * List locally registered APIs with optional vendor filter and pagination.
      *
      * This is the **imported** registry — APIs present in this deployment. The
@@ -58,14 +61,14 @@ export class ApIsService {
         });
     }
     /**
-     * Import Apis
+     * Import OpenAPI or Arazzo specs
      * Import OpenAPI/Arazzo content as new API revisions (async).
      *
      * The whole request body is capped at `ingest.max_import_request_bytes`
      * (twice `ingest.max_spec_bytes` unless configured) and each inline source's
      * content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
      * request is refused with 413 before any job is queued.
-     * @returns any Successful Response
+     * @returns ApiImportResponse Successful Response
      * @throws ApiError
      */
     public static importApis({
@@ -75,7 +78,7 @@ export class ApIsService {
          * Wrapper for a batch of import sources.
          */
         requestBody: ApiImportRequest,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<ApiImportResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/apis',
@@ -93,7 +96,7 @@ export class ApIsService {
         });
     }
     /**
-     * Delete Api
+     * Delete an API
      * Delete an API and all its revisions.
      * @returns void
      * @throws ApiError
@@ -137,7 +140,7 @@ export class ApIsService {
         });
     }
     /**
-     * Get Api
+     * Get an API
      * Retrieve a single API by its (vendor, name, version) identity.
      * @returns ApiResponse Successful Response
      * @throws ApiError
@@ -179,9 +182,9 @@ export class ApIsService {
         });
     }
     /**
-     * Update Api
+     * Update an API
      * Partially update an API's presentation fields.
-     * @returns any Successful Response
+     * @returns ApiResponse Successful Response
      * @throws ApiError
      */
     public static updateApi({
@@ -206,7 +209,7 @@ export class ApIsService {
          * Partial update payload for an API's presentation fields.
          */
         requestBody: ApiUpdateRequest,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<ApiResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',
             url: '/apis/{vendor}/{name}/{version}',
@@ -238,7 +241,7 @@ export class ApIsService {
      * Results are cursor-paginated: pass `next_cursor` as `cursor` while
      * `has_more` is true. Fetch one revision with
      * `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
-     * @returns any Successful Response
+     * @returns ApiRevisionListResponse Successful Response
      * @throws ApiError
      */
     public static listApiRevisions({
@@ -273,7 +276,7 @@ export class ApIsService {
          * Maximum number of revisions to return (1-200).
          */
         limit?: number,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<ApiRevisionListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/revisions',
@@ -343,6 +346,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `Only an \`archived\` revision can be deleted; a \`draft\`, \`imported\` or \`published\` revision is refused with type \`revision_state_conflict\`. Nothing was deleted.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -358,7 +362,7 @@ export class ApIsService {
      * to the actions valid in its state. This is metadata only — download the
      * spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
      * revision does not exist.
-     * @returns any Successful Response
+     * @returns ApiRevisionResponse Successful Response
      * @throws ApiError
      */
     public static getApiRevision({
@@ -383,7 +387,7 @@ export class ApIsService {
          * ID of the API revision.
          */
         revisionId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<ApiRevisionResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}',
@@ -397,6 +401,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `The API (type \`api_not_found\`) or the revision (type \`revision_not_found\`) does not exist.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -412,7 +417,7 @@ export class ApIsService {
      * no live revision until another is promoted. A revision in any other
      * state is refused with 409 (`revision_state_conflict`). Requires
      * `apis:write`. Returns the archived revision.
-     * @returns any Successful Response
+     * @returns ApiRevisionResponse Successful Response
      * @throws ApiError
      */
     public static archiveRevision({
@@ -437,7 +442,7 @@ export class ApIsService {
          * ID of the API revision.
          */
         revisionId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<ApiRevisionResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive',
@@ -451,6 +456,7 @@ export class ApIsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `Only a \`draft\` or \`imported\` revision can be archived; any other state (\`published\`, \`archived\`) is refused with type \`revision_state_conflict\`. Nothing was archived.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -458,7 +464,7 @@ export class ApIsService {
         });
     }
     /**
-     * Promote Revision
+     * Promote an API revision
      * Promote a draft revision to published, archiving the current one.
      *
      * If the draft declares different server hosts than the API's current (or last
@@ -466,7 +472,7 @@ export class ApIsService {
      * the API has credentials bound to agents, the caller must be an organisation
      * admin (``org:admin``); otherwise the promote is refused with 403
      * ``host_change_requires_operator``.
-     * @returns any Successful Response
+     * @returns ApiResponse Successful Response
      * @throws ApiError
      */
     public static promoteRevision({
@@ -491,7 +497,7 @@ export class ApIsService {
          * ID of the API revision.
          */
         revisionId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<ApiResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote',

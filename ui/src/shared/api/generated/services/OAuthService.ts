@@ -84,7 +84,7 @@ export class OAuthService {
         });
     }
     /**
-     * Error Page
+     * Get a browser authorization error
      * Minimal error endpoint for browser-facing authorization failures.
      * @returns string Successful Response
      * @throws ApiError
@@ -269,7 +269,7 @@ export class OAuthService {
      * makes N parallel submits (N distinct blobs from N renders) create exactly
      * one agent — losers re-enter consent, which renders the picker or the
      * awaiting page as appropriate.
-     * @returns any Successful Response
+     * @returns string The re-rendered consent page, as HTML for the browser that posted the form. This endpoint serves a page rather than an API body: a failure redirects (302) to `/error` instead of returning a problem document.
      * @throws ApiError
      */
     public static consentAgentCreate({
@@ -279,7 +279,7 @@ export class OAuthService {
          * Request payload for the `consentAgentCreate` operation.
          */
         formData: Body_consentAgentCreate,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<string> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/consent/agent',
@@ -337,7 +337,7 @@ export class OAuthService {
         });
     }
     /**
-     * Introspect Endpoint
+     * Introspect an OAuth token
      * Introspect a token (RFC 7662).
      *
      * Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
@@ -377,7 +377,7 @@ export class OAuthService {
         });
     }
     /**
-     * Revoke Endpoint
+     * Revoke an OAuth token
      * Revoke a token (RFC 7009). Always returns 200 for valid requests.
      *
      * Two client-authentication arms, negotiated on the request content type by
@@ -407,7 +407,7 @@ export class OAuthService {
      * resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
      * may honour an already-cached verdict for up to 30 s — the same residual as
      * the UI `:revoke` kill switch and the G10 transfer sweep.
-     * @returns any Successful Response
+     * @returns any The token is revoked, or there was nothing to revoke. The response body is **empty** (RFC 7009 §2.2) — there is nothing to parse, and success is indistinguishable from a no-op on both arms, deliberately: neither tells the caller whether the token existed. Both arms answer this same empty `200` — the form-encoded RFC 7009 arm and the bearer-authenticated JSON arm.
      * @throws ApiError
      */
     public static revokeEndpoint({
@@ -443,7 +443,7 @@ export class OAuthService {
         });
     }
     /**
-     * Token Endpoint
+     * Exchange a grant for OAuth tokens
      * Exchange a refresh token, JWT assertion, or authorization code for tokens.
      *
      * Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
@@ -481,6 +481,7 @@ export class OAuthService {
             mediaType: 'application/json',
             errors: {
                 400: `RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): \`{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}\`. \`invalid_request\` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as \`invalid_grant\` with \`error_description: "consent grant has been revoked"\` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (\`Authorization\` header, RFC 6749 §2.3.1) gets the same \`invalid_client\` dialect body with status 401 and a \`WWW-Authenticate: Basic\` challenge, per §5.2.`,
+                401: `Client authentication failed after the client attempted HTTP Basic (RFC 6749 §2.3.1): the same \`invalid_client\` dialect body as the 400 arm, plus a \`WWW-Authenticate: Basic\` challenge. A client that did not attempt Basic gets \`invalid_client\` as a 400 instead, so branch on the body's \`error\` member rather than on the status code.`,
                 429: `Per-client_id + client-network rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
