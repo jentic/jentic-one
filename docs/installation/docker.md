@@ -288,6 +288,22 @@ auth:
 > (and its `max_owner_share`) together with `max_total_bytes`, or lower
 > `broker.idempotency.ttl_s`. Raise the container memory limit by at least
 > as much as you raise the budgets.
+>
+> **Password and OAuth client-secret memory (`admin.auth.argon2_max_concurrency`):**
+> in the `app` container, every concurrent password or OAuth client-secret
+> hash or verification allocates 64 MiB (argon2id with `memory_cost=65536`).
+> Concurrent argon2 operations are capped per process at
+> `admin.auth.argon2_max_concurrency`
+> (`JENTIC__ADMIN__AUTH__ARGON2_MAX_CONCURRENCY`, default `4`, capping peak
+> argon2 memory at `4 × 64 MiB = 256 MiB`); callers beyond the cap wait up to
+> `admin.auth.argon2_acquire_timeout_s`
+> (`JENTIC__ADMIN__AUTH__ARGON2_ACQUIRE_TIMEOUT_S`, default `5.0`s) for a slot
+> and then get a `503` with `Retry-After` instead of allocating another 64 MiB
+> buffer. Size the `app` container's `--memory` limit to cover the ~150 MiB
+> baseline, `state.memory.max_total_bytes` (192 MiB budgeted, ~220 MiB real),
+> and `64 MiB × argon2_max_concurrency` (at least `512m`, `1g` recommended at
+> the defaults), and add `64m` per slot if you raise
+> `argon2_max_concurrency`.
 
 ## 3. Prepare the database
 
