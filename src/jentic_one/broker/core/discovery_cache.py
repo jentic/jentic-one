@@ -32,12 +32,19 @@ serves repeat lookups from memory:
 - **Memory.** An LRU bound of ``max_entries``; each entry's size is bounded only
   by the request URL's length. Concurrent misses for one key share a single
   lookup (:class:`SingleFlight`).
-- **Eviction is process-wide and unpartitioned.** Distinct path-parameter values
-  each take an entry, so one caller walking a parameterised route past
-  ``max_entries`` evicts the routes cached for every other identity in the
-  process, costing them a registry lookup each. Only
-  ``broker.discovery_cache.evictions`` signals it. Per-caller admission or
-  partitioning is #1695 follow-up work.
+- **Eviction is partitioned by route.** Distinct path-parameter values each take
+  an entry, so entries are also bounded per route — method, host and revision,
+  with the path omitted — at ``max_entries_per_route``. One caller walking a
+  parameterised route with unique path parameters therefore evicts only that
+  route's own entries, and cannot reach ``max_entries`` on its own while that
+  per-route cap is the smaller of the two, so the routes cached for every other
+  identity survive. The process-wide ``max_entries`` bound stays the memory cap
+  across routes. A route's partition is dropped as soon as its last entry goes,
+  so the bookkeeping is proportional to the routes currently cached. Within a
+  route the cap evicts in store order — a hit re-seats the entry in the
+  process-wide order only, so the hit path stays one lookup — while the
+  process-wide bound evicts in access order. Both count
+  ``broker.discovery_cache.evictions``.
 
 **Tenancy.** The lookup takes no caller identity, so its answer is the same for
 every caller, and one cache is shared by every identity in the process. The
@@ -59,6 +66,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from jentic_one.broker.core.singleflight import SingleFlight
@@ -78,9 +86,13 @@ _cache_evictions = _meter.create_counter(
     description="Route-discovery cache entries evicted by the LRU bound",
 )
 
-#: LRU bound on cached routes. Distinct path-parameter values each take an entry,
-#: so the bound (not the TTL) is what caps memory under a spray of unique URLs.
+#: Process-wide LRU bound on cached routes: the memory cap across every route.
 DEFAULT_MAX_ENTRIES = 10_000
+
+#: Bound on the entries one route (method, host, revision) may hold. Distinct
+#: path-parameter values each take an entry, so this is what caps a spray of
+#: unique URLs on one route to that route's own share of ``max_entries``.
+DEFAULT_MAX_ENTRIES_PER_ROUTE = 1_000
 
 _DEFAULT_PORT_SUFFIX = {"http": ":80", "https": ":443"}
 
@@ -90,6 +102,8 @@ class _Entry:
     value: ResolveResult | None
     generation: int
     expires_at: float
+    #: The entry's route partition, so dropping it also unindexes it.
+    route: str
 
 
 class DiscoveryCache:
@@ -101,6 +115,7 @@ class DiscoveryCache:
         ttl_s: float,
         negative_ttl_s: float = 0.0,
         max_entries: int = DEFAULT_MAX_ENTRIES,
+        max_entries_per_route: int = DEFAULT_MAX_ENTRIES_PER_ROUTE,
         generation: Callable[[], int] = route_generation,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -112,12 +127,21 @@ class DiscoveryCache:
             raise ValueError("negative_ttl_s must be finite, >= 0 and <= ttl_s")
         if max_entries < 1:
             raise ValueError("max_entries must be >= 1")
+        if max_entries_per_route < 1:
+            raise ValueError("max_entries_per_route must be >= 1")
         self._ttl_s = ttl_s
         self._negative_ttl_s = negative_ttl_s
         self._max_entries = max_entries
+        # A cap at or above the process-wide bound never bites: a route can only
+        # exceed it once the whole cache has, and the access-ordered bound below
+        # gets there first.
+        self._max_entries_per_route = max_entries_per_route
         self._generation = generation
         self._clock = clock
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
+        # Route partition -> that route's entry keys in store order. A partition
+        # exists only while it holds an entry.
+        self._routes: dict[str, OrderedDict[str, None]] = {}
         self._single_flight: SingleFlight[ResolveResult | None] = SingleFlight()
 
     def __len__(self) -> int:
@@ -132,7 +156,8 @@ class DiscoveryCache:
         load: Callable[[], Awaitable[ResolveResult | None]],
     ) -> ResolveResult | None:
         """Return the cached resolution for the lookup, or run ``load`` and cache it."""
-        key = _cache_key(method=method, url=url, revision_id=revision_id)
+        keys = _cache_keys(method=method, url=url, revision_id=revision_id)
+        key = keys.entry
         generation = self._generation()
         entry = self._entries.get(key)
         if entry is not None:
@@ -140,7 +165,7 @@ class DiscoveryCache:
                 self._entries.move_to_end(key)
                 _cache_hits.add(1)
                 return _copy(entry.value)
-            del self._entries[key]
+            self._discard(key)
 
         async def _load() -> ResolveResult | None:
             # Counted here, not before the flight: single-flighted waiters run
@@ -155,7 +180,13 @@ class DiscoveryCache:
             ttl = self._ttl_s if value is not None else self._negative_ttl_s
             if ttl > 0 and self._generation() == generation:
                 self._store(
-                    key, _Entry(value=value, generation=generation, expires_at=started + ttl)
+                    key,
+                    _Entry(
+                        value=value,
+                        generation=generation,
+                        expires_at=started + ttl,
+                        route=keys.route,
+                    ),
                 )
             return value
 
@@ -169,12 +200,38 @@ class DiscoveryCache:
         # stale entry for the key), and re-seats an existing key as most-recent.
         self._entries[key] = entry
         self._entries.move_to_end(key)
+        route = self._routes.setdefault(entry.route, OrderedDict())
+        route[key] = None
+        route.move_to_end(key)
+        # The storing route's own cap first, so a spray of unique path parameters
+        # is paid for out of that route's entries and never reaches the
+        # process-wide bound on its own.
+        while len(route) > self._max_entries_per_route:
+            self._discard(next(iter(route)))
+            _cache_evictions.add(1)
         while len(self._entries) > self._max_entries:
-            self._entries.popitem(last=False)
+            self._discard(next(iter(self._entries)))
             _cache_evictions.add(1)
 
+    def _discard(self, key: str) -> None:
+        """Drop one entry and unindex it, reclaiming its route's partition when empty."""
+        entry = self._entries.pop(key)
+        route = self._routes.get(entry.route)
+        if route is None:
+            return
+        route.pop(key, None)
+        if not route:
+            del self._routes[entry.route]
 
-def _cache_key(*, method: str, url: str, revision_id: uuid.UUID | None) -> str:
+
+class _Keys(NamedTuple):
+    """The entry's own key and the route partition it is bounded within."""
+
+    entry: str
+    route: str
+
+
+def _cache_keys(*, method: str, url: str, revision_id: uuid.UUID | None) -> _Keys:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
     # Userinfo is dropped and the scheme is not keyed on: the lookup reads the
@@ -186,15 +243,15 @@ def _cache_key(*, method: str, url: str, revision_id: uuid.UUID | None) -> str:
     default_port = _DEFAULT_PORT_SUFFIX.get(scheme)
     if default_port is not None and hostport.endswith(default_port):
         hostport = hostport.removesuffix(default_port)
-    raw = "\x00".join(
-        (
-            method.upper(),
-            hostport,
-            parts.path,
-            revision_id.hex if revision_id is not None else "",
-        )
+    revision = revision_id.hex if revision_id is not None else ""
+    # The route partition is the key without the path: the one component a caller
+    # varies freely, since the rest are fixed by the API the request targets.
+    route = "\x00".join((method.upper(), hostport, revision))
+    raw = "\x00".join((method.upper(), hostport, parts.path, revision))
+    return _Keys(
+        entry=hashlib.sha256(raw.encode()).hexdigest(),
+        route=hashlib.sha256(route.encode()).hexdigest(),
     )
-    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _copy(value: ResolveResult | None) -> ResolveResult | None:

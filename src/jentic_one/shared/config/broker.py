@@ -299,7 +299,22 @@ class BrokerConfig(BaseModel):
     discovery_cache_max_entries: int = Field(
         default=10_000,
         ge=1,
-        description="LRU bound on entries in the per-process route-discovery cache.",
+        description=(
+            "Process-wide LRU bound on entries in the per-process "
+            "route-discovery cache: the memory cap across every route."
+        ),
+    )
+    discovery_cache_max_entries_per_route: int = Field(
+        default=1_000,
+        ge=1,
+        description=(
+            "Bound on the route-discovery cache entries one route (method, host "
+            "and revision, with the URL path omitted) may hold. Distinct "
+            "path-parameter values each take an entry, so this caps one caller "
+            "walking a parameterised route to that route's own entries instead "
+            "of evicting the routes cached for every other identity. Values "
+            "above discovery_cache_max_entries never bite."
+        ),
     )
     streaming_persist_timeout_s: float = Field(
         default=10.0,

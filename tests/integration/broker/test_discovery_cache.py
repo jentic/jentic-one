@@ -206,6 +206,7 @@ def _deployed_broker_resolver(
         ttl_s=config.discovery_cache_ttl_s,
         negative_ttl_s=config.discovery_cache_negative_ttl_s,
         max_entries=config.discovery_cache_max_entries,
+        max_entries_per_route=config.discovery_cache_max_entries_per_route,
         generation=lambda: 0,
         clock=clock,
     )

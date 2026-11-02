@@ -269,6 +269,7 @@ def test_broker_discovery_cache_defaults_yaml_and_env_overrides(
     assert broker.discovery_cache_ttl_s == 3.0
     assert broker.discovery_cache_negative_ttl_s == 0.0
     assert broker.discovery_cache_max_entries == 10_000
+    assert broker.discovery_cache_max_entries_per_route == 1_000
 
     from_yaml = tmp_path / "discovery.yaml"
     from_yaml.write_text(

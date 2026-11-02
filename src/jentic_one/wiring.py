@@ -143,6 +143,7 @@ def build_discovery_cache(broker: BrokerConfig) -> DiscoveryCache | None:
         ttl_s=broker.discovery_cache_ttl_s,
         negative_ttl_s=broker.discovery_cache_negative_ttl_s,
         max_entries=broker.discovery_cache_max_entries,
+        max_entries_per_route=broker.discovery_cache_max_entries_per_route,
     )
 
 

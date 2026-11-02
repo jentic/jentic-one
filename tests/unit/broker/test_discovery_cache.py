@@ -53,6 +53,7 @@ def _cache(
     ttl_s: float = 60.0,
     negative_ttl_s: float = 0.0,
     max_entries: int = 100,
+    max_entries_per_route: int = 100,
     clock: Callable[[], float] = lambda: 1000.0,
 ) -> tuple[DiscoveryCache, _Generation]:
     generation = _Generation()
@@ -60,6 +61,7 @@ def _cache(
         ttl_s=ttl_s,
         negative_ttl_s=negative_ttl_s,
         max_entries=max_entries,
+        max_entries_per_route=max_entries_per_route,
         generation=generation,
         clock=clock,
     )
@@ -339,6 +341,45 @@ async def test_lru_bound_evicts_least_recently_used() -> None:
     assert len(calls) == 4
 
 
+async def test_path_parameter_spray_evicts_only_its_own_route() -> None:
+    """One route's unique path parameters are paid for out of that route's entries.
+
+    The sprayed URLs all share a route (method, host, revision), so the per-route
+    cap bounds them well below ``max_entries`` and the warm entry another
+    identity holds for a different route still serves from memory.
+    """
+    cache, _ = _cache(max_entries=8, max_entries_per_route=2)
+    load, calls = _counting_loader(_result())
+    other = "https://api.other.com/v1/widgets"
+
+    await cache.resolve(method="GET", url=other, revision_id=None, load=load)
+    for n in range(20):
+        await cache.resolve(
+            method="GET", url=f"https://api.acme.com/v1/pets/{n}", revision_id=None, load=load
+        )
+    assert len(calls) == 21
+
+    await cache.resolve(method="GET", url=other, revision_id=None, load=load)
+    assert len(calls) == 21
+    assert len(cache) == 3
+
+
+async def test_route_partition_is_reclaimed_when_its_last_entry_goes() -> None:
+    cache, _ = _cache(max_entries=2, max_entries_per_route=2)
+    load, _ = _counting_loader(_result())
+    hosts = ("a.example", "b.example", "c.example")
+
+    for host in hosts:
+        url = f"https://{host}/v1/pets"
+        await cache.resolve(method="GET", url=url, revision_id=None, load=load)
+
+    # Three routes stored one entry each under a bound of two, so the first
+    # route's partition goes with its only entry: the bookkeeping never
+    # outlives the entries it orders.
+    assert len(cache) == 2
+    assert len(cache._routes) == 2
+
+
 async def test_callers_get_independent_copies() -> None:
     cache, _ = _cache()
     load, _ = _counting_loader(_result())
@@ -388,3 +429,8 @@ def test_build_discovery_cache_ttl_zero_disables_it() -> None:
 def test_invalid_parameters_rejected(ttl_s: float, negative_ttl_s: float, max_entries: int) -> None:
     with pytest.raises(ValueError):
         DiscoveryCache(ttl_s=ttl_s, negative_ttl_s=negative_ttl_s, max_entries=max_entries)
+
+
+def test_max_entries_per_route_below_one_rejected() -> None:
+    with pytest.raises(ValueError, match="max_entries_per_route"):
+        DiscoveryCache(ttl_s=1.0, max_entries_per_route=0)

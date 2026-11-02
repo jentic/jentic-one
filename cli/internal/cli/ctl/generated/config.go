@@ -230,8 +230,16 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
-	// LRU bound on entries in the per-process route-discovery cache.
+	// Process-wide LRU bound on entries in the per-process route-discovery cache: the
+	// memory cap across every route.
 	DiscoveryCacheMaxEntries int `json:"discovery_cache_max_entries" yaml:"discovery_cache_max_entries" mapstructure:"discovery_cache_max_entries"`
+
+	// Bound on the route-discovery cache entries one route (method, host and
+	// revision, with the URL path omitted) may hold. Distinct path-parameter values
+	// each take an entry, so this caps one caller walking a parameterised route to
+	// that route's own entries instead of evicting the routes cached for every other
+	// identity. Values above discovery_cache_max_entries never bite.
+	DiscoveryCacheMaxEntriesPerRoute int `json:"discovery_cache_max_entries_per_route" yaml:"discovery_cache_max_entries_per_route" mapstructure:"discovery_cache_max_entries_per_route"`
 
 	// TTL (seconds) for caching an unmatched URL (the operation_not_found 404) in the
 	// route-discovery cache. Must not exceed discovery_cache_ttl_s while the cache is
@@ -349,6 +357,12 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	}
 	if 1 > plain.DiscoveryCacheMaxEntries {
 		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_max_entries", 1)
+	}
+	if v, ok := raw["discovery_cache_max_entries_per_route"]; !ok || v == nil {
+		plain.DiscoveryCacheMaxEntriesPerRoute = 1000
+	}
+	if 1 > plain.DiscoveryCacheMaxEntriesPerRoute {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_max_entries_per_route", 1)
 	}
 	if v, ok := raw["discovery_cache_negative_ttl_s"]; !ok || v == nil {
 		plain.DiscoveryCacheNegativeTtlS = 0.0
