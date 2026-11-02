@@ -1,18 +1,22 @@
 /**
  * Fleet-aware avatar initials: distinct letters for the near-identical names a
  * real fleet grows (`my-agent-34` → M34, `my-agent-34-staging` → M34S,
- * `support-triage` vs `support-triage-eu` → ST vs STE).
+ * `support-triage` vs `support-triage-eu` → ST and STE, the older keeping ST).
  *
  * Each name yields a ranked list of candidates. Agents are served first come,
  * first served by creation date (ties broken by id): each takes the first of its
- * own candidates no older agent holds, and one with none left numbers its first
- * (`M342`, `M343`, …) until the result is free fleet-wide.
+ * own candidates no older agent holds. One with none left numbers its first
+ * (`M342`, `M343`, …), counting past every pick made and past the first
+ * candidate of every name in the fleet, so a numbered fallback never spells
+ * another agent's own letters (`my-agent-342` keeps M342).
  *
  * Avatar letters are an identity cue, so an older agent's pick never depends on
  * a newer one: adding an agent never changes the letters of any agent already
- * there, nor does reordering the list it arrives in. Removing one can let a
- * younger agent take a better candidate it frees. Pure and deterministic: the
- * same fleet always reads the same letters.
+ * there, nor does reordering the list it arrives in. The one exception is a
+ * numbered fallback, which steps past a newer agent whose own letters it would
+ * otherwise spell. Removing an agent can let a younger one take a better
+ * candidate it frees. Pure and deterministic: the same fleet always reads the
+ * same letters.
  */
 
 /** The longest initials an avatar carries. */
@@ -92,11 +96,15 @@ function byCreation(a: Named, b: Named): number {
 
 /** Initials for every agent in the fleet, keyed by id (upper case), in fleet order. */
 export function smartInitials(fleet: readonly Named[]): Map<string, string> {
+	const candidates = new Map(fleet.map((a) => [a.id, initialsCandidates(a.name)]));
+	// Every name's own first letters: no numbered fallback may spell them.
+	const reserved = new Set<string>();
+	for (const list of candidates.values()) if (list[0]) reserved.add(list[0]);
 	const taken = new Set<string>();
 	const picks = new Map<string, string>();
 	for (const agent of [...fleet].sort(byCreation)) {
 		if (picks.has(agent.id)) continue;
-		const pick = firstFree(initialsCandidates(agent.name), taken);
+		const pick = firstFree(candidates.get(agent.id) ?? [], taken, reserved);
 		if (pick === undefined) continue;
 		taken.add(pick);
 		picks.set(agent.id, pick.toUpperCase());
@@ -111,16 +119,21 @@ export function smartInitials(fleet: readonly Named[]): Map<string, string> {
 
 /**
  * The best candidate nobody has taken; with none left, the first candidate
- * numbered (`M342`), counting on until the result is free fleet-wide.
- * `undefined` only for a name with no candidates at all.
+ * numbered (`M342`), counting on until the result is free fleet-wide and is
+ * no name's own first candidate (`reserved`). `undefined` only for a name
+ * with no candidates at all.
  */
-function firstFree(list: readonly string[], taken: ReadonlySet<string>): string | undefined {
+function firstFree(
+	list: readonly string[],
+	taken: ReadonlySet<string>,
+	reserved: ReadonlySet<string>,
+): string | undefined {
 	if (list.length === 0) return undefined;
 	const free = list.find((c) => !taken.has(c));
 	if (free !== undefined) return free;
 	for (let n = 2; ; n++) {
 		const digits = String(n);
 		const numbered = take(list[0], Math.max(1, MAX_INITIALS - digits.length)) + digits;
-		if (!taken.has(numbered)) return numbered;
+		if (!taken.has(numbered) && !reserved.has(numbered)) return numbered;
 	}
 }

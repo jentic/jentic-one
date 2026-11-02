@@ -138,6 +138,21 @@ describe('smartInitials', () => {
 		expect(first).toEqual(['M343', 'M34', 'MA34', 'M342', 'M344']);
 	});
 
+	it("numbers a fallback past every name's own first letters", () => {
+		// The third `my-agent-34` numbers itself. A younger `my-agent-342` keeps
+		// M342 — the number is its identity — and the fallback steps past it.
+		expect(read('my-agent-34', 'my-agent-34', 'my-agent-34')).toEqual(['M34', 'MA34', 'M342']);
+		expect(read('my-agent-34', 'my-agent-34', 'my-agent-34', 'my-agent-342')).toEqual([
+			'M34',
+			'MA34',
+			'M343',
+			'M342',
+		]);
+		// A number too long for the tile truncates onto a neighbour's: the
+		// fallback skips the agents that really carry those numbers.
+		expect(read('agent-123', 'agent-122', 'agent-1239999')).toEqual(['A123', 'A122', 'A124']);
+	});
+
 	it('is unique across every fleet, large and near-identical', () => {
 		for (const names of FLEETS) {
 			const got = read(...names);
