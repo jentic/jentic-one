@@ -24,8 +24,7 @@ import {
 	useUsageWindow,
 	type UsageResponse,
 } from '@/modules/monitor/api';
-import { useActorDirectory, type ActorDirectory } from '@/shared/hooks';
-import { smartInitials } from '@/shared/lib';
+import { useActorDirectory, useFleetInitials } from '@/shared/hooks';
 import {
 	usageToEntityRows,
 	usageToOverview,
@@ -39,27 +38,6 @@ import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 function actorIdOf(key: string): string | null {
 	const slash = key.indexOf('/');
 	return slash < 0 ? null : key.slice(slash + 1) || null;
-}
-
-/**
- * The initials the Agents tab gives every agent: `smartInitials` over the whole
- * directory's agents, not just the rows on screen. Assigned first come, first
- * served, so an agent's letters depend only on older agents, which both
- * surfaces hold alike. A directory entry without a creation time (a by-id
- * lookup) is served last.
- *
- * Monitor's usage is for org admins, who can list the whole actor directory,
- * so that full listing (with creation times) is the source. The by-id lookup
- * fallback carries no `created_at` and covers only the agents on screen, so
- * its letters can differ from the Agents tab's.
- */
-function fleetInitials(byId: ActorDirectory['byId']): Map<string, string> {
-	const fleet = [];
-	for (const actor of byId.values()) {
-		if (actor.actor_type !== 'agent') continue;
-		fleet.push({ id: actor.id, name: actor.name, createdAt: actor.created_at ?? '' });
-	}
-	return smartInitials(fleet);
 }
 
 /**
@@ -107,7 +85,7 @@ export function useUsageOverview({ enabled }: { enabled: boolean }): UsageOvervi
 	// The rollup has no names: each actor row is named from the actor directory,
 	// as `ActorLabel` names it everywhere else.
 	const directory = useActorDirectory(agentRows.map((row) => actorIdOf(row.id)));
-	const agentInitials = useMemo(() => fleetInitials(directory.byId), [directory.byId]);
+	const agentInitials = useFleetInitials();
 	const agents = useMemo(
 		() =>
 			withActorNames(agentRows, {

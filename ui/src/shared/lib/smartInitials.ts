@@ -17,12 +17,17 @@
  * otherwise spell. Removing an agent can let a younger one take a better
  * candidate it frees. Pure and deterministic: the same fleet always reads the
  * same letters.
+ *
+ * `tieredInitials` serves whole tiers in turn — agents, then the users drawn
+ * beside them on a chart — so every avatar on one surface reads apart while
+ * an agent's letters never depend on a user.
  */
 
 /** The longest initials an avatar carries. */
 const MAX_INITIALS = 4;
 
-interface Named {
+/** An actor the initials are read for. */
+export interface Named {
 	id: string;
 	name: string;
 	/** ISO-8601 creation time: decides who keeps contested letters. An absent
@@ -96,23 +101,45 @@ function byCreation(a: Named, b: Named): number {
 
 /** Initials for every agent in the fleet, keyed by id (upper case), in fleet order. */
 export function smartInitials(fleet: readonly Named[]): Map<string, string> {
-	const candidates = new Map(fleet.map((a) => [a.id, initialsCandidates(a.name)]));
-	// Every name's own first letters: no numbered fallback may spell them.
+	return tieredInitials([fleet]);
+}
+
+/**
+ * Initials across tiers served in turn: every actor of the first tier picks
+ * (first come, first served) before any of the second, and so on, so a tier's
+ * letters are exactly what {@link smartInitials} gives it alone, and each later
+ * tier reads apart from everything before it. Keyed by id (upper case), in
+ * the order given; an id listed twice is served where it first appears.
+ */
+export function tieredInitials(tiers: readonly (readonly Named[])[]): Map<string, string> {
+	const candidates = new Map<string, string[]>();
+	// Every name's own first letters, within the tiers served so far: no
+	// numbered fallback may spell them. A later tier reserves nothing from an
+	// earlier one, so an agent's letters never depend on a user's name.
 	const reserved = new Set<string>();
-	for (const list of candidates.values()) if (list[0]) reserved.add(list[0]);
 	const taken = new Set<string>();
 	const picks = new Map<string, string>();
-	for (const agent of [...fleet].sort(byCreation)) {
-		if (picks.has(agent.id)) continue;
-		const pick = firstFree(candidates.get(agent.id) ?? [], taken, reserved);
-		if (pick === undefined) continue;
-		taken.add(pick);
-		picks.set(agent.id, pick.toUpperCase());
+	for (const tier of tiers) {
+		for (const actor of tier) {
+			if (candidates.has(actor.id)) continue;
+			const list = initialsCandidates(actor.name);
+			candidates.set(actor.id, list);
+			if (list[0]) reserved.add(list[0]);
+		}
+		for (const actor of [...tier].sort(byCreation)) {
+			if (picks.has(actor.id)) continue;
+			const pick = firstFree(candidates.get(actor.id) ?? [], taken, reserved);
+			if (pick === undefined) continue;
+			taken.add(pick);
+			picks.set(actor.id, pick.toUpperCase());
+		}
 	}
 	const out = new Map<string, string>();
-	for (const agent of fleet) {
-		const pick = picks.get(agent.id);
-		if (pick) out.set(agent.id, pick);
+	for (const tier of tiers) {
+		for (const actor of tier) {
+			const pick = picks.get(actor.id);
+			if (pick) out.set(actor.id, pick);
+		}
 	}
 	return out;
 }

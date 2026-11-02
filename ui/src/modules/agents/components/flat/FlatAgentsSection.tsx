@@ -38,9 +38,9 @@ import {
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { shellScroller, shellScrollTop } from '@/shared/lib/shellScroll';
-import { smartInitials } from '@/shared/lib/smartInitials';
 import {
 	useEagerCursorDrain,
+	useFleetInitials,
 	useHotkey,
 	useIsRenderedPathCurrent,
 	usePersistedChoice,
@@ -251,8 +251,9 @@ export function FlatAgentsSection({
 			),
 		[landing.agents],
 	);
-	// One reading of every avatar's letters, so the strip and the card agree.
-	const fleetInitials = useMemo(() => smartInitials(agents), [agents]);
+	// One reading of every avatar's letters, shared with every other surface
+	// that draws these agents, so the strip, the card and Monitor agree.
+	const fleetInitials = useFleetInitials(agents);
 
 	// Until the URL catches up with an exit's hand-off, the handed-off agent is
 	// the one on screen.

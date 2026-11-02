@@ -13,6 +13,7 @@ export {
 	actorDirectoryKey,
 } from '@/shared/hooks/useActorDirectory';
 export type { ActorDirectory } from '@/shared/hooks/useActorDirectory';
+export { useFleetInitials } from '@/shared/hooks/useFleetInitials';
 export { useVersionInfo, versionInfoKey } from '@/shared/hooks/useVersionInfo';
 export { useApiUsageWeek, apiUsageKeyFor } from '@/shared/hooks/useApiUsageWeek';
 export type { ApiUsageWeek, ApiUsageRow } from '@/shared/hooks/useApiUsageWeek';

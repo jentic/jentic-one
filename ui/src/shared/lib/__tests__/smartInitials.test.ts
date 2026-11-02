@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialsCandidates, smartInitials } from '@/shared/lib/smartInitials';
+import { initialsCandidates, smartInitials, tieredInitials } from '@/shared/lib/smartInitials';
 
 interface Agent {
 	id: string;
@@ -171,5 +171,46 @@ describe('smartInitials', () => {
 		// A lone surrogate is the one thing `encodeURIComponent` throws on.
 		for (const v of read('🚀-launcher', '🚀🚀'))
 			expect(() => encodeURIComponent(v)).not.toThrow();
+	});
+});
+
+describe('tieredInitials', () => {
+	const users = [
+		{ id: 'u0', name: 'Manuel Admin', createdAt: at(0) },
+		{ id: 'u1', name: 'Sam Tan', createdAt: at(0) },
+	];
+
+	it('serves a later tier after the first, so both read apart', () => {
+		const agents = fleet('mailer', 'support-triage');
+		const got = tieredInitials([agents, users]);
+		// The agents read exactly as they do alone …
+		expect([...smartInitials(agents)]).toEqual([...got].slice(0, 2));
+		expect(got.get('a0')).toBe('MA');
+		expect(got.get('a1')).toBe('ST');
+		// … and the users, though older, pick around them.
+		expect(got.get('u0')).toBe('MAA');
+		expect(got.get('u1')).toBe('SAT');
+		expect(new Set(got.values()).size).toBe(4);
+	});
+
+	it("lets no later tier move an earlier tier's numbered fallback", () => {
+		const agents = fleet('my-agent-34', 'my-agent-34', 'my-agent-34');
+		const user = [{ id: 'u0', name: 'my-agent-342', createdAt: at(0) }];
+		// The third agent numbers itself M342 whatever the users are called …
+		expect(tieredInitials([agents, user]).get('a2')).toBe('M342');
+		// … and the user, served after, finds its own letters taken and numbers
+		// itself past them.
+		expect(tieredInitials([agents, user]).get('u0')).toBe('M343');
+	});
+
+	it('is smartInitials for a single tier', () => {
+		const agents = fleet('docs-indexer', 'inbox', 'inbox');
+		expect([...tieredInitials([agents])]).toEqual([...smartInitials(agents)]);
+	});
+
+	it('serves an id listed in two tiers where it first appears', () => {
+		const agents = fleet('mailer');
+		const got = tieredInitials([agents, [{ ...agents[0], name: 'other-name' }]]);
+		expect([...got]).toEqual([['a0', 'MA']]);
 	});
 });
