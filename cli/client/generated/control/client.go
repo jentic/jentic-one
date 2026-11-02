@@ -8393,7 +8393,7 @@ type ReviewEditResponse struct {
 	// Examples: true
 	NeedsVendorConsent *bool `json:"needs_vendor_consent,omitempty"`
 
-	// OtherBoundAgents Other agents bound to the credential; added scopes and a shared rule set change reach them.
+	// OtherBoundAgents Other agents this change reaches: those bound to the credential, which added scopes reach, and those bound through a shared rule set the change rewrites.
 	//
 	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}]
 	OtherBoundAgents *[]EditAgentRef `json:"other_bound_agents,omitempty"`
@@ -39579,6 +39579,8 @@ type AmendConnectSessionHTTPResp struct {
 	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -39615,6 +39617,11 @@ func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDeta
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
 	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -39863,6 +39870,8 @@ type RebaseConnectSessionHTTPResp struct {
 	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -39899,6 +39908,11 @@ func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDet
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
 	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -58795,6 +58809,13 @@ func ParseAmendConnectSessionHTTPResp(rsp *http.Response) (*AmendConnectSessionH
 		}
 		response.ApplicationproblemJSON422 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalServerError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -59036,6 +59057,13 @@ func ParseRebaseConnectSessionHTTPResp(rsp *http.Response) (*RebaseConnectSessio
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalServerError

@@ -3041,7 +3041,7 @@ components:
     BindingAccessResponse:
       description: A binding's permission rules plus the rest of what it grants.
       examples:
-      - &id311
+      - &id312
         data: &id049
         - _comment: Read-only access to charges.
           _system: false
@@ -3440,7 +3440,7 @@ components:
     ConnectOptionsResponse:
       description: How a connection to one registry API would be made, scheme by scheme.
       examples:
-      - &id336
+      - &id337
         api_target_supported: true
         display_name: Gmail
         name: gmail
@@ -3497,7 +3497,7 @@ components:
     ConnectRequestBody:
       description: Request body for initiating a credential connect flow.
       examples:
-      - &id317
+      - &id318
         extra: &id057
           prompt: consent
         scopes: &id058
@@ -3865,7 +3865,7 @@ components:
     CredentialAgentListResponse:
       description: Paginated list of agents directly bound to a credential.
       examples:
-      - &id310
+      - &id311
         data: &id061
         - agent_id: agnt_6968b3984d1c238dbe7e2e29
           agent_name: billing-assistant
@@ -4149,7 +4149,7 @@ components:
     CredentialCreateResponse:
       description: 'Create response: redacted + secret shown once.'
       examples:
-      - &id308
+      - &id309
         credential:
           active: true
           api:
@@ -4220,7 +4220,7 @@ components:
     CredentialListResponse:
       description: Paginated list of credentials.
       examples:
-      - &id307
+      - &id308
         data: &id066
         - *id065
         has_more: true
@@ -4498,7 +4498,7 @@ components:
       additionalProperties: false
       description: Approve or deny a pending held execution.
       examples:
-      - &id329
+      - &id330
         decision: deny
         reason: Not this account
       properties:
@@ -4845,7 +4845,7 @@ components:
       additionalProperties: false
       description: Ask to change an existing credential binding; a human approves the change.
       examples:
-      - &id339
+      - &id340
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         apply: true
         credential_id: cred_6968b39855d91a3561684b32
@@ -4927,7 +4927,7 @@ components:
     EditConnectionResponse:
       description: The opened edit session.
       examples:
-      - &id340
+      - &id341
         approval_url: https://jentic.example.com/app/connect-sessions/cs_6968b3983b8b91c75627bee5
         challenge: *id078
         poll_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
@@ -5472,7 +5472,7 @@ components:
     EventListResponse:
       description: Paginated list of events.
       examples:
-      - &id320
+      - &id321
         data: &id091
         - _links: *id090
           actor_id: usr_6968b3987ee4c3ec0b4ee3b9
@@ -5517,7 +5517,7 @@ components:
     EventResponse:
       description: Event representation in API responses.
       examples:
-      - &id323
+      - &id324
         _links: *id090
         actor_id: usr_6968b3987ee4c3ec0b4ee3b9
         actor_type: user
@@ -5619,7 +5619,7 @@ components:
     ExecutionListResponse:
       description: Paginated list of executions.
       examples:
-      - &id325
+      - &id326
         data: &id094
         - _links:
             self: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
@@ -5687,7 +5687,7 @@ components:
     ExecutionResponse:
       description: Execution record representation in API responses.
       examples:
-      - &id331
+      - &id332
         _links: *id095
         actor_id: agnt_6968b3984d1c238dbe7e2e29
         actor_type: agent
@@ -6071,7 +6071,7 @@ components:
         This is a documented deviation from the list-endpoint pagination
         convention.
       examples:
-      - &id332
+      - &id333
         data: &id105
         - api.github.com
         - api.stripe.com
@@ -6144,7 +6144,7 @@ components:
     HeldExecutionDetailResponse:
       description: A held execution with the agent context and the held request a reviewer decides on.
       examples:
-      - &id327
+      - &id328
         _links: &id106
           execution: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
           result: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result
@@ -6394,7 +6394,7 @@ components:
     HeldExecutionListResponse:
       description: A page of held executions.
       examples:
-      - &id326
+      - &id327
         data: &id109
         - _links: *id108
           agent_id: agnt_6968b3984d1c238dbe7e2e29
@@ -6447,7 +6447,7 @@ components:
     HeldExecutionResponse:
       description: A call held for a human decision, and where it stands.
       examples:
-      - &id330
+      - &id331
         _links: *id108
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         api_name: stripe
@@ -6631,7 +6631,7 @@ components:
         A held call that never ran answers an `application/problem+json` body
         instead of this one.
       examples:
-      - &id328
+      - &id329
         body_b64: eyJpZCI6ICJyZV8xMjMifQ==
         duration_ms: 412
         execution_id: exec_6968b3982706c619fe73f0cf
@@ -6744,7 +6744,7 @@ components:
         it *thinks* it is pointed to confirm it is talking to the intended backend
         (e.g. a local install vs. a remote one) before diagnosing "missing" data.
       examples:
-      - &id335
+      - &id336
         backend: remote
         broker_url: https://broker.jentic.example.com
         canonical_base_url: https://jentic.example.com
@@ -6799,7 +6799,7 @@ components:
       additionalProperties: false
       description: Start connecting a credential for a vendor or a registry API.
       examples:
-      - &id337
+      - &id338
         agent_id: agnt_6968b3984d1c238dbe7e2e29
         api: *id110
         auth_type: oauth2
@@ -6898,7 +6898,7 @@ components:
       type: object
     IntegrationsConnectResponse:
       examples:
-      - &id338
+      - &id339
         approval_url: https://jentic.example.com/app/connect-sessions/cs_6968b3983b8b91c75627bee5
         poll_token: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         resolved_flow: authorization_code
@@ -9633,7 +9633,7 @@ components:
     OperationInspectResult:
       description: Full structural detail for a resolved operation.
       examples:
-      - &id334
+      - &id335
         api: *id160
         auth: &id164
         - *id161
@@ -10574,7 +10574,7 @@ components:
     PermissionRuleListResponse:
       description: List of permission rules.
       examples:
-      - &id313
+      - &id314
         data: &id178
         - _comment: Read-only access to charges.
           _system: false
@@ -10753,7 +10753,7 @@ components:
       additionalProperties: false
       description: Request body for :test — dry-run a request shape against the binding's rules.
       examples:
-      - &id314
+      - &id315
         method: GET
         operation_id: listCharges
         path: /v1/charges
@@ -10782,7 +10782,7 @@ components:
     PermissionTestResponse:
       description: Dry-run result matching :class:`PermissionTestResult`.
       examples:
-      - &id315
+      - &id316
         allowed: true
         credential_id: cred_6968b39855d91a3561684b32
         effect: allow
@@ -10863,7 +10863,7 @@ components:
     PermissionsPatchRequest:
       description: Patch permission rules — add and/or remove.
       examples:
-      - &id312
+      - &id313
         add: &id183
         - *id182
         remove: &id184
@@ -11245,7 +11245,7 @@ components:
     ProviderDiscoveryResponse:
       description: Discovery response listing all available credential providers.
       examples:
-      - &id309
+      - &id310
         providers: &id193
         - *id192
       properties:
@@ -11554,7 +11554,7 @@ components:
           - true
           type: boolean
         other_bound_agents:
-          description: Other agents bound to the credential; added scopes and a shared rule set change reach them.
+          description: 'Other agents this change reaches: those bound to the credential, which added scopes reach, and those bound through a shared rule set the change rewrites.'
           examples:
           - *id203
           items:
@@ -11926,7 +11926,7 @@ components:
     RootHealthResponse:
       description: Liveness body of the canonical root ``GET /health`` probe.
       examples:
-      - &id333
+      - &id334
         status: ok
         version: 1.0.0
       properties:
@@ -11972,7 +11972,7 @@ components:
     RuleSetAttachRequest:
       description: Point a direct agent↔credential binding at a shared rule set.
       examples:
-      - &id316
+      - &id317
         rule_set_id: prs_6968b3987c22b63e87e79f05
       properties:
         rule_set_id:
@@ -18881,9 +18881,21 @@ paths:
               example: *id265
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: 'The session is closed: confirmed or ended'
+          description: The session is closed, or holds every revision it may
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          content:
+            application/problem+json:
+              example: &id307
+                detail: Too many requests; retry after the indicated delay.
+                instance: /example/path
+                status: 429
+                title: Too Many Requests
+                type: rate_limit_exceeded
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Rate limit
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
@@ -19085,9 +19097,16 @@ paths:
               example: *id265
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: 'The session is closed: confirmed or ended'
+          description: The session is closed, or holds every revision it may
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          content:
+            application/problem+json:
+              example: *id307
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Rate limit
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
@@ -19200,7 +19219,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id307
+              example: *id308
               schema:
                 $ref: '#/components/schemas/CredentialListResponse'
           description: Successful Response
@@ -19254,7 +19273,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id308
+              example: *id309
               schema:
                 $ref: '#/components/schemas/CredentialCreateResponse'
           description: Successful Response
@@ -19288,7 +19307,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id309
+              example: *id310
               schema:
                 $ref: '#/components/schemas/ProviderDiscoveryResponse'
           description: Successful Response
@@ -19490,7 +19509,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id310
+              example: *id311
               schema:
                 $ref: '#/components/schemas/CredentialAgentListResponse'
           description: Successful Response
@@ -19548,7 +19567,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id311
+              example: *id312
               schema:
                 $ref: '#/components/schemas/BindingAccessResponse'
           description: Successful Response
@@ -19596,7 +19615,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id312
+            example: *id313
             schema:
               $ref: '#/components/schemas/PermissionsPatchRequest'
         description: Patch permission rules — add and/or remove.
@@ -19605,7 +19624,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id313
+              example: *id314
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
@@ -19665,7 +19684,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id313
+              example: *id314
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
@@ -19721,7 +19740,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id314
+            example: *id315
             schema:
               $ref: '#/components/schemas/PermissionTestRequest'
         description: Request body for :test — dry-run a request shape against the binding's rules.
@@ -19730,7 +19749,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id315
+              example: *id316
               schema:
                 $ref: '#/components/schemas/PermissionTestResponse'
           description: Successful Response
@@ -19837,7 +19856,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id316
+            example: *id317
             schema:
               $ref: '#/components/schemas/RuleSetAttachRequest'
         description: Point a direct agent↔credential binding at a shared rule set.
@@ -19889,7 +19908,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id317
+            example: *id318
             schema:
               $ref: '#/components/schemas/ConnectRequestBody'
         description: Request body for initiating a credential connect flow.
@@ -19995,7 +20014,7 @@ paths:
         examples:
           example:
             summary: Example query value for `event_type`
-            value: &id318
+            value: &id319
             - import.completed
         in: query
         name: event_type
@@ -20003,7 +20022,7 @@ paths:
         schema:
           description: Only return events of one of these types; repeat the parameter for several.
           examples:
-          - *id318
+          - *id319
           items:
             examples:
             - import.completed
@@ -20016,7 +20035,7 @@ paths:
         examples:
           example:
             summary: Example query value for `severity`
-            value: &id319
+            value: &id320
             - warning
             - error
         in: query
@@ -20025,7 +20044,7 @@ paths:
         schema:
           description: Only return events with one of these severities; repeat the parameter for several.
           examples:
-          - *id319
+          - *id320
           items:
             $ref: '#/components/schemas/EventSeverity'
             examples:
@@ -20169,7 +20188,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id320
+              example: *id321
               schema:
                 $ref: '#/components/schemas/EventListResponse'
           description: Successful Response
@@ -20240,7 +20259,7 @@ paths:
         examples:
           example:
             summary: Example query value for `event_type`
-            value: &id321
+            value: &id322
             - import.completed
         in: query
         name: event_type
@@ -20248,7 +20267,7 @@ paths:
         schema:
           description: Only return events of one of these types; repeat the parameter for several.
           examples:
-          - *id321
+          - *id322
           items:
             examples:
             - import.completed
@@ -20261,7 +20280,7 @@ paths:
         examples:
           example:
             summary: Example query value for `severity`
-            value: &id322
+            value: &id323
             - warning
             - error
         in: query
@@ -20270,7 +20289,7 @@ paths:
         schema:
           description: Only return events with one of these severities; repeat the parameter for several.
           examples:
-          - *id322
+          - *id323
           items:
             $ref: '#/components/schemas/EventSeverity'
             examples:
@@ -20430,7 +20449,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id323
+              example: *id324
               schema:
                 $ref: '#/components/schemas/EventResponse'
           description: Successful Response
@@ -20488,7 +20507,7 @@ paths:
         examples:
           example:
             summary: Example query value for `status`
-            value: &id324
+            value: &id325
             - completed
             - failed
         in: query
@@ -20497,7 +20516,7 @@ paths:
         schema:
           description: Only return executions with one of these terminal statuses (`completed` or `failed`); repeat the parameter for several.
           examples:
-          - *id324
+          - *id325
           items:
             examples:
             - completed
@@ -20625,7 +20644,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id325
+              example: *id326
               schema:
                 $ref: '#/components/schemas/ExecutionListResponse'
           description: Successful Response
@@ -20729,7 +20748,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id326
+              example: *id327
               schema:
                 $ref: '#/components/schemas/HeldExecutionListResponse'
           description: Successful Response
@@ -20770,7 +20789,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id327
+              example: *id328
               schema:
                 $ref: '#/components/schemas/HeldExecutionDetailResponse'
           description: Successful Response
@@ -20816,7 +20835,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id328
+              example: *id329
               schema:
                 $ref: '#/components/schemas/HeldExecutionResultResponse'
             application/problem+json:
@@ -20923,7 +20942,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id329
+            example: *id330
             schema:
               $ref: '#/components/schemas/DecideHeldExecutionRequest'
         description: Approve or deny a pending held execution.
@@ -20932,7 +20951,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id330
+              example: *id331
               schema:
                 $ref: '#/components/schemas/HeldExecutionResponse'
           description: Successful Response
@@ -20978,7 +20997,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id330
+              example: *id331
               schema:
                 $ref: '#/components/schemas/HeldExecutionResponse'
           description: Successful Response
@@ -21031,7 +21050,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id331
+              example: *id332
               schema:
                 $ref: '#/components/schemas/ExecutionResponse'
           description: Successful Response
@@ -21109,7 +21128,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id332
+              example: *id333
               schema:
                 $ref: '#/components/schemas/GovernedHostsResponse'
           description: Successful Response
@@ -21159,7 +21178,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id333
+              example: *id334
               schema:
                 $ref: '#/components/schemas/RootHealthResponse'
           description: Successful Response
@@ -21252,7 +21271,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id334
+              example: *id335
               schema:
                 $ref: '#/components/schemas/OperationInspectResult'
             application/openapi+yaml:
@@ -21306,7 +21325,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id335
+              example: *id336
               schema:
                 $ref: '#/components/schemas/InstanceIdentityResponse'
           description: Successful Response
@@ -21392,7 +21411,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id336
+              example: *id337
               schema:
                 $ref: '#/components/schemas/ConnectOptionsResponse'
           description: Successful Response
@@ -21449,7 +21468,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id337
+            example: *id338
             schema:
               $ref: '#/components/schemas/IntegrationsConnectRequest'
         description: Start connecting a credential for a vendor or a registry API.
@@ -21458,7 +21477,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id338
+              example: *id339
               schema:
                 $ref: '#/components/schemas/IntegrationsConnectResponse'
           description: Successful Response
@@ -21487,12 +21506,7 @@ paths:
         '429':
           content:
             application/problem+json:
-              example: &id341
-                detail: Too many requests; retry after the indicated delay.
-                instance: /example/path
-                status: 429
-                title: Too Many Requests
-                type: rate_limit_exceeded
+              example: *id307
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Rate limit, open-session cap, or a recent rejection
@@ -21528,7 +21542,7 @@ paths:
       requestBody:
         content:
           application/json:
-            example: *id339
+            example: *id340
             schema:
               $ref: '#/components/schemas/EditConnectionRequest'
         description: Ask to change an existing credential binding; a human approves the change.
@@ -21537,7 +21551,7 @@ paths:
         '201':
           content:
             application/json:
-              example: *id340
+              example: *id341
               schema:
                 $ref: '#/components/schemas/EditConnectionResponse'
           description: Successful Response
@@ -21566,7 +21580,7 @@ paths:
         '429':
           content:
             application/problem+json:
-              example: *id341
+              example: *id307
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Rate limit or open-session cap
@@ -24010,7 +24024,7 @@ paths:
         '200':
           content:
             application/json:
-              example: *id313
+              example: *id314
               schema:
                 $ref: '#/components/schemas/PermissionRuleListResponse'
           description: Successful Response
