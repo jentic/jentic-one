@@ -9,6 +9,7 @@ import {
 	QUEUE_STATUS_LABELS,
 	activeEntry,
 	buildQueue,
+	forgetCredential,
 	isTerminal,
 	patchEntry,
 	reopenEntry,
@@ -130,15 +131,31 @@ describe('advancing the queue', () => {
 		expect(activeEntry(entries)?.key).toBe('slack.com/main');
 	});
 
-	it('reopening a failed item puts it back in line, clearing its error', () => {
+	it('reopening a failed item puts it back in line, keeping its error for the pane to show', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'choose'), makeItem('slack.com', 'form')]);
 		entries = patchEntry(entries, 'stripe.com/main', {
 			status: 'failed',
 			error: 'Bind failed',
+			step: 'access',
 		});
 		entries = reopenEntry(entries, 'stripe.com/main');
 		expect(activeEntry(entries)?.key).toBe('stripe.com/main');
-		expect(entries[0].error).toBeUndefined();
+		expect(entries[0].status).toBe('waiting');
+		expect(entries[0].step).toBe('credential');
+		// The reason is not thrown away with the status: the next attempt clears it.
+		expect(entries[0].error).toBe('Bind failed');
+	});
+
+	it('forgets a credential the server no longer has, the one this queue created included', () => {
+		const stale = makeCredential({ credential_id: 'cred_gone', name: 'Gone' });
+		const kept = makeCredential({ credential_id: 'cred_kept', name: 'Kept' });
+		let entries = buildQueue([makeItem('stripe.com', 'choose', { covering: [stale, kept] })]);
+		entries = patchEntry(entries, 'stripe.com/main', {
+			created: { credential_id: 'cred_gone', name: 'Gone', needsConnect: false },
+		});
+		entries = forgetCredential(entries, 'stripe.com/main', 'cred_gone');
+		expect(entries[0].covering.map((c) => c.credential_id)).toEqual(['cred_kept']);
+		expect(entries[0].created).toBeUndefined();
 	});
 
 	it('reopening a skipped item brings it back; an added one stays added', () => {
@@ -180,16 +197,19 @@ describe('queueSummary', () => {
 			dropped: 1,
 			failed: 1,
 			unfinished: 1,
-			// The failure is owed back alongside the unwalked item.
-			remaining: 2,
+			// The failure and the skip are owed back alongside the unwalked item.
+			remaining: 3,
 			total: 4,
 			done: false,
 		});
 	});
 
-	it('is done only when every item is attached or declined', () => {
+	it('is done only when every item is attached — a skip is "for now", so it is not done', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'choose')]);
 		expect(queueSummary(entries).done).toBe(false);
+		entries = patchEntry(entries, 'stripe.com/main', { status: 'dropped' });
+		expect(queueSummary(entries).done).toBe(false);
+		expect(queueSummary(entries).remaining).toBe(1);
 		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
 		expect(queueSummary(entries).done).toBe(true);
 	});
@@ -234,7 +254,7 @@ describe('queueSummaryLine', () => {
 				total: 4,
 				done: false,
 			}),
-		).toBe('2 APIs added · 1 dropped · 1 failed');
+		).toBe('2 APIs added · 1 skipped · 1 failed');
 	});
 });
 
@@ -266,11 +286,13 @@ describe('unfinishedItems', () => {
 		expect(unfinishedItems(entries).map((i) => i.key)).toEqual(['stripe.com/main']);
 	});
 
-	it('excludes both settled states — attached and declined are answers', () => {
+	it('excludes the attached, and hands a skipped item back — "for now" means it returns', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'choose'), makeItem('slack.com', 'form')]);
 		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
 		entries = patchEntry(entries, 'slack.com/main', { status: 'dropped' });
-		expect(unfinishedItems(entries)).toEqual([]);
+		expect(unfinishedItems(entries).map((i) => i.key)).toEqual(['slack.com/main']);
+		// Going Back to the tray does not re-tick it, though: that was the operator's call.
+		expect(queueBackSeed(entries).picks).toEqual([]);
 	});
 
 	it('returns the in-flight item too — a closed pane finished nothing', () => {

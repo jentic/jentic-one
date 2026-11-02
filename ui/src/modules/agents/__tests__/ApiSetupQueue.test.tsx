@@ -86,10 +86,13 @@ function QueueHarness({
 	items,
 	onClosed,
 	onBack,
+	autoCloseMs = 0,
 }: {
 	items: PreflightItem[];
 	onClosed?: (remaining: PreflightItem[]) => void;
 	onBack?: ApiSetupQueueProps['onBack'];
+	/** The done screen's self-close; off by default so specs read it at rest. */
+	autoCloseMs?: number;
 }) {
 	const [batch, setBatch] = useState(items);
 	const [open, setOpen] = useState(true);
@@ -109,6 +112,7 @@ function QueueHarness({
 					onClosed?.(remaining);
 				}}
 				onBack={onBack}
+				autoCloseMs={autoCloseMs}
 			/>
 		</>
 	);
@@ -239,6 +243,29 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 			makeMockApi({ vendor: 'stripe.com', name: 'main', displayName: 'stripe' }),
 			BEARER_API,
 		]);
+	});
+
+	it('two APIs with one name show their vendors in the list; a unique name shows none', async () => {
+		const named = (vendor: string): PreflightItem =>
+			makeItem(vendor, 'choose', {
+				api: {
+					source: 'local',
+					vendor,
+					name: 'orders-api',
+					version: '1.0.0',
+					label: 'Orders Api',
+				},
+				key: `${vendor}/orders-api`,
+			});
+		renderWithProviders(
+			<QueueHarness
+				items={[named('acme'), named('globex'), makeItem('stripe.com', 'choose')]}
+			/>,
+		);
+		await screen.findByTestId('queue-rail-list');
+		const vendors = screen.getAllByTestId('queue-row-vendor').map((v) => v.textContent);
+		expect(vendors).toEqual([' · acme', ' · globex']);
+		expect(within(rowFor('stripe')).queryByTestId('queue-row-vendor')).toBeNull();
 	});
 
 	it('never binds a lone matching credential on its own — it is preselected, and the footer adds', async () => {
@@ -576,8 +603,7 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		);
 	});
 
-	it('warns, a Details away, before a second credential is added to an API the agent reaches', async () => {
-		const user = userEvent.setup();
+	it('warns in plain view before a second credential is added to an API the agent reaches', async () => {
 		renderWithProviders(
 			<QueueHarness
 				items={[
@@ -592,11 +618,11 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 
 		const accounts = await screen.findByTestId('queue-existing-accounts');
 		expect(accounts).toHaveTextContent('Needs a new key · Added via Acme bot already');
-		await user.click(within(accounts).getByRole('button', { name: /Details/ }));
-		await waitFor(() =>
-			expect(screen.getByTestId('queue-ambiguity-warning')).toHaveTextContent(
-				'This adds a second credential; Support bot keeps its current one. Once added, calls to acme must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly. Nothing is stored until you save it.',
-			),
+		// Not behind a fold: how every call must then be made is not a detail.
+		expect(within(accounts).queryByRole('button', { name: /Details/ })).toBeNull();
+		expect(screen.getByTestId('queue-ambiguity-warning')).toBeVisible();
+		expect(screen.getByTestId('queue-ambiguity-warning')).toHaveTextContent(
+			'This adds a second credential; Support bot keeps its current one. Once added, calls to acme must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly. Nothing is stored until you save it.',
 		);
 	});
 	it('the list rail: "N of M added", and any API opens in any order', async () => {
@@ -647,6 +673,86 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		expectAddReady();
 	});
 
+	it('once everything was added, the done screen closes itself after a short dwell', async () => {
+		const onClosed = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[coveredItem('stripe.com', 'cred_stripe')]}
+				onClosed={onClosed}
+				autoCloseMs={600}
+			/>,
+		);
+		await addWithAccess(user);
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		expect(await screen.findByTestId('queue-autoclose')).toHaveTextContent(/^Closing in \ds$/);
+		await waitFor(() => expect(onClosed).toHaveBeenCalledTimes(1), { timeout: 3000 });
+		expect(onClosed.mock.calls[0][0]).toEqual([]);
+	});
+
+	it('the done screen stays when there is something to read, or the operator touches it', async () => {
+		const onClosed = vi.fn();
+		const user = userEvent.setup();
+		const { unmount } = renderWithProviders(
+			<QueueHarness
+				items={[
+					coveredItem('stripe.com', 'cred_stripe'),
+					coveredItem('slack.com', 'cred_slack'),
+				]}
+				onClosed={onClosed}
+				autoCloseMs={400}
+			/>,
+		);
+		// A skip is something to read: no countdown, no self-close.
+		await user.click(await screen.findByTestId('queue-skip'));
+		await addWithAccess(user);
+		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'added'));
+		expect(screen.queryByTestId('queue-autoclose')).toBeNull();
+		await new Promise((r) => setTimeout(r, 700));
+		expect(onClosed).not.toHaveBeenCalled();
+		unmount();
+
+		// Everything added, but a click inside keeps it open.
+		renderWithProviders(
+			<QueueHarness
+				items={[coveredItem('stripe.com', 'cred_stripe')]}
+				onClosed={onClosed}
+				autoCloseMs={400}
+			/>,
+		);
+		await addWithAccess(user);
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
+		await screen.findByTestId('queue-autoclose');
+		await user.click(screen.getByTestId('queue-done-pane'));
+		expect(screen.queryByTestId('queue-autoclose')).toBeNull();
+		await new Promise((r) => setTimeout(r, 700));
+		expect(onClosed).not.toHaveBeenCalled();
+	});
+
+	it('Skip for now hands the API back on close, so Resume setup offers it again', async () => {
+		const onClosed = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					coveredItem('stripe.com', 'cred_stripe'),
+					coveredItem('slack.com', 'cred_slack'),
+				]}
+				onClosed={onClosed}
+			/>,
+		);
+		await user.click(await screen.findByTestId('queue-skip'));
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'dropped'));
+		await addWithAccess(user);
+		await waitFor(() => expect(rowFor('slack')).toHaveAttribute('data-status', 'added'));
+		expect(screen.getByTestId('queue-done-pane')).toHaveTextContent('1 API added · 1 skipped');
+		await user.click(screen.getByRole('button', { name: 'Done' }));
+		// "For now" is a promise: the skipped API is owed back, the added one is not.
+		expect(onClosed.mock.calls[0][0].map((i: PreflightItem) => i.key)).toEqual([
+			'stripe.com/main',
+		]);
+	});
+
 	it('a failed bind is terminal for that item only, and retryable in place', async () => {
 		let failing = true;
 		worker.use(
@@ -683,10 +789,50 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		failing = false;
 		await user.click(within(rowFor('stripe')).getByRole('button'));
 		await waitFor(() => expect(rowFor('stripe')).toHaveTextContent('In progress'));
+		// Reopened, the reason for the failure is still in view (the bind client
+		// surfaces the response's status text).
+		expect(screen.getByTestId('queue-last-error')).toHaveTextContent('Service Unavailable');
 		expect(await screen.findByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
 		await addWithAccess(user);
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 		expect(await screen.findByTestId('queue-done-pane')).toHaveTextContent('2 APIs added');
+	});
+
+	it('a credential deleted meanwhile: the failure names it, and Try again no longer offers it', async () => {
+		worker.use(
+			http.post('/agents/:id/credentials', async ({ request }) => {
+				const body = (await request.clone().json()) as { credential_id: string };
+				if (body.credential_id === 'cred_stripe') {
+					return HttpResponse.json(
+						{ detail: 'Credential cred_stripe not found' },
+						{ status: 404 },
+					);
+				}
+				return undefined;
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(
+			<QueueHarness
+				items={[
+					coveredItem('stripe.com', 'cred_stripe'),
+					coveredItem('slack.com', 'cred_slack'),
+				]}
+			/>,
+		);
+
+		await addWithAccess(user);
+		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'failed'));
+		// The queue moves on to Slack; the failed row is reopened from the list.
+		await user.click(within(rowFor('stripe')).getByRole('button'));
+		await waitFor(() => expect(rowFor('stripe')).toHaveTextContent('In progress'));
+		expect(screen.getByTestId('queue-last-error')).toHaveTextContent(
+			'stripe.com key no longer exists — it was deleted. Pick another credential, or add a new one.',
+		);
+		// The deleted credential is not preselected — nor offered: with nothing
+		// left to choose from, the pane opens on the new-credential form.
+		expect(screen.queryByRole('radio', { name: /stripe\.com key/ })).toBeNull();
+		expect(await screen.findByTestId('queue-credential-form')).toBeInTheDocument();
 	});
 
 	it('closing mid-way keeps what landed and hands the rest back for re-entry', async () => {
