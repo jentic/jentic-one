@@ -17,7 +17,12 @@ import { readLocalPreference, writeLocalPreference } from '@/shared/lib/localPre
 /** How many ids the history keeps. */
 const DEFAULT_CAP = 50;
 
-function readIds(key: string): string[] {
+/**
+ * The history stored under `key`, newest first, without subscribing to it:
+ * for a surface that needs the last id once (what to show when the URL names
+ * nothing) rather than the live list.
+ */
+export function readRecentIds(key: string): string[] {
 	const raw = readLocalPreference(key);
 	if (!raw) return [];
 	try {
@@ -51,13 +56,13 @@ export function useRecentIds(
 		storageKey,
 		current,
 		cap,
-		ids: lead(readIds(storageKey), current, cap),
+		ids: lead(readRecentIds(storageKey), current, cap),
 	}));
 	let { ids } = state;
 	// A new key, current id or cap is applied now, in this render — not an
 	// effect later, which would paint one frame of the stale list.
 	if (state.storageKey !== storageKey || state.current !== current || state.cap !== cap) {
-		const base = state.storageKey === storageKey ? state.ids : readIds(storageKey);
+		const base = state.storageKey === storageKey ? state.ids : readRecentIds(storageKey);
 		ids = lead(base, current, cap);
 		setState({ storageKey, current, cap, ids });
 	}
@@ -75,7 +80,7 @@ export function useRecentIds(
 			if (event.storageArea !== window.localStorage) return;
 			if (event.key !== null && event.key !== storageKey) return;
 			setState((prev) => {
-				const next = lead(readIds(storageKey), prev.current, prev.cap);
+				const next = lead(readRecentIds(storageKey), prev.current, prev.cap);
 				const same =
 					next.length === prev.ids.length && next.every((id, i) => id === prev.ids[i]);
 				return same ? prev : { ...prev, ids: next };

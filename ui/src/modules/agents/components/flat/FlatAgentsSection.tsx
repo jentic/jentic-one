@@ -39,6 +39,7 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { shellScroller, shellScrollTop } from '@/shared/lib/shellScroll';
 import {
+	readRecentIds,
 	useEagerCursorDrain,
 	useFleetInitials,
 	useHotkey,
@@ -120,6 +121,7 @@ import { API_CARD_GRID, API_CARD_HEIGHT } from '@/modules/agents/components/flat
 import { LENS_CARD_VARIANTS, type LensItem } from '@/modules/agents/lib/apiViewMotion';
 import { TreeBranch } from '@/modules/agents/components/flat/TreeBranch';
 import { API_VIEWS, API_VIEW_STORAGE_KEY, DEFAULT_API_VIEW } from '@/modules/agents/lib/apiView';
+import { STRIP_RECENT_STORAGE_KEY } from '@/modules/agents/lib/stripOrder';
 import {
 	rowActivity,
 	tileUsageApiId,
@@ -283,9 +285,22 @@ export function FlatAgentsSection({
 	useEffect(() => {
 		setMissingId(agentNotFound ? agentParam : null);
 	}, [agentNotFound, agentParam]);
+	// With nothing named, the agent last shown here (the strip's history, which
+	// the selection writes) is shown again, so coming back to Agents resumes
+	// rather than re-pinning the first tab — and the history is not rewritten
+	// around a fallback. A fleet with no history yet opens on its first tab,
+	// the newest agent waiting for a decision.
+	const lastShownId = useMemo(() => {
+		if (shownId != null) return null;
+		const ids = new Set(agents.map((a) => a.id));
+		return readRecentIds(STRIP_RECENT_STORAGE_KEY).find((id) => ids.has(id)) ?? null;
+	}, [shownId, agents]);
 	const selected = paramUnknown
 		? null
-		: (agents.find((a) => a.id === shownId) ?? agents[0] ?? null);
+		: (agents.find((a) => a.id === shownId) ??
+			agents.find((a) => a.id === lastShownId) ??
+			agents[0] ??
+			null);
 	// Written back only once the fleet view is decided and on screen, so the
 	// landing leaves the URL plain — and not while a hand-off's own selection
 	// is still on its way.
