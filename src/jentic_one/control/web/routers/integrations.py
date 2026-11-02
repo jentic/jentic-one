@@ -586,6 +586,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 other_bound_agents=[
                     EditAgentRef(agent_id=a.agent_id, name=a.name) for a in c.other_bound_agents
                 ],
+                other_bound_agents_truncated=c.other_bound_agents_truncated,
                 can_bind=c.can_bind,
                 needs_vendor_consent=c.needs_vendor_consent,
             )
@@ -618,6 +619,7 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
         other_bound_agents=[
             EditAgentRef(agent_id=a.agent_id, name=a.name) for a in edit.other_bound_agents
         ],
+        other_bound_agents_truncated=edit.other_bound_agents_truncated,
     )
 
 

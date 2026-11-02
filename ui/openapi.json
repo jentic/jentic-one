@@ -10226,6 +10226,7 @@
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
               }
             ],
+            "other_bound_agents_truncated": false,
             "type": "oauth2"
           }
         ],
@@ -10306,6 +10307,14 @@
               "$ref": "#/components/schemas/EditAgentRef"
             },
             "type": "array"
+          },
+          "other_bound_agents_truncated": {
+            "default": false,
+            "description": "True when more agents are bound than the list names: it is capped, and no cursor continues it.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
           },
           "type": {
             "examples": [
@@ -19660,6 +19669,7 @@
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
               }
             ],
+            "other_bound_agents_truncated": false,
             "result": {
               "rules": [
                 {
@@ -19774,6 +19784,14 @@
               "$ref": "#/components/schemas/EditAgentRef"
             },
             "type": "array"
+          },
+          "other_bound_agents_truncated": {
+            "default": false,
+            "description": "True when the change reaches more agents than the list names: it is capped, and no cursor continues it.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
           },
           "result": {
             "$ref": "#/components/schemas/EditResultAccess",
@@ -20109,6 +20127,7 @@
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
                 }
               ],
+              "other_bound_agents_truncated": false,
               "result": {
                 "rules": [
                   {
@@ -20152,6 +20171,7 @@
                     "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
                   }
                 ],
+                "other_bound_agents_truncated": false,
                 "type": "oauth2"
               }
             ],
@@ -20319,6 +20339,7 @@
                     "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
                   }
                 ],
+                "other_bound_agents_truncated": false,
                 "result": {
                   "rules": [
                     {
@@ -20366,6 +20387,7 @@
                       "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
                     }
                   ],
+                  "other_bound_agents_truncated": false,
                   "type": "oauth2"
                 }
               ]
@@ -31805,6 +31827,7 @@
                         "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
                       }
                     ],
+                    "other_bound_agents_truncated": false,
                     "result": {
                       "rules": [
                         {
@@ -31848,6 +31871,7 @@
                           "agent_id": "agnt_6968b3984d1c238dbe7e2e29"
                         }
                       ],
+                      "other_bound_agents_truncated": false,
                       "type": "oauth2"
                     }
                   ],

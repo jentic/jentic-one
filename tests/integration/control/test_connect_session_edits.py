@@ -537,6 +537,7 @@ async def test_a_shared_rule_set_edit_names_every_agent_it_reaches(
         review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
         assert review.edit is not None and review.edit.result["target"] == "rule_set"
         assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_cse_shared"]
+        assert review.edit.other_bound_agents_truncated is False
     finally:
         # Outside the fixture's own wipe, so a failing assert must not leave
         # the row for the next test in this module.
@@ -1260,3 +1261,43 @@ async def test_a_rebase_of_an_ended_request_is_the_uniform_refusal(
     )
     with pytest.raises(InvalidPollTokenError):
         await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
+
+
+async def test_a_reach_wider_than_the_cap_says_so(
+    integration_context: Context, binding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The screen whose job is to state reach must not under-report it silently.
+
+    Both reach queries are capped, and nothing pages past the cap, so the
+    review says when the change reaches more agents than it names.
+    """
+    monkeypatch.setattr(connect_session_service, "_BOUND_AGENTS_LIMIT", 1)
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    async with ctx.admin_db.transaction() as session:
+        for n in (1, 2):
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                    f"VALUES ('agnt_cse_many_{n}', 'many {n}', :u, :u, 'approved')"
+                ),
+                {"u": _OWNER_SUB},
+            )
+            await AgentCredentialBindingRepository.bind(
+                session,
+                agent_id=f"agnt_cse_many_{n}",
+                credential_id=binding,
+                created_by=_OWNER_SUB,
+            )
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    try:
+        review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+        assert review.edit is not None
+        assert len(review.edit.other_bound_agents) == 1
+        assert review.edit.other_bound_agents_truncated is True
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_cse_many_%'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_many_%'"))

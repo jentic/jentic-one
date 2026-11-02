@@ -6003,6 +6003,7 @@ components:
         needs_vendor_consent: true
         other_bound_agents: &id104
         - *id101
+        other_bound_agents_truncated: false
         type: oauth2
       properties:
         can_bind:
@@ -6047,6 +6048,12 @@ components:
           items:
             $ref: '#/components/schemas/EditAgentRef'
           type: array
+        other_bound_agents_truncated:
+          default: false
+          description: 'True when more agents are bound than the list names: it is capped, and no cursor continues it.'
+          examples:
+          - false
+          type: boolean
         type:
           examples:
           - oauth2
@@ -11526,6 +11533,7 @@ components:
         needs_vendor_consent: true
         other_bound_agents: &id203
         - *id101
+        other_bound_agents_truncated: false
         result: *id201
         revision: &id204
           id: csr_6968b3983b8b91c75627bee6
@@ -11560,6 +11568,12 @@ components:
           items:
             $ref: '#/components/schemas/EditAgentRef'
           type: array
+        other_bound_agents_truncated:
+          default: false
+          description: 'True when the change reaches more agents than the list names: it is capped, and no cursor continues it.'
+          examples:
+          - false
+          type: boolean
         result:
           $ref: '#/components/schemas/EditResultAccess'
           examples:

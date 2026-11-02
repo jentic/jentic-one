@@ -798,6 +798,14 @@ class ExistingCredentialResponse(BaseModel):
         default_factory=list,
         description="Other agents bound to the credential; added scopes reach them too.",
     )
+    other_bound_agents_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when more agents are bound than the list names: it is capped, and no "
+            "cursor continues it."
+        ),
+        examples=[False],
+    )
     can_bind: bool = Field(
         description=(
             "Whether this viewer may use it: its grant covers the request, or the missing "
@@ -918,6 +926,14 @@ class ReviewEditResponse(BaseModel):
             "Other agents this change reaches: those bound to the credential, which added "
             "scopes reach, and those bound through a shared rule set the change rewrites."
         ),
+    )
+    other_bound_agents_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when the change reaches more agents than the list names: it is capped, "
+            "and no cursor continues it."
+        ),
+        examples=[False],
     )
     needs_vendor_consent: bool = Field(
         default=False,

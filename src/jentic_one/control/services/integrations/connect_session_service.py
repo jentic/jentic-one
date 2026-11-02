@@ -402,6 +402,9 @@ class EditReview:
     result: dict[str, Any]
     widens_access: bool
     other_bound_agents: list[AgentView]
+    # The change reaches more agents than ``other_bound_agents`` names: the
+    # list is capped, and nothing pages past it.
+    other_bound_agents_truncated: bool = False
     # The result adds scopes: confirming starts a vendor consent.
     needs_vendor_consent: bool = False
     # What the request can't follow since the binding changed under it.
@@ -517,6 +520,8 @@ class ExistingCredentialView:
     granted_scopes: list[str] | None
     missing_scopes: list[str] | None
     other_bound_agents: list[AgentView]
+    #: More agents are bound than ``other_bound_agents`` names (it is capped).
+    other_bound_agents_truncated: bool
     can_bind: bool
     needs_vendor_consent: bool
 
@@ -2552,7 +2557,7 @@ class ConnectSessionService:
         # the grant is out does not get it without another review.
         change = {
             **change,
-            "shared_with": sorted(await self._other_bound_agent_ids(credential.id, row.agent_id)),
+            "shared_with": (await self._other_bound_agent_ids(credential.id, row.agent_id))[0],
         }
 
         async with self._ctx.control_db.transaction() as session:
@@ -2650,7 +2655,7 @@ class ConnectSessionService:
         self, credential: Credential, agent_id: str, identity: Identity
     ) -> None:
         """Changing a credential other agents use is its owner's or an org admin's call."""
-        others = await self._other_bound_agent_ids(credential.id, agent_id)
+        others, _ = await self._other_bound_agent_ids(credential.id, agent_id)
         if not others or ORG_ADMIN in identity.permissions:
             return
         if credential.created_by != identity.sub:
@@ -3410,7 +3415,7 @@ class ConnectSessionService:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
         if revision is None:
             raise SessionNotFoundError(row.id)
-        others = await self._affected_agents(row, row.baseline, credential, identity)
+        others, more_others = await self._affected_agents(row, row.baseline, credential, identity)
         review = EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
@@ -3421,6 +3426,7 @@ class ConnectSessionService:
             result=dict(revision.result),
             widens_access=widens_access(row.baseline, revision.result),
             other_bound_agents=others,
+            other_bound_agents_truncated=more_others,
             needs_vendor_consent=scopes_changed(row.baseline, revision.result),
             conflicts=list(revision.proposal.get("conflicts") or []),
         )
@@ -3773,7 +3779,7 @@ class ConnectSessionService:
         requested = list(row.requested_scopes or [])
         views: list[ExistingCredentialView] = []
         for credential in candidates:
-            others = await self._other_bound_agents(
+            others, more_others = await self._other_bound_agents(
                 credential.id,
                 row.agent_id,
                 visible_to=bound_agent_visibility(credential.created_by, identity),
@@ -3788,6 +3794,7 @@ class ConnectSessionService:
                         granted_scopes=None,
                         missing_scopes=None,
                         other_bound_agents=others,
+                        other_bound_agents_truncated=more_others,
                         can_bind=True,
                         needs_vendor_consent=False,
                     )
@@ -3810,6 +3817,7 @@ class ConnectSessionService:
                     granted_scopes=granted,
                     missing_scopes=missing,
                     other_bound_agents=others,
+                    other_bound_agents_truncated=more_others,
                     can_bind=not missing or (consentable and may_widen),
                     needs_vendor_consent=consentable,
                 )
@@ -3822,23 +3830,24 @@ class ConnectSessionService:
         baseline: Mapping[str, Any],
         credential: Credential | None,
         identity: Identity,
-    ) -> list[AgentView]:
+    ) -> tuple[list[AgentView], bool]:
         """Every agent the change reaches besides the session's own, named.
 
         The credential's other bound agents, plus — when the change rewrites a
         shared rule set rather than copying it — every agent bound through
         that set on any credential: one write reaches all of them. Narrowed to
         the agents the caller may enumerate, as the credential's own bound-agent
-        list is, so a review never names a stranger's agent.
+        list is, so a review never names a stranger's agent. Returned with
+        whether either source hit its cap, so the review can say the reach is
+        wider than the names it shows.
         """
         visible_to = bound_agent_visibility(
             credential.created_by if credential is not None else None, identity
         )
-        ids = set(
-            await self._other_bound_agent_ids(
-                row.credential_id, row.agent_id, visible_to=visible_to
-            )
+        bound, truncated = await self._other_bound_agent_ids(
+            row.credential_id, row.agent_id, visible_to=visible_to
         )
+        ids = set(bound)
         rule_set = baseline.get("rule_set")
         reached: dict[str, AgentView] = {}
         if rule_set is not None and not rule_set.get("curated"):
@@ -3846,7 +3855,7 @@ class ConnectSessionService:
                 rows = await PrerequisiteRepository.list_agents_for_rule_set(
                     admin_session,
                     rule_set_id=rule_set["id"],
-                    limit=_BOUND_AGENTS_LIMIT,
+                    limit=_BOUND_AGENTS_LIMIT + 2,
                     visible_to=visible_to,
                 )
             # The set reaches bindings on other credentials, and owning this
@@ -3868,11 +3877,20 @@ class ConnectSessionService:
                     owner_id=None,
                     status=r.agent_status,
                 )
+            # Counted on the agents the set reaches that this caller may be
+            # told about, not on the rows read: the unreadable ones are not
+            # reach it is being under-told about.
+            if len(reached) > _BOUND_AGENTS_LIMIT:
+                truncated = True
+                reached = {
+                    agent_id: reached[agent_id]
+                    for agent_id in sorted(reached)[:_BOUND_AGENTS_LIMIT]
+                }
         views: list[AgentView] = []
         for other_id in sorted(ids | reached.keys()):
             view = reached.get(other_id) or await self._agent_view(other_id)
             views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
-        return views
+        return views, truncated
 
     async def _other_bound_agents(
         self,
@@ -3880,15 +3898,20 @@ class ConnectSessionService:
         agent_id: str | None,
         *,
         visible_to: AgentVisibility | None = None,
-    ) -> list[AgentView]:
-        """The agents other than ``agent_id`` bound to the credential, with their names."""
-        views: list[AgentView] = []
-        for other_id in await self._other_bound_agent_ids(
+    ) -> tuple[list[AgentView], bool]:
+        """The agents other than ``agent_id`` bound to the credential, with their names.
+
+        With whether the cap cut the list, as :meth:`_other_bound_agent_ids`
+        reports it.
+        """
+        ids, truncated = await self._other_bound_agent_ids(
             credential_id, agent_id, visible_to=visible_to
-        ):
+        )
+        views: list[AgentView] = []
+        for other_id in ids:
             view = await self._agent_view(other_id)
             views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
-        return views
+        return views, truncated
 
     async def _other_bound_agent_ids(
         self,
@@ -3896,15 +3919,27 @@ class ConnectSessionService:
         agent_id: str | None,
         *,
         visible_to: AgentVisibility | None = None,
-    ) -> list[str]:
+    ) -> tuple[list[str], bool]:
+        """The other agents bound to the credential, and whether the cap cut the list.
+
+        Past the cap a caller can say the reach is wider than the names it
+        holds, rather than reporting the cap as the whole of it. No cursor
+        continues the list: the screens that show it state reach, they do not
+        page through it.
+
+        Two rows beyond the cap are read, not one: ``agent_id``'s own binding
+        is among them and is dropped here, so a window of exactly one more
+        would answer differently depending on where that row landed in it.
+        """
         async with self._ctx.admin_db.session() as admin_session:
             rows = await PrerequisiteRepository.list_agents_for_credential(
                 admin_session,
                 credential_id=credential_id,
-                limit=_BOUND_AGENTS_LIMIT,
+                limit=_BOUND_AGENTS_LIMIT + 2,
                 visible_to=visible_to,
             )
-        return sorted({r.agent_id for r in rows if r.agent_id != agent_id})
+        ids = sorted({r.agent_id for r in rows if r.agent_id != agent_id})
+        return ids[:_BOUND_AGENTS_LIMIT], len(ids) > _BOUND_AGENTS_LIMIT
 
     async def _try_leave_awaiting_app(self, row: ConnectSession) -> ConnectSession:
         """:meth:`_leave_awaiting_app`, returning the session as it stands afterwards."""
@@ -4782,7 +4817,7 @@ class ConnectSessionService:
                 raise ScopeValidationError(unknown)
         await self._require_scope_change_allowed(credential, agent_id, identity)
         change: dict[str, Any] = {
-            "shared_with": sorted(await self._other_bound_agent_ids(credential.id, agent_id)),
+            "shared_with": (await self._other_bound_agent_ids(credential.id, agent_id))[0],
             "rules": [rule_to_write(r) for r in variant.checks.permission_rules],
             "rule_set_id": None,
             "detach_rule_set": False,
@@ -5579,10 +5614,8 @@ class ConnectSessionService:
             # A wider grant reaches every agent bound to the credential. The
             # approver saw the ones bound at the time; one that bound since has
             # to be reviewed, so the grant is not stored.
-            appeared = sorted(
-                set(await self._other_bound_agent_ids(row.credential_id, row.agent_id))
-                - set(approved_shared)
-            )
+            bound_now, _ = await self._other_bound_agent_ids(row.credential_id, row.agent_id)
+            appeared = sorted(set(bound_now) - set(approved_shared))
             if appeared:
                 _logger.warning(
                     "connect_session.edit_binding_now_shared",
