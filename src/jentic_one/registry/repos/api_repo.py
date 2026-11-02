@@ -17,6 +17,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
+from jentic_one.shared.broker.route_generation import mark_routes_changed
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.pagination import Cursor
 
@@ -202,11 +203,19 @@ class ApiRepository:
             msg = f"Api {api_id} not found"
             raise ValueError(msg)
         api.current_revision_id = revision_id
+        mark_routes_changed(session)
         await session.flush()
 
     @staticmethod
     async def clear_current_revision(session: AsyncSession, api_id: uuid.UUID) -> None:
-        await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(Api).where(Api.id == api_id).values(current_revision_id=None)
+            ),
+        )
+        if result.rowcount:
+            mark_routes_changed(session)
         await session.flush()
 
     @staticmethod
@@ -234,6 +243,10 @@ class ApiRepository:
                 .values(current_revision_id=new_revision_id)
             ),
         )
+        # Only a winning CAS moved the served revision; a loser (rowcount 0) backs
+        # off, so it must not invalidate the process's cached routes.
+        if result.rowcount:
+            mark_routes_changed(session)
         await session.flush()
         return result.rowcount
 
@@ -368,5 +381,7 @@ class ApiRepository:
             "CursorResult[Any]",
             await session.execute(delete(Api).where(Api.id == api_id)),
         )
+        if result.rowcount:
+            mark_routes_changed(session)
         await session.flush()
         return result.rowcount

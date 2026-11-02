@@ -228,6 +228,12 @@ class SecurityConfig(BaseModel):
     execution_repeated_failure_critical_threshold: int = Field(default=20, ge=1)
 
 
+#: Upper bound on the route-discovery cache TTLs. The TTL is the only freshness
+#: bound a deployed broker has, so a typo (``3000`` for ``3``) must fail config
+#: validation rather than freeze routing for most of an hour.
+MAX_DISCOVERY_CACHE_TTL_S = 300.0
+
+
 class BrokerConfig(BaseModel):
     """Broker surface configuration."""
 
@@ -261,6 +267,55 @@ class BrokerConfig(BaseModel):
     # is one entry. Eviction is LRU by entry count (the TTL only bounds
     # staleness, never memory).
     rule_cache_max_entries: int = 5_000
+    discovery_cache_ttl_s: float = Field(
+        default=3.0,
+        ge=0,
+        le=MAX_DISCOVERY_CACHE_TTL_S,
+        allow_inf_nan=False,
+        description=(
+            "TTL (seconds) of the per-process route-discovery cache (METHOD+URL "
+            "to operation). The broker runs as its own process, so it sees a "
+            "promote, archive, import or delete only once this TTL lapses; until "
+            "then it can keep routing to the previous operation and injecting "
+            "that API's bound credentials, even after the API is deleted or "
+            "archived. Invalidation on commit applies only when the write and the "
+            "broker share a process. Authorization and egress checks never read "
+            "the cache. 0 disables it (every change takes effect on the next call)."
+        ),
+    )
+    discovery_cache_negative_ttl_s: float = Field(
+        default=0.0,
+        ge=0,
+        le=MAX_DISCOVERY_CACHE_TTL_S,
+        allow_inf_nan=False,
+        description=(
+            "TTL (seconds) for caching an unmatched URL (the operation_not_found "
+            "404) in the route-discovery cache. Must not exceed "
+            "discovery_cache_ttl_s while the cache is enabled. 0 (the default) "
+            "never caches a miss, so a newly imported API is reachable on the "
+            "next call."
+        ),
+    )
+    discovery_cache_max_entries: int = Field(
+        default=10_000,
+        ge=1,
+        description=(
+            "Process-wide LRU bound on entries in the per-process "
+            "route-discovery cache: the memory cap across every route."
+        ),
+    )
+    discovery_cache_max_entries_per_route: int = Field(
+        default=1_000,
+        ge=1,
+        description=(
+            "Bound on the route-discovery cache entries one route (method, host "
+            "and revision, with the URL path omitted) may hold. Distinct "
+            "path-parameter values each take an entry, so this caps one caller "
+            "walking a parameterised route to that route's own entries instead "
+            "of evicting the routes cached for every other identity. Values "
+            "above discovery_cache_max_entries never bite."
+        ),
+    )
     streaming_persist_timeout_s: float = Field(
         default=10.0,
         gt=0,
@@ -344,6 +399,29 @@ class BrokerConfig(BaseModel):
     )
 
     _normalize_public_urls = field_validator("jobs_api_base_url")(_normalize_optional_base_url)
+
+    @model_validator(mode="after")
+    def _negative_discovery_ttl_within_ttl(self) -> BrokerConfig:
+        """A cached miss must never outlive a cached hit, nor be set with no cache.
+
+        With ``discovery_cache_ttl_s`` at 0 no cache is built at all, so a
+        non-zero negative TTL would be silently inert — rejected rather than
+        quietly dropped.
+        """
+        if self.discovery_cache_negative_ttl_s > 0 and self.discovery_cache_ttl_s == 0:
+            raise ValueError(
+                "broker.discovery_cache_negative_ttl_s "
+                f"({self.discovery_cache_negative_ttl_s}) has no effect while "
+                "broker.discovery_cache_ttl_s is 0 (the cache is disabled); set "
+                "it to 0 or enable the cache"
+            )
+        if 0 < self.discovery_cache_ttl_s < self.discovery_cache_negative_ttl_s:
+            raise ValueError(
+                "broker.discovery_cache_negative_ttl_s "
+                f"({self.discovery_cache_negative_ttl_s}) must not exceed "
+                f"broker.discovery_cache_ttl_s ({self.discovery_cache_ttl_s})"
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod

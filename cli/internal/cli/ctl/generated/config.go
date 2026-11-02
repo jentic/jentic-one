@@ -230,6 +230,32 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
+	// Process-wide LRU bound on entries in the per-process route-discovery cache: the
+	// memory cap across every route.
+	DiscoveryCacheMaxEntries int `json:"discovery_cache_max_entries" yaml:"discovery_cache_max_entries" mapstructure:"discovery_cache_max_entries"`
+
+	// Bound on the route-discovery cache entries one route (method, host and
+	// revision, with the URL path omitted) may hold. Distinct path-parameter values
+	// each take an entry, so this caps one caller walking a parameterised route to
+	// that route's own entries instead of evicting the routes cached for every other
+	// identity. Values above discovery_cache_max_entries never bite.
+	DiscoveryCacheMaxEntriesPerRoute int `json:"discovery_cache_max_entries_per_route" yaml:"discovery_cache_max_entries_per_route" mapstructure:"discovery_cache_max_entries_per_route"`
+
+	// TTL (seconds) for caching an unmatched URL (the operation_not_found 404) in the
+	// route-discovery cache. Must not exceed discovery_cache_ttl_s while the cache is
+	// enabled. 0 (the default) never caches a miss, so a newly imported API is
+	// reachable on the next call.
+	DiscoveryCacheNegativeTtlS float64 `json:"discovery_cache_negative_ttl_s,omitempty,omitzero" yaml:"discovery_cache_negative_ttl_s,omitempty" mapstructure:"discovery_cache_negative_ttl_s,omitempty"`
+
+	// TTL (seconds) of the per-process route-discovery cache (METHOD+URL to
+	// operation). The broker runs as its own process, so it sees a promote, archive,
+	// import or delete only once this TTL lapses; until then it can keep routing to
+	// the previous operation and injecting that API's bound credentials, even after
+	// the API is deleted or archived. Invalidation on commit applies only when the
+	// write and the broker share a process. Authorization and egress checks never
+	// read the cache. 0 disables it (every change takes effect on the next call).
+	DiscoveryCacheTtlS float64 `json:"discovery_cache_ttl_s" yaml:"discovery_cache_ttl_s" mapstructure:"discovery_cache_ttl_s"`
+
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -325,6 +351,36 @@ func (j *BrokerConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["discovery_cache_max_entries"]; !ok || v == nil {
+		plain.DiscoveryCacheMaxEntries = 10000
+	}
+	if 1 > plain.DiscoveryCacheMaxEntries {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_max_entries", 1)
+	}
+	if v, ok := raw["discovery_cache_max_entries_per_route"]; !ok || v == nil {
+		plain.DiscoveryCacheMaxEntriesPerRoute = 1000
+	}
+	if 1 > plain.DiscoveryCacheMaxEntriesPerRoute {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_max_entries_per_route", 1)
+	}
+	if v, ok := raw["discovery_cache_negative_ttl_s"]; !ok || v == nil {
+		plain.DiscoveryCacheNegativeTtlS = 0.0
+	}
+	if 300 < plain.DiscoveryCacheNegativeTtlS {
+		return fmt.Errorf("field %s: must be <= %v", "discovery_cache_negative_ttl_s", 300)
+	}
+	if 0 > plain.DiscoveryCacheNegativeTtlS {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_negative_ttl_s", 0)
+	}
+	if v, ok := raw["discovery_cache_ttl_s"]; !ok || v == nil {
+		plain.DiscoveryCacheTtlS = 3.0
+	}
+	if 300 < plain.DiscoveryCacheTtlS {
+		return fmt.Errorf("field %s: must be <= %v", "discovery_cache_ttl_s", 300)
+	}
+	if 0 > plain.DiscoveryCacheTtlS {
+		return fmt.Errorf("field %s: must be >= %v", "discovery_cache_ttl_s", 0)
 	}
 	if v, ok := raw["resolve_cache_ttl_seconds"]; !ok || v == nil {
 		plain.ResolveCacheTtlSeconds = 3.0

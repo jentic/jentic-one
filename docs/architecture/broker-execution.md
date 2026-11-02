@@ -42,6 +42,24 @@ sequenceDiagram
     end
 ```
 
+Route discovery (step 4) is served from a short-TTL, per-process cache
+([`broker/core/discovery_cache.py`](../../src/jentic_one/broker/core/discovery_cache.py)) keyed on the method, the URL's
+scheme, host and path, and any pinned revision. The broker always runs as its
+own process, and every registry routing write (promote, archive, overlay
+rollback, import, delete) commits in the registry surface or the jobs worker,
+so `broker.discovery_cache_ttl_s` (default 3 s, at most 300 s, `0` disables the
+cache) is the only freshness bound a deployed broker has. Until it lapses the
+broker can keep routing to the previous operation, and injecting that API's
+bound credentials, even after the API is deleted or archived — set the TTL to
+`0` where a delete must cut traffic off immediately. Invalidation on commit
+applies only when the write and the broker share a process (tests, embedded
+use). An unmatched URL is not cached unless
+`broker.discovery_cache_negative_ttl_s` is set (it must not exceed the TTL).
+The cache holds only the route: revision-pin rights, credential bindings,
+permission rules and egress checks are evaluated on every call. It is shared
+by every caller in the process, so hit/miss timing can reveal that some caller
+requested the same METHOD+URL within the TTL.
+
 ## One pipeline, two callers — and a streaming fast path
 
 The docstring rule in [`broker/services/execution/pipeline.py`](../../src/jentic_one/broker/services/execution/pipeline.py) is
@@ -216,11 +234,11 @@ The broker's hot path caches three kinds of authorization lookups in memory per
 process:
 
 - **Token and actor-status verdicts** ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py),
-  bounded by `broker.resolve_cache_ttl_seconds`, default `30` s).
+  bounded by `broker.resolve_cache_ttl_seconds`, default `3` s).
 - **Direct credential-binding derivations** ([`broker/repos/caching_credential_deriver.py`](../../src/jentic_one/broker/repos/caching_credential_deriver.py),
-  bounded by `broker.toolkit_cache_ttl_s`, default `30` s).
+  bounded by `broker.toolkit_cache_ttl_s`, default `3` s).
 - **Permission-rule lists** ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py),
-  bounded by `broker.rule_cache_ttl_s`, default `30` s).
+  bounded by `broker.rule_cache_ttl_s`, default `3` s).
 
 `install_broker_auth` ([`broker/core/setup.py`](../../src/jentic_one/broker/core/setup.py)) registers a
 `BrokerCacheInvalidator` on the shared `Context` (`ctx.invalidate_broker_caches(...)`).
@@ -234,7 +252,7 @@ token/actor-status cache entries with zero wait for the TTL.
 In **multi-process deployments** (where the broker runs in its own process or
 across multiple stateless replicas), each broker instance holds its own
 in-memory LRU caches and does not share the control plane's `Context`. Cross-process
-propagation is bounded by the configured TTLs above (default `30` s; set the
+propagation is bounded by the configured TTLs above (default `3` s; set the
 respective TTL to `0` to disable caching). Queued async executions bypass these
 caches and re-authorize against live database state when the worker claims the
 job (`build_queued_execution_authorizer`).

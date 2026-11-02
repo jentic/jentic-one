@@ -68,9 +68,19 @@ BODY_SIZES = {"1k": 1024, "100k": 100 * 1024, "1m": 1024 * 1024}
 VARIANTS: dict[str, dict[str, str]] = {
     "default": {},
     "buffered": {"PERF_STREAMING": "false"},
-    "cold-cache": {"PERF_RESOLVE_TTL": "0", "PERF_TOOLKIT_TTL": "0", "PERF_RULE_TTL": "0"},
+    "cold-cache": {
+        "PERF_RESOLVE_TTL": "0",
+        "PERF_TOOLKIT_TTL": "0",
+        "PERF_RULE_TTL": "0",
+        "PERF_DISCOVERY_TTL": "0",
+    },
     # Long TTLs so a measurement window never straddles a cache expiry (dbcost).
-    "warm-cache": {"PERF_RESOLVE_TTL": "300", "PERF_TOOLKIT_TTL": "300", "PERF_RULE_TTL": "300"},
+    "warm-cache": {
+        "PERF_RESOLVE_TTL": "300",
+        "PERF_TOOLKIT_TTL": "300",
+        "PERF_RULE_TTL": "300",
+        "PERF_DISCOVERY_TTL": "300",
+    },
 }
 
 
