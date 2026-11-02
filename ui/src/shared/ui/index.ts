@@ -167,7 +167,7 @@ export { ExpandableText } from '@/shared/ui/ExpandableText';
 export { ExpandReveal, REVEAL_MOTION } from '@/shared/ui/ExpandReveal';
 export type { ExpandRevealProps } from '@/shared/ui/ExpandReveal';
 
-export { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
+export { Tooltip, TOOLTIP_DELAY_MS, quietHoverUntilPointerMoves } from '@/shared/ui/Tooltip';
 
 export { OperationDetail } from '@/shared/ui/OperationDetail';
 export type {

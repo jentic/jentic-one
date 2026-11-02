@@ -42,6 +42,7 @@ import {
 	STATUS_LABELS,
 	STATUS_TINT,
 	Tooltip,
+	quietHoverUntilPointerMoves,
 } from '@/shared/ui';
 import type { ActorStatus } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
@@ -526,6 +527,9 @@ export function AgentStrip({
 		// Only the switch it was captured for: a pick the parent didn't apply
 		// leaves nothing behind to move the rail on a later change made elsewhere.
 		if (!sc || !intent || intent.to !== selectedId) return;
+		// The switch slides the rail's tabs under a resting pointer; the one that
+		// stops there is not being pointed at, so its hover card waits for a move.
+		quietHoverUntilPointerMoves();
 		// The scroller's start padding (`pinPx`) catches up with the new pin's
 		// width only after this effect, shifting every content position read
 		// here by the difference: fold it in now.

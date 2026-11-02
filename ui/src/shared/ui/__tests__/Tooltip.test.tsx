@@ -1,6 +1,7 @@
-import { renderWithProviders, screen } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
-import { Tooltip } from '@/shared/ui/Tooltip';
+import { Tooltip, quietHoverUntilPointerMoves } from '@/shared/ui/Tooltip';
+import { fireEvent } from '@testing-library/react';
 
 describe('Tooltip', () => {
 	it('renders its trigger children', () => {
@@ -34,6 +35,28 @@ describe('Tooltip', () => {
 
 		await user.unhover(screen.getByText('trigger'));
 		expect(screen.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('holds a hover open after quietHoverUntilPointerMoves until the pointer moves', async () => {
+		renderWithProviders(
+			<Tooltip content="the full value" delayMs={0}>
+				<span>trigger</span>
+			</Tooltip>,
+		);
+		quietHoverUntilPointerMoves();
+		// The trigger slid under a resting pointer: an enter with no movement.
+		const trigger = screen.getByText('trigger');
+		fireEvent.mouseEnter(trigger);
+		expect(screen.queryByRole('tooltip')).toBeNull();
+		// The pointer moves over it: the held hover opens, with no leave and
+		// re-enter needed.
+		fireEvent.pointerMove(trigger);
+		expect(await screen.findByRole('tooltip')).toHaveTextContent('the full value');
+		fireEvent.mouseLeave(trigger);
+		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+		// Unheld, a plain enter opens as before.
+		fireEvent.mouseEnter(trigger);
+		expect(await screen.findByRole('tooltip')).toBeInTheDocument();
 	});
 
 	it('shows content on keyboard focus (a11y) and wires aria-describedby', async () => {
