@@ -2078,24 +2078,24 @@ function EditApproveFlow({
 							scopes; nothing changes until you do.
 						</p>
 					)}
-					{(newScopes.length > 0 || droppedScopes.length > 0) &&
-						otherAgents.length > 0 && (
-							<p className="text-muted-foreground text-xs">
-								The changes also reach{' '}
-								{otherAgents.length === 1
-									? '1 other agent'
-									: `${otherAgents.length} other agents`}{' '}
-								using this credential:{' '}
-								{otherAgents.map((agent, i) => (
-									<span key={agent.agent_id}>
-										{i > 0 && ', '}
-										<ActorLabel actorId={agent.agent_id} />
-									</span>
-								))}
-								.
-							</p>
-						)}
 				</section>
+			)}
+
+			{otherAgents.length > 0 && (
+				<p className="text-muted-foreground text-xs">
+					The changes also reach{' '}
+					{otherAgents.length === 1
+						? '1 other agent'
+						: `${otherAgents.length} other agents`}
+					, bound to this credential or to a rule set this change rewrites:{' '}
+					{otherAgents.map((agent, i) => (
+						<span key={agent.agent_id}>
+							{i > 0 && ', '}
+							<ActorLabel actorId={agent.agent_id} />
+						</span>
+					))}
+					.
+				</p>
 			)}
 
 			{shown.current.suspended && (

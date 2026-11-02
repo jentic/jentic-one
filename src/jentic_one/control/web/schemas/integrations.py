@@ -915,8 +915,8 @@ class ReviewEditResponse(BaseModel):
     other_bound_agents: list[EditAgentRef] = Field(
         default_factory=list,
         description=(
-            "Other agents bound to the credential; added scopes and a shared rule set change "
-            "reach them."
+            "Other agents this change reaches: those bound to the credential, which added "
+            "scopes reach, and those bound through a shared rule set the change rewrites."
         ),
     )
     needs_vendor_consent: bool = Field(

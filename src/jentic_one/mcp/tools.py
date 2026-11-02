@@ -1514,6 +1514,8 @@ _REQUEST_CONNECTION_REASON_MAX = 1024
 #: Upper bound on ``requested_scopes`` — the Go mount's ``connectScopesMax``
 #: twin, so neither mount forwards an unbounded list to the vendor authorize URL.
 _REQUEST_CONNECTION_SCOPES_MAX = 100
+#: Characters in a rule id, as the route's schema bounds ``before``.
+_EDIT_RULE_ID_MAX = 30
 #: Characters in one scope's reason, as the route's schema bounds it.
 _SCOPE_COMMENT_MAX = 500
 
@@ -2148,6 +2150,14 @@ def _edit_request(args: dict[str, Any]) -> EditRequest:
         wrapped = isinstance(item, dict) and isinstance(item.get("rule"), dict)
         rule = item["rule"] if wrapped else item
         before = item.get("before") if wrapped else None
+        # The route takes a rule id here. Anything else reaches resolve_edit's
+        # set lookup and raises an unhashable-type TypeError the agent sees as
+        # an internal error, with the connect bucket already spent.
+        if before is not None and (not isinstance(before, str) or len(before) > _EDIT_RULE_ID_MAX):
+            raise invalid_params(
+                f"rules.add[{idx}].before must be a rule id of at most "
+                f"{_EDIT_RULE_ID_MAX} characters"
+            )
         (validated,) = _edit_rule_list([rule], f"rules.add[{idx}]")
         adds.append(RuleAdd(rule=validated, before=before or None))
     remove = rules.get("remove") or []

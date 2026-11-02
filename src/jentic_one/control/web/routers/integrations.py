@@ -855,7 +855,10 @@ def _to_variant(
     "/connect-sessions/{session_id}:amend",
     summary="Amend an open connect session's request",
     response_model=AmendSessionResponse,
-    responses=with_responses(conflict("The session is closed: confirmed or ended")),
+    responses=with_responses(
+        conflict("The session is closed, or holds every revision it may"),
+        too_many_requests("Rate limit"),
+    ),
 )
 async def amend_connect_session(
     session_id: Annotated[
@@ -997,7 +1000,10 @@ async def poll_connect_session_status(
     "/connect-sessions/{session_id}:rebase",
     summary="Resolve an open edit against the binding as it is now",
     response_model=AmendSessionResponse,
-    responses=with_responses(conflict("The session is closed: confirmed or ended")),
+    responses=with_responses(
+        conflict("The session is closed, or holds every revision it may"),
+        too_many_requests("Rate limit"),
+    ),
 )
 async def rebase_connect_session(
     session_id: Annotated[

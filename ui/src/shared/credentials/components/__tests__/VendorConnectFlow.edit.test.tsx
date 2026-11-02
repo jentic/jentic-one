@@ -263,7 +263,7 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 
 		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
 		expect(scopes).toHaveTextContent('gmail.send');
-		expect(scopes).toHaveTextContent(/reach 1 other agent/);
+		expect(await screen.findByText(/reach 1 other agent/)).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Approve and sign in' }));
 		await waitFor(() =>
@@ -277,6 +277,31 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 			kind: 'edit',
 			confirmed_scopes: ['gmail.readonly', 'gmail.send'],
 		});
+	});
+
+	it('names the agents a shared rule-set rewrite reaches, with no scope change', async () => {
+		const seeded = seedEdit(
+			editBlock({
+				current: {
+					rules: [READ, DENY],
+					rule_set: { id: 'prs_shared', name: 'Mail team', curated: false },
+					suspended: false,
+					granted_scopes: ['gmail.readonly'],
+				},
+				result: {
+					target: 'rule_set',
+					rules: [READ, SEND],
+					scopes: ['gmail.readonly'],
+					suspended: false,
+				},
+				other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }],
+			}),
+		);
+		renderApprove(seeded.session_id);
+
+		expect(await screen.findByText(/reach 1 other agent/)).toBeInTheDocument();
+		const scopes = screen.getByRole('region', { name: 'Scope changes' });
+		expect(scopes).not.toHaveTextContent(/reach 1 other agent/);
 	});
 
 	it("shows each revision's own change in the history", async () => {

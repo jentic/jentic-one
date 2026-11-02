@@ -838,6 +838,9 @@ const connectSessionsHandlers = [
 		if (!isMockSession(gated)) return gated;
 		const current = gated.edit?.revision ?? createRevision(gated);
 		return HttpResponse.json({
+			limit: 50,
+			has_more: false,
+			next_cursor: null,
 			data: gated.revisions ?? [
 				{
 					id: current.id,

@@ -19762,7 +19762,7 @@
             "type": "boolean"
           },
           "other_bound_agents": {
-            "description": "Other agents bound to the credential; added scopes and a shared rule set change reach them.",
+            "description": "Other agents this change reaches: those bound to the credential, which added scopes reach, and those bound through a shared rule set the change rewrites.",
             "examples": [
               [
                 {
@@ -32309,10 +32309,27 @@
                 }
               }
             },
-            "description": "The session is closed: confirmed or ended"
+            "description": "The session is closed, or holds every revision it may"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Rate limit"
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
@@ -32584,10 +32601,27 @@
                 }
               }
             },
-            "description": "The session is closed: confirmed or ended"
+            "description": "The session is closed, or holds every revision it may"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Rate limit"
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
