@@ -21,10 +21,13 @@ response: `OutcomeStreamingResponse` logs one structured event for it and ends
 the response without its final body frame, so the server closes the connection
 and the client sees a truncated body rather than a clean end. On every outcome
 it then hands the `StreamingOutcome` to the completion callback exactly once —
-the execution record is never lost to a body that raised. The callback must
-return promptly: the router's callback hands the record write to the app's
-background-task registry (`jentic_one.shared.web.background_tasks`), so neither
-a clean end nor an abort waits on the database.
+the execution record is never lost to a body that raised. A stream that ends
+before any response exists (it fails to open, or the call is cancelled before
+the headers arrive) hands the callback a FAILED outcome with no upstream
+status, then re-raises unchanged. The callback must return promptly: the
+router's callback hands the record write to the app's background-task registry
+(`jentic_one.shared.web.background_tasks`), so neither a clean end, an abort,
+nor an error response waits on the database.
 
 The truncation is detectable only where the downstream framing delimits the
 body: HTTP/1.1 chunked (the broker strips the upstream ``Content-Length``, so a
@@ -58,6 +61,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.errors import (
     BrokerError,
+    CircuitOpenError,
     UpstreamBodyInterruptedError,
     UpstreamTimeoutError,
 )
@@ -91,6 +95,22 @@ def _error_type(exc: Exception) -> str:
     if isinstance(exc, UpstreamBodyInterruptedError):
         return exc.transport_error
     return type(exc).__name__
+
+
+def _pre_header_error(exc: BaseException) -> str:
+    """The execution record's ``error`` for a call that ends before its response headers.
+
+    A cancellation records ``cancelled``; a mapped domain failure records its
+    problem ``type`` — the identifier the caller receives in the problem+json
+    body, so the record names the failure the same way the response does;
+    anything else records its exception class. Never the ``detail`` or the
+    exception message, which can quote request material.
+    """
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    if isinstance(exc, BrokerError) and exc.type != BrokerError.default_type:
+        return exc.type
+    return f"server_error: {type(exc).__name__}"
 
 
 async def guarded_body(
@@ -318,19 +338,75 @@ class OutcomeStreamingResponse(StreamingResponse):
                     (time.perf_counter() - self._outcome.started_at_perf) * 1000
                 )
                 self._outcome.error = self._outcome.error or "client_disconnect"
-            await self._hand_off()
+            await _deliver_outcome(self._outcome, self._on_complete)
 
-    async def _hand_off(self) -> None:
-        if self._on_complete is None:
-            return
-        try:
-            await self._on_complete(self._outcome)
-        except Exception:
-            logger.error(
-                "streaming_outcome_callback_failed",
-                execution_id=self._outcome.execution_id,
-                exc_info=True,
-            )
+
+async def _deliver_outcome(
+    outcome: StreamingOutcome,
+    on_complete: Callable[[StreamingOutcome], Awaitable[None]] | None,
+) -> None:
+    """Hand ``outcome`` to the completion callback; a callback failure never reaches the caller.
+
+    Both hand-off sites run from a ``finally`` (or an ``except`` that re-raises)
+    and owe the caller its own outcome afterwards — the response already sent,
+    or the mapped problem+json of the failure that ended the call. A callback
+    that raises must not replace it, so a ``CancelledError`` out of the
+    callback is logged and swallowed along with every other ``Exception``: the
+    callback's job is to hand the record write to the app's background-task
+    registry, which outlives the request task, so no work is left here for a
+    cancellation to stop. ``KeyboardInterrupt``/``SystemExit`` propagate.
+    """
+    if on_complete is None:
+        return
+    try:
+        await on_complete(outcome)
+    except (Exception, asyncio.CancelledError):
+        logger.error(
+            "streaming_outcome_callback_failed",
+            execution_id=outcome.execution_id,
+            exc_info=True,
+        )
+
+
+async def _record_pre_header_failure(
+    exc: BaseException,
+    *,
+    execution_id: str,
+    started_at_perf: float,
+    on_complete: Callable[[StreamingOutcome], Awaitable[None]] | None,
+) -> None:
+    """Settle the outcome of a stream that ended before any response existed.
+
+    No ``OutcomeStreamingResponse`` is built on this path, so its completion
+    step never runs: this is the outcome's only delivery. The outcome carries
+    no upstream status, and names the failure with :func:`_pre_header_error`.
+
+    A cancellation here comes from server shutdown or an outer cancel — uvicorn
+    does not cancel a handler when its client disconnects — and the streaming
+    path serves non-idempotent calls, so the request may already have reached
+    the upstream: it must not go unrecorded. It is marked ``cancelled``, so the
+    record is written without the action-required event and repeated-failure
+    accounting a real failure gets: a rolling restart with streams in flight is
+    the server's doing, not the agent's.
+
+    ``circuit_open`` is set for a breaker refusal that holds the breaker's
+    per-host report claim, so the persistence path raises the same
+    rate-limited ``upstream.circuit_open`` event the buffered path does.
+
+    The callback returns promptly (the router's only schedules the write on the
+    app's background-task registry), so the error response never waits on the
+    database.
+    """
+    outcome = StreamingOutcome(
+        execution_id=execution_id,
+        http_status=None,
+        started_at_perf=started_at_perf,
+        duration_ms=int((time.perf_counter() - started_at_perf) * 1000),
+        error=_pre_header_error(exc),
+        circuit_open=isinstance(exc, CircuitOpenError) and exc.report,
+        cancelled=isinstance(exc, asyncio.CancelledError),
+    )
+    await _deliver_outcome(outcome, on_complete)
 
 
 async def open_streaming_response(
@@ -352,10 +428,15 @@ async def open_streaming_response(
     When ``background_callback`` is provided, it is the response's completion
     callback: it receives the final ``StreamingOutcome`` exactly once after the
     response body ends, whatever the outcome (completed, failed mid-body,
-    client disconnect), before the response returns to the server. It must
-    return promptly — the router's callback only schedules the record write on
-    the app's background-task registry. (The parameter name is part of the
-    ``Broker.execute_streaming`` injection seam and stays stable.)
+    client disconnect), before the response returns to the server. A failure
+    opening the stream (connect/TLS failure, an open circuit, a timeout before
+    the response headers) or a cancellation before them delivers a FAILED
+    outcome with no upstream status instead, then propagates unchanged — the
+    caller still gets the mapped problem+json response, and cancellation
+    semantics are preserved. It must return promptly — the router's callback
+    only schedules the record write on the app's background-task registry.
+    (The parameter name is part of the ``Broker.execute_streaming`` injection
+    seam and stays stable.)
     """
     # Anchor the duration clock *before* the upstream stream is opened:
     # ``runner.stream()`` awaits connect + request send + response headers, and
@@ -366,8 +447,22 @@ async def open_streaming_response(
     stack = AsyncExitStack()
     try:
         result = await stack.enter_async_context(runner.stream(request))
-    except BaseException:
-        await stack.aclose()
+    except BaseException as exc:
+        # ``enter_async_context`` registers its unwind callback only once
+        # ``__aenter__`` returns, so a hand-off that raises leaves the stack
+        # empty: whatever the runner opened it has already released itself on
+        # the way out, and there is nothing to close here. A mapped failure or
+        # a cancellation is recorded — the call may have reached the upstream —
+        # while a ``KeyboardInterrupt``/``SystemExit`` means the process is
+        # going down, so it gets out of the way without touching the database.
+        # The hand-off never raises, so ``raise`` re-raises ``exc`` unchanged.
+        if isinstance(exc, Exception | asyncio.CancelledError):
+            await _record_pre_header_failure(
+                exc,
+                execution_id=execution_id,
+                started_at_perf=start_perf,
+                on_complete=background_callback,
+            )
         raise
 
     outcome = StreamingOutcome(
