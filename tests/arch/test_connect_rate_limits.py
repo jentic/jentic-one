@@ -14,6 +14,9 @@ import inspect
 import pytest
 
 from jentic_one.control.web.routers import integrations
+from jentic_one.mcp import tools
+
+pytestmark = pytest.mark.arch
 
 #: The mutating connect routes. A new one belongs here with its limiter call.
 _MUTATING_ROUTES = (
@@ -21,6 +24,14 @@ _MUTATING_ROUTES = (
     "integrations_edit_connection",
     "confirm_connect_session",
     "amend_connect_session",
+    "rebase_connect_session",
+)
+
+#: The MCP mount's twins of those routes, which share the same bucket.
+_MUTATING_TOOLS = (
+    "handle_request_connection",
+    "handle_request_access_change",
+    "handle_amend_request",
 )
 
 
@@ -33,4 +44,16 @@ def test_a_mutating_connect_route_enforces_the_connect_rate_limit(handler_name: 
         f"{handler_name} does not spend the connect rate-limit bucket; an actor can "
         "drive it at whatever rate it can issue requests, and can double its rate by "
         "splitting calls across HTTP and MCP"
+    )
+
+
+@pytest.mark.parametrize("handler_name", _MUTATING_TOOLS)
+def test_a_mutating_connect_tool_enforces_the_connect_rate_limit(handler_name: str) -> None:
+    handler = getattr(tools, handler_name, None)
+    assert handler is not None, f"{handler_name} is no longer in the MCP tool mount"
+    source = inspect.getsource(handler)
+    assert "_spend_connect_bucket" in source, (
+        f"{handler_name} does not spend the connect rate-limit bucket; the tool mount "
+        "reaches the same vendors its route does, and an actor that finds one "
+        "unlimited surface has no reason to use the limited one"
     )
