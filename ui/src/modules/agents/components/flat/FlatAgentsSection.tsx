@@ -172,6 +172,40 @@ const STATUS_ORDER: Record<ActorStatus, number> = {
 	archived: 4,
 };
 
+/** Where this tab keeps the unfinished Add-APIs batches (agent id → items). */
+const QUEUE_BATCHES_KEY = 'agents.setupQueue';
+
+/** The batches this tab stored, or none — storage that is missing, denied or
+ * holds something unreadable reads as "nothing waiting", never as an error. */
+function readStoredQueueBatches(): Record<string, PreflightItem[]> {
+	if (typeof window === 'undefined') return {};
+	try {
+		const raw = window.sessionStorage.getItem(QUEUE_BATCHES_KEY);
+		if (!raw) return {};
+		const parsed: unknown = JSON.parse(raw);
+		if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+		const batches: Record<string, PreflightItem[]> = {};
+		for (const [agentId, items] of Object.entries(parsed as Record<string, unknown>)) {
+			if (Array.isArray(items) && items.length > 0)
+				batches[agentId] = items as PreflightItem[];
+		}
+		return batches;
+	} catch {
+		return {};
+	}
+}
+
+/** Store `batches` for this tab; nothing waiting clears the entry. Never throws. */
+function writeStoredQueueBatches(batches: Record<string, PreflightItem[]>): void {
+	if (typeof window === 'undefined') return;
+	try {
+		if (Object.keys(batches).length === 0) window.sessionStorage.removeItem(QUEUE_BATCHES_KEY);
+		else window.sessionStorage.setItem(QUEUE_BATCHES_KEY, JSON.stringify(batches));
+	} catch {
+		/* storage unavailable (private mode / quota): the batch lives for this mount only */
+	}
+}
+
 interface FlatAgentsSectionProps {
 	createOpen: boolean;
 	setCreateOpen: (open: boolean) => void;
@@ -325,8 +359,15 @@ export function FlatAgentsSection({
 	}, [fallbackId, selectAgent, isRenderedPathCurrent]);
 
 	/** The unfinished Add-APIs batch per agent. Held here, not in
-	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */
-	const [queueBatches, setQueueBatches] = useState<Record<string, PreflightItem[]>>({});
+	 *  `SelectedAgentPanel`, which unmounts on a tab switch — and in this tab's
+	 *  session storage, so leaving the page (Library, a reload) doesn't lose the
+	 *  picks Resume setup promised to keep. `stillOwedItems` prunes what got
+	 *  bound meanwhile when the batch is read back. */
+	const [queueBatches, setQueueBatches] =
+		useState<Record<string, PreflightItem[]>>(readStoredQueueBatches);
+	useEffect(() => {
+		writeStoredQueueBatches(queueBatches);
+	}, [queueBatches]);
 	const setQueueBatchFor = useCallback((agentId: string, items: PreflightItem[]) => {
 		setQueueBatches((prev) => {
 			if (items.length === 0) {

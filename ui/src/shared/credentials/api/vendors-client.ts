@@ -61,6 +61,12 @@ export class IntegrationsApiError extends Error {
 	}
 }
 
+/** A credential write refused because the credential no longer exists (404) —
+ * deleted since the caller read it. */
+export function isCredentialGone(error: unknown): boolean {
+	return error instanceof IntegrationsApiError && error.status === 404;
+}
+
 /** Problem+json members every problem carries; the rest are extensions. */
 const PROBLEM_MEMBERS = new Set(['type', 'title', 'detail', 'status', 'instance']);
 

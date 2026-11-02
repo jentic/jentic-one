@@ -8,7 +8,8 @@
  * binding starts with). The binding is made only when the access step is
  * confirmed — bound, then its rules saved — so an item is never half-added
  * behind the operator's back. "Set up later" on the access step adds it with
- * no rules: bound, but every call denied until rules exist.
+ * no rules: bound, but every call denied until rules exist. "Skip for now"
+ * sets an item aside; it is handed back on close so Resume setup offers it.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
 import type { RulesPreset, ScopeReach } from '@/shared/credentials/lib/accessPresets';
@@ -92,14 +93,11 @@ export function isTerminal(status: QueueStatus): boolean {
 	return status === 'added' || status === 'dropped' || status === 'failed';
 }
 
-/** Entries whose fate is SETTLED: attached (`added`, or bound with its rules
- * still owed), or the operator was told it would not be (`dropped`). `failed`
- * is absent — nobody chose it, so the item is still outstanding work. */
-function isResolved(entry: QueueEntry): boolean {
-	return entry.status === 'added' || entry.status === 'dropped' || entry.bound === true;
-}
-
-/** Attached to the agent — added, or bound with its rules still owed. */
+/**
+ * Attached to the agent — added, or bound with its rules still owed. The one
+ * SETTLED fate: a failure is outstanding work nobody chose, and a skip is
+ * "for now" — both are owed back to the operator rather than lost.
+ */
 function isAttached(entry: QueueEntry): boolean {
 	return entry.status === 'added' || entry.bound === true;
 }
@@ -160,7 +158,8 @@ export function reconcileQueue(entries: QueueEntry[], items: PreflightItem[]): Q
 
 /** What the tray is seeded with when the operator goes Back: the APIs still owed
  * (ticked, editable) and the ones this batch already added (ticked, locked). A
- * declined API is left unticked — "Not added" was already the answer. */
+ * skipped API is left unticked — the operator just set it aside; it comes back
+ * under Resume setup (see {@link unfinishedItems}), not re-ticked behind them. */
 export interface QueueBackSeed {
 	picks: SelectedApi[];
 	added: SelectedApi[];
@@ -168,7 +167,7 @@ export interface QueueBackSeed {
 
 export function queueBackSeed(entries: QueueEntry[]): QueueBackSeed {
 	return {
-		picks: entries.filter((e) => !isResolved(e)).map((e) => e.api),
+		picks: entries.filter((e) => !isAttached(e) && e.status !== 'dropped').map((e) => e.api),
 		added: entries.filter(isAttached).map((e) => e.api),
 	};
 }
@@ -187,17 +186,33 @@ export function patchEntry(
 	return entries.map((e) => (e.key === key ? { ...e, ...patch } : e));
 }
 
-/** Reopen a settled item picked again: a skipped one resumes, a failed one is retried. */
+/** Reopen a settled item picked again: a skipped one resumes, a failed one is
+ * retried from its credential step. Its error stays on it until the next
+ * attempt starts, so the pane can say why the last one failed. */
 export function reopenEntry(entries: QueueEntry[], key: string): QueueEntry[] {
 	const entry = entries.find((e) => e.key === key);
 	if (entry?.status === 'dropped') return patchEntry(entries, key, { status: 'waiting' });
 	if (entry?.status === 'failed')
-		return patchEntry(entries, key, {
-			status: 'waiting',
-			error: undefined,
-			step: 'credential',
-		});
+		return patchEntry(entries, key, { status: 'waiting', step: 'credential' });
 	return entries;
+}
+
+/**
+ * A credential the server no longer has (a 404 on bind: deleted meanwhile) is
+ * taken out of the item's options, so a retry can't offer it again — the one
+ * this queue created included.
+ */
+export function forgetCredential(
+	entries: QueueEntry[],
+	key: string,
+	credentialId: string,
+): QueueEntry[] {
+	return entries.map((e) => {
+		if (e.key !== key) return e;
+		const covering = e.covering.filter((c) => c.credential_id !== credentialId);
+		const created = e.created?.credential_id === credentialId ? undefined : e.created;
+		return { ...e, covering, created };
+	});
 }
 
 /** Move an item to its access step with the credential it will bind. */
@@ -240,10 +255,11 @@ export interface QueueSummary {
 	/** Items not yet walked — still `waiting`, `active` or `working`. */
 	unfinished: number;
 	total: number;
-	/** Items the host hands back on close: the unwalked ones plus the failures — the
-	 * figure the progress bar and the "N wait here for next time" note read. */
+	/** Items the host hands back on close: the unwalked ones, the failures and
+	 * the skips — the figure the progress bar and the "N wait here for next
+	 * time" note read. */
 	remaining: number;
-	/** Nothing is left to hand back — every API is attached or declined. */
+	/** Nothing is left to hand back — every API is attached. */
 	done: boolean;
 }
 
@@ -258,7 +274,7 @@ export function queueSummary(entries: QueueEntry[]): QueueSummary {
 		else if (e.status === 'failed') failed += 1;
 		else unfinished += 1;
 	}
-	const remaining = unfinished + failed;
+	const remaining = unfinished + failed + dropped;
 	return {
 		added,
 		dropped,
@@ -270,23 +286,24 @@ export function queueSummary(entries: QueueEntry[]): QueueSummary {
 	};
 }
 
-/** The one-line outcome, e.g. `2 APIs added · 1 dropped`. Empty when nothing happened. */
+/** The one-line outcome, e.g. `2 APIs added · 1 skipped`. Empty when nothing happened. */
 export function queueSummaryLine(summary: QueueSummary): string {
 	const parts: string[] = [];
 	if (summary.added > 0) {
 		parts.push(`${summary.added} ${summary.added === 1 ? 'API' : 'APIs'} added`);
 	}
-	if (summary.dropped > 0) parts.push(`${summary.dropped} dropped`);
+	if (summary.dropped > 0) parts.push(`${summary.dropped} skipped`);
 	if (summary.failed > 0) parts.push(`${summary.failed} failed`);
 	return parts.join(' · ');
 }
 
 /** The items still owed to the operator, back in `PreflightItem` shape so the
- * host can reopen the queue on the remainder. Filtered on {@link isResolved},
- * not {@link isTerminal}: a failed item dropped here is lost silently. */
+ * host can reopen the queue on the remainder. Everything not attached — the
+ * unwalked, the failed and the skipped: an item dropped here is lost silently,
+ * and "Skip for now" promised it would come back. */
 export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 	return entries
-		.filter((e) => !isResolved(e))
+		.filter((e) => !isAttached(e))
 		.map((e) => ({
 			key: e.key,
 			api: e.api,

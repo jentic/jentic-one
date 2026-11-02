@@ -28,7 +28,6 @@ import {
 import {
 	Button,
 	ConfirmDialog,
-	DetailsLine,
 	ErrorAlert,
 	ExpandReveal,
 	REVEAL_MOTION,
@@ -40,7 +39,7 @@ import {
 	type PermissionRuleInput,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { useCredential, useImportCatalogEntry } from '@/shared/credentials/api';
+import { isCredentialGone, useCredential, useImportCatalogEntry } from '@/shared/credentials/api';
 import {
 	useApplyBindingRules,
 	useBindCredentialToAgents,
@@ -62,7 +61,7 @@ import {
 	type RulesPreset,
 	type ScopeReach,
 } from '@/shared/credentials/lib/accessPresets';
-import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
+import { apiScopeReach, sharedApiLabels } from '@/shared/credentials/lib/apiIdentity';
 import {
 	credentialAwaitsConsent,
 	type CredentialChoice,
@@ -81,6 +80,7 @@ import {
 	blockedCount,
 	buildQueue,
 	chooseCredential,
+	forgetCredential,
 	isTerminal,
 	patchEntry,
 	queueBackSeed,
@@ -114,7 +114,14 @@ export interface ApiSetupQueueProps {
 	 * would hand back, for a host whose tray is then closed instead of continued.
 	 * The next `items` this queue receives are folded into its progress. */
 	onBack?: (seed: QueueBackSeed, remaining: PreflightItem[]) => void;
+	/** How long the done screen stays once EVERY API was added with its rules —
+	 * nothing owed, nothing blocked, nothing to read — before the queue closes
+	 * itself. Any click or key keeps it open. `0` never closes on its own. */
+	autoCloseMs?: number;
 }
+
+/** The done screen's own dwell when everything went through. */
+const AUTO_CLOSE_MS = 5000;
 
 function errorText(e: unknown): string {
 	return e instanceof Error && e.message ? e.message : 'Something went wrong.';
@@ -172,6 +179,7 @@ export function ApiSetupQueue({
 	items,
 	onClose,
 	onBack,
+	autoCloseMs = AUTO_CLOSE_MS,
 }: ApiSetupQueueProps) {
 	const headingId = 'api-setup-queue-title';
 	const [entries, setEntries] = useState<QueueEntry[]>(() => buildQueue(items));
@@ -280,6 +288,7 @@ export function ApiSetupQueue({
 		return covering.length === entry.covering.length ? entry : { ...entry, covering };
 	}, [entries, openKey]);
 	const summary = useMemo(() => queueSummary(entries), [entries]);
+	const sharedLabels = useMemo(() => sharedApiLabels(entries.map((e) => e.api)), [entries]);
 	const blocked = useMemo(() => blockedCount(entries), [entries]);
 	const nextOwed = (after: string | null): QueueEntry | undefined =>
 		entries.find((e) => e.key !== after && !isTerminal(e.status));
@@ -483,6 +492,25 @@ export function ApiSetupQueue({
 						rules: rules ?? undefined,
 					}));
 				} catch (e) {
+					if (isCredentialGone(e)) {
+						// The credential was deleted meanwhile: say so, and take it out of
+						// the options so Try again can't preselect it and fail the same way.
+						setEntries((current) =>
+							patchEntry(
+								forgetCredential(current, entry.key, chosen.credential_id),
+								entry.key,
+								{
+									status: 'failed',
+									error: `${chosen.name} no longer exists — it was deleted. Pick another credential, or add a new one.`,
+								},
+							),
+						);
+						setChoices((current) => {
+							const { [entry.key]: _gone, ...rest } = current;
+							return rest;
+						});
+						return;
+					}
 					setEntries((current) =>
 						patchEntry(current, entry.key, { status: 'failed', error: errorText(e) }),
 					);
@@ -590,6 +618,40 @@ export function ApiSetupQueue({
 
 	const added = summary.added;
 	const total = summary.total;
+
+	// Everything added, with rules: the done screen has nothing to decide, so it
+	// closes itself after a short dwell — unless the operator touches it. A
+	// skip, a failure or a blocked add is something to read, and stays.
+	const allAdded = current == null && total > 0 && summary.done && blocked === 0;
+	const [stay, setStay] = useState(false);
+	const [closesIn, setClosesIn] = useState<number | null>(null);
+	const closeRef = useRef(close);
+	closeRef.current = close;
+	useEffect(() => {
+		if (open) setStay(false);
+	}, [open]);
+	useEffect(() => {
+		if (!open || !allAdded || stay || autoCloseMs <= 0) {
+			setClosesIn(null);
+			return undefined;
+		}
+		const startedAt = Date.now();
+		setClosesIn(Math.ceil(autoCloseMs / 1000));
+		const tick = window.setInterval(() => {
+			const left = autoCloseMs - (Date.now() - startedAt);
+			if (left <= 0) {
+				window.clearInterval(tick);
+				setClosesIn(null);
+				closeRef.current();
+				return;
+			}
+			setClosesIn(Math.ceil(left / 1000));
+		}, 200);
+		return () => window.clearInterval(tick);
+	}, [open, allAdded, stay, autoCloseMs]);
+	const keepOpen = (): void => {
+		if (allAdded) setStay(true);
+	};
 	const settledCurrent =
 		current != null && isTerminal(current.status) && current.status !== 'failed';
 	const creating = current != null && creatingKey === current.key;
@@ -606,9 +668,20 @@ export function ApiSetupQueue({
 	let primary: ReactNode;
 	if (!current) {
 		primary = (
-			<Button onClick={close} data-testid="queue-done">
-				Done
-			</Button>
+			<>
+				{closesIn != null && (
+					<span
+						role="status"
+						className="text-muted-foreground text-xs"
+						data-testid="queue-autoclose"
+					>
+						Closing in {closesIn}s
+					</span>
+				)}
+				<Button onClick={close} data-testid="queue-done">
+					Done
+				</Button>
+			</>
 		);
 	} else if (current.status === 'failed') {
 		primary = (
@@ -710,7 +783,12 @@ export function ApiSetupQueue({
 			size="flow"
 			handoffKey={AGENT_SETUP_FLOW}
 		>
-			<div className="flex h-full min-h-0 flex-col">
+			<div
+				className="flex h-full min-h-0 flex-col"
+				// A touch anywhere keeps the done screen from closing itself.
+				onPointerDownCapture={keepOpen}
+				onKeyDownCapture={keepOpen}
+			>
 				<SheetHeader className="items-center justify-between pb-3">
 					<h2
 						id={headingId}
@@ -768,6 +846,9 @@ export function ApiSetupQueue({
 								<QueueRow
 									key={entry.key}
 									entry={entry}
+									showVendor={sharedLabels.has(
+										entry.api.label.trim().toLowerCase(),
+									)}
 									selected={entry.key === currentKey}
 									disabled={busy}
 									onOpen={(): void => openApi(entry.key)}
@@ -803,6 +884,16 @@ export function ApiSetupQueue({
 									<AddedSummary entry={current} />
 								) : (
 									<>
+										{current.error && (
+											// Reopened after a failure: the reason stays in view until
+											// the next attempt starts, so the retry is an informed one.
+											<div data-testid="queue-last-error">
+												<ErrorAlert
+													title="The last attempt failed"
+													message={current.error}
+												/>
+											</div>
+										)}
 										<CredentialSection
 											entry={current}
 											agentId={agentId}
@@ -922,11 +1013,14 @@ function QueueRow({
 	selected,
 	disabled,
 	onOpen,
+	showVendor,
 }: {
 	entry: QueueEntry;
 	selected: boolean;
 	disabled: boolean;
 	onOpen: () => void;
+	/** Another item in the queue has the same name: the vendor tells them apart. */
+	showVendor: boolean;
 }) {
 	const working = entry.status === 'working';
 	const status =
@@ -973,6 +1067,15 @@ function QueueRow({
 						)}
 					>
 						{entry.api.label}
+						{showVendor && (
+							<span
+								data-testid="queue-row-vendor"
+								className="text-foreground-faint font-mono text-xs font-normal"
+							>
+								{' '}
+								· {entry.api.vendor}
+							</span>
+						)}
 					</span>
 					<span className={cn('flex items-center gap-1.5 text-xs', tone)}>
 						{entry.status === 'added' ? (
@@ -1190,17 +1293,31 @@ function CredentialSection({
 			</StepHeading>
 			<div className="space-y-3">
 				{entry.existing.length > 0 && (
-					<DetailsLine
+					// In view, not behind a fold: a second credential changes how every
+					// call to this API must be made, which is not a detail.
+					<div
 						data-testid="queue-existing-accounts"
-						icon={<KeyRound className="text-caution h-3.5 w-3.5" />}
-						summary={`${count === 0 ? 'Needs a new key · ' : ''}${addedViaLabel(entry.existing)} already`}
+						className="bg-warning/10 flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs"
 					>
-						<p data-testid="queue-ambiguity-warning">
-							This adds a second credential; <AgentNameText name={agentName} /> keeps
-							its current one. {anotherCredentialWarning(entry.api.label)} Nothing is
-							stored until you save it.
-						</p>
-					</DetailsLine>
+						<KeyRound
+							className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0"
+							aria-hidden="true"
+						/>
+						<div className="space-y-1">
+							<p className="text-foreground font-medium">
+								{count === 0 ? 'Needs a new key · ' : ''}
+								{addedViaLabel(entry.existing)} already
+							</p>
+							<p
+								className="text-foreground-sub"
+								data-testid="queue-ambiguity-warning"
+							>
+								This adds a second credential; <AgentNameText name={agentName} />{' '}
+								keeps its current one. {anotherCredentialWarning(entry.api.label)}{' '}
+								Nothing is stored until you save it.
+							</p>
+						</div>
+					</div>
 				)}
 
 				{entry.bound && entry.chosen ? (
@@ -1525,6 +1642,16 @@ function DonePane({ summary, blocked }: { summary: QueueSummary; blocked: number
 							? `${blocked === 1 ? '1 API was' : `${blocked} APIs were`} set up later — every call to ${blocked === 1 ? 'it' : 'them'} is denied until you add rules on the API.`
 							: 'Each API was added with its access rules.'}
 				</p>
+				{!nothingAdded && (
+					<p
+						className="text-muted-foreground mt-1.5 text-xs"
+						data-testid="queue-done-next"
+					>
+						Try it: the agent can call {summary.added === 1 ? 'it' : 'them'} now — open
+						an API&apos;s Manage access and <strong>Test a request</strong> to check a
+						call against its rules, or run one from the agent.
+					</p>
+				)}
 			</div>
 		</section>
 	);
