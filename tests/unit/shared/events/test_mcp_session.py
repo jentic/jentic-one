@@ -17,8 +17,8 @@ import pytest
 import jentic_one.shared.events.mcp_session as mcp_session
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.events.mcp_session import (
-    MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
     MCP_HTTP_WINDOW_SECONDS,
+    MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW,
     McpUserAgent,
     mcp_http_window_key,
     mcp_stdio_session_key,
@@ -727,11 +727,17 @@ async def test_http_cap_logs_once_per_agent_window() -> None:
     cap = mcp_session.MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
     window = int(_FROZEN_NOW // MCP_HTTP_WINDOW_SECONDS)
     ctx = _fake_ctx()
+
+    async def admit() -> bool:
+        return await mcp_session._admit_agent_window_key(
+            ctx, "agnt_abc", window, transport="http", cap=cap
+        )
+
     for _ in range(cap):
-        assert await mcp_session._admit_agent_window_key(ctx, "agnt_abc", window)
+        assert await admit()
     with patch.object(mcp_session.logger, "warning") as warn:
-        assert not await mcp_session._admit_agent_window_key(ctx, "agnt_abc", window)
-        assert not await mcp_session._admit_agent_window_key(ctx, "agnt_abc", window)
+        assert not await admit()
+        assert not await admit()
     warn.assert_called_once()
 
 
@@ -816,14 +822,16 @@ async def test_one_agent_rotating_session_ids_is_capped_per_window() -> None:
     """The unique index dedupes identical keys only, never distinct ones.
 
     A rotating header value otherwise minted a row per request on this path,
-    while the HTTP mount bounds the same agent per window.
+    while the HTTP mount bounds the same agent per window. The budget is the
+    stdio one: these keys are session ids, one per launch, where the HTTP
+    lane's are client name and version pairs.
     """
     ctx = _fake_ctx()
     with patch(
         "jentic_one.shared.events.mcp_session.record_mcp_session_started",
         new_callable=AsyncMock,
     ) as record:
-        for index in range(MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW + 8):
+        for index in range(MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW + 8):
             await schedule_mcp_session_emit(
                 ctx,
                 user_agent="jentic-mcp/1.0 (cursor/1.0)",
@@ -832,4 +840,37 @@ async def test_one_agent_rotating_session_ids_is_capped_per_window() -> None:
                 actor_type="agent",
             )
         await _run_scheduled_tasks()
-    assert record.await_count == MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
+    assert record.await_count == MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW
+
+
+@pytest.mark.asyncio
+async def test_a_flood_on_one_transport_leaves_the_other_emitting() -> None:
+    """The counter names the transport, so one lane cannot starve the other.
+
+    The two lanes key on different things and are sized apart for it. Counted
+    together, an agent's stdio launches would spend the budget its HTTP
+    clients are admitted on, and a legitimate client would go silent for a
+    flood it has nothing to do with.
+    """
+    ctx = _fake_ctx()
+    exists_p, emit_p = _patch_emit()
+    with (
+        _freeze_time(),
+        patch(
+            "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+            new_callable=AsyncMock,
+        ),
+    ):
+        for index in range(MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW + 8):
+            await schedule_mcp_session_emit(
+                ctx,
+                user_agent="jentic-mcp/1.0 (cursor/1.0)",
+                session_id=f"launch-{index}",
+                actor_id="agnt_both",
+                actor_type="agent",
+            )
+        await _run_scheduled_tasks()
+    with _freeze_time(), exists_p, emit_p as emit:
+        await _schedule_http(ctx, actor_id="agnt_both", client_name="cursor")
+        await _run_scheduled_tasks()
+    assert emit.await_count == 1

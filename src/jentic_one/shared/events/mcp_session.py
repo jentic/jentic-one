@@ -129,6 +129,14 @@ MCP_HTTP_WINDOW_SECONDS = 6 * 60 * 60
 #: the emit is skipped and a warning logged once per (agent, window).
 MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW = 16
 
+#: Per-agent cap on *distinct* stdio session ids admitted per window. The stdio
+#: key is the client's own session id, so one per launch: an agent an operator
+#: restarts, or a harness that runs it per task, legitimately holds hundreds in
+#: a 6-hour bucket, where its clientInfo pairs stay in single figures. Sized
+#: for that, so the cap still refuses a client minting an id per request
+#: without going quiet on an agent doing nothing wrong.
+MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW = 256
+
 #: Longest UA-derived field persisted to event ``data``. The User-Agent is
 #: untrusted input; without a cap a hostile client could grow every
 #: ``mcp.session_started`` row by kilobytes of junk.
@@ -139,8 +147,8 @@ _UA_FIELD_MAX = 128
 #: event is recorded (here or, per the table lookup, by another process) it is
 #: rewritten to live :data:`_SEEN_TTL_S`, so later requests short-circuit on it.
 SESSION_NAMESPACE = "mcp-session"
-#: Shared-state namespace of the per-(agent, window) distinct-key counter behind
-#: :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` (``mcp-session-cap:<agent>:<window>``).
+#: Shared-state namespace of the distinct-key counter each transport's cap is
+#: counted on (``mcp-session-cap:<transport>:<agent>:<window>``).
 CLIENT_CAP_NAMESPACE = "mcp-session-cap"
 
 #: How long an unconfirmed claim holds a session id. An emit that fails leaves
@@ -346,11 +354,16 @@ async def schedule_mcp_session_emit(
     sid = mcp_stdio_session_key(actor_id, raw)
     if not _in_flight_has_room() or not await _claim(ctx, sid):
         return
-    # The same per-agent window the HTTP path admits on: the unique index
-    # dedupes identical keys only, never distinct ones, so a rotating header
-    # value would otherwise mint a row per request.
+    # A per-agent window of its own: the unique index dedupes identical keys
+    # only, never distinct ones, so a rotating header value would otherwise
+    # mint a row per request. The budget is the stdio one, counted apart from
+    # the HTTP lane's — these keys are session ids, not client pairs.
     if not await _admit_agent_window_key(
-        ctx, actor_id, int(time.time() // MCP_HTTP_WINDOW_SECONDS)
+        ctx,
+        actor_id,
+        int(time.time() // MCP_HTTP_WINDOW_SECONDS),
+        transport=_STDIO_TRANSPORT,
+        cap=MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW,
     ):
         return
 
@@ -446,7 +459,13 @@ async def schedule_mcp_http_session_emit(
     if not _in_flight_has_room() or not await _claim(ctx, sid):
         return
     window = int(now // MCP_HTTP_WINDOW_SECONDS)
-    if not await _admit_agent_window_key(ctx, actor_id, window):
+    if not await _admit_agent_window_key(
+        ctx,
+        actor_id,
+        window,
+        transport=_HTTP_TRANSPORT,
+        cap=MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
+    ):
         return
 
     _spawn_emit(
@@ -475,34 +494,42 @@ def _in_flight_has_room() -> bool:
     return False
 
 
-async def _admit_agent_window_key(ctx: Context, actor_id: str, window: int) -> bool:
-    """Admit one more *distinct* HTTP dedupe key for this (agent, window).
+async def _admit_agent_window_key(
+    ctx: Context, actor_id: str, window: int, *, transport: str, cap: int
+) -> bool:
+    """Admit one more *distinct* dedupe key for this (agent, transport, window).
 
     Callers have just claimed the key, so it is new. The count is an atomic
     increment on the shared-state backend, so the cap holds across
-    processes. Past :data:`MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW` the emit
-    is skipped and a warning logged once per (agent, window) — one flooding
-    agent stops minting rows while every other agent's counter is untouched.
-    A key retried after its claim expired (or while the ``mcp-session``
-    namespace refuses claims) re-counts, tightening the cap for that agent —
-    acceptable for a defensive bound. A backend that
-    refuses or fails the increment skips the emit.
+    processes. Past ``cap`` the emit is skipped and a warning logged once per
+    (agent, transport, window) — one flooding agent stops minting rows while
+    every other agent's counter is untouched. A key retried after its claim
+    expired (or while the ``mcp-session`` namespace refuses claims) re-counts,
+    tightening the cap for that agent — acceptable for a defensive bound. A
+    backend that refuses or fails the increment skips the emit.
+
+    The counter is per transport because the two lanes key on different
+    things, and are sized apart for it: one shared counter would let an
+    agent's stdio launches use up the budget for its HTTP clients and the
+    other way about, so a quiet lane goes silent for a flood on the other.
     """
     try:
         count = await ctx.state_backend.incr_with_ttl(
-            f"{CLIENT_CAP_NAMESPACE}:{actor_id}:{window}", ttl_s=float(MCP_HTTP_WINDOW_SECONDS)
+            f"{CLIENT_CAP_NAMESPACE}:{transport}:{actor_id}:{window}",
+            ttl_s=float(MCP_HTTP_WINDOW_SECONDS),
         )
     except Exception as exc:
-        logger.debug("mcp_http_session_client_cap_skipped", error=type(exc).__name__)
+        logger.debug("mcp_session_key_cap_skipped", error=type(exc).__name__)
         return False
-    if count <= MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW:
+    if count <= cap:
         return True
-    if count == MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW + 1:
+    if count == cap + 1:
         logger.warning(
-            "mcp_http_session_client_cap_reached",
+            "mcp_session_key_cap_reached",
             actor_id=actor_id,
+            transport=transport,
             window=window,
-            cap=MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW,
+            cap=cap,
         )
     return False
 
