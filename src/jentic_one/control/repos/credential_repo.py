@@ -63,27 +63,6 @@ class CredentialRepository:
     """Data access layer for Credential entities — flush-only, never commits."""
 
     @staticmethod
-    async def visible_ids(
-        session: AsyncSession,
-        credential_ids: Sequence[str],
-        *,
-        filters: Sequence[ColumnElement[bool]] | None = None,
-    ) -> set[str]:
-        """Which of ``credential_ids`` the caller may read, in one statement.
-
-        For callers holding ids from another database (a rule set's bindings
-        live in the admin DB) that must not report across credentials the
-        caller cannot see.
-        """
-        if not credential_ids:
-            return set()
-        stmt = select(Credential.id).where(Credential.id.in_(list(credential_ids)))
-        for clause in filters or ():
-            stmt = stmt.where(clause)
-        result = await session.execute(stmt)
-        return {str(row[0]) for row in result.fetchall()}
-
-    @staticmethod
     async def get_by_id(
         session: AsyncSession,
         credential_id: str,

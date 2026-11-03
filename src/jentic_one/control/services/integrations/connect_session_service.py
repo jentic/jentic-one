@@ -3897,25 +3897,30 @@ class ConnectSessionService:
         rule_set = baseline.get("rule_set")
         reached: dict[str, AgentView] = {}
         if rule_set is not None and not rule_set.get("curated"):
+            # Unfiltered: the set reaches bindings on other credentials, and
+            # which agents on those this caller may be told about depends on
+            # its relationship to each credential, which one SQL predicate
+            # over all of them cannot express. The rows are judged below.
             async with self._ctx.admin_db.session() as admin_session:
                 rows = await PrerequisiteRepository.list_agents_for_rule_set(
                     admin_session,
                     rule_set_id=rule_set["id"],
                     limit=_BOUND_AGENTS_LIMIT + 2,
-                    visible_to=visible_to,
                 )
-            # The set reaches bindings on other credentials, and owning this
-            # one says nothing about those: a row is named only when its own
-            # credential is readable by the caller.
-            candidates = {r.credential_id for r in rows if r.agent_id != row.agent_id}
-            async with self._ctx.control_db.session() as session:
-                readable = await CredentialRepository.visible_ids(
-                    session,
-                    sorted(candidates),
-                    filters=build_access_filters(identity, Credential),
-                )
+            creators = await self._readable_credential_creators(
+                {r.credential_id for r in rows if r.agent_id != row.agent_id}, identity
+            )
             for r in rows:
-                if r.agent_id == row.agent_id or r.credential_id not in readable:
+                if r.agent_id == row.agent_id or r.credential_id not in creators:
+                    continue
+                # The credential's own rule, as its bound-agent list applies
+                # it: its creator sees every binding on it, any other reader
+                # only the agents it may enumerate. Owning the credential the
+                # edit was opened on says nothing about the others.
+                allowed = bound_agent_visibility(creators[r.credential_id], identity)
+                if allowed is not None and not (
+                    r.agent_id == allowed.self_id or r.agent_owner_id in allowed.owner_ids
+                ):
                     continue
                 reached[r.agent_id] = AgentView(
                     agent_id=r.agent_id,
@@ -3940,6 +3945,46 @@ class ConnectSessionService:
             view = reached.get(other_id) or await self._agent_view(other_id)
             views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
         return views, truncated
+
+    async def _readable_credential_creators(
+        self, credential_ids: set[str], identity: Identity
+    ) -> dict[str, str | None]:
+        """Who created each of ``credential_ids`` the caller may read.
+
+        Absent means unreadable, so a caller is told nothing about the agents
+        bound on it. The access filters are the ones the credential service's
+        own rule-set count passes, including the agent and shared-read terms:
+        without them an agent caller, or a reader under a shared-read grant,
+        is told less than it may see.
+        """
+        if not credential_ids:
+            return {}
+        async with self._ctx.admin_db.session() as admin_session:
+            bound_credential_ids = (
+                await PrerequisiteRepository.list_credential_ids_for_agent(
+                    admin_session, agent_id=identity.sub
+                )
+                if identity.actor_type == ActorType.AGENT and identity.sub
+                else []
+            )
+            owned_agent_ids = (
+                await PrerequisiteRepository.list_agent_ids_owned_by(
+                    admin_session, owner_id=identity.sub
+                )
+                if identity.actor_type == ActorType.USER and identity.sub
+                else []
+            )
+        filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=bound_credential_ids,
+            owned_agent_ids=owned_agent_ids,
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            return await CredentialRepository.get_creators_by_ids(
+                session, sorted(credential_ids), filters=filters
+            )
 
     async def _other_bound_agents(
         self,

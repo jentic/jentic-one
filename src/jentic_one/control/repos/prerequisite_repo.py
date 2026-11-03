@@ -20,11 +20,17 @@ from jentic_one.shared.pagination import Cursor
 
 
 class RuleSetBoundAgentRow(NamedTuple):
-    """Result row for agents bound through a rule set, with the credential each uses."""
+    """Result row for agents bound through a rule set, with the credential each uses.
+
+    ``agent_owner_id`` rides along because visibility of these rows is decided
+    per credential, by the caller's relationship to each one, which no single
+    SQL predicate can express.
+    """
 
     agent_id: str
     agent_name: str
     agent_status: str
+    agent_owner_id: str | None
     credential_id: str
 
 
@@ -223,10 +229,9 @@ class PrerequisiteRepository:
         Changing the set is one write to rows every one of those bindings
         reads, so a review of such a change names them: the credential the
         edit was opened on is only part of its reach. ``visible_to`` narrows
-        the rows exactly as :meth:`list_agents_for_credential` does, and the
-        credential each binding uses rides along so the caller can drop the
-        ones it may not read: owning one credential confers no visibility of
-        agents bound on another.
+        the rows exactly as :meth:`list_agents_for_credential` does; a caller
+        whose visibility differs per credential passes ``None`` and decides
+        row by row, from the credential and owner each row carries.
         """
         conditions = ["b.rule_set_id = :rule_set_id"]
         params: dict[str, object] = {"rule_set_id": rule_set_id, "limit": limit}
@@ -237,7 +242,7 @@ class PrerequisiteRepository:
             bind_params.append(bindparam("owner_ids", expanding=True))
 
         stmt = text(
-            "SELECT a.id, a.name, a.status, b.credential_id "
+            "SELECT a.id, a.name, a.status, a.owner_id, b.credential_id "
             "FROM agent_credential_bindings b "
             "JOIN agents a ON a.id = b.agent_id "
             f"WHERE {' AND '.join(conditions)} "

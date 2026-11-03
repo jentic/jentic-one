@@ -32,6 +32,7 @@ from jentic_one.control.repos.connect_session_revision_repo import (
 )
 from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.scoping import filters
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
@@ -1455,3 +1456,73 @@ async def test_a_rule_set_reach_window_filled_by_unreadable_rows_is_not_reported
             await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_hidden_%'"))
         async with ctx.control_db.transaction() as session:
             await session.execute(delete(Credential).where(Credential.id.in_(strangers)))
+
+
+async def test_a_rule_set_reach_applies_each_credentials_own_visibility_rule(
+    integration_context: Context, binding: str
+) -> None:
+    """Creating one credential is not creatorship of the others the set governs.
+
+    The reach spans credentials, and a credential's own bound-agent list says
+    its creator sees every binding on it while any other reader sees only the
+    agents it may enumerate. Applied as one predicate over every row, the
+    creator of the credential the edit was opened on is named a stranger's
+    agent on a credential it merely reads; and with the agent and shared-read
+    terms left out of the filters, it is told nothing about one it may see.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    rule_set_id = await _attach_rule_set(ctx, binding, curated=False)
+
+    def _share_with_owner(identity: Identity, model: type) -> Any:
+        if model is Credential and identity.sub == _OWNER_SUB:
+            return Credential.id.isnot(None)
+        return None
+
+    filters.register_access_filter_provider(_share_with_owner)
+    theirs = await CredentialService(ctx).create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="cse shared-read credential",
+            api=APIReference(vendor="acme-com", name="widgets", version="v1"),
+            token="sk-shared-read",
+        ),
+        identity=_OTHER,
+    )
+    try:
+        async with ctx.admin_db.transaction() as session:
+            for suffix, owner in (("mine", _OWNER_SUB), ("theirs", _OTHER_SUB)):
+                await session.execute(
+                    text(
+                        "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                        f"VALUES ('agnt_cse_{suffix}', '{suffix}', :u, :u, 'approved')"
+                    ),
+                    {"u": owner},
+                )
+                await AgentCredentialBindingRepository.bind(
+                    session,
+                    agent_id=f"agnt_cse_{suffix}",
+                    credential_id=theirs.credential_id,
+                    created_by=owner,
+                )
+                await PrerequisiteRepository.set_binding_rule_set(
+                    session,
+                    agent_id=f"agnt_cse_{suffix}",
+                    credential_id=theirs.credential_id,
+                    rule_set_id=rule_set_id,
+                )
+        created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+        review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+        assert review.edit is not None
+        # Its own agent on that credential, and not the stranger's.
+        assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_cse_mine"]
+    finally:
+        filters._ACCESS_FILTER_PROVIDERS.remove(_share_with_owner)
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text("DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_cse_%'")
+            )
+            await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_mine'"))
+            await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_theirs'"))
+        async with ctx.control_db.transaction() as session:
+            await session.execute(delete(Credential).where(Credential.id == theirs.credential_id))
