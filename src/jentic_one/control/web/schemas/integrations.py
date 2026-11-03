@@ -1053,6 +1053,13 @@ class SessionRevisionResponse(BaseModel):
     )
 
 
+#: A cursor of this route's own shape: the shared example's id is a UUID.
+_REVISION_CURSOR = (
+    "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAi"  # pragma: allowlist secret
+    "Y3NyXzY5NjhiMzk4NGQxYzIzOGRiZTdlMmUyOSJ9"  # pragma: allowlist secret
+)
+
+
 class SessionRevisionListResponse(BaseModel):
     """A session's revisions, oldest first, one page at a time."""
 
@@ -1064,7 +1071,10 @@ class SessionRevisionListResponse(BaseModel):
     next_cursor: str | None = Field(
         default=None,
         description="Opaque cursor for the next page; null when this is the last one.",
-        examples=[ex.CURSOR],
+        # Not the shared example: that one carries a UUID, while this route's
+        # cursor always names a revision (``csr_``), and the sample ships
+        # verbatim into the generated clients and the rendered reference.
+        examples=[_REVISION_CURSOR],
     )
 
 

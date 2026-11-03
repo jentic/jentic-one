@@ -210,7 +210,7 @@ from jentic_one.shared.models.api_identity import (
 )
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import decode_cursor, encode_cursor
+from jentic_one.shared.pagination import InvalidCursorError, decode_cursor, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
@@ -1950,7 +1950,7 @@ class ConnectSessionService:
         await self._require_revision_room(
             row, needed=2 if row.intent == INTENT_EDIT and await self._edit_is_stale(row) else 1
         )
-        row = await self._refresh_edit(row)
+        row, _ = await self._refresh_edit(row)
         current = await self._current_revision(row)
         if current is None:
             raise _session_closed(row)
@@ -2482,7 +2482,7 @@ class ConnectSessionService:
             # the request cannot be brought up to date and has to be asked
             # again.
             await self._require_revision_room(row)
-            rebased = await self._rebase_edit(row, live)
+            rebased, _ = await self._rebase_edit(row, live)
             async with self._ctx.control_db.session() as session:
                 revision = await ConnectSessionRevisionRepository.get_by_id(
                     session, rebased, session_id=row.id
@@ -3225,11 +3225,14 @@ class ConnectSessionService:
             raise _session_closed(row)
         await self._require_revision_room(row)
         before = await self._current_revision(row)
-        row = await self._refresh_edit(row)
+        row, rebased = await self._refresh_edit(row)
         current = await self._current_revision(row)
         if current is None:
             raise _session_closed(row)
-        if before is None or before.id != current.id:
+        # Only what this call did: an amend landing in the gap moves the chain
+        # too, and recording that as this caller's rebase names the wrong
+        # actor for the one question the entry exists to answer.
+        if rebased and (before is None or before.id != current.id):
             _logger.info(
                 "connect_session.rebased",
                 session_id=row.id,
@@ -3253,31 +3256,36 @@ class ConnectSessionService:
             session_id=row.id, revision_id=current.id, revision_number=current.number
         )
 
-    async def _refresh_edit(self, row: ConnectSession) -> ConnectSession:
+    async def _refresh_edit(self, row: ConnectSession) -> tuple[ConnectSession, bool]:
         """An open edit rebased onto its binding when the binding moved since.
 
         Called where the caller acts on the session (an amend, a rebase it
         asked for), never from a read: a GET reports ``stale`` instead, so it
-        appends nothing.
+        appends nothing. Returns the session as it stands and whether this
+        call appended the revision it now points at.
         """
         if row.intent != INTENT_EDIT or row.state != "created" or row.baseline is None:
-            return row
+            return row, False
         live = await self._live_binding_snapshot(row)
         if live is None or baseline_matches(row.baseline, live):
-            return row
-        await self._rebase_edit(row, live)
+            return row, False
+        _, rebased = await self._rebase_edit(row, live)
         async with self._ctx.control_db.session() as session:
             fresh = await ConnectSessionRepository.get_by_id(session, row.id)
-        return fresh if fresh is not None else row
+        return (fresh if fresh is not None else row), rebased
 
-    async def _rebase_edit(self, row: ConnectSession, live: dict[str, Any]) -> str:
+    async def _rebase_edit(self, row: ConnectSession, live: dict[str, Any]) -> tuple[str, bool]:
         """Re-resolve the edit's latest ask onto the binding as it is now.
 
         The live binding becomes the baseline and the current revision's
         proposal is resolved against it as a new revision. What follows
         cleanly merges without anyone acting. A rule it names (to remove, or
         to add before) that no longer exists is listed in the proposal's
-        ``conflicts``. Returns the new current revision id.
+        ``conflicts``.
+
+        Returns the current revision id and whether this call is what appended
+        it: at the cap, or when another writer won the race, the chain moved
+        for someone else and a caller must not be recorded as having moved it.
         """
         try:
             async with self._ctx.control_db.transaction() as session:
@@ -3302,7 +3310,7 @@ class ConnectSessionService:
                         session_id=row.id,
                         revision_id=current.id,
                     )
-                    return current.id
+                    return current.id, False
                 request = EditRequest.from_proposal(current.proposal)
                 result, dropped = resolve_edit(live, request, lenient=True, previous=current.result)
                 proposal = {
@@ -3335,7 +3343,7 @@ class ConnectSessionService:
                 session_id=row.id,
                 revision_id=fresh.current_revision_id,
             )
-            return fresh.current_revision_id
+            return fresh.current_revision_id, False
         _logger.info(
             "connect_session.edit_rebased",
             session_id=row.id,
@@ -3343,7 +3351,7 @@ class ConnectSessionService:
             dropped=len(dropped),
             conflicts=len(proposal["conflicts"]),
         )
-        return revision.id
+        return revision.id, True
 
     async def _emit_edit_applied(self, row: ConnectSession, actor_id: str, *, bound: bool) -> None:
         """``credential.permission_rule_set`` (and ``credential.bound_to_agent`` when bound)."""
@@ -3727,11 +3735,21 @@ class ConnectSessionService:
         # continues after its number, which is what the chain is ordered on.
         after = decode_cursor(cursor, id_kind="str").id if cursor is not None else None
         async with self._ctx.control_db.session() as session:
+            if after is not None and not await ConnectSessionRevisionRepository.belongs_to(
+                session, after, session_id=row.id
+            ):
+                # A cursor from another session decodes cleanly and then
+                # matches nothing, so the page would come back empty and read
+                # as a session with no history at all.
+                raise InvalidCursorError("Invalid pagination cursor")
             page = await ConnectSessionRevisionRepository.list_for_session(
                 session, row.id, limit=limit + 1, after_revision_id=after
             )
         has_more = len(page) > limit
         page = page[:limit]
+        # The shared cursor shape carries a timestamp beside the id; only the
+        # id is read here, since the chain is paged on the number that id
+        # resolves to rather than on a clock.
         next_cursor = encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
         return page, has_more, next_cursor
 

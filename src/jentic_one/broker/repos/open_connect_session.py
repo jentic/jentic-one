@@ -69,7 +69,14 @@ class OpenConnectSessionReader:
         return str(row[0]) if row is not None else None
 
     async def find_open_edit_id(self, *, agent_id: str, credential_id: str) -> str | None:
-        """Return the newest open edit of one binding, whoever opened it, or ``None``."""
+        """Return the newest open edit of one binding, whoever opened it, or ``None``.
+
+        Read from the primary, where :meth:`find_session_id` reads a replica.
+        The edit this relays is often seconds old (a human opening a review
+        for the agent that was just denied), and a replica that has not caught
+        up would answer "none", sending the agent to file a second request for
+        a change already waiting.
+        """
         async with self._control_db.session() as session:
             row = (
                 await session.execute(

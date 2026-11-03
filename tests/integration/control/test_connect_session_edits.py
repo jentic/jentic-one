@@ -1459,6 +1459,48 @@ async def test_a_rule_set_reach_window_filled_by_unreadable_rows_is_not_reported
             await session.execute(delete(Credential).where(Credential.id.in_(strangers)))
 
 
+async def test_a_rebase_that_appended_nothing_records_no_one(
+    integration_context: Context, binding: str
+) -> None:
+    """The audit answers who moved the request, so it must not guess.
+
+    An amend landing between the read and the rebase moves the chain too.
+    Keyed on the revision pointer alone, this caller is recorded as having
+    rebased a revision somebody else wrote, which is the wrong actor for the
+    one question the entry exists to answer.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    # The ask moves under the caller, with the binding left where it was, so
+    # the rebase finds nothing to do.
+    amended = await svc.amend_session(
+        created.session_id,
+        identity=_AGENT_IDENTITY,
+        amend=SessionAmend(fields=frozenset({"reason"}), reason="also the drafts"),
+    )
+    rebased = await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
+    assert rebased.revision_id == amended.revision_id
+
+    async with ctx.admin_db.session() as session:
+        entries = [
+            e
+            for e in (await session.execute(select(AuditEntry))).scalars().all()
+            if e.target_id == created.session_id and e.action == AuditAction.UPDATE.value
+        ]
+        events = [
+            e
+            for e in (await session.execute(select(Event))).scalars().all()
+            if e.type == EventType.CONNECT_SESSION_AMENDED
+            and (e.data or {}).get("session_id") == created.session_id
+        ]
+    # One of each, for the amend that did move it, named as the agent's.
+    assert [(e.actor_id, (e.after or {}).get("revision_id")) for e in entries] == [
+        (_AGENT, amended.revision_id)
+    ]
+    assert [e.actor_id for e in events] == [_AGENT]
+
+
 async def test_a_rule_set_reach_applies_each_credentials_own_visibility_rule(
     integration_context: Context, binding: str
 ) -> None:

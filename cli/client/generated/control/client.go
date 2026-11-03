@@ -9031,7 +9031,7 @@ type SessionApiReferenceResponse struct {
 
 // SessionRevisionListResponse A session's revisions, oldest first, one page at a time.
 //
-// Examples: {"data":[{"created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","id":"csr_6968b3983b8b91c75627bee6","number":1,"proposal":{"reason":"needs issue access","requested_permission_rules":[],"requested_scopes":["repo","read:user"]},"result":{"rules":[],"scopes":["repo","read:user"]}}],"has_more":false,"limit":50,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","id":"csr_6968b3983b8b91c75627bee6","number":1,"proposal":{"reason":"needs issue access","requested_permission_rules":[],"requested_scopes":["repo","read:user"]},"result":{"rules":[],"scopes":["repo","read:user"]}}],"has_more":false,"limit":50,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiY3NyXzY5NjhiMzk4NGQxYzIzOGRiZTdlMmUyOSJ9"}
 type SessionRevisionListResponse struct {
 	// Data Examples: [{"created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","id":"csr_6968b3983b8b91c75627bee6","number":1,"proposal":{"reason":"needs issue access","requested_permission_rules":[],"requested_scopes":["repo","read:user"]},"result":{"rules":[],"scopes":["repo","read:user"]}}]
 	Data []SessionRevisionResponse `json:"data"`
@@ -9048,7 +9048,7 @@ type SessionRevisionListResponse struct {
 
 	// NextCursor Opaque cursor for the next page; null when this is the last one.
 	//
-	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiY3NyXzY5NjhiMzk4NGQxYzIzOGRiZTdlMmUyOSJ9
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 

@@ -134,6 +134,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.pagination import InvalidCursorError, encode_cursor
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
 from tests.harness.http_doubles import spec_client
@@ -3259,6 +3260,37 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
         identity=Identity(sub=_USER_ID, permissions=["events:read"]),
     )
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
+
+
+async def test_a_cursor_from_another_session_is_refused_not_answered_empty(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A cursor names a revision of this session, and only this session.
+
+    One from another decodes cleanly and resolves to nothing, so the page
+    comes back empty: a caller following it reads a session with no history,
+    which is indistinguishable from one that has none.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    mine = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    theirs = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    foreign = encode_cursor(datetime.now(UTC), await _revision(ctx, theirs.session_id))
+    with pytest.raises(InvalidCursorError):
+        await svc.list_revisions(
+            mine.session_id,
+            poll_token=mine.poll_token,
+            identity=_AGENT_IDENTITY,
+            limit=50,
+            cursor=foreign,
+        )
 
 
 async def test_a_rebase_of_a_session_in_its_vendor_step_is_the_documented_409(

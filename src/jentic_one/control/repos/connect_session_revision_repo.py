@@ -77,6 +77,22 @@ class ConnectSessionRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def belongs_to(session: AsyncSession, revision_id: str, *, session_id: str) -> bool:
+        """Whether ``revision_id`` is a revision of ``session_id``.
+
+        A page cursor names a revision the caller already has. One from
+        another session decodes cleanly and then resolves to nothing, so the
+        page comes back empty and reads as a session with no history; the
+        caller is told its cursor is invalid instead.
+        """
+        result = await session.execute(
+            select(ConnectSessionRevision.id)
+            .where(ConnectSessionRevision.id == revision_id)
+            .where(ConnectSessionRevision.session_id == session_id)
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def list_for_session(
         session: AsyncSession,
         session_id: str,
