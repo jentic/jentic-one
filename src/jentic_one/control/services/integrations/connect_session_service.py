@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import structlog
@@ -712,17 +712,6 @@ def _require_rules_present(baseline: Mapping[str, Any], rules: Sequence[Any]) ->
     """
     if not rules and target_rules(baseline)[1]:
         raise RulesRequiredError()
-
-
-def _rules_moved(before: Mapping[str, Any], live: Mapping[str, Any]) -> bool:
-    """Whether the rule list an edit changes moved from ``before`` to ``live``."""
-    before_set = (before.get("rule_set") or {}).get("id")
-    live_set = (live.get("rule_set") or {}).get("id")
-    if before_set != live_set:
-        return True
-    was = [rule_content(r) for r in target_rules(before)[1]]
-    now = [rule_content(r) for r in target_rules(live)[1]]
-    return was != now
 
 
 #: ``error_code`` of a session a human explicitly rejected.
@@ -2067,7 +2056,7 @@ class ConnectSessionService:
             if row.agent_id is None or "dedupe_key" not in fields:
                 # An edit's ``fields`` never carries a dedupe key, so this is
                 # the revision index: another writer appended first and the ask
-                # has moved. Asserting the key here made that a 500.
+                # has moved. Asserting the key instead would make that a 500.
                 async with self._ctx.control_db.session() as session:
                     latest = await ConnectSessionRepository.get_by_id(session, row.id)
                     raise await _revision_changed(
@@ -2404,7 +2393,7 @@ class ConnectSessionService:
                 resume=request.resume,
                 confirmed_scopes=None,
             )
-            await self._write_change(session, row, change)
+            change, _ = await self._write_change(session, row, change)
         await self._apply_admin_change(row, change)
         await self._record_change_applied(row, change, origin=identity.origin.value)
         _logger.info(
@@ -2518,7 +2507,7 @@ class ConnectSessionService:
                 if current is not None and current.state == "created":
                     raise await _revision_changed(session, row.id, current.current_revision_id)
                 raise InvalidStateTransitionError(row.id, row.state, "confirm")
-            await self._write_change(session, row, change)
+            change, _ = await self._write_change(session, row, change)
         await self._apply_admin_change(row, change)
         await self._record_change_applied(row, change, origin=identity.origin.value)
         return ConnectedConfirmResult(credential_id=row.credential_id)
@@ -2869,38 +2858,59 @@ class ConnectSessionService:
         row: ConnectSession,
         change: dict[str, Any],
         *,
-        refuse_if_rules_moved: bool = True,
-    ) -> None:
+        on_rules_moved: Literal["refuse", "reopen"] = "refuse",
+    ) -> tuple[dict[str, Any], bool]:
         """Write an approved change's rules, record its outcome and close the session.
 
         ``keep_rules`` leaves the rules as they are (the approved ones were for
-        rules that moved since).
+        rules that moved since). Returns the change as written, which the
+        caller's admin-DB half and audit entry must use, and whether the
+        session was reopened instead of closed.
 
         The rules are replaced by a delete and re-insert, and whether they may
-        be replaced was decided by a read before this transaction. So the
-        binding is locked here and the rules are read again inside it: two
-        landings would otherwise both pass their own check and the later one
-        would revert the earlier, with both recording success.
-        ``refuse_if_rules_moved`` says what to do when they have moved: a
-        confirm refuses so its approver re-reads, while a landing grant keeps
-        the rules it found and leaves the rule change to be reviewed again.
+        be replaced was decided by a read before this transaction. So what the
+        write touches is locked here and the rules are read again inside it:
+        two landings would otherwise both pass their own check and the later
+        one would revert the earlier, with both recording success. A write to a
+        shared set takes the set's lock, not the binding's: the bindings are
+        different rows, the set is the one they share.
+
+        ``on_rules_moved`` says what to do when they have moved. A confirm
+        refuses, so its approver re-reads. A landing grant keeps the rules it
+        found, since its own vendor step has to land, and reopens the session
+        when that discards a rule change its approver made: dropping the
+        decision and recording the change as applied would lose it for good.
         """
         assert row.agent_id is not None
         writes_rules = not change.get("keep_rules")
         if writes_rules:
-            await AgentPermissionRuleRepository.acquire_binding_lock(
-                session, row.agent_id, row.credential_id
-            )
+            await self._lock_rule_targets(session, row, change)
             if row.baseline is not None and await self._rules_moved_in(session, row):
-                if refuse_if_rules_moved:
+                if on_rules_moved == "refuse":
                     raise BaselineChangedError(row.id, row.current_revision_id or "", None)
+                _, approved_from = target_rules(row.baseline)
+                reopen = change["rules"] != [rule_to_write(r) for r in approved_from]
                 _logger.info(
                     "connect_session.edit_rules_kept_moved_under_write",
                     session_id=row.id,
                     credential_id=row.credential_id,
+                    reopened=reopen,
                 )
                 change = {**change, "keep_rules": True, "detach_rule_set": False}
                 writes_rules = False
+                if reopen:
+                    # The rules the approver chose cannot be written and are
+                    # not theirs to drop: the session goes back to its review
+                    # with the grant in place, rather than reporting a change
+                    # it never made.
+                    await ConnectSessionRepository.update_fields(
+                        session,
+                        row.id,
+                        state="created",
+                        approved_change=None,
+                        resolved_flow=EDIT_FLOW,
+                    )
+                    return change, True
         if not writes_rules:
             pass  # rewriting them would also re-id them under other open edits
         elif change["rule_set_id"] is not None:
@@ -2924,6 +2934,28 @@ class ConnectSessionService:
             credential_id=row.credential_id,
         )
         await ConnectSessionRepository.delete(session, row.id)
+        return change, False
+
+    async def _lock_rule_targets(
+        self, session: Any, row: ConnectSession, change: dict[str, Any]
+    ) -> None:
+        """Lock what the rules read and the rules write both touch.
+
+        The two can differ: copying a curated set onto the binding reads the
+        set (to see whether it moved) and writes the binding's own rows. Sets
+        are taken before bindings, and sets among themselves in id order, so
+        every caller takes them in one order.
+        """
+        assert row.agent_id is not None
+        baseline_set = (row.baseline or {}).get("rule_set") or {}
+        read_set_id = baseline_set.get("id")
+        write_set_id = change["rule_set_id"]
+        for rule_set_id in sorted({read_set_id, write_set_id} - {None}):
+            await PermissionRuleSetRepository.acquire_rules_lock(session, rule_set_id)
+        if read_set_id is None or write_set_id is None:
+            await AgentPermissionRuleRepository.acquire_binding_lock(
+                session, row.agent_id, row.credential_id
+            )
 
     async def _apply_admin_change(self, row: ConnectSession, change: dict[str, Any]) -> None:
         """The admin-DB half of an approved change: bind, detach a curated set, resume."""
@@ -3095,9 +3127,9 @@ class ConnectSessionService:
     async def _rules_moved_in(self, session: Any, row: ConnectSession) -> bool:
         """Whether the rules an edit changes have moved, read in ``session``.
 
-        The same comparison :func:`_rules_moved` makes, but on rows read inside
-        the caller's transaction, so the answer cannot go stale before the
-        write it guards.
+        Read inside the caller's transaction, under the lock the write takes,
+        so the answer cannot go stale between the check and the write it
+        guards.
         """
         assert row.baseline is not None and row.agent_id is not None
         rule_set = row.baseline.get("rule_set")
@@ -3877,11 +3909,14 @@ class ConnectSessionService:
                     owner_id=None,
                     status=r.agent_status,
                 )
-            # Counted on the agents the set reaches that this caller may be
-            # told about, not on the rows read: the unreadable ones are not
-            # reach it is being under-told about.
-            if len(reached) > _BOUND_AGENTS_LIMIT:
+            # Two questions, and the window answers only one of them. Whether
+            # the list is complete is whether the window saturated: the rows
+            # beyond it are unread, so whether any of them is readable is
+            # unknown, and a window filled by unreadable rows would otherwise
+            # report "reaches no other agent" exactly.
+            if len(rows) >= _BOUND_AGENTS_LIMIT + 2 or len(reached) > _BOUND_AGENTS_LIMIT:
                 truncated = True
+            if len(reached) > _BOUND_AGENTS_LIMIT:
                 reached = {
                     agent_id: reached[agent_id]
                     for agent_id in sorted(reached)[:_BOUND_AGENTS_LIMIT]
@@ -5668,32 +5703,24 @@ class ConnectSessionService:
                 "error_code": "scopes_not_removed",
             }
 
-        # The rules were approved against the binding as it was. If they moved
-        # while the grant was out, writing them would undo that change: the
-        # grant still lands, and the rules are left for the reviewer again.
-        reopen = False
-        if row.baseline is not None and not change["bind"]:
-            live = await self._live_binding_snapshot(row)
-            if live is not None and _rules_moved(row.baseline, live):
-                _, before = target_rules(row.baseline)
-                reopen = change["rules"] != [rule_to_write(r) for r in before]
-                change = {**change, "keep_rules": True, "detach_rule_set": False}
-
         # The grant, the state swap and the rules commit together. Written
         # before the swap, a grant outlived a session cancelled or expired
         # while the exchange was in flight: the callback reported failure and
         # the wider token stayed, reaching every agent bound to the credential.
-        reopen_fields: dict[str, Any] = (
-            {"approved_change": None, "resolved_flow": EDIT_FLOW} if reopen else {}
-        )
+        #
+        # Whether the rules moved while the grant was out is decided inside
+        # that transaction, under the lock the write takes: read before it, the
+        # answer could change under the write, and the session would either
+        # revert a direct change or close having silently dropped the one its
+        # approver made.
+        reopen = False
         try:
             async with self._ctx.control_db.transaction() as session:
                 won = await ConnectSessionRepository.transition_state(
                     session,
                     row.id,
-                    to_state="created" if reopen else change["outcome"],
+                    to_state=change["outcome"],
                     from_states=("polling",),
-                    **reopen_fields,
                 )
                 if won:
                     if not scopes_kept:
@@ -5706,8 +5733,9 @@ class ConnectSessionService:
                             close_session_id=None,
                             in_session=session,
                         )
-                    if not reopen:
-                        await self._write_change(session, row, change, refuse_if_rules_moved=False)
+                    change, reopen = await self._write_change(
+                        session, row, change, on_rules_moved="reopen"
+                    )
         except TokenEndpointMovedError as exc:
             return await self._fail_token_endpoint_moved(row, exc)
         if not won:

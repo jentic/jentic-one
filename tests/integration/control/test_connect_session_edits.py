@@ -30,6 +30,7 @@ from jentic_one.control.repos.connect_session_repo import ConnectSessionReposito
 from jentic_one.control.repos.connect_session_revision_repo import (
     ConnectSessionRevisionRepository,
 )
+from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
@@ -1301,3 +1302,125 @@ async def test_a_reach_wider_than_the_cap_says_so(
                 text("DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_cse_many_%'")
             )
             await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_many_%'"))
+
+
+async def test_a_shared_set_write_locks_the_set_the_bindings_share(
+    integration_context: Context, binding: str
+) -> None:
+    """The lock has to cover the rows the write replaces.
+
+    A shared set's rules are one list every binding pointing at it reads, so
+    two confirms on two bindings of one set take disjoint binding locks,
+    serialise on nothing, and the later one reverts the earlier with both
+    recording success. Copying a curated set reads the set and writes the
+    binding, so it takes both, sets first.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    admin = Identity(sub="usr_cse_admin", email="admin@test.local", permissions=["org:admin"])
+    taken: list[str] = []
+
+    async def record_set(session: Any, rule_set_id: str) -> None:
+        taken.append(f"set:{rule_set_id}")
+
+    async def record_binding(session: Any, agent_id: str, credential_id: str) -> None:
+        taken.append(f"binding:{agent_id}:{credential_id}")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(PermissionRuleSetRepository, "acquire_rules_lock", record_set)
+    monkeypatch.setattr(AgentPermissionRuleRepository, "acquire_binding_lock", record_binding)
+    try:
+        shared = await _attach_rule_set(ctx, binding, curated=False)
+        created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+        await svc.confirm_edit(
+            created.session_id,
+            poll_token=None,
+            identity=admin,
+            revision_id=created.revision_id,
+            permission_rules=[_READ, _SEND],
+            resume=False,
+        )
+        # The set is both read and written: its lock alone serialises it.
+        assert taken == [f"set:{shared}"]
+
+        taken.clear()
+        curated = await _attach_rule_set(ctx, binding, curated=True)
+        copied = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND | {"path": "/v2/"})]))
+        await svc.confirm_edit(
+            copied.session_id,
+            poll_token=None,
+            identity=admin,
+            revision_id=copied.revision_id,
+            permission_rules=[_READ, _SEND | {"path": "/v2/"}],
+            resume=False,
+        )
+        # Read from the set, written to the binding: both, in one order.
+        assert taken == [f"set:{curated}", f"binding:{_AGENT}:{binding}"]
+    finally:
+        monkeypatch.undo()
+
+
+async def test_a_rule_set_reach_window_filled_by_unreadable_rows_is_not_reported_as_exact(
+    integration_context: Context, binding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whether the list is complete is whether the window saturated.
+
+    The rows past the window are unread, so whether any of them is readable
+    is unknown. Counted on the survivors alone, a window filled by rows on
+    credentials this reader cannot see reports "reaches no other agent"
+    exactly, while readable agents sit outside it.
+    """
+    monkeypatch.setattr(connect_session_service, "_BOUND_AGENTS_LIMIT", 1)
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    rule_set_id = await _attach_rule_set(ctx, binding, curated=False)
+    strangers = []
+    for n in (1, 2):
+        theirs = await CredentialService(ctx).create(
+            CredentialCreate(
+                type=CredentialType.BEARER_TOKEN,
+                name=f"cse stranger credential {n}",
+                api=APIReference(vendor="acme-com", name="widgets", version="v1"),
+                token=f"sk-stranger-{n}",
+            ),
+            identity=_OTHER,
+        )
+        strangers.append(theirs.credential_id)
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                    f"VALUES ('agnt_cse_hidden_{n}', 'hidden {n}', :u, :u, 'approved')"
+                ),
+                {"u": _OTHER_SUB},
+            )
+            await AgentCredentialBindingRepository.bind(
+                session,
+                agent_id=f"agnt_cse_hidden_{n}",
+                credential_id=theirs.credential_id,
+                created_by=_OTHER_SUB,
+            )
+            await PrerequisiteRepository.set_binding_rule_set(
+                session,
+                agent_id=f"agnt_cse_hidden_{n}",
+                credential_id=theirs.credential_id,
+                rule_set_id=rule_set_id,
+            )
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    try:
+        review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+        assert review.edit is not None
+        # Named: none of them, since none is on a credential this reader has.
+        assert review.edit.other_bound_agents == []
+        # Said: the list is not the whole of the reach.
+        assert review.edit.other_bound_agents_truncated is True
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_cse_hidden_%'"
+                )
+            )
+            await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_hidden_%'"))
+        async with ctx.control_db.transaction() as session:
+            await session.execute(delete(Credential).where(Credential.id.in_(strangers)))

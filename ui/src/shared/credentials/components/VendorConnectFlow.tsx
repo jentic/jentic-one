@@ -1714,7 +1714,8 @@ function EditApproveFlow({
 		} catch (err) {
 			// A refusal (the request closed under them, the chain full, the
 			// bucket spent) leaves the diff as it is and says so: the banner
-			// still offers the action, so saying nothing read as a dead button.
+			// goes on offering the action, so saying nothing reads as a dead
+			// button.
 			setError(err instanceof Error ? err.message : 'The request couldn’t be updated.');
 			return;
 		}

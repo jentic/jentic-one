@@ -460,8 +460,8 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 	});
 
 	it('banners a rebase that lands over an amend the reviewer has not seen', async () => {
-		// Adopted as their own revision, the acknowledgement of the amend
-		// disappeared and Approve came back for an ask never shown to them.
+		// Adopted as their own revision, it clears the acknowledgement of the
+		// amend and re-enables Approve for an ask never shown to them.
 		const seeded = seedEdit(editBlock());
 		seeded.stale = true;
 		worker.use(

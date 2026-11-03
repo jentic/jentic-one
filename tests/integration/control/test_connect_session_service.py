@@ -3197,6 +3197,98 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
 
 
+async def test_rules_moving_under_the_landing_write_never_reports_a_change_it_dropped(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Whether the rules moved is decided under the lock the write takes.
+
+    Read before the transaction, the answer can change under the write: the
+    landing then keeps the rules it finds, records the change as applied and
+    deletes the session, so the rule change its approver made is lost with
+    nothing left to recover it from. Here the move is injected inside the
+    lock, where only the in-transaction answer can see it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)], add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with patch.object(ConnectSessionService, "_rules_moved_in", new=AsyncMock(return_value=True)):
+        await _land_grant(svc, credential_id)
+
+    # The grant is in, the rules are not written, and the ask is back on its
+    # review rather than closed as applied.
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    assert await _paths(ctx, credential_id) == ["/repos"]
+    again = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert again.edit is not None and again.state == "created"
+    assert again.edit.needs_vendor_consent is False
+
+
+async def test_a_scopes_only_landing_closes_even_when_the_rules_moved(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Nothing is lost when the approver changed no rule, so nothing reopens.
+
+    The other arm of the same decision: the rules are kept, the grant lands,
+    and the session closes applied, rather than sending a scopes-only ask
+    back for a review with nothing left to decide.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with patch.object(ConnectSessionService, "_rules_moved_in", new=AsyncMock(return_value=True)):
+        await _land_grant(svc, credential_id)
+
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "applied"
+
+
 async def test_a_refused_apply_leaves_no_open_session_behind(
     integration_context: Context,
     seed_test_vendors: None,
@@ -3250,9 +3342,9 @@ async def test_a_widening_apply_that_strips_every_rule_spends_no_quota(
     """The pre-check carries every refusal the widening branch can raise.
 
     Stripping the rules is default deny, and it is refused while building the
-    change the widening branch writes the session for first. The pre-check
-    covered the scope and rule-set refusals only, so this one still left an
-    open session behind against the agent's quota.
+    change the widening branch writes the session for first. A pre-check
+    covering only the scope and rule-set refusals leaves this one to refuse
+    after the write, with an open session behind it against the agent's quota.
     """
     ctx = integration_context
     svc = ConnectSessionService(ctx)

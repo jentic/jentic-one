@@ -256,8 +256,8 @@ async def test_the_edit_tools_apply_the_routes_bounds() -> None:
         {"credential_id": "cred_1", "scopes": {"add": ["a"], "comments": {"a": "x" * 501}}},
         # A scalar where a list belongs was an unhandled TypeError.
         {"credential_id": "cred_1", "rules": {"add": 5}},
-        # ``before`` takes a rule id. A list reached the set lookup in
-        # resolve_edit as an unhashable type, with the bucket already spent.
+        # ``before`` takes a rule id. A list reaches resolve_edit's set lookup
+        # as an unhashable type, with the bucket already spent.
         {"credential_id": "cred_1", "rules": {"add": [{"rule": rule, "before": ["apr_1"]}]}},
         {"credential_id": "cred_1", "rules": {"add": [{"rule": rule, "before": "a" * 31}]}},
     ]
