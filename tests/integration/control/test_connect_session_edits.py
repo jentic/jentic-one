@@ -56,6 +56,7 @@ from jentic_one.control.services.integrations.errors import (
     RevisionChangedError,
     RuleSetConfirmForbiddenError,
     RulesRequiredError,
+    ScopesNotSupportedError,
     SessionClosedError,
     TooManyRevisionsError,
     UnknownRuleError,
@@ -1526,3 +1527,32 @@ async def test_a_rule_set_reach_applies_each_credentials_own_visibility_rule(
             await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_theirs'"))
         async with ctx.control_db.transaction() as session:
             await session.execute(delete(Credential).where(Credential.id == theirs.credential_id))
+
+
+async def test_an_apply_asking_scopes_of_a_credential_that_has_none_spends_no_quota(
+    integration_context: Context, binding: str
+) -> None:
+    """The other refusal a scope change can draw, before the session is written.
+
+    A static credential has no consent to re-run, so there is nothing to ask
+    the vendor for. Refused after the write, each attempt leaves an open
+    session against the agent's quota.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    for _ in range(3):
+        with pytest.raises(ScopesNotSupportedError):
+            await svc.create_edit_session(
+                credential_id=binding,
+                agent_id=_AGENT,
+                identity=_OWNER,
+                request=EditRequest(add_scopes=["mail.send"]),
+                apply=True,
+            )
+    async with ctx.control_db.session() as session:
+        assert (
+            await ConnectSessionRepository.get_open_edit(
+                session, agent_id=_AGENT, credential_id=binding, initiator_actor_id=_OWNER_SUB
+            )
+            is None
+        )

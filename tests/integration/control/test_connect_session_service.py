@@ -96,6 +96,7 @@ from jentic_one.control.services.integrations.errors import (
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
+    SessionClosedError,
     TooManyRevisionsError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport, SuccessTokens
@@ -2794,7 +2795,8 @@ async def test_only_the_initiator_or_an_approver_amends_a_users_own_session(
     so the amend takes the approver gate, not the ``can_confirm`` view helper
     (which answers True for every human once a session names no agent).
     """
-    svc = ConnectSessionService(integration_context)
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
     mine = await svc.create_session(
         vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY, requested_scopes=["repo"]
     )
@@ -2820,6 +2822,23 @@ async def test_only_the_initiator_or_an_approver_amends_a_users_own_session(
         amend=SessionAmend(fields=frozenset({"reason"}), reason="admin note"),
     )
     assert by_admin.revision_number == 3
+
+    # A person's own request has no agent, and the change still reaches the
+    # rail: dropped for want of one, it belonged nowhere. The summary and the
+    # created_by fall back to the initiator.
+    async with ctx.admin_db.session() as session:
+        events = [
+            e
+            for e in (await session.execute(select(Event))).scalars().all()
+            if e.type == EventType.CONNECT_SESSION_AMENDED
+            and (e.data or {}).get("session_id") == mine.session_id
+        ]
+    assert [(e.created_by, e.actor_id, (e.data or {})["number"]) for e in events] == [
+        (_USER_ID, _USER_ID, 2),
+        (_USER_ID, _ADMIN_IDENTITY.sub, 3),
+    ]
+    assert all(e.data is not None and e.data["agent_id"] is None for e in events)
+    assert all("connect request changed" in e.summary for e in events)
 
 
 async def test_a_human_who_does_not_own_the_credential_cannot_resume_a_binding(
@@ -3195,6 +3214,45 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
         identity=Identity(sub=_USER_ID, permissions=["events:read"]),
     )
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
+
+
+async def test_a_rebase_of_a_session_in_its_vendor_step_is_the_documented_409(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """``:rebase`` takes an open edit, and only before its vendor step.
+
+    Once a confirm has sent the approver to the vendor, the ask is settled and
+    the rules are waiting on the grant, so re-resolving it would move what is
+    already being written. The route documents that 409 and the vendored
+    clients carry it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)], add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with pytest.raises(SessionClosedError):
+        await svc.rebase_session(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
 
 
 async def test_rules_moving_under_the_landing_write_never_reports_a_change_it_dropped(
