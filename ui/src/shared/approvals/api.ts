@@ -9,8 +9,8 @@
  * nav badge are shell chrome; one held call's detail lives under
  * `sharedQueryKeys.approvalsRoot` (see `hooks.ts`).
  */
-import { useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useMemo } from 'react';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useNow } from '@/shared/app/rail/useNow';
 import {
 	HeldExecutionState,
@@ -113,6 +113,78 @@ export function usePendingApprovals(options?: { enabled?: boolean }) {
 		refetchInterval: REFETCH_MS,
 		select,
 	});
+}
+
+/**
+ * Under the approvals root, which a decision and every approval event on the
+ * stream refresh along with the waiting list, so a decided call moves from
+ * Waiting to Decided at once. Not under the attention root: the agent and
+ * OAuth events that refresh it would re-read every loaded page for nothing.
+ */
+export const decidedApprovalsKey = [...sharedQueryKeys.approvalsRoot, 'decided'] as const;
+
+/** Rows per read of the decided history. */
+const DECIDED_PAGE_LIMIT = 25;
+
+interface DecidedPage {
+	calls: HeldExecutionResponse[];
+	nextCursor: string | null;
+}
+
+/**
+ * A call that no longer waits: decided, expired or withdrawn. A pending row
+ * past its window counts as expired, so it is never missing from both lists
+ * while the expiry sweep catches up.
+ */
+const isSettled = (row: HeldExecutionResponse, now: number) =>
+	row.state !== HeldExecutionState.PENDING || !stillDecidable(row, now);
+
+/**
+ * One page of the decided history, newest asked first. The list endpoint has
+ * no "settled only" filter, so waiting rows are dropped here, and a read that
+ * finds only waiting rows reads on (up to `MAX_PAGES`) rather than come back
+ * empty with more to show.
+ */
+async function listDecidedPage(cursor: string | null): Promise<DecidedPage> {
+	const calls: HeldExecutionResponse[] = [];
+	let next = cursor;
+	for (let page = 0; page < MAX_PAGES; page++) {
+		const res = await HeldExecutionsService.listHeldExecutions({
+			limit: DECIDED_PAGE_LIMIT,
+			cursor: next,
+		});
+		const now = Date.now();
+		calls.push(...res.data.map(normaliseHeldCall).filter((row) => isSettled(row, now)));
+		next = res.has_more && res.next_cursor ? res.next_cursor : null;
+		if (calls.length > 0 || !next) break;
+	}
+	return { calls, nextCursor: next };
+}
+
+/**
+ * The held calls that no longer wait on anyone, newest asked first, for the
+ * Inbox's Decided view: every one the viewer can see (their own agents', or
+ * every agent's for an `org:admin`). Read only while `enabled`; "Show more"
+ * is `fetchNextPage`.
+ */
+export function useDecidedApprovals(options?: { enabled?: boolean }) {
+	const query = useInfiniteQuery({
+		queryKey: decidedApprovalsKey,
+		queryFn: ({ pageParam }) => listDecidedPage(pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => last.nextCursor,
+		enabled: options?.enabled ?? true,
+		staleTime: 30_000,
+	});
+	const { data } = query;
+	// Each call once: a call decided between two reads can sit on both pages.
+	const calls = useMemo(() => {
+		const seen = new Set<string>();
+		return (data?.pages ?? [])
+			.flatMap((page) => page.calls)
+			.filter((call) => !seen.has(call.id) && !!seen.add(call.id));
+	}, [data]);
+	return { ...query, calls };
 }
 
 /**

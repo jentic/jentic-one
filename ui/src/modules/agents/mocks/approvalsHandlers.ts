@@ -257,10 +257,20 @@ export const approvalsHandlers = [
 		const params = new URL(request.url).searchParams;
 		const state = params.get('state');
 		const agentId = params.get('agent_id');
-		const data = store
+		// Newest first, paged by `limit` with an offset for a cursor, as the
+		// real endpoint pages.
+		const rows = store
 			.filter((r) => (!state || r.state === state) && (!agentId || r.agent_id === agentId))
-			.map(listView);
-		return HttpResponse.json({ data, has_more: false, next_cursor: null });
+			.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+		const limit = Number(params.get('limit') ?? 25) || 25;
+		const offset = Number(params.get('cursor') ?? 0) || 0;
+		const page = rows.slice(offset, offset + limit);
+		const more = offset + limit < rows.length;
+		return HttpResponse.json({
+			data: page.map(listView),
+			has_more: more,
+			next_cursor: more ? String(offset + limit) : null,
+		});
 	}),
 	http.get('/executions/holds/:id', ({ params }) => {
 		const row = store.find((r) => r.id === params.id);

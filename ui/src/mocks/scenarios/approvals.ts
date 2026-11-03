@@ -30,6 +30,10 @@ import { clearApprovalsStore, seedMockApproval } from '@/modules/agents/mocks/ap
 
 /** The mock signed-in admin (resolves in the actor directory). */
 const ADMIN = 'usr_000000000000000000000admin';
+/** The signed-in viewer (`/users/me`): what they decided reads "you". */
+const VIEWER = '00000000-0000-0000-0000-000000000001';
+/** A second admin, who decided some of the history. */
+const PRIYA = 'usr_00000000000000000000priya';
 
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 /** A pending hold's window: 24h from when it was held. */
@@ -227,6 +231,102 @@ function seedHolds(
 	}
 }
 
+/** One settled call in the Decided history, `askedMinutesAgo` after its case's ask. */
+interface SettledCase {
+	ask: AskCase;
+	askedMinutesAgo: number;
+	state: 'approved' | 'denied' | 'expired' | 'withdrawn';
+	/** Where an approved call went. */
+	ran?: 'completed' | 'failed';
+	by?: string;
+	reason?: string;
+}
+
+function seedSettled(
+	agent: (typeof AGENTS)[number],
+	credentialId: string,
+	host: string,
+	api: { vendor: string; name: string; version: string },
+	cases: SettledCase[],
+	idPrefix: string,
+): void {
+	cases.forEach((c, i) => {
+		const id = `held_${idPrefix}_${i + 1}`;
+		const asked = c.askedMinutesAgo;
+		const decided = c.state === 'approved' || c.state === 'denied';
+		seedMockApproval({
+			id,
+			job_id: `job_${id}`,
+			agent_id: agent.id,
+			agent_name: agent.name,
+			agent_owner_id: ADMIN,
+			credential_id: credentialId,
+			api_vendor: api.vendor,
+			api_name: api.name,
+			api_version: api.version,
+			operation_id: c.ask.operationId,
+			method: c.ask.method,
+			path: c.ask.path,
+			matched_rule_id: c.ask.ruleId,
+			state: c.state,
+			execution_status: c.state === 'approved' ? (c.ran ?? 'completed') : 'failed',
+			created_at: minutesAgo(asked),
+			// A 24h window; an expired call ran out of it.
+			expires_at: minutesAgo(asked - 24 * 60),
+			decided_at: decided ? minutesAgo(asked - 9) : null,
+			decided_by: decided ? (c.by ?? VIEWER) : null,
+			decision_reason: c.reason ?? null,
+			updated_at: c.state === 'withdrawn' ? minutesAgo(asked - 30) : null,
+			request: {
+				method: c.ask.method,
+				url: `https://${host}${c.ask.path}`,
+				body: c.ask.body ? JSON.stringify(c.ask.body) : null,
+				body_truncated: false,
+			},
+			agent_reason: c.ask.reason ?? null,
+		});
+	});
+}
+
+/** The billing agent's history: one of each ending, then a run of routine approvals. */
+function billingHistory(): SettledCase[] {
+	const [charge, refund, , payout] = BILLING_ASKS;
+	const named: SettledCase[] = [
+		{ ask: charge, askedMinutesAgo: 180, state: 'approved' },
+		{
+			ask: refund,
+			askedMinutesAgo: 300,
+			state: 'denied',
+			by: PRIYA,
+			reason: 'Support is already refunding this in ticket #4821.',
+		},
+		{ ask: payout, askedMinutesAgo: 26 * 60, state: 'expired' },
+	];
+	// Older, routine approvals: enough history to page through.
+	const routine = Array.from({ length: 24 }, (_, i): SettledCase => ({
+		ask: i % 3 === 0 ? refund : charge,
+		askedMinutesAgo: 30 * 60 + i * 4 * 60,
+		state: 'approved',
+		by: i % 4 === 0 ? PRIYA : VIEWER,
+	}));
+	return [...named, ...routine];
+}
+
+/** The release agent's history. */
+function releaseHistory(): SettledCase[] {
+	const [merge, release, deleteBranch] = RELEASE_ASKS;
+	return [
+		{ ask: merge, askedMinutesAgo: 22 * 60, state: 'approved', ran: 'failed', by: PRIYA },
+		{ ask: release, askedMinutesAgo: 2 * 24 * 60, state: 'withdrawn' },
+		{
+			ask: deleteBranch,
+			askedMinutesAgo: 3 * 24 * 60,
+			state: 'denied',
+			reason: 'Keep release/4.11 until the hotfix ships.',
+		},
+	];
+}
+
 /**
  * `GET /apis/{vendor}/{name}/{version}/operations` for the scenario's two APIs:
  * one row per held call's operation, named by its spec summary. Other APIs
@@ -279,15 +379,22 @@ export function installApprovalsScenario(): void {
 			has_api_key: true,
 		})),
 	);
-	seedMockActors(
-		AGENTS.map((a) => ({
+	seedMockActors([
+		...AGENTS.map((a) => ({
 			id: a.id,
 			actor_type: 'agent',
 			name: a.name,
 			active: true,
 			created_at: minutesAgo(a.created),
 		})),
-	);
+		{
+			id: PRIYA,
+			actor_type: 'user',
+			name: 'Priya Shah',
+			active: true,
+			created_at: minutesAgo(90 * 24 * 60),
+		},
+	]);
 
 	const [docs, billing, release] = AGENTS;
 	const servesStripe = [{ api_vendor: 'stripe', api_name: 'stripe-api', api_version: null }];
@@ -342,6 +449,8 @@ export function installApprovalsScenario(): void {
 
 	seedHolds(billing, 'cred_stripe_1', 'api.stripe.com', STRIPE, BILLING_ASKS);
 	seedHolds(release, 'cred_github_1', 'api.github.com', GITHUB, RELEASE_ASKS);
+	seedSettled(billing, 'cred_stripe_1', 'api.stripe.com', STRIPE, billingHistory(), 'billing');
+	seedSettled(release, 'cred_github_1', 'api.github.com', GITHUB, releaseHistory(), 'release');
 
 	// release-manager also asked to connect an account: the "Waiting for you"
 	// row beside the held calls.

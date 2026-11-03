@@ -1,5 +1,9 @@
 /**
- * InboxPanel — the rail's Inbox tab: every held call waiting on the viewer,
+ * InboxPanel — the rail's Inbox tab, in two views behind a Waiting · Decided
+ * switch. It opens on Waiting, the calls to act on; Decided is the history
+ * (`InboxDecided`).
+ *
+ * Waiting: every held call waiting on the viewer,
  * across every agent, grouped by agent. The agent the page is about leads;
  * the rest follow the one waiting longest. Each row opens that call's review
  * pop-up (`?review=`), and a group's "Review all" opens its oldest call. Either
@@ -10,12 +14,22 @@
  * count, the strip's count and the bell always agree. Shared verbatim by the
  * docked rail and the below-`xl` drawer.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { ChevronRight, ShieldQuestion } from 'lucide-react';
-import { AgentBadge, Button, EmptyState, ErrorAlert, MethodBadge, SkeletonRows } from '@/shared/ui';
+import { AgentBadge, Button, EmptyState, MethodBadge, SegmentedToggle } from '@/shared/ui';
+import { InboxDecided } from '@/shared/app/rail/InboxDecided';
+import {
+	INBOX_EMPTY_CLASS,
+	INBOX_MORE_CLASS,
+	INBOX_ROW_CLASS,
+	InboxLoadError,
+	InboxLoading,
+} from '@/shared/app/rail/inboxParts';
 import { useRouteAgentId } from '@/shared/app/rail/useRouteAgentId';
 import { useNow } from '@/shared/app/rail/useNow';
 import {
+	INBOX_PARAM,
 	groupApprovalsByAgent,
 	useCanDecideApprovals,
 	useHeldCallHeadlines,
@@ -35,7 +49,47 @@ export type InboxPanelProps = {
 	onNavigated?: () => void;
 };
 
+type InboxView = 'waiting' | 'decided';
+
+const VIEW_OPTIONS: { value: InboxView; label: string }[] = [
+	{ value: 'waiting', label: 'Waiting' },
+	{ value: 'decided', label: 'Decided' },
+];
+
 export function InboxPanel({ onNavigated }: InboxPanelProps) {
+	const [view, setView] = useState<InboxView>('waiting');
+	// An Inbox link (`?inbox=1`) is a call to act: it lands on Waiting even
+	// when the panel is already open on Decided.
+	const [params] = useSearchParams();
+	const linked = params.get(INBOX_PARAM) != null;
+	useEffect(() => {
+		if (linked) setView('waiting');
+	}, [linked]);
+	return (
+		<>
+			<div className="px-3 pt-2 pb-1">
+				<SegmentedToggle
+					options={VIEW_OPTIONS}
+					value={view}
+					onChange={setView}
+					ariaLabel="Show calls"
+					tone="inset"
+					fill
+				/>
+			</div>
+			{view === 'waiting' ? (
+				<InboxWaiting onNavigated={onNavigated} onShowDecided={() => setView('decided')} />
+			) : (
+				<InboxDecided onNavigated={onNavigated} />
+			)}
+		</>
+	);
+}
+
+function InboxWaiting({
+	onNavigated,
+	onShowDecided,
+}: InboxPanelProps & { onShowDecided: () => void }) {
 	const canDecide = useCanDecideApprovals();
 	const pending = usePendingApprovals({ enabled: canDecide });
 	const calls = useMemo<HeldCall[]>(() => pending.data?.approvals ?? [], [pending.data]);
@@ -59,36 +113,31 @@ export function InboxPanel({ onNavigated }: InboxPanelProps) {
 		onNavigated?.();
 	}
 
-	if (!canDecide || (pending.isLoading && !pending.data)) {
-		return (
-			<div className="px-3 py-3">
-				<SkeletonRows rows={3} />
-			</div>
-		);
-	}
+	if (!canDecide || (pending.isLoading && !pending.data)) return <InboxLoading />;
 
 	if (pending.isError && !pending.data) {
 		return (
-			<div className="px-3 py-3">
-				<ErrorAlert
-					title="Couldn't load the inbox"
-					message={
-						pending.error instanceof Error ? pending.error : 'Something went wrong.'
-					}
-					onRetry={() => void pending.refetch()}
-					retrying={pending.isFetching}
-				/>
-			</div>
+			<InboxLoadError
+				title="Couldn't load the inbox"
+				error={pending.error}
+				onRetry={() => void pending.refetch()}
+				retrying={pending.isFetching}
+			/>
 		);
 	}
 
 	if (groups.length === 0) {
 		return (
 			<EmptyState
-				className="bg-transparent px-5 py-10 sm:px-5 sm:py-10"
+				className={INBOX_EMPTY_CLASS}
 				icon={<ShieldQuestion className="text-success h-5 w-5" aria-hidden="true" />}
 				title="Nothing waiting for you"
 				description="Requests show up here the moment an agent asks."
+				action={
+					<Button variant="ghost" size="xs" onClick={onShowDecided}>
+						See decided calls
+					</Button>
+				}
 			/>
 		);
 	}
@@ -157,7 +206,7 @@ function InboxGroup({
 				<Button
 					variant="ghost"
 					size="xs"
-					className="mx-2 mt-1 h-6 px-2 text-[11px]"
+					className={INBOX_MORE_CLASS}
 					onClick={() => setShowAll(true)}
 				>
 					Show all {count}
@@ -184,7 +233,7 @@ function InboxRow({
 				type="button"
 				data-held-id={call.id}
 				onClick={() => onReview(call.id)}
-				className="hover:bg-surface-1-hover focus-visible:ring-ring flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left focus-visible:ring-2 focus-visible:outline-none"
+				className={INBOX_ROW_CLASS}
 			>
 				<MethodBadge method={call.method} className="w-[46px]" />
 				<span className="min-w-0 flex-1">
