@@ -51,13 +51,26 @@ class MethodNotAllowedError(DiscoveryError):
 
 
 class AmbiguousMatchError(DiscoveryError):
-    """More than one URL index entry matches with equal specificity."""
+    """More than one URL index entry matches with equal specificity.
 
-    def __init__(self, candidate_count: int) -> None:
-        super().__init__(
-            f"Ambiguous URL match: {candidate_count} candidates with equal specificity"
-        )
+    ``apis`` names the distinct live APIs that matched, when the tie spans more
+    than one of them. That tie is not a version choice: the winner decides
+    which API identity credential coverage is evaluated against, so the detail
+    names the colliding APIs for an operator who must re-scope or retire one.
+    """
+
+    def __init__(self, candidate_count: int, *, apis: list[str] | None = None) -> None:
+        if apis:
+            detail = (
+                f"Ambiguous URL match: {candidate_count} candidates with equal "
+                f"specificity from {len(apis)} live APIs ({', '.join(apis)}); "
+                "one URL is served by one API"
+            )
+        else:
+            detail = f"Ambiguous URL match: {candidate_count} candidates with equal specificity"
+        super().__init__(detail)
         self.candidate_count = candidate_count
+        self.apis = list(apis or ())
 
 
 class TooManyCandidatesError(DiscoveryError):

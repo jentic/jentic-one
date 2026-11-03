@@ -31,6 +31,9 @@ def _make_index_entry(
     param_names: list[str] | None = None,
     segment_count: int = 2,
     revision_id: uuid.UUID | None = None,
+    vendor: str = "example.com",
+    name: str = "pets",
+    version: str = "v1",
 ) -> UrlIndexCandidate:
     """Create a lookup candidate wrapping a mock OperationURLIndex row."""
     entry = MagicMock()
@@ -47,9 +50,9 @@ def _make_index_entry(
     entry.segment_count = segment_count
     return UrlIndexCandidate(
         row=entry,
-        vendor="example.com",
-        name="pets",
-        version="v1",
+        vendor=vendor,
+        name=name,
+        version=version,
         operation_path=path_template,
         operation_method=method,
     )
@@ -305,12 +308,13 @@ async def test_no_match_returns_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_equal_matches_across_live_revisions_prefer_first_candidate() -> None:
-    """Equally specific matches from two live revisions resolve to the first one.
+async def test_equal_matches_across_live_revisions_of_one_api_prefer_the_newest() -> None:
+    """Two live revisions of one API resolve to the most recently promoted one.
 
-    Unpinned candidates arrive newest-live revision first, so the newest wins
-    instead of raising ``AmbiguousMatchError`` — ambiguity is only an error
-    within a single revision's own spec.
+    Unpinned candidates arrive newest-live revision first, and a request names
+    a URL rather than a version, so the API's own latest is the answer. Both
+    candidates are the same ``vendor/name``, which is what keeps this a version
+    choice rather than the cross-API ambiguity below.
     """
     newest = _make_index_entry(operation_id="op_new", revision_id=OTHER_REVISION_ID)
     older = _make_index_entry(operation_id="op_old", revision_id=REVISION_ID)
@@ -355,3 +359,95 @@ async def test_ambiguity_within_the_winning_revision_still_raises() -> None:
     ):
         svc = URLLookupService(AsyncMock())
         await svc.resolve(method="GET", url="https://api.example.com/v1/test")
+
+
+@pytest.mark.asyncio
+async def test_equal_matches_across_two_live_apis_raise_ambiguous() -> None:
+    """Two different live APIs serving one URL is ambiguous, not a newest-wins pick.
+
+    The winner's identity is what credential coverage is evaluated against, so
+    resolving this by promotion order would silently decide which credential
+    the broker injects. The error names both APIs so the operator can re-scope
+    or retire one.
+    """
+    newest = _make_index_entry(
+        operation_id="op_twin",
+        revision_id=OTHER_REVISION_ID,
+        name="pets-admin",
+    )
+    older = _make_index_entry(operation_id="op_pets", revision_id=REVISION_ID)
+
+    with (
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_live",
+            new_callable=AsyncMock,
+            return_value=[newest, older],
+        ),
+        pytest.raises(AmbiguousMatchError) as caught,
+    ):
+        svc = URLLookupService(AsyncMock())
+        await svc.resolve(method="GET", url="https://api.example.com/v1/pets")
+
+    assert caught.value.apis == ["example.com/pets", "example.com/pets-admin"]
+    assert "example.com/pets-admin" in caught.value.detail
+
+
+@pytest.mark.asyncio
+async def test_two_live_apis_on_one_host_with_distinct_paths_still_resolve() -> None:
+    """A gateway host serving several APIs on different paths is unaffected.
+
+    Only an equally specific tie is ambiguous. These two APIs share the host
+    but not the path, so each URL still resolves to exactly one of them.
+    """
+    pets = _make_index_entry(operation_id="op_pets")
+    admin = _make_index_entry(
+        operation_id="op_admin",
+        revision_id=OTHER_REVISION_ID,
+        name="pets-admin",
+        path_template="/v1/admin",
+        path_regex=r"^/v1/admin$",
+    )
+
+    with patch(
+        "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_live",
+        new_callable=AsyncMock,
+        return_value=[admin, pets],
+    ):
+        svc = URLLookupService(AsyncMock())
+        resolved_pets = await svc.resolve(method="GET", url="https://api.example.com/v1/pets")
+        resolved_admin = await svc.resolve(method="GET", url="https://api.example.com/v1/admin")
+
+    assert resolved_pets is not None
+    assert resolved_pets.operation_id == "op_pets"
+    assert resolved_admin is not None
+    assert resolved_admin.operation_id == "op_admin"
+
+
+@pytest.mark.asyncio
+async def test_a_more_specific_match_wins_before_cross_api_ambiguity_applies() -> None:
+    """Specificity is still decided first: an exact path beats another API's template.
+
+    Ambiguity is only raised among the *equally* specific matches, so a literal
+    path on one API outranks a parameterized one on another rather than
+    colliding with it.
+    """
+    literal = _make_index_entry(operation_id="op_literal")
+    templated = _make_index_entry(
+        operation_id="op_templated",
+        revision_id=OTHER_REVISION_ID,
+        name="pets-admin",
+        path_template="/v1/{slug}",
+        path_regex=r"^/v1/(?P<slug>[^/]+)$",
+        param_names=["slug"],
+    )
+
+    with patch(
+        "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_live",
+        new_callable=AsyncMock,
+        return_value=[templated, literal],
+    ):
+        svc = URLLookupService(AsyncMock())
+        result = await svc.resolve(method="GET", url="https://api.example.com/v1/pets")
+
+    assert result is not None
+    assert result.operation_id == "op_literal"
