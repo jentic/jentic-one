@@ -18,8 +18,10 @@ import jentic_one.shared.events.mcp_session as mcp_session
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.events.mcp_session import (
     MCP_HTTP_WINDOW_SECONDS,
+    MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW,
     McpUserAgent,
     mcp_http_window_key,
+    mcp_stdio_session_key,
     parse_mcp_user_agent,
     record_mcp_session_started,
     schedule_mcp_http_session_emit,
@@ -289,7 +291,7 @@ async def test_schedule_creates_task_for_mcp_request() -> None:
         await _run_scheduled_tasks()
 
     record.assert_awaited_once()
-    assert record.call_args.kwargs["session_id"] == "sess-1"
+    assert record.call_args.kwargs["session_id"] == mcp_stdio_session_key("agnt_abc", "sess-1")
     assert record.call_args.kwargs["actor_id"] == "agnt_abc"
 
 
@@ -319,13 +321,15 @@ async def test_schedule_ignores_non_qualifying_requests(
 
     record.assert_not_awaited()
     # Non-qualifying traffic never touches the backend.
-    assert await backend.get(_session_key("sess-1")) is None
+    assert await backend.get(_session_key(mcp_stdio_session_key("agnt_abc", "sess-1"))) is None
 
 
 @pytest.mark.asyncio
 async def test_schedule_recorded_marker_short_circuits(backend: MemoryStateBackend) -> None:
     """Once a session id is recorded, no further task (or lookup) is scheduled."""
-    await backend.set(_session_key("sess-1"), b"recorded", ttl_s=60)
+    await backend.set(
+        _session_key(mcp_stdio_session_key("agnt_abc", "sess-1")), b"recorded", ttl_s=60
+    )
     with patch(
         "jentic_one.shared.events.mcp_session.record_mcp_session_started",
         new_callable=AsyncMock,
@@ -420,13 +424,15 @@ async def test_a_full_namespace_falls_back_to_the_table_dedupe() -> None:
 
     record.assert_awaited_once()
     assert record.await_args is not None
-    assert record.await_args.kwargs["session_id"] == "sess-1"
+    assert record.await_args.kwargs["session_id"] == mcp_stdio_session_key("agnt_abc", "sess-1")
 
 
 @pytest.mark.asyncio
 async def test_a_recorded_session_short_circuits_even_when_the_namespace_is_full() -> None:
     backend = MemoryStateBackend(max_entries=1)
-    await backend.set(_session_key("sess-1"), b"recorded", ttl_s=60)
+    await backend.set(
+        _session_key(mcp_stdio_session_key("agnt_abc", "sess-1")), b"recorded", ttl_s=60
+    )
     with patch(
         "jentic_one.shared.events.mcp_session.record_mcp_session_started",
         new_callable=AsyncMock,
@@ -721,11 +727,17 @@ async def test_http_cap_logs_once_per_agent_window() -> None:
     cap = mcp_session.MCP_HTTP_MAX_CLIENTS_PER_AGENT_WINDOW
     window = int(_FROZEN_NOW // MCP_HTTP_WINDOW_SECONDS)
     ctx = _fake_ctx()
+
+    async def admit() -> bool:
+        return await mcp_session._admit_agent_window_key(
+            ctx, "agnt_abc", window, transport="http", cap=cap
+        )
+
     for _ in range(cap):
-        assert await mcp_session._admit_agent_window_key(ctx, "agnt_abc", window)
+        assert await admit()
     with patch.object(mcp_session.logger, "warning") as warn:
-        assert not await mcp_session._admit_agent_window_key(ctx, "agnt_abc", window)
-        assert not await mcp_session._admit_agent_window_key(ctx, "agnt_abc", window)
+        assert not await admit()
+        assert not await admit()
     warn.assert_called_once()
 
 
@@ -763,7 +775,7 @@ async def test_in_flight_cap_drops_new_emits_on_both_transports(
             await _schedule(_fake_ctx())
         emit.assert_not_awaited()
         stdio_record.assert_not_awaited()
-        assert await backend.get(_session_key("sess-1")) is None
+        assert await backend.get(_session_key(mcp_stdio_session_key("agnt_abc", "sess-1"))) is None
 
         release.set()
         await _run_scheduled_tasks()
@@ -774,3 +786,91 @@ async def test_in_flight_cap_drops_new_emits_on_both_transports(
         await _schedule_http(_fake_ctx())
         await _run_scheduled_tasks()
     emit_retry.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_two_owners_agents_sharing_a_session_id_both_emit() -> None:
+    """The stored id is namespaced by actor, so neither claims it globally.
+
+    The dedupe keys on that value alone — the claim, the table lookup and the
+    unique index behind them — so without the namespace whichever actor
+    emitted first for a given id silences every other owner's agent for it.
+    """
+    ctx = _fake_ctx()
+    with patch(
+        "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+        new_callable=AsyncMock,
+    ) as record:
+        for actor in ("agnt_one", "agnt_two"):
+            await schedule_mcp_session_emit(
+                ctx,
+                user_agent="jentic-mcp/1.0 (cursor/1.0)",
+                session_id="shared-orchestrator-id",
+                actor_id=actor,
+                actor_type="agent",
+            )
+        await _run_scheduled_tasks()
+    emitted = sorted(call.kwargs["session_id"] for call in record.await_args_list)
+    assert emitted == [
+        mcp_stdio_session_key("agnt_one", "shared-orchestrator-id"),
+        mcp_stdio_session_key("agnt_two", "shared-orchestrator-id"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_agent_rotating_session_ids_is_capped_per_window() -> None:
+    """The unique index dedupes identical keys only, never distinct ones.
+
+    A rotating header value otherwise minted a row per request on this path,
+    while the HTTP mount bounds the same agent per window. The budget is the
+    stdio one: these keys are session ids, one per launch, where the HTTP
+    lane's are client name and version pairs.
+    """
+    ctx = _fake_ctx()
+    with patch(
+        "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+        new_callable=AsyncMock,
+    ) as record:
+        for index in range(MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW + 8):
+            await schedule_mcp_session_emit(
+                ctx,
+                user_agent="jentic-mcp/1.0 (cursor/1.0)",
+                session_id=f"rotating-{index}",
+                actor_id="agnt_rotator",
+                actor_type="agent",
+            )
+        await _run_scheduled_tasks()
+    assert record.await_count == MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW
+
+
+@pytest.mark.asyncio
+async def test_a_flood_on_one_transport_leaves_the_other_emitting() -> None:
+    """The counter names the transport, so one lane cannot starve the other.
+
+    The two lanes key on different things and are sized apart for it. Counted
+    together, an agent's stdio launches would spend the budget its HTTP
+    clients are admitted on, and a legitimate client would go silent for a
+    flood it has nothing to do with.
+    """
+    ctx = _fake_ctx()
+    exists_p, emit_p = _patch_emit()
+    with (
+        _freeze_time(),
+        patch(
+            "jentic_one.shared.events.mcp_session.record_mcp_session_started",
+            new_callable=AsyncMock,
+        ),
+    ):
+        for index in range(MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW + 8):
+            await schedule_mcp_session_emit(
+                ctx,
+                user_agent="jentic-mcp/1.0 (cursor/1.0)",
+                session_id=f"launch-{index}",
+                actor_id="agnt_both",
+                actor_type="agent",
+            )
+        await _run_scheduled_tasks()
+    with _freeze_time(), exists_p, emit_p as emit:
+        await _schedule_http(ctx, actor_id="agnt_both", client_name="cursor")
+        await _run_scheduled_tasks()
+    assert emit.await_count == 1

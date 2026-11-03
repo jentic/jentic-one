@@ -41,7 +41,11 @@ from jentic_one.control.repos.prerequisite_repo import (
     PrerequisiteRepository,
 )
 from jentic_one.control.repos.registry_api_lookup_repo import RegistryApiLookupRepository
-from jentic_one.control.scoping.filters import build_access_filters
+from jentic_one.control.scoping.filters import (
+    bound_agent_visibility,
+    build_access_filters,
+    own_agent_visibility,
+)
 from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
     CredentialNotFoundError,
@@ -92,7 +96,7 @@ from jentic_one.shared.audit import (
     record_audit_best_effort,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
@@ -667,29 +671,11 @@ class CredentialService:
         return rows, has_more, next_cursor
 
     @staticmethod
-    def _agent_visibility_for(identity: Identity) -> AgentVisibility:
-        """Agents a non-admin, non-creator caller may enumerate on a visible credential."""
-        owner_ids = [identity.sub]
-        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
-            owner_ids.append(identity.parent_actor_id)
-        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
-
-    @staticmethod
     def _bound_agent_visibility(
         credential: Credential, identity: Identity
     ) -> AgentVisibility | None:
-        """Bound agents the caller may enumerate; ``None`` means all of them.
-
-        ``org:admin`` and the credential's creator see every bound agent.
-        Anyone else sees the agents it owns and itself (when the caller is an
-        agent), plus its owner's agents when it holds ``owner:agents:read`` —
-        the same agent visibility the admin surface applies.
-        """
-        if ORG_ADMIN in identity.permissions:
-            return None
-        if credential.created_by is not None and credential.created_by == identity.sub:
-            return None
-        return CredentialService._agent_visibility_for(identity)
+        """Bound agents the caller may enumerate; ``None`` means all of them."""
+        return bound_agent_visibility(credential.created_by, identity)
 
     # --- Per-binding permission rules (theme 5 phase 1) ---
 
@@ -867,6 +853,12 @@ class CredentialService:
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.transaction() as session:
+            # The same lock a connect session's confirm takes: this write is a
+            # delete and re-insert too, so without it a confirm's locked read
+            # of these rows is overwritten after it passed.
+            await AgentPermissionRuleRepository.acquire_binding_lock(
+                session, agent_id, credential_id
+            )
             result = await AgentPermissionRuleRepository.replace_user_rules(
                 session, agent_id, credential_id, rules, created_by=identity.sub
             )
@@ -890,6 +882,9 @@ class CredentialService:
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.transaction() as session:
+            await AgentPermissionRuleRepository.acquire_binding_lock(
+                session, agent_id, credential_id
+            )
             result = await AgentPermissionRuleRepository.patch_rules(
                 session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
             )
@@ -1121,7 +1116,7 @@ class CredentialService:
         :meth:`list_agents` and :meth:`_require_visible_binding`: ``org:admin``
         sees every referencing binding, a credential's creator sees every
         binding on that credential, and any other reader of a credential sees
-        only bindings on agents matching :meth:`_agent_visibility_for`.
+        only bindings on agents matching :func:`own_agent_visibility`.
         """
         if ORG_ADMIN in identity.permissions:
             async with self._ctx.admin_db.session() as session:
@@ -1133,7 +1128,7 @@ class CredentialService:
             counts_by_cred = await PrerequisiteRepository.count_bindings_for_rule_set_by_credential(
                 session,
                 rule_set_id,
-                visible_to=self._agent_visibility_for(identity),
+                visible_to=own_agent_visibility(identity),
             )
             if not counts_by_cred:
                 return 0
@@ -1247,6 +1242,9 @@ class CredentialService:
                 raise RuleSetNotFoundError(rule_set_id)
             if not self._may_mutate_rule_set(rule_set, identity):
                 raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
+            # The lock a confirm writing this set takes: one list, every
+            # binding pointing at the set, replaced by a delete and re-insert.
+            await PermissionRuleSetRepository.acquire_rules_lock(session, rule_set_id)
             result = await PermissionRuleSetRepository.replace_user_rules(
                 session, rule_set_id, rules, created_by=identity.sub
             )

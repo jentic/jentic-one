@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **174**._
+_Total endpoints: **175**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -209,7 +209,7 @@ _Total endpoints: **174**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable a user |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue a user's invite |
 
-## Any authenticated actor (82)
+## Any authenticated actor (83)
 
 
 ### `actors`
@@ -269,6 +269,7 @@ _Total endpoints: **174**._
 | POST | `/connect-sessions/{session_id}:amend` | `credentials:connect`, `credentials:write` | any | Amend an open connect session's request |
 | POST | `/connect-sessions/{session_id}:cancel` | `credentials:connect`, `credentials:write` | any | Cancel an in-flight connect session |
 | POST | `/connect-sessions/{session_id}:confirm` | `credentials:write` | any | Confirm a connect session |
+| POST | `/connect-sessions/{session_id}:rebase` | `credentials:connect`, `credentials:write` | any | Resolve an open edit against the binding as it is now |
 | POST | `/connect-sessions/{session_id}:reject` | `credentials:write` | any | Reject an agent's connect request |
 
 ### `credentials`

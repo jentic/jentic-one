@@ -28,6 +28,9 @@ SURFACE_APP_MODULES = [
 ]
 
 
+pytestmark = pytest.mark.arch
+
+
 @pytest.mark.parametrize("filepath", SURFACE_ERROR_FILES, ids=lambda p: p.name)
 def test_no_mro_walk_in_surface_error_handlers(filepath: Path) -> None:
     """Surface error modules must not contain their own MRO-walking loop."""

@@ -4987,7 +4987,7 @@ type ExistingCredentialConfirmSessionRequestKind string
 // them first (“needs_vendor_consent“), which widens the access of every
 // agent in “other_bound_agents“ too.
 //
-// Examples: {"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"type":"oauth2"}
+// Examples: {"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}
 type ExistingCredentialResponse struct {
 	// CanBind Whether this viewer may use it: its grant covers the request, or the missing scopes can be consented and the viewer may widen it.
 	//
@@ -5015,6 +5015,11 @@ type ExistingCredentialResponse struct {
 	//
 	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}]
 	OtherBoundAgents *[]EditAgentRef `json:"other_bound_agents,omitempty"`
+
+	// OtherBoundAgentsTruncated True when more agents are bound than the list names: it is capped, and no cursor continues it.
+	//
+	// Examples: false
+	OtherBoundAgentsTruncated *bool `json:"other_bound_agents_truncated,omitempty"`
 
 	// Type Examples: oauth2
 	Type string `json:"type"`
@@ -8373,7 +8378,7 @@ type ReviewAgentResponse struct {
 
 // ReviewEditResponse The binding change an edit session asks a human to approve.
 //
-// Examples: {"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true}
+// Examples: {"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true}
 type ReviewEditResponse struct {
 	// Binding Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"}
 	Binding EditBindingRef `json:"binding"`
@@ -8393,10 +8398,15 @@ type ReviewEditResponse struct {
 	// Examples: true
 	NeedsVendorConsent *bool `json:"needs_vendor_consent,omitempty"`
 
-	// OtherBoundAgents Other agents bound to the credential; added scopes and a shared rule set change reach them.
+	// OtherBoundAgents Other agents this change reaches: those bound to the credential, which added scopes reach, and those bound through a shared rule set the change rewrites.
 	//
 	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}]
 	OtherBoundAgents *[]EditAgentRef `json:"other_bound_agents,omitempty"`
+
+	// OtherBoundAgentsTruncated True when the change reaches more agents than the list names: it is capped, and no cursor continues it.
+	//
+	// Examples: false
+	OtherBoundAgentsTruncated *bool `json:"other_bound_agents_truncated,omitempty"`
 
 	// Result What confirming the current revision leaves in place.
 	//
@@ -8476,7 +8486,7 @@ type ReviewScopeResponse struct {
 // ReviewScopeResponseClassification Examples: write
 type ReviewScopeResponseClassification string
 
-// ReviewSessionResponse Examples: {"agent":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"Issue triage bot","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"},"api_reference":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"can_confirm":true,"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","edit":{"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true},"existing_credentials":[{"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"type":"oauth2"}],"last_rejected_at":"2026-01-10T16:45:00Z","pinned_hosts":["api.github.com"],"provenance":{"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"},"reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"resolved_flow":"authorization_code","revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"scheme":{"authorization_url":"https://github.com/login/oauth/authorize","field_name":"Authorization","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"oauth2"},"scopes":[{"classification":"write","default":false,"description":"Full control of private repositories","name":"repo","requested":true}],"session_id":"cs_6968b3983b8b91c75627bee5","state":"created","target_kind":"vendor","vendor_display_name":"GitHub","vendor_key":"github"}
+// ReviewSessionResponse Examples: {"agent":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"Issue triage bot","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"},"api_reference":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"can_confirm":true,"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","edit":{"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true},"existing_credentials":[{"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}],"last_rejected_at":"2026-01-10T16:45:00Z","pinned_hosts":["api.github.com"],"provenance":{"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"},"reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"resolved_flow":"authorization_code","revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"scheme":{"authorization_url":"https://github.com/login/oauth/authorize","field_name":"Authorization","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"oauth2"},"scopes":[{"classification":"write","default":false,"description":"Full control of private repositories","name":"repo","requested":true}],"session_id":"cs_6968b3983b8b91c75627bee5","stale":false,"state":"created","target_kind":"vendor","vendor_display_name":"GitHub","vendor_key":"github"}
 type ReviewSessionResponse struct {
 	// Agent Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"Issue triage bot","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}
 	Agent *ReviewAgentResponse `json:"agent,omitempty"`
@@ -8500,10 +8510,10 @@ type ReviewSessionResponse struct {
 	// Digest Examples: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 	Digest string `json:"digest"`
 
-	// Edit Examples: {"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true}
+	// Edit Examples: {"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true}
 	Edit *ReviewEditResponse `json:"edit,omitempty"`
 
-	// ExistingCredentials Examples: [{"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"type":"oauth2"}]
+	// ExistingCredentials Examples: [{"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}]
 	ExistingCredentials *[]ExistingCredentialResponse `json:"existing_credentials,omitempty"`
 
 	// LastRejectedAt When a human last rejected this agent's request for the same target (or, for an edit, the same binding), within the last 30 days; null when none. Lets the reviewer see that a request repeats one already rejected.
@@ -8543,6 +8553,11 @@ type ReviewSessionResponse struct {
 
 	// SessionId Examples: cs_6968b3983b8b91c75627bee5
 	SessionId string `json:"session_id"`
+
+	// Stale The binding moved since this edit was opened, so the diff below is against the access as it was. `POST /connect-sessions/{id}:rebase` resolves the ask against the binding as it is now.
+	//
+	// Examples: false
+	Stale *bool `json:"stale,omitempty"`
 
 	// State Examples: created
 	State string `json:"state"`
@@ -9014,12 +9029,27 @@ type SessionApiReferenceResponse struct {
 	Version *string `json:"version"`
 }
 
-// SessionRevisionListResponse A session's revisions, oldest first.
+// SessionRevisionListResponse A session's revisions, oldest first, one page at a time.
 //
-// Examples: {"data":[{"created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","id":"csr_6968b3983b8b91c75627bee6","number":1,"proposal":{"reason":"needs issue access","requested_permission_rules":[],"requested_scopes":["repo","read:user"]},"result":{"rules":[],"scopes":["repo","read:user"]}}]}
+// Examples: {"data":[{"created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","id":"csr_6968b3983b8b91c75627bee6","number":1,"proposal":{"reason":"needs issue access","requested_permission_rules":[],"requested_scopes":["repo","read:user"]},"result":{"rules":[],"scopes":["repo","read:user"]}}],"has_more":false,"limit":50,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiY3NyXzY5NjhiMzk4NGQxYzIzOGRiZTdlMmUyOSJ9"}
 type SessionRevisionListResponse struct {
 	// Data Examples: [{"created_at":"2026-01-15T09:30:00Z","created_by":"agnt_6968b3984d1c238dbe7e2e29","id":"csr_6968b3983b8b91c75627bee6","number":1,"proposal":{"reason":"needs issue access","requested_permission_rules":[],"requested_scopes":["repo","read:user"]},"result":{"rules":[],"scopes":["repo","read:user"]}}]
 	Data []SessionRevisionResponse `json:"data"`
+
+	// HasMore Whether the session holds revisions beyond this page.
+	//
+	// Examples: false
+	HasMore bool `json:"has_more"`
+
+	// Limit The page size the request was served at.
+	//
+	// Examples: 50
+	Limit int `json:"limit"`
+
+	// NextCursor Opaque cursor for the next page; null when this is the last one.
+	//
+	// Examples: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiY3NyXzY5NjhiMzk4NGQxYzIzOGRiZTdlMmUyOSJ9
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // SessionRevisionRef Examples: {"id":"csr_6968b3983b8b91c75627bee6","number":2}
@@ -9206,7 +9236,7 @@ type Sigv4UpdateRequest struct {
 // Examples: sigv4
 type Sigv4UpdateRequestType string
 
-// StatusResponse Examples: {"bound_scopes":["repo","read:user"],"connected_as":"octocat","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","status":"connected"}
+// StatusResponse Examples: {"bound_scopes":["repo","read:user"],"connected_as":"octocat","credential_id":"cred_6968b39855d91a3561684b32","error_code":"access_denied","stale":false,"status":"connected"}
 type StatusResponse struct {
 	// BoundScopes Examples: ["repo","read:user"]
 	BoundScopes *[]string `json:"bound_scopes,omitempty"`
@@ -9219,6 +9249,11 @@ type StatusResponse struct {
 
 	// ErrorCode Examples: access_denied
 	ErrorCode *string `json:"error_code,omitempty"`
+
+	// Stale An open edit whose binding moved since it was opened. Its ask is resolved against the binding as it is now by `POST /connect-sessions/{id}:rebase`, or by amending it.
+	//
+	// Examples: false
+	Stale *bool `json:"stale,omitempty"`
 
 	// Status Examples: connected
 	Status StatusResponseStatus `json:"status"`
@@ -10175,6 +10210,12 @@ type GetConnectSessionParams struct {
 type ListConnectSessionRevisionsParams struct {
 	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *QueryPollToken `form:"poll_token,omitempty" json:"poll_token,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Limit Maximum number of revisions to return (1-200, default 50).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
@@ -10203,6 +10244,12 @@ type ConfirmConnectSessionParams struct {
 // ConfirmConnectSession200JSONResponseBody defines parameters for ConfirmConnectSession.
 type ConfirmConnectSession200JSONResponseBody struct {
 	union json.RawMessage
+}
+
+// RebaseConnectSessionParams defines parameters for RebaseConnectSession.
+type RebaseConnectSessionParams struct {
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+	PollToken *QueryPollToken `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // ListCredentialsParams defines parameters for ListCredentials.
@@ -13318,11 +13365,11 @@ type ClientInterface interface {
 
 	// ListConnectSessionRevisions List a connect session's revisions
 	//
-	// Every version of what the session asks for, oldest first.
+	// One page of what the session has asked for, oldest first.
 	//
 	// The review shows the current revision against today's access; this is the
 	// history behind it, one entry per ask and amend. Gated like the review
-	// read.
+	// read, and bounded like the session list.
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
 	ListConnectSessionRevisions(ctx context.Context, sessionId PathSessionId, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -13466,6 +13513,22 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
 	ConfirmConnectSession(ctx context.Context, sessionId PathSessionId, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebaseConnectSession Resolve an open edit against the binding as it is now
+	//
+	// Bring an open edit up to date with its binding, as a new revision.
+	//
+	// What a reader asks for when the review or the status reports the session
+	// `stale`: the ask is re-resolved against the binding as it is now, and any
+	// part of it the binding no longer fits comes back as a conflict on that
+	// revision. Reads never do this themselves, so a GET appends nothing.
+	//
+	// Idempotent: a session already current answers with the revision it
+	// already had. Its initiator, or a human who may confirm it, as an amend
+	// takes; a closed session is 409 `session_closed`.
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+	RebaseConnectSession(ctx context.Context, sessionId PathSessionId, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RejectConnectSession Reject an agent's connect request
 	//
@@ -17235,11 +17298,11 @@ func (c *Client) GetConnectSession(ctx context.Context, sessionId PathSessionId,
 
 // ListConnectSessionRevisions List a connect session's revisions
 //
-// Every version of what the session asks for, oldest first.
+// One page of what the session has asked for, oldest first.
 //
 // The review shows the current revision against today's access; this is the
 // history behind it, one entry per ask and amend. Gated like the review
-// read.
+// read, and bounded like the session list.
 //
 // Corresponds with GET /connect-sessions/{session_id}/revisions (the `ListConnectSessionRevisions` operationId).
 func (c *Client) ListConnectSessionRevisions(ctx context.Context, sessionId PathSessionId, params *ListConnectSessionRevisionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17444,6 +17507,32 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId Pa
 // Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
 func (c *Client) ConfirmConnectSession(ctx context.Context, sessionId PathSessionId, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmConnectSessionRequest(c.Server, sessionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RebaseConnectSession Resolve an open edit against the binding as it is now
+//
+// Bring an open edit up to date with its binding, as a new revision.
+//
+// What a reader asks for when the review or the status reports the session
+// `stale`: the ask is re-resolved against the binding as it is now, and any
+// part of it the binding no longer fits comes back as a conflict on that
+// revision. Reads never do this themselves, so a GET appends nothing.
+//
+// Idempotent: a session already current answers with the revision it
+// already had. Its initiator, or a human who may confirm it, as an amend
+// takes; a closed session is 409 `session_closed`.
+//
+// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+func (c *Client) RebaseConnectSession(ctx context.Context, sessionId PathSessionId, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebaseConnectSessionRequest(c.Server, sessionId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -24418,6 +24507,30 @@ func NewListConnectSessionRevisionsRequest(server string, sessionId PathSessionI
 
 		}
 
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -24671,6 +24784,67 @@ func NewConfirmConnectSessionRequestWithBody(server string, sessionId PathSessio
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRebaseConnectSessionRequest constructs an http.Request for the RebaseConnectSession method
+func NewRebaseConnectSessionRequest(server string, sessionId PathSessionId, params *RebaseConnectSessionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/connect-sessions/%s:rebase", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -30487,11 +30661,11 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectSessionRevisionsWithResponse List a connect session's revisions
 	//
-	// Every version of what the session asks for, oldest first.
+	// One page of what the session has asked for, oldest first.
 	//
 	// The review shows the current revision against today's access; this is the
 	// history behind it, one entry per ask and amend. Gated like the review
-	// read.
+	// read, and bounded like the session list.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -30641,6 +30815,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /connect-sessions/{session_id}:confirm (the `ConfirmConnectSession` operationId).
 	ConfirmConnectSessionWithResponse(ctx context.Context, sessionId PathSessionId, params *ConfirmConnectSessionParams, body ConfirmConnectSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectSessionHTTPResp, error)
+
+	// RebaseConnectSessionWithResponse Resolve an open edit against the binding as it is now
+	//
+	// Bring an open edit up to date with its binding, as a new revision.
+	//
+	// What a reader asks for when the review or the status reports the session
+	// `stale`: the ask is re-resolved against the binding as it is now, and any
+	// part of it the binding no longer fits comes back as a conflict on that
+	// revision. Reads never do this themselves, so a GET appends nothing.
+	//
+	// Idempotent: a session already current answers with the revision it
+	// already had. Its initiator, or a human who may confirm it, as an amend
+	// takes; a closed session is 409 `session_closed`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+	RebaseConnectSessionWithResponse(ctx context.Context, sessionId PathSessionId, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*RebaseConnectSessionHTTPResp, error)
 
 	// RejectConnectSessionWithResponse Reject an agent's connect request
 	//
@@ -39408,10 +39600,14 @@ type AmendConnectSessionHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -39440,6 +39636,11 @@ func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
 }
 
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
 func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
 	return r.ApplicationproblemJSON409
@@ -39448,6 +39649,11 @@ func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDeta
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
 	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r AmendConnectSessionHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -39594,6 +39800,8 @@ type ConfirmConnectSessionHTTPResp struct {
 	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -39637,6 +39845,11 @@ func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON422() *Unprocess
 	return r.ApplicationproblemJSON422
 }
 
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
+}
+
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
 func (r ConfirmConnectSessionHTTPResp) GetApplicationproblemJSON500() *InternalServerError {
 	return r.ApplicationproblemJSON500
@@ -39675,6 +39888,117 @@ func (r ConfirmConnectSessionHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ConfirmConnectSessionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RebaseConnectSessionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AmendSessionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *InternalServerError
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ServiceUnavailable
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *UnexpectedError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RebaseConnectSessionHTTPResp) GetJSON200() *AmendSessionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON500() *InternalServerError {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSON503() *ServiceUnavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RebaseConnectSessionHTTPResp) GetApplicationproblemJSONDefault() *UnexpectedError {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RebaseConnectSessionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RebaseConnectSessionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RebaseConnectSessionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RebaseConnectSessionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -49864,11 +50188,11 @@ func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context,
 
 // ListConnectSessionRevisionsWithResponse List a connect session's revisions
 //
-// Every version of what the session asks for, oldest first.
+// One page of what the session has asked for, oldest first.
 //
 // The review shows the current revision against today's access; this is the
 // history behind it, one entry per ask and amend. Gated like the review
-// read.
+// read, and bounded like the session list.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -50059,6 +50383,30 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseConfirmConnectSessionHTTPResp(rsp)
+}
+
+// RebaseConnectSessionWithResponse Resolve an open edit against the binding as it is now
+//
+// Bring an open edit up to date with its binding, as a new revision.
+//
+// What a reader asks for when the review or the status reports the session
+// `stale`: the ask is re-resolved against the binding as it is now, and any
+// part of it the binding no longer fits comes back as a conflict on that
+// revision. Reads never do this themselves, so a GET appends nothing.
+//
+// Idempotent: a session already current answers with the revision it
+// already had. Its initiator, or a human who may confirm it, as an amend
+// takes; a closed session is 409 `session_closed`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /connect-sessions/{session_id}:rebase (the `RebaseConnectSession` operationId).
+func (c *ClientWithResponses) RebaseConnectSessionWithResponse(ctx context.Context, sessionId PathSessionId, params *RebaseConnectSessionParams, reqEditors ...RequestEditorFn) (*RebaseConnectSessionHTTPResp, error) {
+	rsp, err := c.RebaseConnectSession(ctx, sessionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebaseConnectSessionHTTPResp(rsp)
 }
 
 // RejectConnectSessionWithResponse Reject an agent's connect request
@@ -58512,6 +58860,13 @@ func ParseAmendConnectSessionHTTPResp(rsp *http.Response) (*AmendConnectSessionH
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -58525,6 +58880,13 @@ func ParseAmendConnectSessionHTTPResp(rsp *http.Response) (*AmendConnectSessionH
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalServerError
@@ -58685,6 +59047,109 @@ func ParseConfirmConnectSessionHTTPResp(rsp *http.Response) (*ConfirmConnectSess
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalServerError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ServiceUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest UnexpectedError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRebaseConnectSessionHTTPResp parses an HTTP response from a RebaseConnectSessionWithResponse call
+func ParseRebaseConnectSessionHTTPResp(rsp *http.Response) (*RebaseConnectSessionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RebaseConnectSessionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AmendSessionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalServerError

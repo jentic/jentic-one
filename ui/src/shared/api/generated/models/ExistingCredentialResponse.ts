@@ -29,6 +29,10 @@ export type ExistingCredentialResponse = {
      * Other agents bound to the credential; added scopes reach them too.
      */
     other_bound_agents?: Array<EditAgentRef>;
+    /**
+     * True when more agents are bound than the list names: it is capped, and no cursor continues it.
+     */
+    other_bound_agents_truncated?: boolean;
     type: string;
 };
 

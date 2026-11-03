@@ -33,6 +33,10 @@ export type ReviewSessionResponse = {
     scheme?: (ReviewSchemeResponse | null);
     scopes: Array<ReviewScopeResponse>;
     session_id: string;
+    /**
+     * The binding moved since this edit was opened, so the diff below is against the access as it was. `POST /connect-sessions/{id}:rebase` resolves the ask against the binding as it is now.
+     */
+    stale?: boolean;
     state: string;
     target_kind?: ReviewSessionResponse.target_kind;
     vendor_display_name: string;

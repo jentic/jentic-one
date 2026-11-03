@@ -584,6 +584,10 @@ var provisioningProblemTypes = map[string]bool{
 // with no directive to name the vendor) request_connection is guaranteed to
 // fail as an unknown vendor, so the pointer stays on whoami and the directive's
 // operator hand-off.
+//
+// A rules denial is change-shaped instead: its directive carries the edit to
+// ask for (parameters.edit), so the pointer names the tool that asks rather
+// than sending the agent to re-read an identity it already knows.
 func denialNextTool(problemType string, directive *ux.Directive) string {
 	if provisioningProblemTypes[problemType] && directive != nil {
 		if connectVendorKey(directive) != "" {
@@ -591,6 +595,11 @@ func denialNextTool(problemType string, directive *ux.Directive) string {
 		}
 		if cmd, _ := directive.Parameters["suggested_command"].(string); cmd != "" {
 			return "request_connection"
+		}
+	}
+	if directive != nil {
+		if edit, ok := directive.Parameters["edit"].(map[string]any); ok && edit != nil {
+			return "request_access_change"
 		}
 	}
 	return "whoami"

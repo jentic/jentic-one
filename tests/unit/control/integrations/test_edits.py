@@ -159,9 +159,14 @@ def test_an_attached_rule_set_is_the_list_an_edit_changes() -> None:
         resolve_edit(_baseline(rule_set=rule_set), EditRequest(remove=["apr_read"]))
 
 
-def test_baseline_matches_ignores_scopes_but_not_rules_or_suspension() -> None:
-    stored = _baseline()
-    assert baseline_matches(stored, stored | {"granted_scopes": ["repo", "gist"]})
+def test_baseline_matches_compares_rules_suspension_and_the_granted_set() -> None:
+    stored = _baseline() | {"granted_scopes": ["repo", "gist"]}
+    # A refresh that rewrites the string without changing the grant is no change.
+    assert baseline_matches(stored, stored | {"granted_scopes": ["gist", "repo"]})
+    # A grant that really moved is: a confirm resolved against the old one
+    # would ask the vendor for a set that drops what widened it since.
+    assert not baseline_matches(stored, stored | {"granted_scopes": ["repo"]})
+    assert not baseline_matches(stored, stored | {"granted_scopes": ["repo", "gist", "admin"]})
     assert not baseline_matches(stored, stored | {"suspended": True})
     assert not baseline_matches(stored, stored | {"rules": stored["rules"][:1]})
 

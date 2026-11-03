@@ -71,6 +71,12 @@ export interface ReviewSession {
 	revision?: { id: string; number: number } | null;
 	/** When a human last rejected this agent's ask for the same target (or binding). */
 	last_rejected_at?: string | null;
+	/**
+	 * The binding moved since this edit was opened, so ``edit`` is the diff
+	 * against the access as it was. ``:rebase`` resolves it onto the binding
+	 * as it is now; reads never do, so a GET appends no revision.
+	 */
+	stale?: boolean;
 	/** Edit sessions only: the binding change under review. */
 	edit?: ReviewEdit | null;
 	/** Whether this viewer may confirm the session as it stands. */

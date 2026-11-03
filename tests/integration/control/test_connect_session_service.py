@@ -32,6 +32,7 @@ from sqlalchemy import delete, select, text, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
@@ -57,13 +58,14 @@ from jentic_one.control.repos.connect_session_revision_repo import (
     ConnectSessionRevisionRepository,
 )
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.credentials.state import StateReplayedError, new_browser_binding
+from jentic_one.control.services.integrations import connect_session_service, identity_echo
 from jentic_one.control.services.integrations import device_authorization as df
-from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     AuthCodeConfirmResult,
@@ -81,6 +83,7 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectOpenError,
+    EditBindingNotFoundError,
     EditOpenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
@@ -88,10 +91,13 @@ from jentic_one.control.services.integrations.errors import (
     OAuthAppChangedError,
     RevisionChangedError,
     RevisionRequiredError,
-    ScopeChangeForbiddenError,
+    RuleSetConfirmForbiddenError,
+    RulesRequiredError,
     ScopesNotSupportedError,
     ScopeValidationError,
     SecuritySchemesLookupUnavailableError,
+    SessionClosedError,
+    TooManyRevisionsError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport, SuccessTokens
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
@@ -128,6 +134,7 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.pagination import InvalidCursorError, encode_cursor
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.wiring import InProcessCatalogAutoImporter
 from tests.harness.http_doubles import spec_client
@@ -2604,6 +2611,317 @@ async def test_amending_a_create_session_replaces_its_ask(
         )
 
 
+async def test_a_revision_chain_is_read_page_by_page(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A chain longer than one page is read whole by following the cursor."""
+    svc = ConnectSessionService(integration_context)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    for number in range(2, 6):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason=f"take {number}"),
+        )
+
+    seen: list[int] = []
+    cursor: str | None = None
+    while True:
+        page, has_more, cursor = await svc.list_revisions(
+            created.session_id,
+            poll_token=created.poll_token,
+            identity=_AGENT_IDENTITY,
+            limit=2,
+            cursor=cursor,
+        )
+        seen.extend(r.number for r in page)
+        assert len(page) <= 2
+        if not has_more:
+            break
+        assert cursor is not None
+    assert seen == [1, 2, 3, 4, 5]
+
+
+async def test_a_page_boundary_never_skips_a_revision_the_clock_disagrees_about(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """The page is keyed on ``number``, the one order the chain guarantees.
+
+    ``created_at`` is stamped by the application clock on one revision writer
+    and by the database clock on another, so a chain can hold two revisions
+    whose timestamps disagree with the order they were written in. A page
+    boundary taken there drops one.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    for number in range(2, 6):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason=f"take {number}"),
+        )
+    # The timestamps now run backwards against the numbers.
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    async with ctx.control_db.transaction() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ConnectSessionRevision).where(
+                        ConnectSessionRevision.session_id == created.session_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            await session.execute(
+                update(ConnectSessionRevision)
+                .where(ConnectSessionRevision.id == row.id)
+                .values(created_at=base - timedelta(minutes=row.number))
+            )
+
+    seen: list[int] = []
+    cursor: str | None = None
+    while True:
+        page, has_more, cursor = await svc.list_revisions(
+            created.session_id,
+            poll_token=created.poll_token,
+            identity=_AGENT_IDENTITY,
+            limit=2,
+            cursor=cursor,
+        )
+        seen.extend(r.number for r in page)
+        if not has_more:
+            break
+        assert cursor is not None
+    assert seen == [1, 2, 3, 4, 5]
+
+
+async def test_an_amend_losing_to_a_concurrent_writer_is_a_conflict(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A revision index collision is the conflict it is, not an internal error.
+
+    An integrity handler that asserts a dedupe key an edit's write never sets
+    raises out of the app on any collision there, instead of telling the
+    caller its ask has moved.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    created = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)]),
+    )
+    # A revision already holds the number this amend would take.
+    async with ctx.control_db.transaction() as session:
+        await ConnectSessionRevisionRepository.append(
+            session,
+            session_id=created.session_id,
+            proposal={"rules": {"add": [], "remove": []}, "scopes": {}, "resume": False},
+            result={"rules": [], "scopes": [], "target": "binding", "suspended": False},
+            digest="d" * 64,
+            created_by=None,
+        )
+    async with ctx.control_db.transaction() as session:
+        await session.execute(
+            text("UPDATE connect_sessions SET current_revision_id = :rid WHERE id = :sid"),
+            {"rid": created.revision_id, "sid": created.session_id},
+        )
+
+    with pytest.raises(RevisionChangedError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="mine"),
+        )
+
+
+async def test_an_agentless_scope_amend_losing_the_race_is_a_conflict_too(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """The other arm of the same handler: a session with no agent.
+
+    Its amend carries a dedupe key, and the dedupe index is partial on
+    ``agent_id IS NOT NULL``, so the only index a collision can come from is
+    the revision one. Reading it as a moved ask is sound for that reason, not
+    by luck, and the arm had no test to say so.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY, requested_scopes=["repo"]
+    )
+    first = await _revision(ctx, created.session_id)
+    # A revision already holds the number this amend would take.
+    async with ctx.control_db.transaction() as session:
+        await ConnectSessionRevisionRepository.append(
+            session,
+            session_id=created.session_id,
+            proposal={"requested_scopes": ["repo", "read:user"]},
+            result={"requested_scopes": ["repo", "read:user"]},
+            digest="e" * 64,
+            created_by=None,
+        )
+    async with ctx.control_db.transaction() as session:
+        await session.execute(
+            text("UPDATE connect_sessions SET current_revision_id = :rid WHERE id = :sid"),
+            {"rid": first, "sid": created.session_id},
+        )
+
+    with pytest.raises(RevisionChangedError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_USER_IDENTITY,
+            amend=SessionAmend(
+                fields=frozenset({"requested_scopes"}), requested_scopes=["repo", "read:user"]
+            ),
+        )
+
+
+async def test_a_session_holds_only_so_many_revisions(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The chain is capped, and every accepted amend also writes an audit row."""
+    monkeypatch.setattr(connect_session_service, "_MAX_SESSION_REVISIONS", 3)
+    svc = ConnectSessionService(integration_context)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    for number in (2, 3):
+        amended = await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason=f"take {number}"),
+        )
+        assert amended.revision_number == number
+    with pytest.raises(TooManyRevisionsError) as capped:
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="once more"),
+        )
+    assert capped.value.limit == 3
+
+
+async def test_only_the_initiator_or_an_approver_amends_a_users_own_session(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A session with no agent has no approver but its initiator.
+
+    Any other human would otherwise rewrite the ask a reviewer then approves,
+    so the amend takes the approver gate, not the ``can_confirm`` view helper
+    (which answers True for every human once a session names no agent).
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    mine = await svc.create_session(
+        vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY, requested_scopes=["repo"]
+    )
+    rewrite = SessionAmend(
+        fields=frozenset({"requested_scopes"}), requested_scopes=["repo", "read:user"]
+    )
+    for stranger in (_OTHER_USER_IDENTITY, _AGENT_IDENTITY):
+        with pytest.raises(InvalidPollTokenError):
+            await svc.amend_session(mine.session_id, identity=stranger, amend=rewrite)
+    # Bidirectional: the other user's own session is just as closed to this one.
+    theirs = await svc.create_session(
+        vendor_key="testdev", agent_id=None, identity=_OTHER_USER_IDENTITY
+    )
+    with pytest.raises(InvalidPollTokenError):
+        await svc.amend_session(theirs.session_id, identity=_USER_IDENTITY, amend=rewrite)
+
+    # The initiator still amends, and an org admin may act on any session.
+    amended = await svc.amend_session(mine.session_id, identity=_USER_IDENTITY, amend=rewrite)
+    assert amended.revision_number == 2
+    by_admin = await svc.amend_session(
+        mine.session_id,
+        identity=_ADMIN_IDENTITY,
+        amend=SessionAmend(fields=frozenset({"reason"}), reason="admin note"),
+    )
+    assert by_admin.revision_number == 3
+
+    # A person's own request has no agent, and the change still reaches the
+    # rail: dropped for want of one, it belonged nowhere. The summary and the
+    # created_by fall back to the initiator.
+    async with ctx.admin_db.session() as session:
+        events = [
+            e
+            for e in (await session.execute(select(Event))).scalars().all()
+            if e.type == EventType.CONNECT_SESSION_AMENDED
+            and (e.data or {}).get("session_id") == mine.session_id
+        ]
+    assert [(e.created_by, e.actor_id, (e.data or {})["number"]) for e in events] == [
+        (_USER_ID, _USER_ID, 2),
+        (_USER_ID, _ADMIN_IDENTITY.sub, 3),
+    ]
+    assert all(e.data is not None and e.data["agent_id"] is None for e in events)
+    assert all("connect request changed" in e.summary for e in events)
+
+
+async def test_a_human_who_does_not_own_the_credential_cannot_resume_a_binding(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """An agent transferred to a new owner keeps the first owner's cut-off.
+
+    The direct resume route requires credential ownership for this reason, so
+    the edit path requires it too: otherwise the new owner lifts a suspension
+    on someone else's secret.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    async with ctx.admin_db.transaction() as session:
+        await AgentCredentialBindingRepository.set_suspended(
+            session, agent_id=_AGENT_ID, credential_id=credential_id, suspended=True
+        )
+    # The agent's owner did not create the credential.
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_created_by(session, credential_id, created_by="usr_else")
+
+    for request in (EditRequest(resume=True), EditRequest(add=[RuleAdd(_WRITE_RULE)])):
+        with pytest.raises(EditBindingNotFoundError):
+            await svc.create_edit_session(
+                credential_id=credential_id,
+                agent_id=_AGENT_ID,
+                identity=_USER_IDENTITY,
+                request=request,
+                apply=True,
+            )
+
+
 async def test_the_reviewer_edits_a_new_connection_request_as_a_revision_of_their_own(
     integration_context: Context,
     seed_test_vendors: None,
@@ -2944,6 +3262,375 @@ async def test_rules_changed_while_a_grant_is_out_are_kept_and_the_rest_reopens(
     assert [e.data.get("credential_id") for e in applied.data].count(credential_id) >= 1
 
 
+async def test_a_cursor_from_another_session_is_refused_not_answered_empty(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """A cursor names a revision of this session, and only this session.
+
+    One from another decodes cleanly and resolves to nothing, so the page
+    comes back empty: a caller following it reads a session with no history,
+    which is indistinguishable from one that has none.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    mine = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    theirs = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    foreign = encode_cursor(datetime.now(UTC), await _revision(ctx, theirs.session_id))
+    with pytest.raises(InvalidCursorError):
+        await svc.list_revisions(
+            mine.session_id,
+            poll_token=mine.poll_token,
+            identity=_AGENT_IDENTITY,
+            limit=50,
+            cursor=foreign,
+        )
+
+
+async def test_a_rebase_of_a_session_in_its_vendor_step_is_the_documented_409(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """``:rebase`` takes an open edit, and only before its vendor step.
+
+    Once a confirm has sent the approver to the vendor, the ask is settled and
+    the rules are waiting on the grant, so re-resolving it would move what is
+    already being written. The route documents that 409 and the vendored
+    clients carry it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)], add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with pytest.raises(SessionClosedError):
+        await svc.rebase_session(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+
+
+async def test_rules_moving_under_the_landing_write_never_reports_a_change_it_dropped(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Whether the rules moved is decided under the lock the write takes.
+
+    Read before the transaction, the answer can change under the write: the
+    landing then keeps the rules it finds, records the change as applied and
+    deletes the session, so the rule change its approver made is lost with
+    nothing left to recover it from. Here the move is injected inside the
+    lock, where only the in-transaction answer can see it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)], add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with patch.object(ConnectSessionService, "_rules_moved_in", new=AsyncMock(return_value=True)):
+        await _land_grant(svc, credential_id)
+
+    # The grant is in, the rules are not written, and the ask is back on its
+    # review rather than closed as applied.
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    assert await _paths(ctx, credential_id) == ["/repos"]
+    again = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert again.edit is not None and again.state == "created"
+    assert again.edit.needs_vendor_consent is False
+
+
+async def test_a_scopes_only_landing_closes_even_when_the_rules_moved(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Nothing is lost when the approver changed no rule, so nothing reopens.
+
+    The other arm of the same decision: the rules are kept, the grant lands,
+    and the session closes applied, rather than sending a scopes-only ask
+    back for a review with nothing left to decide.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.edit is not None
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm_edit(
+            edit.session_id,
+            poll_token=None,
+            identity=_USER_IDENTITY,
+            revision_id=review.edit.revision_id,
+            permission_rules=list(review.edit.result["rules"]),
+            resume=False,
+            confirmed_scopes=["read:user", "repo"],
+        )
+    with patch.object(ConnectSessionService, "_rules_moved_in", new=AsyncMock(return_value=True)):
+        await _land_grant(svc, credential_id)
+
+    assert await _token_scope(ctx, credential_id) == "read:user repo"
+    status = await svc.get_status(
+        edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "applied"
+
+
+async def test_a_refused_apply_leaves_no_open_session_behind(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A refusal must not spend the agent's open-session quota.
+
+    Written before the checks that refuse it, each refused request leaves one
+    open: a handful of them and the agent can open no further request at
+    all.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    # The binding is governed by a shared rule set someone else owns, so a
+    # change to it is refused — after the scope check, late in the apply.
+    rule_set, _ = await CredentialService(ctx).create_rule_set(
+        name=f"quota shared set {uuid.uuid4().hex[:8]}",
+        description=None,
+        rules=[_READ_RULE],
+        identity=Identity(sub=_OTHER_USER_ID, permissions=["credentials:write"]),
+    )
+    async with ctx.admin_db.transaction() as session:
+        await PrerequisiteRepository.set_binding_rule_set(
+            session, agent_id=_AGENT_ID, credential_id=credential_id, rule_set_id=rule_set.id
+        )
+
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        for _ in range(3):
+            with pytest.raises(RuleSetConfirmForbiddenError):
+                await svc.create_edit_session(
+                    credential_id=credential_id,
+                    agent_id=_AGENT_ID,
+                    identity=_USER_IDENTITY,
+                    request=EditRequest(add_scopes=["repo"]),
+                    apply=True,
+                )
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
+
+
+async def test_a_widening_apply_that_strips_every_rule_spends_no_quota(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """The pre-check carries every refusal the widening branch can raise.
+
+    Stripping the rules is default deny, and it is refused while building the
+    change the widening branch writes the session for first. A pre-check
+    covering only the scope and rule-set refusals leaves this one to refuse
+    after the write, with an open session behind it against the agent's quota.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        for _ in range(3):
+            with pytest.raises(RulesRequiredError):
+                await svc.create_edit_session(
+                    credential_id=credential_id,
+                    agent_id=_AGENT_ID,
+                    identity=_USER_IDENTITY,
+                    request=EditRequest(add_scopes=["repo"], set_rules=[]),
+                    apply=True,
+                )
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
+
+
+async def test_a_rebase_is_for_an_edit_and_an_unknown_scope_is_refused_before_the_session(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """Two bounds on the apply path and the rebase beside it.
+
+    ``:rebase`` resolves an edit's ask against its binding, so a vendor
+    connect — which has no binding to resolve against — is refused on its
+    kind. And the pre-check validates the scopes the consent would ask for,
+    not only the rule-set authority: refused later, the apply leaves an open
+    session against the agent's quota.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_AGENT_IDENTITY
+    )
+    with pytest.raises(ConfirmKindMismatchError):
+        await svc.rebase_session(created.session_id, poll_token=None, identity=_USER_IDENTITY)
+    await svc.cancel_session(
+        created.session_id, poll_token=created.poll_token, identity=_AGENT_IDENTITY
+    )
+
+    credential_id = await _connected_device_credential(ctx, svc)
+    with (
+        patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)),
+        pytest.raises(ScopeValidationError),
+    ):
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["not:a:scope"]),
+            apply=True,
+        )
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.count_open(session, agent_ids=[_AGENT_ID]) == 0
+
+
+async def test_a_grant_that_moved_under_an_open_edit_reads_as_stale(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A confirm must not silently drop a scope the reviewer was never shown.
+
+    The sign-in asks the vendor for the scopes the session holds, so resolved
+    against a grant that has moved it would drop whatever widened it since,
+    for every agent bound to the credential.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add=[RuleAdd(_WRITE_RULE)]),
+    )
+    review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert review.stale is False
+    assert review.edit is not None and review.edit.current["granted_scopes"] == ["read:user"]
+
+    # Someone else widens the shared grant while this edit waits.
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+    await _land_grant(svc, credential_id)
+
+    stale = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert stale.stale is True
+    await svc.rebase_session(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    current = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
+    assert current.edit is not None
+    assert current.edit.current["granted_scopes"] == ["read:user", "repo"]
+    assert current.edit.result["scopes"] == ["read:user", "repo"]
+
+
+async def test_a_session_cancelled_mid_exchange_does_not_keep_the_widened_grant(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """The grant and the session's state swap commit together.
+
+    Written first, a grant outlived the cancellation: the callback reported
+    failure while the wider token stayed on the credential, reaching every
+    agent bound to it.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        edit = await svc.create_edit_session(
+            credential_id=credential_id,
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            request=EditRequest(add_scopes=["repo"]),
+            apply=True,
+        )
+
+    # The approver gives up while the vendor exchange is in flight: the
+    # session ends between the exchange starting and the grant coming back.
+    async def cancel_then_succeed(*args: object, **kwargs: object) -> StatusReport:
+        await svc.cancel_session(
+            edit.session_id, poll_token=edit.poll_token, identity=_USER_IDENTITY
+        )
+        return _success(["read:user", "repo"])
+
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(DeviceAuthorizationHandler, "advance", new=cancel_then_succeed),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_session(edit.session_id)
+
+    # The cancellation stands: the credential keeps the grant it had.
+    assert await _token_scope(ctx, credential_id) == "read:user"
+
+
 async def test_scopes_the_vendor_adds_of_its_own_are_not_a_kept_removal(
     integration_context: Context,
     seed_test_vendors: None,
@@ -3274,7 +3961,7 @@ async def test_a_failed_consent_leaves_the_credential_as_it_was(
     assert bound.scalars().first() is not None
 
 
-async def test_adding_scopes_to_a_credential_other_agents_use_needs_its_owner(
+async def test_editing_a_credential_someone_else_owns_is_refused(
     integration_context: Context,
     seed_test_vendors: None,
     seed_agent: None,
@@ -3311,7 +3998,10 @@ async def test_adding_scopes_to_a_credential_other_agents_use_needs_its_owner(
     review = await svc.get_review_data(edit.session_id, poll_token=None, identity=_USER_IDENTITY)
     assert review.edit is not None
     assert [a.agent_id for a in review.edit.other_bound_agents] == ["agnt_other_bound"]
-    with pytest.raises(ScopeChangeForbiddenError):
+    # The agent's owner does not own the credential, so the rules and scopes
+    # it is bound by are not theirs to change: the same not-found refusal the
+    # direct rule write and the direct resume give.
+    with pytest.raises(EditBindingNotFoundError):
         await svc.confirm_edit(
             edit.session_id,
             poll_token=None,

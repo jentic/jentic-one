@@ -79,6 +79,8 @@ async def _seed_session(
     api_vendor: str = _VENDOR,
     api_name: str | None = _API_NAME,
     created_at: datetime | None = None,
+    intent: str = "create",
+    initiator_actor_id: str | None = None,
 ) -> None:
     credential_id = f"cred_{session_id}"
     async with control_db.session() as session:
@@ -100,7 +102,8 @@ async def _seed_session(
                 credential_id=credential_id,
                 vendor="github",
                 agent_id=agent_id,
-                initiator_actor_id=agent_id or "usr_1",
+                initiator_actor_id=initiator_actor_id or agent_id or "usr_1",
+                intent=intent,
                 state=state,
                 resolved_flow="device_authorization",
                 poll_token_hash=f"{session_id:0<64}"[:64],
@@ -138,6 +141,31 @@ async def test_reader_finds_a_live_session(
 ) -> None:
     await _seed_session(control_db, session_id=f"cs_open_{state}", state=state)
     assert await _find(control_db) == f"cs_open_{state}"
+
+
+async def test_reader_finds_an_open_edit_whoever_opened_it(
+    control_db: DatabaseSession, clean_sessions: None
+) -> None:
+    """The denial relays an open edit of the binding, however it was opened.
+
+    A human opening a reviewable edit for the agent is exactly the review the
+    denial should point at; keyed on the agent's own initiation, the denial
+    tells the agent to file a second request for a change already waiting for
+    its owner. The edit is not an answer to a missing credential either, so
+    the API-target query must not return it.
+    """
+    await _seed_session(
+        control_db,
+        session_id="cs_open_edit",
+        intent="edit",
+        initiator_actor_id="usr_owner",
+    )
+    reader = OpenConnectSessionReader(control_db)
+    assert (
+        await reader.find_open_edit_id(agent_id=_AGENT, credential_id="cred_cs_open_edit")
+        == "cs_open_edit"
+    )
+    assert await _find(control_db) is None
 
 
 def test_open_states_mirror_the_control_live_states() -> None:

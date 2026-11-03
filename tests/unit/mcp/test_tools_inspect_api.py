@@ -20,7 +20,10 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSchemeOption,
     ConnectScopeOption,
 )
-from jentic_one.control.services.integrations.errors import UnknownApiError
+from jentic_one.control.services.integrations.errors import (
+    InvalidOAuthAppRegistrationError,
+    UnknownApiError,
+)
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
@@ -53,6 +56,7 @@ def _payload(result: Any) -> dict[str, Any]:
 class _FakeService:
     calls: ClassVar[list[tuple[ApiTarget, str | None]]] = []
     missing: ClassVar[bool] = False
+    error: ClassVar[Exception | None] = None
 
     def __init__(self, ctx: Any, **seams: Any) -> None:
         pass
@@ -60,6 +64,8 @@ class _FakeService:
     async def connect_options(
         self, target: ApiTarget, *, registration_id: str | None = None
     ) -> ConnectOptions:
+        if _FakeService.error is not None:
+            raise _FakeService.error
         if _FakeService.missing:
             raise UnknownApiError(target.vendor, target.name, target.version)
         _FakeService.calls.append((target, registration_id))
@@ -94,6 +100,7 @@ class _FakeService:
 def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeService.calls = []
     _FakeService.missing = False
+    _FakeService.error = None
     monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeService)
 
 
@@ -121,3 +128,35 @@ async def test_an_api_the_registry_lacks_points_at_import() -> None:
     result = await dispatch_tool_call(_env(), "inspect_api", {"api": "nope/nope/v0"})
     assert result.is_error
     assert _payload(result)["next_tool"] == "import_api"
+
+
+async def test_a_registration_naming_no_active_app_is_coded_not_internal() -> None:
+    """The pin is the agent's to fix, so it comes back as a tool error.
+
+    Unhandled, a refused registration reached the client as an internal
+    error, which tells the model nothing it can act on: the arm names the
+    retry without the pin.
+    """
+    _FakeService.error = InvalidOAuthAppRegistrationError(
+        "oar_gone", "no active shared app serves this API"
+    )
+    result = await dispatch_tool_call(
+        _env(), "inspect_api", {"api": "googleapis.com/gmail/v1", "registration_id": "oar_gone"}
+    )
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["next_tool"] == "inspect_api"
+    assert "without oauth_app_registration_id" in payload["actionable_step"]
+
+
+async def test_the_registration_id_is_bounded_as_the_route_bounds_it() -> None:
+    """The mount applies the route's cap, so neither forwards an unbounded id."""
+    result = await dispatch_tool_call(
+        _env(),
+        "inspect_api",
+        {"api": "googleapis.com/gmail/v1", "registration_id": "o" * 31},
+    )
+    assert result.is_error
+    assert _payload(result)["error_code"] == "MISSING_ARGUMENT"
+    assert _FakeService.calls == []

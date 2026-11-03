@@ -10,10 +10,13 @@ model column uses it. Postgres DDL is the same either way (``timestamptz``).
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import DateTime
 
 from jentic_one.migrations.targets import DB_TARGETS
 from jentic_one.shared.db.types import UTCDateTime
+
+pytestmark = pytest.mark.arch
 
 
 def test_every_timestamp_column_uses_utc_datetime() -> None:

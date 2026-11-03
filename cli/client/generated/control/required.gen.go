@@ -385,8 +385,10 @@ func (ServedApiRef) RequiredFields() []string               { return []string{"a
 func (SessionApiReferenceResponse) RequiredFields() []string {
 	return []string{"name", "vendor", "version"}
 }
-func (SessionRevisionListResponse) RequiredFields() []string { return []string{"data"} }
-func (SessionRevisionRef) RequiredFields() []string          { return []string{"id", "number"} }
+func (SessionRevisionListResponse) RequiredFields() []string {
+	return []string{"data", "has_more", "limit"}
+}
+func (SessionRevisionRef) RequiredFields() []string { return []string{"id", "number"} }
 func (SessionRevisionResponse) RequiredFields() []string {
 	return []string{"created_at", "id", "number", "proposal", "result"}
 }

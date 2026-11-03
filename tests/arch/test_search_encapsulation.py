@@ -24,6 +24,9 @@ SCANNED_DIRS = [
 ]
 
 
+pytestmark = pytest.mark.arch
+
+
 def _imported_modules(path: Path) -> set[str]:
     """Return all imported module names from a Python file."""
     source = path.read_text()

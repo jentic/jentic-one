@@ -23,9 +23,13 @@ export type ReviewEditResponse = {
      */
     needs_vendor_consent?: boolean;
     /**
-     * Other agents bound to the credential; added scopes and a shared rule set change reach them.
+     * Other agents this change reaches: those bound to the credential, which added scopes reach, and those bound through a shared rule set the change rewrites.
      */
     other_bound_agents?: Array<EditAgentRef>;
+    /**
+     * True when the change reaches more agents than the list names: it is capped, and no cursor continues it.
+     */
+    other_bound_agents_truncated?: boolean;
     result: EditResultAccess;
     revision: SessionRevisionRef;
     /**
