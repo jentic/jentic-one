@@ -309,7 +309,8 @@ describe('CreateCredentialFlow (inline) — choosing the authentication method',
 		const group = await methods();
 		expect(within(group).getAllByRole('radio')).toHaveLength(CREDENTIAL_TYPE_ORDER.length);
 		for (const radio of within(group).getAllByRole('radio')) expect(radio).not.toBeChecked();
-		expect(fieldsBox()).not.toBeVisible();
+		// The no-auth fields fold away: hidden once the fold settles.
+		await waitFor(() => expect(fieldsBox()).not.toBeVisible());
 		expectSaveBlocked(/Choose an authentication method first/);
 	});
 
