@@ -21,9 +21,11 @@
  * itself. Every row has its checkbox, and one toolbar above them, beside the
  * checkboxes, holds select-all and the bulk verbs: Deny N decides each ticked
  * call and sums up in one toast, and Approve N… opens the bulk-approve
- * confirmation on the ticked calls that are not deletes (each delete is
- * approved on its own). The pop-up and the confirmation are the shell's,
- * opened through `useReviewLinks`.
+ * confirmation on the ticked calls. Deletes are approved one at a time, and
+ * the toolbar says so before anything is ticked: the confirmation sets the
+ * ticked deletes aside and opens the first of them once the rest have run;
+ * with only deletes ticked, the verb is Review, on the first of them. The
+ * pop-up and the confirmation are the shell's, opened through `useReviewLinks`.
  *
  * Amber is an accent only — the tile's glyph, the count and the hairline
  * ring — so dark surfaces stay neutral; the light theme adds a faint warm fill
@@ -139,7 +141,8 @@ export function HeldCallsCard({
 	// for nothing.
 	const ticked = calls.filter((call) => tickedIds.has(call.id));
 	const approvable = ticked.filter((call) => !isDeleteCall(call));
-	const deletesTicked = ticked.length - approvable.length;
+	const deletesTicked = ticked.filter(isDeleteCall);
+	const hasDeletes = calls.some(isDeleteCall);
 	const allTicked = ticked.length === calls.length;
 	const n = calls.length;
 	const names = [
@@ -329,10 +332,12 @@ export function HeldCallsCard({
 				onClosed={() => setTickedIds(new Set())}
 			>
 				<div className="border-warning/25 border-t">
-					{/* One toolbar, top-left, beside the checkboxes it acts on. */}
+					{/* One toolbar, top-left, beside the checkboxes it acts on. From
+					    `sm` the checkboxes line up under the head's title; on a phone
+					    they line up under its tile, so the rows keep their width. */}
 					<div
 						data-testid="held-calls-toolbar"
-						className="border-hairline-row flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 border-b py-2 pr-3 pl-[62px]"
+						className="border-hairline-row flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 border-b py-2 pr-3 pl-3.5 sm:pl-[62px]"
 					>
 						<label className="text-foreground-sub flex cursor-pointer items-center gap-2.5 text-xs font-semibold">
 							<Checkbox
@@ -356,31 +361,54 @@ export function HeldCallsCard({
 								>
 									Deny {ticked.length}
 								</Button>
-								<Button
-									variant="primary"
-									size="xs"
-									disabled={approvable.length === 0 || denying}
-									onClick={() => openBatch(approvable.map((call) => call.id))}
-								>
-									{approvable.length > 0
-										? `Approve ${approvable.length}…`
-										: 'Approve…'}
-								</Button>
-								{deletesTicked > 0 && (
+								{approvable.length > 0 ? (
+									<Button
+										variant="primary"
+										size="xs"
+										disabled={denying}
+										// The deletes go too: the confirmation sets them aside and
+										// opens the first once the rest are approved.
+										onClick={() => openBatch(ticked.map((call) => call.id))}
+									>
+										Approve {approvable.length}…
+									</Button>
+								) : (
+									<Button
+										variant="primary"
+										size="xs"
+										disabled={denying}
+										// The pop-up walks just these deletes, one at a time.
+										onClick={() =>
+											openReview(deletesTicked[0].id, {
+												only: deletesTicked.map((call) => call.id),
+											})
+										}
+									>
+										{deletesTicked.length === 1
+											? 'Review the delete'
+											: `Review ${deletesTicked.length} deletes`}
+									</Button>
+								)}
+								{deletesTicked.length > 0 && (
 									<span className="text-foreground-faint text-[11.5px]">
-										Deletes are approved one at a time
+										{approvable.length === 0
+											? 'Deletes are approved one at a time'
+											: deletesTicked.length === 1
+												? 'The delete comes next, on its own'
+												: `The ${deletesTicked.length} deletes come next, one at a time`}
 									</span>
 								)}
 							</>
 						) : (
 							<span className="text-foreground-faint text-[11.5px]">
 								Tick calls to deny or approve several at once
+								{hasDeletes && '. Deletes are approved one at a time'}
 							</span>
 						)}
 					</div>
 					<ul
 						aria-label={`Calls waiting for you from ${agentName}`}
-						className="divide-hairline-row divide-y pl-[52px]"
+						className="divide-hairline-row divide-y pl-1 sm:pl-[52px]"
 					>
 						{calls.map((call) => (
 							<HeldCallRow
@@ -402,8 +430,12 @@ export function HeldCallsCard({
 }
 
 /** The meta line's quiet separator. */
-function Sep() {
-	return <span aria-hidden="true">·</span>;
+function Sep({ className }: { className?: string }) {
+	return (
+		<span aria-hidden="true" className={className}>
+			·
+		</span>
+	);
 }
 
 /** One held call: its checkbox, then the control that opens it in the pop-up. */
@@ -427,16 +459,21 @@ function HeldCallRow({
 	// A headline from the spec says what the call does; the route says what it
 	// touches, so it follows. A headline that is the route already says both.
 	const named = headline !== heldCallRoute(call);
+	// On a phone the meta line is one cut line and leaves the route out, with
+	// its separator: the headline and the review say what it touches.
 	const facts = [
-		<span key="api">{apiTitle}</span>,
-		named && (
-			<span key="path" className="max-w-full min-w-0 truncate font-mono">
-				{call.path}
-			</span>
-		),
-		<span key="age">{waitingSince(call.created_at, now)}</span>,
-		<span key="expiry">{expiresIn(call.expires_at, now)}</span>,
-	].filter(Boolean);
+		{ node: <span>{apiTitle}</span> },
+		named && {
+			wide: true,
+			node: (
+				<span className="max-w-full min-w-0 truncate font-mono max-sm:hidden">
+					{call.path}
+				</span>
+			),
+		},
+		{ node: <span>{waitingSince(call.created_at, now)}</span> },
+		{ node: <span>{expiresIn(call.expires_at, now)}</span> },
+	].filter((fact) => !!fact);
 	// The `{' '}` between flex items and blocks draw nothing (whitespace there
 	// is not laid out) but keep the words apart in the control's name.
 	return (
@@ -463,16 +500,18 @@ function HeldCallRow({
 					<span className="text-foreground-name block truncate text-[13px] leading-5 font-semibold">
 						{headline}
 					</span>{' '}
-					<span className="text-foreground-faint flex min-w-0 flex-wrap items-center gap-x-1 text-[11.5px] leading-4">
+					<span className="text-foreground-faint block text-[11.5px] leading-4 max-sm:truncate sm:flex sm:min-w-0 sm:flex-wrap sm:items-center sm:gap-x-1">
 						{facts.map((fact, i) => (
 							<Fragment key={i}>
 								{i > 0 && (
 									<>
 										{' '}
-										<Sep />{' '}
+										<Sep
+											className={fact.wide ? 'max-sm:hidden' : undefined}
+										/>{' '}
 									</>
 								)}
-								{fact}
+								{fact.node}
 							</Fragment>
 						))}
 					</span>
@@ -480,9 +519,11 @@ function HeldCallRow({
 				{isDeleteCall(call) && (
 					<>
 						{' '}
-						<Tag>
+						{/* The glyph alone on a phone, where the headline needs the
+						    room; the words stay in the control's name. */}
+						<Tag className="max-sm:px-1">
 							<Trash2 aria-hidden="true" className="text-danger h-3 w-3 shrink-0" />
-							Deletes data
+							<span className="max-sm:sr-only">Deletes data</span>
 						</Tag>
 					</>
 				)}

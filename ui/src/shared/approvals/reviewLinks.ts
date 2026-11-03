@@ -6,7 +6,9 @@
  *     next, and the agent's last decision closes it. A held call's
  *     `review_url` lands here. With `&review_all=1` (the attention toast, the
  *     one surface that speaks for every agent at once) it walks every waiting
- *     call instead, the open call's agent first.
+ *     call instead, the open call's agent first. With `&review_only=<id>,<id>…`
+ *     it walks just those calls (the deletes a card or a batch sets aside to
+ *     approve one at a time).
  *   - `?review_batch=<id>,<id>…` — the bulk-approve confirmation for those
  *     calls (deletes are never in it; each is approved on its own).
  *   - `?inbox=1` — the shell rail opened on its Inbox tab (the drawer below
@@ -22,6 +24,7 @@ import { useSearchParams } from 'react-router';
 export const REVIEW_PARAM = 'review';
 export const REVIEW_ALL_PARAM = 'review_all';
 export const REVIEW_BATCH_PARAM = 'review_batch';
+export const REVIEW_ONLY_PARAM = 'review_only';
 export const INBOX_PARAM = 'inbox';
 
 /**
@@ -34,11 +37,25 @@ const HELD_ID = /^(?!\.{1,2}$)[^\s/?#%]{1,256}$/;
 const validId = (value: string | null): string | null =>
 	value != null && HELD_ID.test(value) ? value : null;
 
+/** A comma list's valid ids, each once. */
+const validIds = (value: string | null): string[] =>
+	value
+		? [
+				...new Set(
+					value
+						.split(',')
+						.map(validId)
+						.filter((id): id is string => id != null),
+				),
+			]
+		: [];
+
 /** The search string that opens the pop-up on `heldId`, keeping the rest of `search`. */
 export function reviewSearch(search: URLSearchParams | string, heldId: string): string {
 	const next = new URLSearchParams(search);
 	next.delete(REVIEW_BATCH_PARAM);
 	next.delete(REVIEW_ALL_PARAM);
+	next.delete(REVIEW_ONLY_PARAM);
 	next.set(REVIEW_PARAM, heldId);
 	return `?${next}`;
 }
@@ -50,10 +67,15 @@ export interface ReviewLinks {
 	reviewAll: boolean;
 	/** The calls the bulk-approve confirmation is on, if it is open; each once. */
 	batchIds: string[];
+	/** The open pop-up walks only these calls; empty walks its usual queue. */
+	onlyIds: string[];
 	/** A review param is present but names nothing (empty, malformed): the host strips it. */
 	dangling: boolean;
-	/** Open the pop-up on `heldId`, over its agent's calls; `all` for every agent's. */
-	openReview: (heldId: string, opts?: { all?: boolean }) => void;
+	/**
+	 * Open the pop-up on `heldId`, over its agent's calls; `all` for every
+	 * agent's, `only` for just those calls.
+	 */
+	openReview: (heldId: string, opts?: { all?: boolean; only?: readonly string[] }) => void;
 	openBatch: (heldIds: readonly string[]) => void;
 	/** Moves the open pop-up to another call. */
 	advanceReview: (heldId: string) => void;
@@ -67,6 +89,7 @@ export function useReviewLinks(): ReviewLinks {
 	const reviewId = validId(params.get(REVIEW_PARAM));
 	const reviewAll = params.get(REVIEW_ALL_PARAM) === '1';
 	const batchParam = params.get(REVIEW_BATCH_PARAM);
+	const onlyParam = params.get(REVIEW_ONLY_PARAM);
 	const hasReviewParam = params.has(REVIEW_PARAM);
 
 	// Every change replaces the entry: the pop-up and the confirmation are no
@@ -86,20 +109,12 @@ export function useReviewLinks(): ReviewLinks {
 	);
 
 	return useMemo(() => {
-		const batchIds = batchParam
-			? [
-					...new Set(
-						batchParam
-							.split(',')
-							.map(validId)
-							.filter((id): id is string => id != null),
-					),
-				]
-			: [];
+		const batchIds = validIds(batchParam);
 		return {
 			reviewId,
 			reviewAll,
 			batchIds,
+			onlyIds: validIds(onlyParam),
 			dangling:
 				(hasReviewParam && !reviewId) ||
 				(!reviewId && batchParam != null && batchIds.length === 0),
@@ -108,12 +123,15 @@ export function useReviewLinks(): ReviewLinks {
 					next.delete(REVIEW_BATCH_PARAM);
 					if (opts?.all) next.set(REVIEW_ALL_PARAM, '1');
 					else next.delete(REVIEW_ALL_PARAM);
+					if (opts?.only?.length) next.set(REVIEW_ONLY_PARAM, opts.only.join(','));
+					else next.delete(REVIEW_ONLY_PARAM);
 					next.set(REVIEW_PARAM, heldId);
 				}),
 			openBatch: (heldIds) =>
 				update((next) => {
 					next.delete(REVIEW_PARAM);
 					next.delete(REVIEW_ALL_PARAM);
+					next.delete(REVIEW_ONLY_PARAM);
 					next.set(REVIEW_BATCH_PARAM, heldIds.join(','));
 				}),
 			// The scope rides along: the pop-up keeps walking the same queue.
@@ -122,9 +140,10 @@ export function useReviewLinks(): ReviewLinks {
 				update((next) => {
 					next.delete(REVIEW_PARAM);
 					next.delete(REVIEW_ALL_PARAM);
+					next.delete(REVIEW_ONLY_PARAM);
 					next.delete(REVIEW_BATCH_PARAM);
 				}),
 			openInbox: () => update((next) => next.set(INBOX_PARAM, '1')),
 		};
-	}, [reviewId, reviewAll, batchParam, hasReviewParam, update]);
+	}, [reviewId, reviewAll, batchParam, onlyParam, hasReviewParam, update]);
 }

@@ -58,6 +58,8 @@ import {
 } from '@/shared/approvals/review/ReviewStates';
 import { nextWaitingCall, reviewQueue } from '@/shared/approvals/review/reviewQueue';
 
+const NO_IDS: readonly string[] = [];
+
 /** Past this many waiting calls the stepper drops its dots and keeps the count. */
 const MAX_STEPPER_DOTS = 12;
 
@@ -65,6 +67,8 @@ interface HeldCallReviewProps {
 	heldId: string;
 	/** Walk every agent's waiting calls, not just the open call's agent's. */
 	allAgents?: boolean;
+	/** Walk only these calls (deletes set aside to approve one at a time). */
+	onlyIds?: readonly string[];
 	/** Move the pop-up to another call (no new history entry). */
 	onAdvance: (heldId: string) => void;
 	onClose: () => void;
@@ -73,6 +77,7 @@ interface HeldCallReviewProps {
 export function HeldCallReview({
 	heldId,
 	allAgents = false,
+	onlyIds = NO_IDS,
 	onAdvance,
 	onClose,
 }: HeldCallReviewProps) {
@@ -91,7 +96,9 @@ export function HeldCallReview({
 	const [refusedId, setRefusedId] = useState<string | null>(null);
 	const [failure, setFailure] = useState<{ heldId: string; message: string } | null>(null);
 
-	const pending = (pendingQuery.data?.approvals ?? []).filter((c) => !settledIds.has(c.id));
+	const listed = (pendingQuery.data?.approvals ?? []).filter((c) => !settledIds.has(c.id));
+	// Scoped to the calls it was opened for, when it was.
+	const pending = onlyIds.length > 0 ? listed.filter((c) => onlyIds.includes(c.id)) : listed;
 	const headlineOf = useHeldCallHeadlines(call ? [call, ...pending] : pending);
 	const directory = useActorDirectory([call?.agent_id]);
 	const credential = useCredential(call?.credential_id);

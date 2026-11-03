@@ -118,7 +118,7 @@ describe('bulk-approve confirmation', () => {
 
 		// The delete is set aside, with a way to review it on its own.
 		expect(
-			within(dialog).getByText('Left out: deletes are approved one at a time'),
+			within(dialog).getByText('Next: 1 delete, approved one at a time'),
 		).toBeInTheDocument();
 		expect(
 			within(dialog).getByRole('button', { name: 'Review Cancel a subscription' }),
@@ -127,7 +127,7 @@ describe('bulk-approve confirmation', () => {
 		await checkA11y(document.body, { modal: true });
 	});
 
-	it('approves only the non-delete calls, one decide each, then closes with one toast', async () => {
+	it('approves only the non-delete calls, one decide each, then opens the delete it set aside', async () => {
 		renderHost('/agents?review_batch=held_charge,held_refund,held_cancel');
 
 		const dialog = await screen.findByRole('dialog', { name: 'Approve 2 calls' });
@@ -135,11 +135,17 @@ describe('bulk-approve confirmation', () => {
 		await userEvent.click(within(dialog).getByRole('button', { name: 'Approve 2' }));
 
 		expect(await screen.findByText('Approved 2 calls')).toBeInTheDocument();
+		expect(screen.getByText('The delete is next, to approve on its own.')).toBeInTheDocument();
 		await waitFor(() =>
 			expect(
 				screen.queryByRole('dialog', { name: 'Approve 2 calls' }),
 			).not.toBeInTheDocument(),
 		);
+		const review = await screen.findByRole('dialog', { name: 'Review call' });
+		expect(await within(review).findByText('“Cancel a subscription”')).toBeInTheDocument();
+		expect(currentParams().get('review')).toBe('held_cancel');
+		// It walks the set-aside deletes alone.
+		expect(currentParams().get('review_only')).toBe('held_cancel');
 		expect(currentParams().has('review_batch')).toBe(false);
 		expect(decisions).toEqual([
 			{ id: 'held_charge', body: { decision: 'approve' } },
@@ -163,13 +169,13 @@ describe('bulk-approve confirmation', () => {
 		expect(getMockApproval('held_refund')?.state).toBe('denied');
 	});
 
-	it('reports a call that failed, which stays waiting', async () => {
+	it('reports a call that failed, which stays waiting, and does not move on to the deletes', async () => {
 		worker.use(
 			http.post('/executions/holds/held_refund\\:decide', () =>
 				HttpResponse.json({ status: 500, detail: 'Upstream unavailable' }, { status: 500 }),
 			),
 		);
-		renderHost('/agents?review_batch=held_charge,held_refund');
+		renderHost('/agents?review_batch=held_charge,held_refund,held_cancel');
 
 		const dialog = await screen.findByRole('dialog', { name: 'Approve 2 calls' });
 		await within(dialog).findByText('Create a refund');
@@ -182,6 +188,13 @@ describe('bulk-approve confirmation', () => {
 			),
 		).toBeInTheDocument();
 		expect(getMockApproval('held_refund')?.state).toBe('pending');
+		expect(screen.queryByText(/delete is next/)).not.toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('dialog', { name: 'Approve 2 calls' }),
+			).not.toBeInTheDocument(),
+		);
+		expect(currentParams().has('review')).toBe(false);
 	});
 
 	it('opens a left-out delete in the review pop-up', async () => {

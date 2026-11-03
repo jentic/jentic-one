@@ -53,8 +53,16 @@ function ReviewHostFallback() {
 }
 
 function ReviewSurfaces() {
-	const { reviewId, reviewAll, batchIds, dangling, advanceReview, closeReview, openReview } =
-		useReviewLinks();
+	const {
+		reviewId,
+		reviewAll,
+		batchIds,
+		onlyIds,
+		dangling,
+		advanceReview,
+		closeReview,
+		openReview,
+	} = useReviewLinks();
 	// A param that names nothing (`?review=`, `?review_batch=,,`, an id that is
 	// not one) opens nothing, and is stripped so it doesn't linger in the URL.
 	useEffect(() => {
@@ -65,6 +73,7 @@ function ReviewSurfaces() {
 			<HeldCallReview
 				heldId={reviewId}
 				allAgents={reviewAll}
+				onlyIds={onlyIds}
 				onAdvance={advanceReview}
 				onClose={closeReview}
 			/>

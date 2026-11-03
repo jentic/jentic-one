@@ -194,6 +194,8 @@ describe('HeldCallsCard', () => {
 		const toolbar = screen.getByTestId('held-calls-toolbar');
 		expect(toolbar).toHaveTextContent('Select all');
 		expect(toolbar).toHaveTextContent('Tick calls to deny or approve several at once');
+		// Said before anything is ticked: the list holds a delete.
+		expect(toolbar).toHaveTextContent('Deletes are approved one at a time');
 		expect(within(toolbar).queryByRole('button', { name: /^Deny/ })).toBeNull();
 
 		await user.click(
@@ -241,19 +243,20 @@ describe('HeldCallsCard', () => {
 		expect(screen.getByTestId('held-calls-toolbar')).toHaveTextContent('Select all');
 	});
 
-	it('Approve N… opens the bulk confirmation on the ticked calls, leaving deletes out', async () => {
+	it('Approve N… counts the calls it approves together, and hands the confirmation the delete too', async () => {
 		const user = userEvent.setup();
 		renderCard(seedCalls());
 		await expand(user);
 		const toolbar = screen.getByTestId('held-calls-toolbar');
 		await user.click(within(toolbar).getByRole('checkbox', { name: 'Select all' }));
-		expect(toolbar).toHaveTextContent('Deletes are approved one at a time');
+		expect(toolbar).toHaveTextContent('The delete comes next, on its own');
 		await user.click(within(toolbar).getByRole('button', { name: 'Approve 2…' }));
-		expect(search().get('review_batch')).toBe('held_payout,held_refund');
+		// The confirmation sets the delete aside and opens it once the rest have run.
+		expect(search().get('review_batch')).toBe('held_payout,held_cancel,held_refund');
 		expect(search().has('review')).toBe(false);
 	});
 
-	it('only a delete ticked: nothing to approve in bulk', async () => {
+	it('only a delete ticked: the verb is Review, on that delete', async () => {
 		const user = userEvent.setup();
 		renderCard(seedCalls());
 		const list = await expand(user);
@@ -261,9 +264,14 @@ describe('HeldCallsCard', () => {
 			await within(list).findByRole('checkbox', { name: 'Select Cancel a subscription' }),
 		);
 		const toolbar = screen.getByTestId('held-calls-toolbar');
-		expect(within(toolbar).getByRole('button', { name: 'Approve…' })).toBeDisabled();
+		expect(within(toolbar).queryByRole('button', { name: /^Approve/ })).toBeNull();
 		expect(within(toolbar).getByRole('button', { name: 'Deny 1' })).toBeEnabled();
 		expect(toolbar).toHaveTextContent('Deletes are approved one at a time');
+		await user.click(within(toolbar).getByRole('button', { name: 'Review the delete' }));
+		expect(search().get('review')).toBe('held_cancel');
+		// The pop-up walks the ticked deletes alone, not every waiting call.
+		expect(search().get('review_only')).toBe('held_cancel');
+		expect(search().has('review_batch')).toBe(false);
 	});
 
 	it('Deny N decides each ticked call, sums up in one toast and clears the ticks', async () => {

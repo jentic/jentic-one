@@ -2873,16 +2873,20 @@ describe('AgentsPage — held calls waiting on the viewer', () => {
 		expect(within(stripTab('support-agent')).queryByTestId('strip-waiting-chip')).toBeNull();
 	});
 
-	it('Approve N… opens the bulk confirmation without the delete', async () => {
-		const { charge } = seedSupportAgentCalls();
+	it('Approve N… counts the delete out and hands it to the confirmation', async () => {
+		const { charge, remove } = seedSupportAgentCalls();
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const card = await findHeldCard();
 		await user.click(within(card).getByRole('button', { name: 'Show the calls' }));
 		await user.click(within(card).getByRole('checkbox', { name: 'Select all' }));
-		expect(card).toHaveTextContent('Deletes are approved one at a time');
+		expect(card).toHaveTextContent('The delete comes next, on its own');
 		await user.click(within(card).getByRole('button', { name: 'Approve 1…' }));
-		await waitFor(() => expect(search().get('review_batch')).toBe(charge.id));
+		await waitFor(() =>
+			expect(search().get('review_batch')?.split(',').sort()).toEqual(
+				[charge.id, remove.id].sort(),
+			),
+		);
 	});
 
 	it('Expand all opens the card with the rows, and Collapse all shuts it', async () => {

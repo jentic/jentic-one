@@ -219,6 +219,22 @@ describe('a decision on its way', () => {
 		expect(getMockApproval('held_a')?.state).toBe('approved');
 	});
 
+	it('with review_only, walks just those calls', async () => {
+		seedCall('held_a', 'createCharge', 30);
+		seedCall('held_b', 'createRefund', 20);
+		seedCall('held_c', 'createCharge', 10);
+		renderHost('/agents?review=held_a&review_only=held_a,held_c');
+		const dialog = await screen.findByRole('dialog', { name: 'Review call' });
+		await within(dialog).findByText('1 of 2 waiting for you');
+
+		await userEvent.click(within(dialog).getByRole('button', { name: 'Approve and run' }));
+		// On to held_c, past the older held_b outside the scope.
+		await waitFor(() =>
+			expect(screen.getByTestId('location')).toHaveTextContent('review=held_c'),
+		);
+		expect(screen.getByTestId('location')).toHaveTextContent('review_only=held_a%2Cheld_c');
+	});
+
 	it('never lands on a next call that was settled behind the list', async () => {
 		seedCall('held_a', 'createCharge', 30);
 		seedCall('held_b', 'createRefund', 20);

@@ -5,14 +5,16 @@
  * "Approve N".
  *
  * Deletes are never approved in bulk: any that reach this list are set aside
- * with a Review link that opens the single-call pop-up. Calls that stopped
+ * with a Review link that opens the single-call pop-up on just those deletes,
+ * and once the rest have run without a failure the pop-up opens on the first
+ * of them by itself. Calls that stopped
  * waiting on the viewer since they were picked (decided, expired, or not theirs
  * to decide) are left out too.
  *
  * There is no batch endpoint, so "Approve N" decides one call at a time,
  * refreshes every surface once at the end, and reports once, in a toast: a call
  * someone else settled first counts as already decided, any other failure is
- * named and stays waiting.
+ * named and stays waiting, and a delete set aside is said to be next.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Trash2 } from 'lucide-react';
@@ -44,8 +46,8 @@ import { bodyAmount, totalAmount, type BodyAmount } from '@/shared/approvals/rev
 interface BulkApproveDialogProps {
 	heldIds: readonly string[];
 	onClose: () => void;
-	/** Open one call in the review pop-up (a delete left out of the batch). */
-	onReviewOne: (heldId: string) => void;
+	/** Open a delete left out of the batch in the review pop-up, walking `only` those. */
+	onReviewOne: (heldId: string, opts?: { only?: readonly string[] }) => void;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -103,6 +105,7 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 
 	async function approveAll() {
 		const batch = [...calls];
+		const setAside = [...deletes];
 		setRunning(batch);
 		let approved = 0;
 		let already = 0;
@@ -124,8 +127,20 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 			}
 		}
 		refresh();
-		toast(batchToast(batch, headlineOf, { approved, already, failed }));
-		if (alive.current) onClose();
+		// On to the deletes the batch set aside, one at a time in the pop-up,
+		// unless a call failed: the toast names it, and the card still lists it.
+		const handOver = setAside.length > 0 && failed.length === 0;
+		toast(
+			batchToast(
+				batch,
+				headlineOf,
+				{ approved, already, failed },
+				handOver ? setAside.length : 0,
+			),
+		);
+		if (!alive.current) return;
+		if (handOver) onReviewOne(setAside[0].id, { only: setAside.map((call) => call.id) });
+		else onClose();
 	}
 
 	const close = () => {
@@ -177,7 +192,9 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 					<div className="bg-surface-field rounded-lg px-3.5 pt-2.5 pb-1">
 						<p className="text-foreground-sub flex items-center gap-1.5 text-[12.5px] font-semibold">
 							<Trash2 className="text-danger h-3.5 w-3.5" aria-hidden="true" />
-							Left out: deletes are approved one at a time
+							{shown.length > 0
+								? `Next: ${plural(deletes.length, 'delete', 'deletes')}, approved one at a time`
+								: 'Deletes are approved one at a time'}
 						</p>
 						<ul className="divide-hairline-row divide-y">
 							{deletes.map((call) => (
@@ -190,7 +207,9 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 										variant="tonal"
 										size="xs"
 										disabled={busy}
-										onClick={() => onReviewOne(call.id)}
+										onClick={() =>
+											onReviewOne(call.id, { only: deletes.map((d) => d.id) })
+										}
 										aria-label={`Review ${headlineOf(call)}`}
 									>
 										Review
@@ -293,14 +312,22 @@ function batchToast(
 	batch: readonly HeldExecutionResponse[],
 	headlineOf: (call: HeldExecutionResponse) => string,
 	{ approved, already, failed }: { approved: number; already: number; failed: string[] },
+	setAside: number,
 ) {
 	const total = batch.length;
+	const next =
+		setAside === 0
+			? null
+			: setAside === 1
+				? 'The delete is next, to approve on its own.'
+				: `The ${setAside} deletes are next, to approve one at a time.`;
 	if (approved === total) {
 		return {
 			title:
 				total === 1
 					? `Approved · ${isolateText(headlineOf(batch[0]))}`
 					: `Approved ${plural(total, 'call', 'calls')}`,
+			description: next ?? undefined,
 			variant: 'success' as const,
 		};
 	}
@@ -309,6 +336,7 @@ function batchToast(
 			`${plural(already, 'call was', 'calls were')} already decided by someone else.`,
 		failed.length > 0 &&
 			`${plural(failed.length, "call couldn't be approved and is", "calls couldn't be approved and are")} still waiting: ${failed[0]}`,
+		next,
 	].filter(Boolean);
 	return {
 		title:
