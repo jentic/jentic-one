@@ -11,6 +11,8 @@ layer.
 
 from __future__ import annotations
 
+import pytest
+
 from .conftest import SRC_ROOT
 
 ROUTER_DIRS = [
@@ -21,6 +23,9 @@ ROUTER_DIRS = [
 ]
 
 ALLOWED_FILES = frozenset({"inspect.py"})
+
+
+pytestmark = pytest.mark.arch
 
 
 def test_no_direct_base_url_usage_in_routers() -> None:

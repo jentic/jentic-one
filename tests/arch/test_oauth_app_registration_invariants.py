@@ -39,6 +39,9 @@ _REGISTRATION_WRITER_ALLOWLIST: frozenset[Path] = frozenset(
 _WRITING_CALLS = frozenset({"Credential", "values", "update"})
 
 
+pytestmark = pytest.mark.arch
+
+
 def _call_name(func: ast.expr) -> str | None:
     if isinstance(func, ast.Name):
         return func.id

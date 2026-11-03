@@ -2754,6 +2754,51 @@ async def test_an_amend_losing_to_a_concurrent_writer_is_a_conflict(
         )
 
 
+async def test_an_agentless_scope_amend_losing_the_race_is_a_conflict_too(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """The other arm of the same handler: a session with no agent.
+
+    Its amend carries a dedupe key, and the dedupe index is partial on
+    ``agent_id IS NOT NULL``, so the only index a collision can come from is
+    the revision one. Reading it as a moved ask is sound for that reason, not
+    by luck, and the arm had no test to say so.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=None, identity=_USER_IDENTITY, requested_scopes=["repo"]
+    )
+    first = await _revision(ctx, created.session_id)
+    # A revision already holds the number this amend would take.
+    async with ctx.control_db.transaction() as session:
+        await ConnectSessionRevisionRepository.append(
+            session,
+            session_id=created.session_id,
+            proposal={"requested_scopes": ["repo", "read:user"]},
+            result={"requested_scopes": ["repo", "read:user"]},
+            digest="e" * 64,
+            created_by=None,
+        )
+    async with ctx.control_db.transaction() as session:
+        await session.execute(
+            text("UPDATE connect_sessions SET current_revision_id = :rid WHERE id = :sid"),
+            {"rid": first, "sid": created.session_id},
+        )
+
+    with pytest.raises(RevisionChangedError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_USER_IDENTITY,
+            amend=SessionAmend(
+                fields=frozenset({"requested_scopes"}), requested_scopes=["repo", "read:user"]
+            ),
+        )
+
+
 async def test_a_session_holds_only_so_many_revisions(
     integration_context: Context,
     seed_test_vendors: None,

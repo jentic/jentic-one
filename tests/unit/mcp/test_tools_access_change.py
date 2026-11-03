@@ -25,6 +25,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.services.integrations.edits import EditRequest
 from jentic_one.control.services.integrations.errors import (
+    ConnectOpenError,
     EditOpenError,
     RevisionChangedError,
     SessionClosedError,
@@ -336,3 +337,23 @@ async def test_the_edit_tools_spend_the_shared_connect_bucket() -> None:
             with contextlib.suppress(Exception):
                 await dispatch_tool_call(env, tool, arguments)
     assert spent == ["agnt_1", "agnt_1"]
+
+
+async def test_an_open_connect_for_the_same_target_is_coded_not_internal() -> None:
+    """The edit tools' refusal list carries this one for a reason.
+
+    An agent whose vendor connect is still open asked for a scope change on
+    the same target; absent from the list, the refusal reached the client as
+    an internal error, which says nothing it can act on. The point of the
+    entry is that it comes back coded, so it is driven through the handler
+    rather than the connect tool that already covers it.
+    """
+    _FakeService.error = ConnectOpenError("cs_open", "https://one.example.com/app/agents")
+    result = await dispatch_tool_call(
+        _env(), "request_access_change", {"credential_id": "cred_1", "scopes": {"add": ["repo"]}}
+    )
+    assert result.is_error
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "cs_open" in payload["error"]
+    assert _FakeService.edits == []

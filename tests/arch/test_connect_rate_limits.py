@@ -9,7 +9,9 @@ than left to each handler's author.
 
 from __future__ import annotations
 
+import ast
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -27,12 +29,30 @@ _MUTATING_ROUTES = (
     "rebase_connect_session",
 )
 
-#: The MCP mount's twins of those routes, which share the same bucket.
-_MUTATING_TOOLS = (
-    "handle_request_connection",
-    "handle_request_access_change",
-    "handle_amend_request",
+#: The connect-session service calls that open or change a session. A tool
+#: reaching one of these is a mutating connect surface, whatever it is called.
+_MUTATING_SERVICE_CALLS = frozenset(
+    {"create_session", "create_edit_session", "amend_session", "rebase_session"}
 )
+
+
+def _mutating_tools() -> list[str]:
+    """The mount's mutating connect handlers, discovered rather than listed.
+
+    A hand-written list is the defect it is meant to catch: a fourth handler
+    reaching the service passes silently, which is exactly how the route half
+    of this file came to omit ``:rebase``. The handlers are read out of the
+    module instead, so the set cannot fall behind the code.
+    """
+    tree = ast.parse(Path(tools.__file__).read_text())
+    found = []
+    for node in tree.body:
+        if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("handle_"):
+            continue
+        body = ast.unparse(node)
+        if any(f".{call}(" in body for call in _MUTATING_SERVICE_CALLS):
+            found.append(node.name)
+    return sorted(found)
 
 
 @pytest.mark.parametrize("handler_name", _MUTATING_ROUTES)
@@ -67,7 +87,20 @@ def test_a_mutating_connect_route_declares_its_429(handler_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("handler_name", _MUTATING_TOOLS)
+def test_the_mount_has_the_mutating_connect_tools_this_file_expects() -> None:
+    """Discovery is only a guard if it finds something: the floor is pinned.
+
+    A refactor that renames the service calls, or moves them behind a helper,
+    would otherwise empty the set and take the guarantee with it silently.
+    """
+    assert _mutating_tools() == [
+        "handle_amend_request",
+        "handle_request_access_change",
+        "handle_request_connection",
+    ]
+
+
+@pytest.mark.parametrize("handler_name", _mutating_tools())
 def test_a_mutating_connect_tool_enforces_the_connect_rate_limit(handler_name: str) -> None:
     handler = getattr(tools, handler_name, None)
     assert handler is not None, f"{handler_name} is no longer in the MCP tool mount"
