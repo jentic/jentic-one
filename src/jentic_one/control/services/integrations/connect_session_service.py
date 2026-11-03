@@ -2058,8 +2058,10 @@ class ConnectSessionService:
         except DatabaseIntegrityError:
             if row.agent_id is None or "dedupe_key" not in fields:
                 # An edit's ``fields`` never carries a dedupe key, so this is
-                # the revision index: another writer appended first and the ask
-                # has moved. Asserting the key instead would make that a 500.
+                # the revision index. Both writers of the chain number under
+                # the same lock, so this is defensive: a writer added without
+                # it would report a moved ask rather than a 500, which
+                # asserting the key here would make it.
                 async with self._ctx.control_db.session() as session:
                     latest = await ConnectSessionRepository.get_by_id(session, row.id)
                     raise await _revision_changed(
@@ -3319,10 +3321,11 @@ class ConnectSessionService:
                 )
                 await ConnectSessionRepository.update_fields(session, row.id, baseline=live)
         except DatabaseIntegrityError:
-            # Two callers can ask for the rebase at once (a reviewer opening
-            # the review, the initiator amending), and the unique
-            # ``(session_id, number)`` index refuses the second. The rebase is
-            # the same either way: the one that landed stands.
+            # Defensive: both writers of this chain now number inside the
+            # same lock, so the unique ``(session_id, number)`` index has
+            # nothing left to refuse. Were a writer ever added that does not
+            # take it, the rebase is the same either way and the one that
+            # landed stands, rather than raising out of a read.
             async with self._ctx.control_db.session() as session:
                 fresh = await ConnectSessionRepository.get_by_id(session, row.id)
             if fresh is None or fresh.current_revision_id is None:

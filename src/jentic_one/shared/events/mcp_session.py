@@ -118,7 +118,12 @@ _HTTP_TRANSPORT = "http"
 #:
 #: A code constant, deliberately not config: the value tunes a UI list's
 #: granularity, not deployment behaviour.
-MCP_HTTP_WINDOW_SECONDS = 6 * 60 * 60
+MCP_SESSION_WINDOW_SECONDS = 6 * 60 * 60
+
+#: The HTTP lane's name for the same window, kept because the synthetic
+#: session id it builds is an HTTP concept. The two lanes are counted apart
+#: and sized apart, so neither reads a constant named for the other.
+MCP_HTTP_WINDOW_SECONDS = MCP_SESSION_WINDOW_SECONDS
 
 #: Per-agent cap on *distinct* clientInfo dedupe keys admitted per window
 #:. Without it an authenticated agent varying ``_meta`` clientInfo
@@ -156,7 +161,7 @@ CLIENT_CAP_NAMESPACE = "mcp-session-cap"
 _CLAIM_TTL_S = 60.0
 #: How long a recorded session id short-circuits. Its expiry only costs one
 #: table lookup for a session still sending requests, never a duplicate event.
-_SEEN_TTL_S = float(MCP_HTTP_WINDOW_SECONDS)
+_SEEN_TTL_S = float(MCP_SESSION_WINDOW_SECONDS)
 
 #: Cap on concurrently in-flight emits on this process: each holds a
 #: background task with an open admin-DB transaction, so the transient
@@ -361,7 +366,7 @@ async def schedule_mcp_session_emit(
     if not await _admit_agent_window_key(
         ctx,
         actor_id,
-        int(time.time() // MCP_HTTP_WINDOW_SECONDS),
+        int(time.time() // MCP_SESSION_WINDOW_SECONDS),
         transport=_STDIO_TRANSPORT,
         cap=MCP_STDIO_MAX_SESSIONS_PER_AGENT_WINDOW,
     ):
@@ -516,7 +521,7 @@ async def _admit_agent_window_key(
     try:
         count = await ctx.state_backend.incr_with_ttl(
             f"{CLIENT_CAP_NAMESPACE}:{transport}:{actor_id}:{window}",
-            ttl_s=float(MCP_HTTP_WINDOW_SECONDS),
+            ttl_s=float(MCP_SESSION_WINDOW_SECONDS),
         )
     except Exception as exc:
         logger.debug("mcp_session_key_cap_skipped", error=type(exc).__name__)

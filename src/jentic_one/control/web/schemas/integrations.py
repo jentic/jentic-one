@@ -355,6 +355,12 @@ class EditRulesRequest(BaseModel):
         return self
 
 
+#: Characters in one scope's reason. A reviewer-facing field, and the MCP
+#: mount applies the same bound to the arguments it coerces, so the two read
+#: it from here rather than carrying a literal each.
+SCOPE_COMMENT_MAX = 500
+
+
 class EditScopesRequest(BaseModel):
     """A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.
 
@@ -401,8 +407,8 @@ class EditScopesRequest(BaseModel):
             raise ValueError("pass either add/remove or set, not both")
         if set(self.add) & set(self.remove):
             raise ValueError("a scope can't be both added and removed")
-        if any(len(reason) > 500 for reason in self.comments.values()):
-            raise ValueError("a scope's comment must be at most 500 characters")
+        if any(len(reason) > SCOPE_COMMENT_MAX for reason in self.comments.values()):
+            raise ValueError(f"a scope's comment must be at most {SCOPE_COMMENT_MAX} characters")
         return self
 
 

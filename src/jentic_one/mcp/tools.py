@@ -99,7 +99,10 @@ from jentic_one.control.services.vendors.service import (
 )
 from jentic_one.control.web.errors import check_access_directive
 from jentic_one.control.web.routers.credentials import binding_access_response
-from jentic_one.control.web.schemas.integrations import ConnectOptionsResponse
+from jentic_one.control.web.schemas.integrations import (
+    SCOPE_COMMENT_MAX,
+    ConnectOptionsResponse,
+)
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.mcp import approvals
 from jentic_one.mcp import execute as ex
@@ -1516,8 +1519,10 @@ _REQUEST_CONNECTION_REASON_MAX = 1024
 _REQUEST_CONNECTION_SCOPES_MAX = 100
 #: Characters in a rule id, as the route's schema bounds ``before``.
 _EDIT_RULE_ID_MAX = 30
-#: Characters in one scope's reason, as the route's schema bounds it.
-_SCOPE_COMMENT_MAX = 500
+#: Characters in one scope's reason: the route's own bound, read from the
+#: schema that applies it (``EditScopesRequest``), so the mount cannot drift
+#: into refusing a body the route accepts.
+_SCOPE_COMMENT_MAX = SCOPE_COMMENT_MAX
 
 #: The route's ``oauth_app_registration_id`` bound (``max_length=30``) — the
 #: Go mount's ``connectRegistrationMax`` twin.
@@ -2271,7 +2276,10 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
                 "it still lacks what you need."
             ),
             next_tool="show_access",
-            extra={"retryable": False, "session_id": exc.session_id},
+            # Merged, not replaced: the arm above built the ``check_access``
+            # directive naming this binding, and a pointer at show_access with
+            # nothing to go with it is half an answer.
+            extra={**(extra or {}), "retryable": False, "session_id": exc.session_id},
         )
     if isinstance(exc, TooManyRevisionsError):
         return ToolError(
