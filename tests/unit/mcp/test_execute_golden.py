@@ -295,10 +295,14 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
                 "agent_directive": {
                     "instruction": "Ask for the rule with request_access_change.",
                     "parameters": {
+                        # As the broker builds it (``action_denied_directive``).
                         "edit": {
                             "credential_id": "cred_1",
-                            "rules": {"add": [{"effect": "allow", "path": "/v1/pets"}]},
-                        }
+                            "suggested_rules": [
+                                {"effect": "allow", "methods": ["POST"], "path": "/v1/pets"}
+                            ],
+                        },
+                        "suggested_command": "jentic access edit cred_1",
                     },
                 },
             },

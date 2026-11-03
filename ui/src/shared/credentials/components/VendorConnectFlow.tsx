@@ -1289,6 +1289,11 @@ function VendorApproveFlow({
 	if (session?.edit) {
 		return (
 			<EditApproveFlow
+				// Mount-once per session: its state (the revision shown, whether
+				// the open read was stale, whether a rebase was asked for) is
+				// about one session, so a host swapping the id without an
+				// unmount in between must not carry the last one's over.
+				key={sessionId}
 				sessionId={sessionId}
 				pollToken={pollToken}
 				session={session as ReviewSession & { edit: ReviewEdit }}
@@ -1712,11 +1717,14 @@ function EditApproveFlow({
 	// diff; once they are reading, the changed-request banner offers it
 	// instead, so the diff never moves under them unasked.
 	// What the reviewer has in front of them, read inside the callback so the
-	// mount effect below keeps one identity.
+	// mount effect below keeps one identity. Written in an effect, not in
+	// render: a discarded concurrent render would otherwise leave it pointing
+	// at a revision that never committed.
 	const shownRevision = useRef(shown.revision);
-	shownRevision.current = shown.revision;
+	useEffect(() => {
+		shownRevision.current = shown.revision;
+	}, [shown.revision]);
 	const rebase = useCallback(async (): Promise<void> => {
-		const from = shownRevision.current;
 		let rebased: AmendedSession;
 		try {
 			rebased = await rebaseMutation.mutateAsync();
@@ -1729,6 +1737,11 @@ function EditApproveFlow({
 			return;
 		}
 		setError(null);
+		// Read after the write, not before it: a reviewer who acknowledges an
+		// amend while the rebase is in flight has read that revision by the
+		// time it lands, and comparing against the one they had on screen when
+		// they clicked would re-disable Approve over their own rebase.
+		const from = shownRevision.current;
 		// Adopted as the revision under review only when the rebase appended
 		// onto the one being read, or returned that one unchanged: they asked
 		// for it, so it is theirs. Rebased over an amend they have not seen,

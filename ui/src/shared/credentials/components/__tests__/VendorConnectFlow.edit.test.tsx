@@ -369,6 +369,38 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		expect(scopes).not.toHaveTextContent(/reach 1 other agent/);
 	});
 
+	it('reads a revision chain longer than one page to its end', async () => {
+		// The client asks for pages and follows `next_cursor`: discarding it
+		// loses the attribution for every revision past the first page, which
+		// is what the history is for.
+		const seeded = seedEdit(editBlock({ revision: { id: 'csr_250', number: 250 } }));
+		seeded.revisions = Array.from({ length: 250 }, (_, i) => ({
+			id: `csr_${i + 1}`,
+			number: i + 1,
+			created_by: i % 2 === 0 ? 'agnt_1' : 'usr_owner',
+			created_at: '2026-10-19T10:00:00Z',
+			proposal: { reason: `take ${i + 1}` },
+			result: { rules: [READ, SEND], scopes: ['gmail.readonly'] },
+		}));
+		const pages: string[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.includes('/revisions')) pages.push(request.url);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderApprove(seeded.session_id);
+			const user = userEvent.setup();
+			await screen.findByRole('region', { name: 'Rule changes' });
+			await user.click(screen.getByRole('button', { name: 'History' }));
+			// The last revision is only reachable by following the cursor.
+			expect(await screen.findByText(/take 250/)).toBeInTheDocument();
+			await waitFor(() => expect(pages.length).toBeGreaterThan(1));
+			expect(pages.some((url) => url.includes('cursor='))).toBe(true);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	}, 30_000);
+
 	it("shows each revision's own change in the history", async () => {
 		const seeded = seedEdit(editBlock({ revision: { id: 'csr_2', number: 2 } }));
 		seeded.revisions = [

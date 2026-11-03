@@ -833,27 +833,37 @@ const connectSessionsHandlers = [
 		});
 	}),
 
+	// Paged like the route: the client asks for one page at a time and follows
+	// `next_cursor`, so a mock that always answers `has_more: false` leaves
+	// that loop unexercised — which is how the client came to discard it.
 	http.get('/connect-sessions/:sessionId/revisions', ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
 		const current = gated.edit?.revision ?? createRevision(gated);
-		return HttpResponse.json({
-			limit: 50,
-			has_more: false,
-			next_cursor: null,
-			data: gated.revisions ?? [
-				{
-					id: current.id,
-					number: current.number,
-					created_by: gated.requested_by_actor_id,
-					created_at: gated.created_at,
-					proposal: {},
-					result: gated.edit?.result ?? {
-						rules: gated.requested_permission_rules,
-						scopes: gated.requested_scopes,
-					},
+		const all = gated.revisions ?? [
+			{
+				id: current.id,
+				number: current.number,
+				created_by: gated.requested_by_actor_id,
+				created_at: gated.created_at,
+				proposal: {},
+				result: gated.edit?.result ?? {
+					rules: gated.requested_permission_rules,
+					scopes: gated.requested_scopes,
 				},
-			],
+			},
+		];
+		const url = new URL(request.url);
+		const limit = Number(url.searchParams.get('limit') ?? 50);
+		const cursor = url.searchParams.get('cursor');
+		const after = cursor ? all.findIndex((r) => r.id === atob(cursor)) + 1 : 0;
+		const page = all.slice(after, after + limit);
+		const has_more = after + page.length < all.length;
+		return HttpResponse.json({
+			limit,
+			has_more,
+			next_cursor: has_more && page.length > 0 ? btoa(page[page.length - 1].id) : null,
+			data: page,
 		});
 	}),
 
