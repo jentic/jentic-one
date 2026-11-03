@@ -67,6 +67,12 @@ export interface ReviewSession {
 	 * ``expected_agent_id``; a mismatch is 409 ``review_stale``.
 	 */
 	digest: string;
+	/** The session's current revision; ``:confirm`` names it as ``revision_id``. */
+	revision?: { id: string; number: number } | null;
+	/** When a human last rejected this agent's ask for the same target (or binding). */
+	last_rejected_at?: string | null;
+	/** Edit sessions only: the binding change under review. */
+	edit?: ReviewEdit | null;
 	/** Whether this viewer may confirm the session as it stands. */
 	can_confirm: boolean;
 	/** Credentials the viewer already holds for the target. */
@@ -104,10 +110,92 @@ export interface ReviewScheme {
 	token_url?: string | null;
 }
 
+/** A rule in an edit's current or resulting access; ``id`` is null for one the edit adds. */
+export interface EditRuleView extends PermissionRule {
+	id: string | null;
+	/** In a result: who put the rule in the request; null for one the binding has. */
+	added_by?: string | null;
+}
+
+/** Who asked for one scope change (added or removed), and why. */
+export interface EditScopeNote {
+	added_by: string | null;
+	comment: string | null;
+}
+
+/** The shared rule set a binding points at; its rules apply instead of the binding's own. */
+export interface EditRuleSetView {
+	id: string;
+	name: string;
+	/** A curated set is never changed: approving copies the rules onto the binding. */
+	curated: boolean;
+	created_by?: string | null;
+	rules: EditRuleView[];
+}
+
+/** The binding as the edit session recorded it when it opened. */
+export interface EditCurrentAccess {
+	rules: EditRuleView[];
+	rule_set: EditRuleSetView | null;
+	suspended: boolean;
+	granted_scopes: string[] | null;
+}
+
+/** What approving the current revision leaves in place. */
+export interface EditResultAccess {
+	target: 'binding' | 'rule_set';
+	rules: EditRuleView[];
+	scopes: string[];
+	/** Each scope the change adds or removes: who asked for it, and why. */
+	scope_notes?: Record<string, EditScopeNote>;
+	suspended: boolean;
+}
+
+/** The binding change an edit session asks a human to approve. */
+export interface ReviewEdit {
+	binding: { agent_id: string; credential_id: string; credential_name: string | null };
+	revision: { id: string; number: number };
+	current: EditCurrentAccess;
+	result: EditResultAccess;
+	/** True when the change could let the agent do more than today. */
+	widens_access: boolean;
+	/** Other agents bound to the credential: added scopes and shared-set changes reach them. */
+	other_bound_agents: BoundAgentRef[];
+	/** Approving starts a vendor consent for the added scopes. */
+	needs_vendor_consent: boolean;
+	/** What the request can't follow since the binding changed under it. */
+	conflicts?: EditConflict[];
+}
+
+/** A part of an edit request the binding no longer fits: a rule it names is gone. */
+export interface EditConflict {
+	kind: 'missing_rule';
+	rule_id: string;
+}
+
+/** One version of what a session asks for (``GET /connect-sessions/{id}/revisions``). */
+export interface SessionRevision {
+	id: string;
+	number: number;
+	/** Who began or amended the session; null for a rebase onto a changed binding. */
+	created_by: string | null;
+	created_at: string;
+	proposal: Record<string, unknown>;
+	result: { rules?: EditRuleView[]; scopes?: string[]; suspended?: boolean; target?: string };
+}
+
+/** Another agent bound to a credential the approver could use. */
+export interface BoundAgentRef {
+	agent_id: string;
+	name: string | null;
+}
+
 /**
  * A credential the viewer already holds for the session's target.
  * ``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials only.
- * ``can_reauthorize`` is false whenever another agent is bound to it.
+ * When ``needs_vendor_consent`` is set, using it first asks the vendor for
+ * ``missing_scopes``, which widens the access of every agent in
+ * ``other_bound_agents`` too.
  */
 export interface ExistingCredential {
 	credential_id: string;
@@ -115,9 +203,9 @@ export interface ExistingCredential {
 	type: string;
 	granted_scopes: string[] | null;
 	missing_scopes: string[] | null;
-	other_bound_agent_ids: string[];
+	other_bound_agents: BoundAgentRef[];
 	can_bind: boolean;
-	can_reauthorize: boolean;
+	needs_vendor_consent: boolean;
 }
 
 /**
@@ -157,6 +245,8 @@ export interface ConfirmRequest {
 	/** The review the approver saw; checked when given, required for an API target. */
 	expected_agent_id?: string | null;
 	digest?: string | null;
+	/** The revision the approver saw; a newer one is 409 ``revision_changed``. */
+	revision_id?: string | null;
 }
 
 /** Fields every non-OAuth confirm carries: the rules and the review it answers. */
@@ -165,6 +255,7 @@ interface ReviewedConfirm {
 	agent_id?: string | null;
 	expected_agent_id: string | null;
 	digest: string;
+	revision_id: string | null;
 }
 
 export interface ApiKeyConfirmRequest extends ReviewedConfirm {
@@ -194,10 +285,24 @@ export interface OwnOAuthClientConfirmRequest extends ReviewedConfirm {
 	confirmed_scopes: string[];
 }
 
-/** Bind a credential the approver already holds (optionally re-consenting it). */
+/** Bind a credential the approver already holds (consenting to any missing scopes first). */
 export interface ExistingCredentialConfirmRequest extends ReviewedConfirm {
-	kind: 'existing_credential' | 'reauthorize';
+	kind: 'existing_credential';
 	credential_id: string;
+}
+
+/**
+ * Approve an edit session's change with the final rules the reviewer chose.
+ * ``confirmed_scopes`` beyond the credential's grant start a vendor consent.
+ */
+export interface EditConfirmRequest {
+	kind: 'edit';
+	revision_id: string;
+	permission_rules: PermissionRule[];
+	resume: boolean;
+	confirmed_scopes?: string[] | null;
+	/** Approve a revision listing conflicts: the reviewer's rules settle them. */
+	resolve_conflicts?: boolean;
 }
 
 /** Every ``:confirm`` body; ``kind`` picks the variant server-side. */
@@ -207,7 +312,8 @@ export type ConfirmSessionBody =
 	| BearerConfirmRequest
 	| BasicConfirmRequest
 	| OwnOAuthClientConfirmRequest
-	| ExistingCredentialConfirmRequest;
+	| ExistingCredentialConfirmRequest
+	| EditConfirmRequest;
 
 /**
  * Discriminated on ``kind`` — the UI branches on the tag, not on which
@@ -222,25 +328,17 @@ export type ConfirmSessionBody =
 export type ConfirmResponse = DeviceAuthorizationConfirmResponse | AuthCodeConfirmResponse;
 
 /**
- * Every ``:confirm`` result. Beyond the vendor challenges above:
- *
- * * ``connected`` — the confirm finished the session (a typed secret or an
- *   existing credential); ``credential_id`` is bound to the agent.
- * * ``reauthorize`` — the agent is bound to ``credential_id``; ``authorize_url``
- *   asks the vendor for the wider scopes on that credential.
+ * Every ``:confirm`` result. Beyond the vendor challenges above, ``connected``
+ * means the confirm finished the session (a typed secret or an existing
+ * credential); ``credential_id`` is bound to the agent. An existing credential
+ * that lacks scopes answers with a vendor challenge instead, and binds once
+ * the grant lands.
  */
-export type ConfirmSessionResponse =
-	ConfirmResponse | ConnectedConfirmResponse | ReauthorizeConfirmResponse;
+export type ConfirmSessionResponse = ConfirmResponse | ConnectedConfirmResponse;
 
 export interface ConnectedConfirmResponse {
 	kind: 'connected';
 	credential_id: string;
-}
-
-export interface ReauthorizeConfirmResponse {
-	kind: 'reauthorize';
-	credential_id: string;
-	authorize_url: string;
 }
 
 export interface DeviceAuthorizationConfirmResponse {
@@ -256,7 +354,8 @@ export interface AuthCodeConfirmResponse {
 	authorize_url: string;
 }
 
-export type SessionStatus = 'pending' | 'polling' | 'connected' | 'failed' | 'expired';
+/** ``applied``: an edit session's change was approved and landed (edit sessions only). */
+export type SessionStatus = 'pending' | 'polling' | 'connected' | 'applied' | 'failed' | 'expired';
 
 export interface StatusResponse {
 	status: SessionStatus;
@@ -286,11 +385,55 @@ export interface ConnectRequest {
 	preferred_flow?: string | null;
 }
 
+/** ``POST /integrations:edit-connection``: ask to change one binding's access. */
+export interface EditConnectionBody {
+	/** The binding's agent; a person names it, an agent caller omits it. */
+	agent_id?: string;
+	credential_id: string;
+	/** The full rule list to replace today's with (the edit's ``set``). */
+	rules?: { set: PermissionRule[] };
+	/** The scope change, shaped like the rule change: ``add``/``remove`` or ``set``. */
+	scopes?: { add?: string[]; remove?: string[]; set?: string[] };
+	resume?: boolean;
+	reason?: string;
+	/** A person approving their own change as they make it: written at once. */
+	apply?: boolean;
+}
+
 export interface ConnectResponse {
 	session_id: string;
 	approval_url: string;
 	poll_token: string;
 	resolved_flow: string;
+	/** Revision 1; a confirm names it until the session is amended. */
+	revision_id?: string | null;
+}
+
+/** ``:amend`` on an edit session: the parts sent replace those of the ask. */
+export interface AmendEditBody {
+	rules?: { set: PermissionRule[] };
+	scopes?: { set: string[] };
+}
+
+/** ``:amend`` on a new connection request: the rules sent replace the ask's. */
+export interface AmendCreateBody {
+	requested_permission_rules?: PermissionRule[];
+}
+
+export type AmendSessionBody = AmendEditBody | AmendCreateBody;
+
+/** ``:amend``'s answer: the session's new current revision. */
+export interface AmendedSession {
+	session_id: string;
+	revision_id: string;
+	revision_number: number;
+}
+
+/** ``:edit-connection``'s answer: with ``apply``, whether it landed or waits on the vendor. */
+export interface EditConnectionResult extends ConnectResponse {
+	status: 'pending' | 'applied' | 'consenting';
+	/** With ``apply`` and added scopes: the vendor sign-in to complete. */
+	challenge: ConfirmResponse | null;
 }
 
 // ---------------------------------------------------------------------------

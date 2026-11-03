@@ -1,4 +1,10 @@
-"""Domain exception hierarchy for the registry module."""
+"""Domain exception hierarchy for the registry module.
+
+The operation-discovery errors the inspect and URL-lookup services raise
+(``OperationNotFoundError``, ``MethodNotAllowedError``, ``AmbiguousMatchError``,
+``TooManyCandidatesError``) live in ``shared/discovery/errors.py``: the broker
+raises and renders the same types.
+"""
 
 from __future__ import annotations
 
@@ -93,39 +99,6 @@ class SpecFileMissingError(RegistryServiceError):
     def __init__(self, revision_id: str) -> None:
         super().__init__(f"Revision '{revision_id}' has no stored spec file")
         self.revision_id = revision_id
-
-
-class OperationNotFoundError(RegistryServiceError):
-    """Raised when an operation cannot be resolved by identifier."""
-
-    def __init__(self, identifier: str) -> None:
-        super().__init__(f"Operation '{identifier}' not found")
-        self.identifier = identifier
-
-
-class MethodNotAllowedError(RegistryServiceError):
-    """Raised when the URL exists but not for the requested HTTP method."""
-
-    def __init__(self, allowed_methods: list[str]) -> None:
-        super().__init__(f"Method not allowed; allowed: {', '.join(allowed_methods)}")
-        self.allowed_methods = allowed_methods
-
-
-class AmbiguousMatchError(RegistryServiceError):
-    """Raised when multiple URL index entries match with equal specificity."""
-
-    def __init__(self, candidate_count: int) -> None:
-        super().__init__(
-            f"Ambiguous URL match: {candidate_count} candidates with equal specificity"
-        )
-        self.candidate_count = candidate_count
-
-
-class TooManyCandidatesError(RegistryServiceError):
-    """Raised when the URL index returns more candidates than can be ranked."""
-
-    def __init__(self) -> None:
-        super().__init__("URL index returned too many candidates")
 
 
 class RevisionStateConflictError(RegistryServiceError):
@@ -325,17 +298,18 @@ class HostChangeRequiresOperatorError(RegistryServiceError):
 
     Making a revision current that declares different server hosts (or moves a host
     to plaintext ``http``) changes where, or how, the API's bound credentials are
-    sent. That needs an operator holding ``credentials:write``; the caller sees a
-    403 naming the origins involved.
+    sent. That needs an organisation admin (``org:admin``). The caller sees a 403
+    naming the origins involved; the detail text names no credential, binding or
+    session. Being raised at all still marks the API as credential-bound — see
+    ``registry/ingest/host_change_guard.py`` for what that leaks and why.
     """
 
     def __init__(self, revision_id: str, *, current_hosts: list[str], new_hosts: list[str]) -> None:
         current = ", ".join(current_hosts) or "(none)"
         new = ", ".join(new_hosts) or "(none)"
         super().__init__(
-            f"Revision '{revision_id}' changes the server origins of an API with bound "
-            f"credentials from [{current}] to [{new}], which requires the "
-            "'credentials:write' permission"
+            f"Revision '{revision_id}' changes the API's server origins from [{current}] to "
+            f"[{new}]; making it current requires 'org:admin'"
         )
         self.revision_id = revision_id
         self.current_hosts = current_hosts

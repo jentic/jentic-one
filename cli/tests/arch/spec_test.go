@@ -187,6 +187,8 @@ var sensitiveSweepAllowlist = map[string]bool{
 	"has_client_secret":    true, // presence flag on OAuthAppRegistrationResponse, not the secret
 	"must_change_password": true, // policy boolean
 	"clear_session_token":  true, // "clear the token?" boolean directive
+	// Redacted credential summaries (id, name, type, scope lists, flags) — no secret value.
+	"existing_credentials": true,
 }
 
 // Test1H_SensitiveAnnotationSweep walks every schema property in the vendored
@@ -365,6 +367,12 @@ var curatedMigrationAllowlist = map[string]string{
 	// connect's nested `api` target: --api takes the whole vendor/name/version
 	// identity as one value (the `api` field is bound on the connect binding).
 	"control.ApiTargetRequest": "nested api target of IntegrationsConnectRequest, bound whole by connect --api <vendor/name/version>",
+	// access edit / amend's nested rule and scope objects, built from
+	// --add/--before/--remove/--set and --scopes (the `rules` / `scopes`
+	// fields are bound on the access edit and access amend bindings).
+	"control.EditRulesRequest":  "nested rules of EditConnectionRequest/AmendSessionRequest, built from --add/--remove/--set",
+	"control.EditRuleAdd":       "one --add entry (a rule, optionally placed --before a rule id)",
+	"control.EditScopesRequest": "nested scopes of EditConnectionRequest/AmendSessionRequest, built from --scopes",
 }
 
 // TestCuratedRegistryCoversGeneratedStructs is the QA-3/GEN-4 meta-test: it

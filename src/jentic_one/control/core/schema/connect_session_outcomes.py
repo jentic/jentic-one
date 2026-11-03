@@ -21,6 +21,8 @@ from jentic_one.shared.db.utils import utcnow
 
 #: The outcomes a session can end with.
 OUTCOME_CONNECTED = "connected"
+#: An edit session whose change a human confirmed and the platform applied.
+OUTCOME_APPLIED = "applied"
 OUTCOME_REJECTED = "rejected"
 OUTCOME_CANCELLED = "cancelled"
 OUTCOME_EXPIRED = "expired"
@@ -38,7 +40,7 @@ class ConnectSessionOutcome(ControlBase):
     __table_args__ = (
         Index("ix_connect_session_outcomes_session_id", "session_id", unique=True),
         Index("ix_connect_session_outcomes_ended_at", "ended_at"),
-        # Serves the rejection-cooldown lookup (an agent's recent outcomes).
+        # An agent's outcomes by when they ended (the rejection-cooldown lookup).
         Index("ix_connect_session_outcomes_agent_ended_at", "agent_id", "ended_at"),
     )
 
@@ -61,7 +63,7 @@ class ConnectSessionOutcome(ControlBase):
     api_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     resolved_flow: Mapped[str] = mapped_column(String(50), nullable=False)
-    # connected | rejected | cancelled | expired | failed
+    # connected | applied | rejected | cancelled | expired | failed
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     # Machine-readable terminal code for ``failed`` (e.g. ``oauth_app_changed``).
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

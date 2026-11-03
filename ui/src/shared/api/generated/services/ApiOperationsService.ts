@@ -28,15 +28,15 @@ export class ApiOperationsService {
         limit = 50,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -64,6 +64,7 @@ export class ApiOperationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `The API does not exist (type \`api_not_found\`), or it exists but has no live revision to list operations from (type \`no_current_revision\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -78,7 +79,7 @@ export class ApiOperationsService {
      * but for the named revision, so you can review a draft before promoting
      * it or compare against an archived one. Follow each row's `inspect` link
      * for full detail. 404 if the API or revision does not exist.
-     * @returns any Successful Response
+     * @returns OperationSummaryListResponse Successful Response
      * @throws ApiError
      */
     public static listApiRevisionOperations({
@@ -90,15 +91,15 @@ export class ApiOperationsService {
         limit = 50,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -113,7 +114,7 @@ export class ApiOperationsService {
          * Maximum number of operations to return (1-200).
          */
         limit?: number,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OperationSummaryListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations',
@@ -131,6 +132,7 @@ export class ApiOperationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `The API (type \`api_not_found\`) or the revision (type \`revision_not_found\`) does not exist.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

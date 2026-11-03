@@ -534,10 +534,18 @@ offers to seed *that provider's* config only:
 | `CLAUDE_CODE_USE_VERTEX=1` | Google Vertex | `~/.config/gcloud` (+ any `GOOGLE_APPLICATION_CREDENTIALS` file) |
 | neither | Anthropic API | nothing extra — the key (if any) is already in the seeded agent config |
 
-- **Config only — never the login token.** For SSO-backed providers we copy the
-  configuration (profiles, SSO-session definitions) but deliberately exclude the
-  cached SSO/session token. Claude Code performs the provider login
-  programmatically on first launch, so the agent gets its own fresh session.
+- **Config only — never the login token.** For login-backed providers we copy the
+  configuration (profiles, SSO-session definitions, gcloud properties and
+  configurations) but exclude the operator's cached login and session tokens:
+  - AWS: `~/.aws/sso/cache` and `~/.aws/cli/cache`;
+  - gcloud: `credentials.db`, `access_tokens.db`, `legacy_credentials/` and
+    `application_default_credentials.json`.
+
+  Claude Code performs the AWS SSO login programmatically on first launch, and
+  a Vertex agent runs its own `gcloud auth` login, so the agent gets its own
+  fresh session. Static keys in `~/.aws/credentials` and an explicit
+  `GOOGLE_APPLICATION_CREDENTIALS` file are still copied, as the warning below
+  says.
 
 > **Warning shown at both seed prompts.** Until you front the provider with an LLM
 > proxy (e.g. [LiteLLM](https://docs.litellm.ai/)), its credentials live in the

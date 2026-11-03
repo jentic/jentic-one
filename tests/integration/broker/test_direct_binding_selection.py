@@ -14,8 +14,8 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete
 
-from jentic_one.broker.core.exceptions import (
-    AmbiguousMatchError,
+from jentic_one.broker.core.errors import (
+    AmbiguousCredentialMatchError,
     CredentialNotProvisionedError,
     InvalidCredentialNameError,
 )
@@ -149,7 +149,7 @@ async def test_two_bound_credentials_ambiguity_names_binding_type(
         secret="sk-b",  # pragma: allowlist secret
     )
 
-    with pytest.raises(AmbiguousMatchError) as exc:
+    with pytest.raises(AmbiguousCredentialMatchError) as exc:
         await CredentialService(integration_context).select(
             api_vendor=_VENDOR,
             api_name=_API_NAME,

@@ -52,7 +52,7 @@ func NewExecuteEnvelope(status int, headers map[string]string, body any, executi
 }
 
 // Directive mirrors the broker's problem+json agent_directive extension member
-// (broker/core/exceptions.py AgentDirective). The strategy vocabulary below
+// (broker/core/directives.py AgentDirective). The strategy vocabulary below
 // mirrors broker AgentStrategy; until the contract is a shared OpenAPI schema,
 // the Python test test_directive_factories_emit_known_strategies and this list
 // must be kept in lock-step (review P1-1).

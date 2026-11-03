@@ -110,8 +110,9 @@ keeps waiting. The page:
   and answers **only** `{"status": "pending" | "approved" | "denied"}`; it
   never accepts a bare `client_id` and never returns client metadata. On a
   429 the page honors `Retry-After` and backs off (up to 60 s between polls).
-  The per-IP defaults (120 rpm, burst 60) hold roughly ten concurrently
-  pending tabs behind one NAT; raise the knobs for larger fleets;
+  The defaults (120 rpm, burst 60, per IPv4 address or IPv6 /64) hold
+  roughly ten concurrently pending tabs behind one NAT; raise the knobs for
+  larger fleets;
 - if the browser holds an operator-SPA admin session (same origin), reveals
   inline **Approve / Deny** controls alongside row-derived registration
   details — registered redirect-URI origins, `client_id`, and `software_id`

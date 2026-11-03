@@ -9,24 +9,22 @@ platform IP throttled by GitHub / Google / etc., which would fail-fast every
 legitimate user on the same install. One per-actor bucket caps both, well below
 any vendor's own throttle: ``CONNECT_RPM`` sustained requests per minute,
 ``CONNECT_BURST`` bucket capacity for a short spike. The MCP
-``request_connection`` tool calls the connect-session service in-process, so it
-carries its own bucket with the same policy.
+``request_connection`` tool calls the connect-session service in-process and
+shares the same per-actor bucket so an actor cannot double its rate limit by
+splitting requests across HTTP and MCP.
 
-Both limiters run on the configured shared-state backend
-(``broker.resilience.backend``): per process on ``memory``, cluster-wide on
-a shared backend.
+The limiter runs on the process's shared-state backend (``state:``,
+``Context.state_backend``): per process on ``memory``, cluster-wide on a
+shared backend.
 """
 
 from __future__ import annotations
 
-import structlog
 from fastapi import FastAPI
 
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state import MemoryStateBackend, RateLimitStore, build_state_backend
-
-_logger = structlog.get_logger(__name__)
+from jentic_one.shared.state import RateLimitStore
 
 CONNECT_RPM = 30
 CONNECT_BURST = 10
@@ -34,9 +32,10 @@ CONNECT_BURST = 10
 ROUTE_LIMITER_ATTR = "integrations_connect_limiter"
 MCP_LIMITER_ATTR = "mcp_connect_limiter"
 _BACKEND_ATTR = "control_state_backend"
+_CONNECT_NAMESPACE = "integrations_connect"
 _NAMESPACES = {
-    ROUTE_LIMITER_ATTR: "integrations_connect",
-    MCP_LIMITER_ATTR: "mcp_integrations_connect",
+    ROUTE_LIMITER_ATTR: _CONNECT_NAMESPACE,
+    MCP_LIMITER_ATTR: _CONNECT_NAMESPACE,
 }
 
 
@@ -45,31 +44,45 @@ def _limiter(store: RateLimitStore, namespace: str) -> RateLimiter:
 
 
 def install_connect_limiters(app: FastAPI, ctx: Context) -> None:
-    """Build the control surface's shared-state backend and both connect limiters."""
-    backend = build_state_backend(ctx.config.broker.resilience.backend)
+    """Install the shared connect limiter on the process's shared-state backend.
+
+    The backend is the process's one instance; the app lifespan closes it
+    (``ctx.close_state_backend()``).
+    """
+    backend = ctx.state_backend
     setattr(app.state, _BACKEND_ATTR, backend)
-    for attr, namespace in _NAMESPACES.items():
-        setattr(app.state, attr, _limiter(backend, namespace))
-
-    async def _close_control_backend() -> None:
-        await backend.aclose()
-
-    app.router.add_event_handler("shutdown", _close_control_backend)
+    limiter = _limiter(backend, _CONNECT_NAMESPACE)
+    for attr in _NAMESPACES:
+        setattr(app.state, attr, limiter)
 
 
 def connect_limiter(app: FastAPI, attr: str) -> RateLimiter:
     """Return the installed limiter ``attr`` from ``app.state``.
 
-    An app assembled without :func:`install_connect_limiters` (a bare test app)
-    gets an in-process limiter, cached on the app so its buckets persist.
+    ``ROUTE_LIMITER_ATTR`` is the authoritative attribute for the shared
+    per-actor connect bucket; ``MCP_LIMITER_ATTR`` mirrors it (unless a test
+    explicitly installed a limiter on ``MCP_LIMITER_ATTR`` without setting
+    ``ROUTE_LIMITER_ATTR``).
+
+    Raises:
+        RuntimeError: The app was assembled without
+            :func:`install_connect_limiters`. A private in-process limiter
+            would silently not share its buckets with the process's
+            shared-state backend, so a missing one is a wiring error.
     """
-    limiter: RateLimiter | None = getattr(app.state, attr, None)
-    if limiter is not None:
-        return limiter
-    _logger.warning("control_connect_limiter_missing_using_in_memory_fallback", limiter=attr)
-    limiter = _limiter(MemoryStateBackend(), _NAMESPACES[attr])
-    setattr(app.state, attr, limiter)
-    return limiter
+    route_limiter: RateLimiter | None = getattr(app.state, ROUTE_LIMITER_ATTR, None)
+    if route_limiter is not None:
+        setattr(app.state, MCP_LIMITER_ATTR, route_limiter)
+        return route_limiter
+    if attr != ROUTE_LIMITER_ATTR:
+        existing: RateLimiter | None = getattr(app.state, attr, None)
+        if existing is not None:
+            return existing
+    raise RuntimeError(
+        f"the control connect limiter {attr!r} is not installed on this app; "
+        "assemble it with install_connect_limiters(app, ctx), which builds it on "
+        "the process's shared-state backend (Context.state_backend)"
+    )
 
 
 __all__ = [

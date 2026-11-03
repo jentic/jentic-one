@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, Final
 
 import structlog
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
@@ -18,10 +19,14 @@ from jentic_one.admin.services.schemas.events import (
     EventFilter,
     EventView,
     Heartbeat,
+    StreamClosed,
+    StreamClosedReason,
 )
 from jentic_one.admin.web.deps import (
     get_event_service,
     get_event_stream_service,
+    get_stream_clock,
+    get_stream_recheck_seconds,
 )
 from jentic_one.admin.web.schemas.events import (
     EventLinks,
@@ -29,10 +34,17 @@ from jentic_one.admin.web.schemas.events import (
     EventResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.models.events import EventSeverity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
+from jentic_one.shared.web.deps import (
+    CredentialRecheck,
+    CredentialRecheckResult,
+    get_credential_recheck,
+)
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import not_found
 
 _LAST_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{24}$")
 
@@ -71,7 +83,7 @@ def _event_response(view: EventView, request: Request) -> EventResponse:
     )
 
 
-@router.get("/events")
+@router.get("/events", summary="List events")
 async def list_events(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["events:read"]),
@@ -157,11 +169,90 @@ async def list_events(
     )
 
 
-@router.get("/events/stream")
+#: What admits a caller to ``/events/stream``. The route gate and the open
+#: stream's re-verification both read this one constant, so they cannot drift.
+_STREAM_PERMISSIONS: Final = ("events:read",)
+
+#: How a failed re-verification reads in the ``stream_closed`` frame. Anything
+#: not listed (including a ``VALID`` outcome with no identity) fails closed.
+_CLOSED_REASONS: Final[dict[CredentialRecheckResult, StreamClosedReason]] = {
+    CredentialRecheckResult.REFUSED: "refused",
+    CredentialRecheckResult.FORBIDDEN: "forbidden",
+    CredentialRecheckResult.UNAVAILABLE: "unavailable",
+}
+
+
+#: An SSE frame carries its payload as a ``data:`` line, so the body is a byte
+#: stream rather than a JSON document. FastAPI infers nothing from a
+#: ``StreamingResponse``, so the media type, the frame grammar and the
+#: per-frame payloads are declared here instead.
+_SSE_FRAME_EXAMPLE: Final = (
+    "event: import.completed\n"
+    "id: evt_6968b3985e8c9902207afaeb\n"
+    'data: {"event_id": "evt_6968b3985e8c9902207afaeb", "type": "import.completed", '
+    '"severity": "info", "summary": "Import completed", "requires_action": false, '
+    '"created_at": "2026-01-15T09:30:00Z", "_links": {"self": "/events/evt_6968b398"}}\n'
+    "\n"
+    "event: heartbeat\n"
+    'data: {"type": "heartbeat", "sent_at": "2026-01-15T09:30:15Z"}\n'
+    "\n"
+    "event: stream_closed\n"
+    'data: {"type": "stream_closed", "reason": "refused"}\n'
+    "\n"
+)
+
+_SSE_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
+    200: {
+        "description": (
+            "An open `text/event-stream` connection in the HTML Server-Sent Events wire "
+            "format — not a JSON document. The server holds the response open and writes "
+            "frames until the caller disconnects or the stream closes. Each frame is an "
+            "`event: <name>` line, an optional `id: <id>` line, one `data: <JSON object>` "
+            "line, and a blank line. Three frame kinds arrive:\n\n"
+            "- **An event frame.** Its `event` is the event's own `type` (e.g. "
+            "`import.completed`, an open set — retired kinds persist in history), its `id` "
+            "the event's `evt_…` id (send it back as `Last-Event-ID` to resume), and its "
+            "`data` the same `EventResponse` object `GET /events/{event_id}` returns.\n"
+            "- **A `heartbeat` frame**, with no `id` and `data` of "
+            '`{"type": "heartbeat", "sent_at": "<RFC 3339>"}`, which keeps the connection '
+            "open while no event matches.\n"
+            "- **A final `stream_closed` frame**, with `data` of "
+            '`{"type": "stream_closed", "reason": "refused" | "forbidden" | "unavailable"}`, '
+            "after which the server closes the stream; reconnect to continue.\n\n"
+            "The response also carries `Cache-Control: no-cache` and `X-Accel-Buffering: no`. "
+            "Because the `200` and its headers are sent before the first frame, a failure "
+            "that happens later arrives as a `stream_closed` frame rather than an error "
+            "status."
+        ),
+        "content": {
+            "text/event-stream": {
+                "schema": {
+                    "type": "string",
+                    "description": (
+                        "A stream of SSE frames; see the response description for the frame "
+                        "grammar and the per-frame `data` payloads."
+                    ),
+                },
+                "example": _SSE_FRAME_EXAMPLE,
+            }
+        },
+    }
+}
+
+
+@router.get(
+    "/events/stream",
+    summary="Stream events over SSE",
+    response_class=StreamingResponse,
+    responses=_SSE_RESPONSE,
+)
 async def stream_events(
     request: Request,
-    identity: Identity = get_current_identity(required_permissions=["events:read"]),
+    identity: Identity = get_current_identity(required_permissions=_STREAM_PERMISSIONS),
     stream_svc: EventStreamService = Depends(get_event_stream_service),
+    recheck_credential: CredentialRecheck = Depends(get_credential_recheck),
+    recheck_seconds: float = Depends(get_stream_recheck_seconds),
+    clock: Callable[[], float] = Depends(get_stream_clock),
     since: datetime | None = Query(
         default=None,
         description=(
@@ -213,19 +304,64 @@ async def stream_events(
         openapi_examples=ex.example("agent"),
     ),
 ) -> StreamingResponse:
-    """Stream events as Server-Sent Events."""
+    """Stream events as Server-Sent Events.
+
+    The open stream re-verifies the caller at the first poll or page after each
+    `admin.events.stream_recheck_seconds` interval (default 5 s) elapses. Each
+    page is scoped by the caller's current permissions, so a narrower
+    permission set narrows the stream. Permissions are those the credential
+    carries: API keys and `at_` access tokens resolve them live (an ephemeral
+    agent `at_` keeps the subset it was minted with). A login session JWT
+    carries the set it was issued with, but removing any of a user's effective
+    permissions revokes their login sessions, so a stream opened with one ends
+    (`refused`) at the next check. The stream keeps re-verifying the token it
+    was opened with, so a permission added to a user reaches a login-session
+    stream once the client reconnects with a newer login JWT. The stream ends
+    with a `stream_closed` frame (`{"type": "stream_closed", "reason": ...}`)
+    once the credential stops verifying (`refused`: expired, revoked, or its
+    user or agent disabled or deleted), the caller no longer holds
+    `events:read` or `org:admin` or must rotate their password (`forbidden`),
+    or the check or the event store cannot be answered (`unavailable`).
+    A reconnect is authenticated afresh.
+    """
     if last_event_id is not None and not _LAST_EVENT_ID_RE.match(last_event_id):
         raise InvalidInputError("Last-Event-ID must match format evt_<24 hex chars>")
 
+    log = structlog.get_logger(__name__)
+    current = identity
+    last_verified = clock()
+    closed_reason: StreamClosedReason | None = None
+
+    async def refresh_identity() -> Identity | None:
+        # The stream outlives the verification that opened it. Before each page,
+        # re-verify at most once per interval (#1139, #1836) and hand the
+        # service the fresh identity, so a dead credential or a revoked
+        # permission ends the stream and a narrower permission set narrows it.
+        nonlocal current, last_verified, closed_reason
+        now = clock()
+        if now - last_verified < recheck_seconds:
+            return current
+        outcome = await recheck_credential(required_permissions=_STREAM_PERMISSIONS)
+        if outcome.result is not CredentialRecheckResult.VALID or outcome.identity is None:
+            closed_reason = _CLOSED_REASONS.get(outcome.result, "refused")
+            log.info(
+                "sse_stream_credential_unverified",
+                sub=identity.sub,
+                reason=closed_reason,
+            )
+            return None
+        current = outcome.identity
+        last_verified = now
+        return current
+
     async def generate() -> AsyncIterator[str]:
-        # The ``async for`` protocol calls ``aclose()`` on the underlying stream
-        # generator when we ``break`` or when this generator is cancelled/closed
-        # on client disconnect, so the per-poll DB session is always unwound and
-        # the pooled connection returned (#627). The ``finally`` only logs — it
-        # must never touch the DB.
-        log = structlog.get_logger(__name__)
+        nonlocal closed_reason
+        # ``aclosing`` closes the service generator on every exit — a ``return``
+        # on disconnect, an exception, or cancellation of this generator — so
+        # its per-page DB session is unwound and the pooled connection returned
+        # (#627). The ``finally`` only logs — it must never touch the DB.
         try:
-            async for item in stream_svc.stream(
+            items = stream_svc.stream(
                 identity=identity,
                 since=since,
                 last_event_id=last_event_id,
@@ -235,18 +371,31 @@ async def stream_events(
                 trace_id=trace_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
-            ):
-                if await request.is_disconnected():
-                    break
-                if isinstance(item, Heartbeat):
-                    yield f"event: heartbeat\ndata: {item.model_dump_json()}\n\n"
-                elif isinstance(item, EventView):
-                    resp = _event_response(item, request)
-                    yield (
-                        f"event: {resp.type}\n"
-                        f"id: {resp.event_id}\n"
-                        f"data: {resp.model_dump_json(by_alias=True)}\n\n"
-                    )
+                refresh_identity=refresh_identity,
+            )
+            try:
+                async with aclosing(items):
+                    async for item in items:
+                        if await request.is_disconnected():
+                            return
+                        if isinstance(item, Heartbeat):
+                            yield f"event: heartbeat\ndata: {item.model_dump_json()}\n\n"
+                        elif isinstance(item, EventView):
+                            resp = _event_response(item, request)
+                            yield (
+                                f"event: {resp.type}\n"
+                                f"id: {resp.event_id}\n"
+                                f"data: {resp.model_dump_json(by_alias=True)}\n\n"
+                            )
+            except DatabaseUnavailableError:
+                # The 200 and its headers are already sent, so the error
+                # handler cannot answer with a 503; the frame tells the client
+                # instead, and a reconnect gets the 503.
+                log.warning("sse_stream_store_unavailable", sub=identity.sub)
+                closed_reason = "unavailable"
+            if closed_reason is not None:
+                closed = StreamClosed(reason=closed_reason)
+                yield f"event: stream_closed\ndata: {closed.model_dump_json()}\n\n"
         finally:
             log.debug("sse_stream_closed")
 
@@ -257,7 +406,15 @@ async def stream_events(
     )
 
 
-@router.get("/events/{event_id}")
+@router.get(
+    "/events/{event_id}",
+    summary="Get an event",
+    responses=not_found(
+        "No event with this id is visible to the caller. An event belonging to another "
+        "actor is indistinguishable from one that does not exist, so a 404 here does not "
+        "mean the id is wrong — do not retry it."
+    ),
+)
 async def get_event(
     event_id: Annotated[
         str, Path(description="ID of the event.", openapi_examples=ex.example(ex.EVENT_ID))

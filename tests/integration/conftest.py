@@ -24,6 +24,7 @@ from alembic import command
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from tests.harness.event_stream import StreamProbe, install_fast_stream
 from tests.harness.postgres import (
     DB_NAMES,
     alembic_config_for,
@@ -118,3 +119,9 @@ def admin_db(integration_context: Context) -> DatabaseSession:
 def control_db(integration_context: Context) -> DatabaseSession:
     """Connected ``DatabaseSession`` for the control database."""
     return integration_context.control_db
+
+
+@pytest.fixture()
+def fast_stream(integration_context: Context, monkeypatch: pytest.MonkeyPatch) -> StreamProbe:
+    """``/events/stream`` re-verifying on every page and polling every 50 ms, with a probe."""
+    return install_fast_stream(integration_context, monkeypatch)

@@ -37,7 +37,8 @@ make perf-help         # every target, incl. the agent probes below
 | `bench_overhead.py` (`make perf-overhead`) | How much latency does the broker add? | [oha](https://github.com/hatoo/oha), **open loop** (fixed `-q` rate, `--latency-correction`), same request direct then via broker, interleaved per case; `--repeat K` reports the spread. |
 | `bench_capacity.py` (`make perf-capacity`) | What's the max throughput per worker/CPU config, and what's the bottleneck? | oha **closed loop** (fixed concurrency, no rate cap), broker recreated per `workers x CPUs`, one `docker stats` CPU sample per step. |
 | `pyspy_profile.py` (`make perf-profile`) | Where does the broker spend its CPU? | py-spy in a sidecar sharing the broker's PID namespace (image untouched), under oha closed-loop load; flamegraph SVG + CPU share per subsystem (DB client, DNS, OTel, ASGI, …). SQLAlchemy's greenlet bridge splits ORM stacks from their callers, so call-site shares are lower bounds. |
-| `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N sequential calls (one connection); aborts unless all N return 200. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes the ping transaction per checkout when `pool_pre_ping` is on (the default). |
+| `dbcost.py` (`make perf-dbcost`) | What does one call cost each database? | `pg_stat_statements` grouped by role (each plane has its own role), idle baseline subtracted, ÷ N sequential calls (one connection); aborts unless all N return 200. `app` is stopped during the run (its scanners would pollute control/admin); `warm` pins TTLs to 300 s. `statements` excludes `BEGIN`/`COMMIT`/`ROLLBACK` (reported as `tx_control`); `transactions` includes any checkout ping transaction when `pool_pre_ping` is on (gated by `pool_pre_ping_idle_s`). |
+| `bench_monitoring.py` (`make perf-monitoring`) | Does the admin dashboard stay fast, *and still add up*, under load? | Three phases. `ramp`: dashboard views (overview strip + a tab per group-by) through a concurrency ladder, p50/p95/p99 per step and per endpoint. `consistency`: aggregates polled while rows are inserted, checked against invariants that hold whatever rows exist. Both monitoring routes fan a response out over several statements in one READ COMMITTED session, so a commit landing between them leaves parts of one body describing different snapshots: `/monitoring/usage` runs `overall_stats`, `time_buckets` and `grouped_top`, so the window total can disagree with the sum of its buckets; `/monitoring/executions` runs `daily_buckets` then `top_operations`, so the top rows can sum past the reported total. The inconsistent body is then cached and re-served for its whole TTL, so one race yields many observations — the summary leads with the distinct count for that reason. Only cross-statement comparisons are checked; anything the service derives in Python from a single statement's rows cannot disagree with itself and is deliberately not asserted. `cache`: distinct query shapes swept across the 256-entry bound, miss rate either side. Both measuring phases abort on a non-200 — a refused call skips the aggregation, so it would read as a perfect cache hit. Cache accounting is DB-side (`pg_stat_user_tables` scans of `admin.execution_records`), since the caches are in-process and the local config exports no metrics. `--base-url`/`--token-file`/`--pg-container` let it run without the compose stack; `--login-email`/`--login-password` re-mint the token on a 401. |
 | `locustfile.py` (`make perf-ui` / `perf-load`) | How do faults, imports and mixed admin load behave? Roughly where's the knee? | [Locust](https://locust.io), **closed loop**, `constant_throughput` pacing, optional step/spike/soak shapes. Closed loop suffers **coordinated omission** above the knee (slow responses lower the offered load, so queueing time is never recorded): its latencies there are a lower bound. |
 | Grafana (`make perf-obs`) | What's happening server-side while it runs? | Prometheus scrape of the surfaces + postgres-exporter. Anonymous access is read-only (Viewer, `127.0.0.1` only); edit `obs/grafana/dashboards/broker-perf.json`, or log in as Grafana's built-in `admin` for Explore. Its password is `PERF_GRAFANA_ADMIN_PASSWORD` (default `admin`); Grafana's first-login prompt to change it can be skipped, so the default stays unless you set it. The UI listens on `127.0.0.1` only. |
 | `report.py` (`make perf-report`) | How did this run compare to the last ones? | Static HTML (Plotly.js) over the latest overhead / dbcost / capacity / profile results (overhead also as a trend), plus links to every py-spy flamegraph and the latest Locust CSV. |
@@ -258,3 +259,29 @@ and `.perf-env.json` (live tokens for the local stack).
 
 * Per-stage timings (`perf-agent-stages`) come from the traced broker only;
   the classic overhead bench is end to end.
+* `bench_monitoring`'s `consistency` phase is **timing-dependent**: the race it
+  looks for needs a cache entry to be minted while writes are landing, so a run
+  short enough to be served entirely from one pre-existing entry reports zero
+  violations. Treat a zero as "not observed", not "cannot happen", and prefer a
+  run longer than the 30 s cache TTL.
+* `bench_monitoring` seeds `admin.execution_records` only. The multi-table
+  `xs|s|m|l` ladder is a separate seeder; point this lane at a world it has
+  already built for 10^6+ rows rather than growing `--seed`.
+* Cache hit rate is inferred from table scans, which `pg_stat_user_tables`
+  reports with some lag, so treat a single small delta as indicative. Scraping
+  the `monitoring.cache.hits`/`.misses` counters would measure it directly, but
+  needs the metrics exporter enabled.
+* The `ramp` phase primes every path before the first level, so its numbers are
+  **cached-read serving latency**, not the cost of aggregating — `table_scans`
+  per step is what tells the two apart, and a zero there means the step never
+  touched the table. Price aggregation with the `cache` phase instead.
+* A quantile is only as good as its sample count, which every `latency_ms` block
+  carries as `n`. The default `--views 250` gives 1000 samples a step and 250 per
+  endpoint; at much lower values a per-endpoint p99 is just the second-highest
+  call and should be read as noise.
+* Pricing an admin GET with `dbcost` is not wired up. `dbcost` is broker-shaped
+  throughout — it iterates DB variants and broker callers, switches the broker's
+  config per variant, and stops `app` for the run, which is the surface an admin
+  read needs. Adding an admin probe means a separate path through its `main`,
+  plus `pg_stat_statements` (a `shared_preload_libraries` preload) and the oha
+  sidecar; `bench_monitoring`'s scan counts cover the cheaper question meanwhile.

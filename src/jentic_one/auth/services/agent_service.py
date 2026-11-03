@@ -27,6 +27,7 @@ from jentic_one.admin.services._support.actor_jobs import cancel_queued_executio
 from jentic_one.auth.repos import (
     AgentControlPurgeRepository,
     BindingRuleRepository,
+    CredentialRef,
     CredentialRefRepository,
 )
 from jentic_one.auth.services.agent_permission_ceiling import check_agent_permission_grant
@@ -61,6 +62,7 @@ from jentic_one.shared.auth.permission_catalog import (
     DEFAULT_AGENT_PERMISSIONS,
     ORG_ADMIN,
     OWNER_CREDENTIALS_READ,
+    compute_effective,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -71,7 +73,7 @@ from jentic_one.shared.events import (
 from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
 
 logger = structlog.get_logger(__name__)
@@ -203,23 +205,21 @@ class AgentService:
         cursor: str | None = None,
         identity: Identity,
     ) -> Page[AgentView]:
-        cursor_dt = None
-        if cursor is not None:
-            cursor_dt, _ = decode_cursor_str(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(identity, Agent)
 
         async with self._ctx.admin_db.session() as session:
             if owner_id is not None:
                 agents = await AgentRepository.list_by_owner(
-                    session, owner_id, limit=limit + 1, cursor=cursor_dt, filters=access_filters
+                    session, owner_id, limit=limit + 1, cursor=cursor_key, filters=access_filters
                 )
             else:
                 agents = await AgentRepository.list_all(
                     session,
                     limit=limit + 1,
                     status=status,
-                    cursor=cursor_dt,
+                    cursor=cursor_key,
                     filters=access_filters,
                 )
             has_more = len(agents) > limit
@@ -256,9 +256,14 @@ class AgentService:
         listing agents). Any other caller gets the same ``ActorNotFoundError``
         as an id that does not exist, so the response does not reveal that the
         agent exists.
+
+        The check runs on the implication-expanded permission set, like the
+        route gate: an API key carries its direct grants only, so a caller
+        holding ``agents:write`` (which implies ``agents:read``) gets the same
+        answer whichever channel it authenticates through.
         """
         view = await self.get_agent(agent_id, identity=identity)
-        permissions = set(identity.permissions)
+        permissions = compute_effective(set(identity.permissions))
         if ORG_ADMIN in permissions or AGENTS_READ in permissions:
             return view
         if identity.sub in (view.id, view.owner_id):
@@ -469,6 +474,7 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def enable(self, agent_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
@@ -483,6 +489,7 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def archive(self, agent_id: str, *, identity: Identity) -> None:
         async with self._ctx.admin_db.transaction() as session:
@@ -514,6 +521,7 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def purge(self, agent_id: str, *, identity: Identity) -> None:
         """Hard-delete an agent and the authority and session rows keyed to it.
@@ -622,6 +630,7 @@ class AgentService:
             permission_rules=control.permission_rules,
             retained_credentials=len(control.retained_credential_ids),
         )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
 
     async def _archive_and_sweep(
         self,
@@ -843,6 +852,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         view = CredentialBindingView.model_validate(binding)
         view.name = ref.name
         view.serves = [
@@ -921,6 +931,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
 
     async def _credential_name(self, credential_id: str) -> str | None:
         """Best-effort display name for a credential, for an event summary.
@@ -997,6 +1008,7 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
         return CredentialBindingView.model_validate(binding)
 
     async def get_permissions(self, agent_id: str, *, identity: Identity) -> list[str]:
@@ -1052,6 +1064,7 @@ class AgentService:
                 reason="replace_permissions",
                 origin=identity.origin.value,
             )
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
         return permissions
 
     async def update_agent(
@@ -1069,12 +1082,22 @@ class AgentService:
         owner's consent live would strand a grant the new owner cannot revoke
         self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
         back; the new owner re-consents through the normal flow if the
-        connection is still wanted. The agent's key channel (API key, scopes,
-        credential bindings) is deliberately untouched.
+        connection is still wanted. Active credential bindings to credentials
+        outside the new owner's ownership are suspended in the same
+        transaction, so the new owner does not inherit active access to the
+        previous owner's credentials; the agent's API key and scopes are
+        untouched.
 
         Only the owner or an ``org:admin`` caller may update the agent (others
-        get a uniform 404); changing ``owner_id`` is ``org:admin``-only.
+        get a uniform 404); changing ``owner_id`` is ``org:admin``-only. An
+        empty ``update_data`` is a no-op that returns the agent unchanged,
+        after the same ownership check.
         """
+        if not update_data:
+            async with self._ctx.admin_db.session() as session:
+                agent = await self._load_owned_agent(session, agent_id, identity=identity)
+                return await self._view(session, agent)
+        owner_transferred = False
         try:
             async with self._ctx.admin_db.transaction() as session:
                 agent = await self._load_owned_agent(
@@ -1094,6 +1117,9 @@ class AgentService:
                     await revoke_active_grants_for_agent(
                         session, agent_id, identity=identity, agent_name=agent.name
                     )
+                    await self._suspend_foreign_bindings_on_transfer(
+                        session, agent, identity=identity
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -1108,7 +1134,88 @@ class AgentService:
                 view = await self._view(session, agent)
         except DatabaseIntegrityError:
             raise InvalidOwnerError(update_data.get("owner_id") or "") from None
+        if owner_transferred:
+            self._ctx.invalidate_broker_caches(agent_id=agent_id)
         return view
+
+    async def _suspend_foreign_bindings_on_transfer(
+        self,
+        session: AsyncSession,
+        agent: Agent,
+        *,
+        identity: Identity,
+    ) -> int:
+        """Suspend active bindings on ``agent`` to credentials the new owner does not own.
+
+        Credentials created by ``agent`` itself or by the new ``agent.owner_id``
+        stay active; every other active binding is suspended in ``session`` so
+        an ownership transfer never hands the new owner an active binding they
+        could not create themselves. When the control database is unavailable
+        or a bound credential row is missing, fails closed by suspending.
+        """
+        bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent.id)
+        active_bindings = [b for b in bindings if not b.suspended]
+        if not active_bindings:
+            return 0
+        refs: dict[str, CredentialRef] = {}
+        if self._ctx.is_db_allowed("control"):
+            credential_ids = [b.credential_id for b in active_bindings]
+            async with self._ctx.control_db.session() as control_session:
+                refs = await CredentialRefRepository.get_refs_for_ids(
+                    control_session, credential_ids
+                )
+        allowed_creators = {agent.id}
+        if agent.owner_id is not None:
+            allowed_creators.add(agent.owner_id)
+        suspended_count = 0
+        for binding in active_bindings:
+            ref = refs.get(binding.credential_id)
+            if ref is not None and ref.created_by in allowed_creators:
+                continue
+            await AgentCredentialBindingRepository.set_suspended(
+                session,
+                agent_id=agent.id,
+                credential_id=binding.credential_id,
+                suspended=True,
+            )
+            await record_audit(
+                session,
+                action=AuditAction.DISABLE,
+                target_type=AuditTargetType.CREDENTIAL_BINDING,
+                target_id=binding.credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                target_parent_id=agent.id,
+                reason="suspend_credential_binding: agent ownership transferred",
+                origin=identity.origin.value,
+            )
+            credential = summary_label(ref.name if ref is not None else None, binding.credential_id)
+            await emit_event_best_effort(
+                session,
+                type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                severity=EventSeverity.INFO,
+                summary=(
+                    f"Credential {credential} suspended for agent "
+                    f"{summary_label(agent.name, agent.id)} because its owner changed"
+                ),
+                data={
+                    "agent_id": agent.id,
+                    "credential_id": binding.credential_id,
+                    "reason": "agent_ownership_transferred",
+                },
+                created_by=agent.id,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+            )
+            suspended_count += 1
+        if suspended_count:
+            logger.info(
+                "credential_bindings_suspended_on_agent_transfer",
+                agent_id=agent.id,
+                count=suspended_count,
+                actor_id=identity.sub,
+            )
+        return suspended_count
 
     async def update_jwks(
         self,

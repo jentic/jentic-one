@@ -20,7 +20,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OAUTH_CLIENTS_WRITE, ORG_ADMIN
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
-from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 #: Permissions that make a non-owner an admin for grant WRITE operations
 #: (``:revoke``). Broader than the usual ``ORG_ADMIN``-only idiom on purpose:
@@ -29,6 +29,16 @@ from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 #: that lifecycle. Lives here (not in the auth tier) so both the revoke
 #: predicate and the per-item ``can_revoke`` capability read one definition.
 GRANT_REVOKE_ADMIN_PERMISSIONS: frozenset[str] = frozenset({ORG_ADMIN, OAUTH_CLIENTS_WRITE})
+
+
+def is_grant_revoke_admin(identity: Identity) -> bool:
+    """Whether ``identity`` may revoke any grant (holds a revoke-admin permission).
+
+    Shared by :func:`viewer_can_revoke` and the unscoped ``:revoke`` lookup in
+    ``OAuthGrantService.revoke_grant``, so who may see a grant to revoke it and
+    who may revoke it read the same set.
+    """
+    return bool(GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions))
 
 
 def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
@@ -46,9 +56,7 @@ def viewer_can_revoke(grant_user_id: str, identity: Identity) -> bool:
     invariant holds by construction, not by timing. It persists only on
     revoked history rows, where ``can_revoke`` keeps the UI honest.
     """
-    return grant_user_id == identity.sub or bool(
-        GRANT_REVOKE_ADMIN_PERMISSIONS & set(identity.permissions)
-    )
+    return grant_user_id == identity.sub or is_grant_revoke_admin(identity)
 
 
 class OAuthGrantAdminService:
@@ -87,10 +95,7 @@ class OAuthGrantAdminService:
         ):
             raise InvalidInputError(f"unsupported status filter: {status}")
 
-        cursor_dt = None
-        cursor_id = None
-        if cursor is not None:
-            cursor_dt, cursor_id = decode_cursor_str(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         access_filters = build_access_filters(identity, OAuthClientGrant)
         async with self._ctx.admin_db.session() as session:
@@ -101,8 +106,7 @@ class OAuthGrantAdminService:
                 user_id=user_id,
                 status=status,
                 limit=limit + 1,
-                cursor_created_at=cursor_dt,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 filters=access_filters,
             )
             has_more = len(grants) > limit

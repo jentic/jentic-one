@@ -1348,12 +1348,35 @@ func copyConfigScript(asAgent, agentHome, operatorHome string, srcs []string) st
 	return fixedPATHPrefix + "set -o pipefail; " + strings.Join(steps, " && ")
 }
 
+// seedTokenCaches lists, per seeded config directory (keyed by its base name),
+// the entries that hold the operator's login or session tokens rather than
+// configuration. They are never archived, so the agent authenticates as itself:
+// AWS keeps its SSO session and assumed-role credentials in sso/cache and
+// cli/cache; gcloud keeps its OAuth credentials, access tokens and
+// application-default credentials in the files below.
+var seedTokenCaches = map[string][]string{
+	".aws": {"sso/cache", "cli/cache"},
+	"gcloud": {
+		"credentials.db",
+		"access_tokens.db",
+		"legacy_credentials",
+		"application_default_credentials.json",
+	},
+}
+
 // operatorArchiveCmdline is the privileged half of CopyConfigCmd: a tar of src
-// (as the single member ./<base>, relative to its parent) written to stdout.
-// COPYFILE_DISABLE keeps macOS tar from adding AppleDouble ._ entries.
+// (as the single member ./<base>, relative to its parent) written to stdout,
+// minus the base's seedTokenCaches entries. COPYFILE_DISABLE keeps macOS tar
+// from adding AppleDouble ._ entries. The ./<base>/<entry> exclude patterns
+// match the same members under bsdtar (macOS) and GNU tar (Linux).
 func operatorArchiveCmdline(src string) string {
-	return "COPYFILE_DISABLE=1 tar -C " + shellQuote(filepath.Dir(src)) + " -cf - " +
-		shellQuote("./"+filepath.Base(src))
+	base := filepath.Base(src)
+	var excludes strings.Builder
+	for _, entry := range seedTokenCaches[base] {
+		excludes.WriteString(" --exclude=" + shellQuote("./"+base+"/"+entry))
+	}
+	return "COPYFILE_DISABLE=1 tar -C " + shellQuote(filepath.Dir(src)) + " -cf -" +
+		excludes.String() + " " + shellQuote("./"+base)
 }
 
 // agentExtractScript is the agent-side half of CopyConfigCmd: create the
@@ -1478,9 +1501,12 @@ type claudeSettings struct {
 //
 //   - CLAUDE_CODE_USE_BEDROCK=1 → AWS Bedrock; config lives in ~/.aws (profiles,
 //     SSO session). Only the *config* is seeded — Claude Code performs the SSO
-//     login programmatically, so the cached SSO token is deliberately excluded.
+//     login programmatically, so the cached SSO and CLI credential caches are
+//     excluded from the copy (seedTokenCaches).
 //   - CLAUDE_CODE_USE_VERTEX=1 → Google Vertex; config lives in ~/.config/gcloud,
-//     plus any explicit GOOGLE_APPLICATION_CREDENTIALS file.
+//     plus any explicit GOOGLE_APPLICATION_CREDENTIALS file. gcloud's credential
+//     and token stores are excluded the same way, so the agent runs its own
+//     `gcloud auth` login.
 //   - otherwise → the default Anthropic API, whose key (if any) is already in the
 //     agent config we seed separately, so there is no extra provider config.
 //

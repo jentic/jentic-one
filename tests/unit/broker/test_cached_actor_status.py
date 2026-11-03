@@ -99,6 +99,21 @@ async def test_jwt_for_an_inactive_agent_is_refused_after_the_claim_checks() -> 
     assert len(resolver.calls) == 1
 
 
+async def test_invalidate_actor_evicts_only_that_actor() -> None:
+    resolver = _StatusResolver(active=True)
+    cache = CachedActorStatus(resolver=resolver, cache_ttl_seconds=300)
+
+    assert await cache.is_active(actor_id="agnt_a", actor_type="agent") is True
+    assert await cache.is_active(actor_id="agnt_b", actor_type="agent") is True
+    resolver.active = False
+
+    cache.invalidate_actor("agnt_a")
+
+    assert await cache.is_active(actor_id="agnt_b", actor_type="agent") is True
+    assert await cache.is_active(actor_id="agnt_a", actor_type="agent") is False
+    assert resolver.calls == [("agent", "agnt_a"), ("agent", "agnt_b"), ("agent", "agnt_a")]
+
+
 async def test_jwt_for_an_active_agent_passes() -> None:
     resolver = _StatusResolver(active=True)
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET), actor_status=resolver)

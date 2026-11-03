@@ -22,9 +22,9 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import AuthServiceError
-from jentic_one.auth.web import flow
+from jentic_one.auth.web import consent_state, deps, flow, pages
 from jentic_one.auth.web.errors import service_error_handler
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -76,7 +76,10 @@ def _client_view(
 @pytest.fixture()
 def app() -> FastAPI:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
     app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
 
@@ -92,7 +95,7 @@ def app() -> FastAPI:
     authorize_svc.get_authorize_redirect_url = MagicMock(
         return_value="https://idp.example.com/authorize?state=x"
     )
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     return app
 
 
@@ -151,7 +154,7 @@ def test_pending_client_page_has_poll_and_resume_wiring(client: TestClient) -> N
     assert isinstance(state_blob, str) and "." in state_blob
     assert isinstance(cfg["status_url"], str)
     assert cfg["status_url"].startswith("/oauth/approval/status?st=")
-    assert cfg["poll_ms"] == authorize._APPROVAL_POLL_INTERVAL_MS
+    assert cfg["poll_ms"] == pages.APPROVAL_POLL_INTERVAL_MS
     assert cfg["decision_url"] == "/oauth/approval/decision"
     assert cfg["token_key"] == "jentic-one.access_token"
     # The blob verifies under the approval purpose and binds the client.
@@ -159,7 +162,7 @@ def test_pending_client_page_has_poll_and_resume_wiring(client: TestClient) -> N
         state_blob,
         flow.derive_key(_SECRET, "approval"),
         purpose="approval",
-        max_age=authorize.APPROVAL_STATE_MAX_AGE_SECONDS,
+        max_age=consent_state.APPROVAL_STATE_MAX_AGE_SECONDS,
     )
     assert params["client_id"] == "oc_test"
     assert params["original_state"] == "client-state-1"
@@ -342,7 +345,9 @@ def test_status_endpoint_rejects_bad_signature(client: TestClient) -> None:
 
 
 def test_status_endpoint_rejects_expired_state(client: TestClient) -> None:
-    expired = _mint_state(iat=str(int(time.time()) - authorize.APPROVAL_STATE_MAX_AGE_SECONDS - 1))
+    expired = _mint_state(
+        iat=str(int(time.time()) - consent_state.APPROVAL_STATE_MAX_AGE_SECONDS - 1)
+    )
     resp = client.get("/oauth/approval/status", params={"st": expired})
     assert resp.status_code == 400
 
@@ -448,7 +453,7 @@ def test_decision_endpoint_approve_reuses_admin_service_path(app: FastAPI) -> No
     approved = _client_view(approval_status="approved", active=True)
     mock_svc = _with_client_view(pending)
     mock_svc.approve = AsyncMock(return_value=approved)
-    with patch.object(authorize, "OAuthClientService", return_value=mock_svc):
+    with patch.object(approval, "OAuthClientService", return_value=mock_svc):
         resp = client.post(
             "/oauth/approval/decision", json={"state": _mint_state(), "action": "approve"}
         )
@@ -469,7 +474,7 @@ def test_decision_endpoint_deny_returns_denied(app: FastAPI) -> None:
     denied = _client_view(approval_status="denied", active=False)
     mock_svc = _with_client_view(pending)
     mock_svc.deny = AsyncMock(return_value=denied)
-    with patch.object(authorize, "OAuthClientService", return_value=mock_svc):
+    with patch.object(approval, "OAuthClientService", return_value=mock_svc):
         resp = client.post(
             "/oauth/approval/decision", json={"state": _mint_state(), "action": "deny"}
         )

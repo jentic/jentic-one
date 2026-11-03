@@ -145,6 +145,7 @@ async def test_entered_secrets_and_poll_tokens_never_leak(
                         "kind": "api_key",
                         "key": _PASTED_KEY,
                         "digest": key_review["digest"],
+                        "revision_id": key_review["revision"]["id"],
                     },
                 )
             )
@@ -160,6 +161,7 @@ async def test_entered_secrets_and_poll_tokens_never_leak(
                         "token_url": "https://idp.approver.example/token",
                         "confirmed_scopes": ["read"],
                         "digest": oauth_review["digest"],
+                        "revision_id": oauth_review["revision"]["id"],
                     },
                 )
             )

@@ -89,3 +89,32 @@ async def test_lru_eviction_bounds_entries() -> None:
     # agt_1 was evicted by agt_2 (max_entries=1) → a re-request misses.
     await cached.derive_credentials(agent_id="agt_1", vendor="acme.com", name="p", version="v1")
     assert inner.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_invalidate_agent_evicts_only_that_agents_entries() -> None:
+    inner = _CountingDeriver()
+    cached = CachingCredentialDeriver(inner, cache_ttl_seconds=300.0)
+    await cached.derive_credentials(agent_id="agt_1", vendor="acme.com", name="p", version="v1")
+    await cached.derive_credentials(agent_id="agt_2", vendor="acme.com", name="p", version="v1")
+    assert inner.calls == 2
+
+    cached.invalidate_agent("agt_1")
+
+    await cached.derive_credentials(agent_id="agt_2", vendor="acme.com", name="p", version="v1")
+    assert inner.calls == 2
+    await cached.derive_credentials(agent_id="agt_1", vendor="acme.com", name="p", version="v1")
+    assert inner.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_invalidate_credential_evicts_cached_derivations() -> None:
+    inner = _CountingDeriver()
+    cached = CachingCredentialDeriver(inner, cache_ttl_seconds=300.0)
+    await cached.derive_credentials(agent_id="agt_1", vendor="acme.com", name="p", version="v1")
+    assert inner.calls == 1
+
+    cached.invalidate_credential("cred_agt_1")
+
+    await cached.derive_credentials(agent_id="agt_1", vendor="acme.com", name="p", version="v1")
+    assert inner.calls == 2

@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, Iterator
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx2 import Response
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -31,6 +32,26 @@ pytestmark = pytest.mark.integration
 
 ADMIN_EMAIL = "auth-web-test-admin@test.local"
 OWNER_EMAIL = "auth-web-test-owner@test.local"
+
+#: Headers that legitimately differ per request or with the echoed id length.
+_PER_REQUEST_HEADERS = frozenset({"date", "content-length", "x-request-id", "traceparent"})
+
+
+def assert_same_response(
+    foreign: Response, foreign_id: str, unknown: Response, unknown_id: str
+) -> None:
+    """Assert two responses match once the requested ids are normalised.
+
+    Compares the status, every header except the per-request ones, and the
+    raw body with each response's own requested id replaced.
+    """
+    assert foreign.status_code == unknown.status_code
+
+    def _headers(resp: Response) -> dict[str, str]:
+        return {k: v for k, v in resp.headers.items() if k.lower() not in _PER_REQUEST_HEADERS}
+
+    assert _headers(foreign) == _headers(unknown)
+    assert foreign.text.replace(foreign_id, "<id>") == unknown.text.replace(unknown_id, "<id>")
 
 
 def _build_app(ctx: Context) -> FastAPI:
@@ -143,6 +164,20 @@ def _make_token(ctx: Context, user_id: str, email: str, permissions: list[str]) 
         "sub": user_id,
         "email": email,
         "actor_type": "user",
+        "permissions": permissions,
+        "must_change_password": False,
+    }
+    return issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+
+
+def _make_agent_token(ctx: Context, agent_id: str, owner_id: str, permissions: list[str]) -> str:
+    """A JWT for an agent acting on behalf of ``owner_id``."""
+    config = ctx.config.admin.auth
+    claims = {
+        "sub": agent_id,
+        "email": "",
+        "actor_type": "agent",
+        "parent_actor_id": owner_id,
         "permissions": permissions,
         "must_change_password": False,
     }

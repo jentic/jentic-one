@@ -32,7 +32,7 @@ pytestmark = pytest.mark.integration
 
 _PREFIX = "integ-rf-savepoint-"
 _ACTOR = "agt_rf_savepoint"
-_TOOLKIT = "tk_rf_savepoint"
+_CREDENTIAL = "cred_rf_savepoint"
 _OPERATION = OperationInfo(id="op_rf_savepoint", path="/v1/things", method="GET")
 
 
@@ -67,7 +67,8 @@ async def test_db_error_inside_the_detector_keeps_the_flushed_records(
             await record_execution(
                 session,
                 execution_id=f"{_PREFIX}{i}",
-                toolkit_id=_TOOLKIT,
+                toolkit_id=None,
+                credential_id=_CREDENTIAL,
                 trace_id="a" * 32,
                 started_at=datetime.now(UTC),
                 status=ExecutionStatus.FAILED,
@@ -80,7 +81,7 @@ async def test_db_error_inside_the_detector_keeps_the_flushed_records(
             session,
             actor_id=_ACTOR,
             actor_type="agent",
-            toolkit_id=_TOOLKIT,
+            credential_id=_CREDENTIAL,
             operation=_OPERATION,
             trace_id="a" * 32,
             config=config,

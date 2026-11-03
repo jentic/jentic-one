@@ -13,11 +13,14 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import weakref
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
@@ -29,17 +32,19 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import (
+    approval_pending_limit_directive,
+    held_execution_directive,
+    switch_toolkit_directive,
+)
+from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
-    OperationNotFoundError,
     PayloadTooLargeError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
-    approval_pending_limit_directive,
-    switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import (
@@ -51,6 +56,7 @@ from jentic_one.broker.core.headers import (
 )
 from jentic_one.broker.core.idempotency import fingerprint
 from jentic_one.broker.core.proxy_headers import (
+    PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
     passthrough_response_headers,
     reconstruct_upstream_url,
@@ -64,6 +70,7 @@ from jentic_one.broker.core.schemas import (
     HeldExecutionAcceptedLinks,
     HeldExecutionAcceptedResponse,
 )
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.broker.services.discovery import (
@@ -78,6 +85,7 @@ from jentic_one.broker.services.execution.authorization import (
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
     default_broker,
+    emit_circuit_open_event,
     persist_streaming_execution,
     run_execution,
 )
@@ -92,6 +100,7 @@ from jentic_one.broker.web.deps import (
     HttpRunnerDep,
     IdempotencyStoreDep,
     RequireExecuteAccess,
+    get_repeated_failure_counter,
 )
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
@@ -103,22 +112,28 @@ from jentic_one.shared.broker.protocols import (
     ResolveResult,
     RuleVerdict,
 )
-from jentic_one.shared.config import UpstreamClientConfig
+from jentic_one.shared.config import AppConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.events import (
-    MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event_best_effort,
     mint_trace_id,
+    summary_label,
+    summary_text,
     valid_trace_id_or_none,
 )
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
+from jentic_one.shared.http.injection import apply_injection
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     HELD_AGENT_DIRECTIVE,
+    INBOUND_COOKIE_PAYLOAD_KEY,
     PendingApprovalLimitError,
     file_hold,
     review_page_path,
 )
+from jentic_one.shared.jobs.hold import agent_name as held_agent_name
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -130,8 +145,9 @@ from jentic_one.shared.tracing import (
     current_trace_id,
     pack_jentic_tracestate,
 )
-from jentic_one.shared.url import apply_server_variables, has_host_server_variable
+from jentic_one.shared.url import has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -141,8 +157,33 @@ logger = structlog.get_logger(__name__)
 _meter = get_meter("broker")
 _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
-    description="Failed attempts to persist a streaming execution record",
+    unit="{persist}",
+    description=(
+        "Streaming execution records not persisted, by reason: write_error (the "
+        "write raised), backlog_timeout (no slot within "
+        "broker.streaming_persist_acquire_timeout_s) or cancelled (abandoned "
+        "while waiting or writing; a record cancelled while writing may still "
+        "have landed)"
+    ),
 )
+_streaming_persist_pending = _meter.create_up_down_counter(
+    "broker.streaming_execution.persist_pending",
+    unit="{persist}",
+    description=(
+        "Streaming execution persists in this process that have not finished, by "
+        "state: waiting (queued for a broker.streaming_persist_max_concurrency "
+        "slot) or in_flight (holding a slot and writing)"
+    ),
+)
+_PENDING_WAITING = {"state": "waiting"}
+_PENDING_IN_FLIGHT = {"state": "in_flight"}
+# The ``error`` recorded for an outcome that has no upstream status and names
+# no failure — a breach of the ``StreamingOutcome`` contract by an injected
+# broker, recorded rather than mistaken for a completed call.
+_MISSING_OUTCOME_ERROR = "server_error: missing_outcome_error"
+_REASON_WRITE_ERROR = {"reason": "write_error"}
+_REASON_BACKLOG_TIMEOUT = {"reason": "backlog_timeout"}
+_REASON_CANCELLED = {"reason": "cancelled"}
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
     description=(
@@ -156,6 +197,157 @@ router = APIRouter()
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
+@dataclass(frozen=True, slots=True)
+class _StreamingPersistGate:
+    """The semaphore bounding one Context's concurrent streaming persists."""
+
+    loop: asyncio.AbstractEventLoop
+    limit: int
+    semaphore: asyncio.Semaphore
+
+
+# One gate per Context (its admin pool), so two Contexts in one process never
+# share or thrash a semaphore. A gate is rebuilt only when the running event
+# loop changes: one Semaphore must not straddle loops.
+_persist_gates: weakref.WeakKeyDictionary[Context, _StreamingPersistGate] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _effective_persist_limit(config: AppConfig) -> int:
+    """``streaming_persist_max_concurrency`` clamped to ``admin.pool_max - 1`` (floor 1)."""
+    return min(
+        config.broker.streaming_persist_max_concurrency,
+        max(1, config.databases.admin.pool_max - 1),
+    )
+
+
+def _streaming_persist_gate(ctx: Context) -> _StreamingPersistGate:
+    """The gate bounding ``ctx``'s concurrent streaming persists on this loop.
+
+    Logs ``streaming_persist_limit_clamped`` when the gate is built with a
+    limit below the configured one, so the effective cap is never silent.
+    """
+    loop = asyncio.get_running_loop()
+    gate = _persist_gates.get(ctx)
+    if gate is None or gate.loop is not loop:
+        limit = _effective_persist_limit(ctx.config)
+        configured = ctx.config.broker.streaming_persist_max_concurrency
+        if limit < configured:
+            logger.warning(
+                "streaming_persist_limit_clamped",
+                configured=configured,
+                effective=limit,
+                admin_pool_max=ctx.config.databases.admin.pool_max,
+            )
+        gate = _StreamingPersistGate(loop=loop, limit=limit, semaphore=asyncio.Semaphore(limit))
+        _persist_gates[ctx] = gate
+    return gate
+
+
+def _record_persist_failed(outcome: StreamingOutcome, ctx_req: ExecuteRequestContext) -> None:
+    """Count and log a persist whose write raised (call from an ``except``)."""
+    _streaming_persist_failures.add(1, _REASON_WRITE_ERROR)
+    logger.error(
+        "streaming_execution_persist_failed",
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        reason=_REASON_WRITE_ERROR["reason"],
+        exc_info=True,
+    )
+
+
+def _record_persist_abandoned(
+    outcome: StreamingOutcome,
+    ctx_req: ExecuteRequestContext,
+    *,
+    reason: dict[str, str],
+    stage: str,
+    **fields: object,
+) -> None:
+    """Count and log a persist given up before it finished.
+
+    ``stage`` is ``waiting`` (no slot yet, so nothing was written) or
+    ``writing`` (cancelled inside the transaction, so the record may or may not
+    have landed). An expected condition, so no traceback.
+    """
+    _streaming_persist_failures.add(1, reason)
+    logger.error(
+        "streaming_execution_persist_abandoned",
+        execution_id=outcome.execution_id,
+        trace_id=ctx_req.trace_id,
+        reason=reason["reason"],
+        stage=stage,
+        **fields,
+    )
+
+
+async def _acquire_persist_slot(
+    semaphore: asyncio.Semaphore,
+    timeout_s: float,
+    outcome: StreamingOutcome,
+    ctx_req: ExecuteRequestContext,
+) -> bool:
+    """Wait up to ``timeout_s`` for a persist slot; ``False`` when it timed out.
+
+    A timeout or a cancellation while waiting is counted and logged as
+    abandoned; the cancellation is re-raised. No permit is held on any path
+    that does not return ``True``.
+    """
+    _streaming_persist_pending.add(1, _PENDING_WAITING)
+    try:
+        async with asyncio.timeout(timeout_s):
+            await semaphore.acquire()
+    except TimeoutError:
+        _record_persist_abandoned(
+            outcome,
+            ctx_req,
+            reason=_REASON_BACKLOG_TIMEOUT,
+            stage="waiting",
+            acquire_timeout_s=timeout_s,
+        )
+        return False
+    except asyncio.CancelledError:
+        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="waiting")
+        raise
+    finally:
+        _streaming_persist_pending.add(-1, _PENDING_WAITING)
+    return True
+
+
+async def _emit_streaming_circuit_event(
+    outcome: StreamingOutcome,
+    ctx: Context,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+) -> None:
+    """Raise ``upstream.circuit_open`` for a streaming fast-fail, in its own transaction.
+
+    The refusal that reaches here holds the breaker's per-host report claim,
+    which is consumed on the request and good for one event per cooldown: every
+    later refusal in that cooldown carries ``report=False``, so an event lost
+    here is the operator's only notice for the whole cooldown. It therefore
+    runs before the execution record and in a transaction of its own — neither
+    a wait for a persist slot nor a failure writing the record can take it
+    down — while still off the request, so the 503 never waits on the admin
+    database. Its own failure is logged, never raised; a cancellation (the
+    task's timeout, the shutdown drain) propagates to the supervisor.
+    """
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_circuit_open_event(
+                session, ctx_req, actor_id=actor_id, actor_type=actor_type
+            )
+    except Exception:
+        logger.error(
+            "streaming_circuit_event_failed",
+            execution_id=outcome.execution_id,
+            trace_id=ctx_req.trace_id,
+            exc_info=True,
+        )
+
+
 async def _persist_streaming_outcome(
     outcome: StreamingOutcome,
     ctx: Context,
@@ -164,20 +356,60 @@ async def _persist_streaming_outcome(
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
 ) -> None:
     """Best-effort persistence of a streaming execution record.
 
     Extracted so unit tests can exercise the real logic without invoking the full
-    handler.
+    handler. Runs off the request on the app's background-task registry, under
+    ``broker.streaming_persist_timeout_s``. Concurrent calls for one Context are
+    bounded by its ``_streaming_persist_gate``: an excess call waits for a slot
+    before opening the admin transaction, for at most
+    ``broker.streaming_persist_acquire_timeout_s``. Callers run it once the
+    response is complete or the client has disconnected, when the request no
+    longer holds its admission slot, so the wait delays neither the client nor
+    ``/ready``. Never raises except ``CancelledError``: a write error, a slot
+    timeout and a cancellation (its timeout or the shutdown drain) are each
+    logged and counted on ``broker.streaming_execution.persist_failures`` by
+    ``reason``.
+    It runs after the streamed body has been sent, or after a call that ended
+    before any response existed, so its write is never part of the response's
+    ``Server-Timing`` field. An outcome with no ``http_status`` (the stream
+    never opened, or was cancelled first) records as FAILED, whether or not it
+    named the failure; a circuit fast-fail's ``upstream.circuit_open`` event is
+    written first, ahead of the slot wait.
     """
+    error_msg = outcome.error
+    if error_msg is None and outcome.http_status is None:
+        # The seam's invariant: an outcome with no upstream status names the
+        # failure that ended the call before a response existed. An outcome
+        # that breaks it still describes a call that reached no upstream, so it
+        # records FAILED under a placeholder — never COMPLETED — and the breach
+        # is logged where the injected broker that caused it can be found.
+        logger.error(
+            "streaming_outcome_missing_error",
+            execution_id=outcome.execution_id,
+            trace_id=ctx_req.trace_id,
+        )
+        error_msg = _MISSING_OUTCOME_ERROR
     status = (
         ExecutionStatus.FAILED
-        if outcome.error or outcome.http_status >= 400
+        if error_msg or (outcome.http_status is not None and outcome.http_status >= 400)
         else ExecutionStatus.COMPLETED
     )
-    error_msg = outcome.error or (
-        f"Upstream returned {outcome.http_status}" if status is ExecutionStatus.FAILED else None
-    )
+    if status is ExecutionStatus.FAILED and error_msg is None:
+        error_msg = f"Upstream returned {outcome.http_status}"
+    if outcome.circuit_open:
+        await _emit_streaming_circuit_event(outcome, ctx, ctx_req, actor_id, actor_type)
+    try:
+        semaphore = _streaming_persist_gate(ctx).semaphore
+        acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
+    except Exception:
+        _record_persist_failed(outcome, ctx_req)
+        return
+    if not await _acquire_persist_slot(semaphore, acquire_timeout_s, outcome, ctx_req):
+        return
+    _streaming_persist_pending.add(1, _PENDING_IN_FLIGHT)
     try:
         async with ctx.admin_db.transaction() as session:
             await persist_streaming_execution(
@@ -193,14 +425,17 @@ async def _persist_streaming_outcome(
                 actor_type=actor_type,
                 origin=origin,
                 security_config=ctx.config.security,
+                repeated_failure_counter=repeated_failure_counter,
+                cancelled=outcome.cancelled,
             )
+    except asyncio.CancelledError:
+        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")
+        raise
     except Exception:
-        _streaming_persist_failures.add(1)
-        logger.error(
-            "streaming_execution_persist_failed",
-            execution_id=outcome.execution_id,
-            exc_info=True,
-        )
+        _record_persist_failed(outcome, ctx_req)
+    finally:
+        semaphore.release()
+        _streaming_persist_pending.add(-1, _PENDING_IN_FLIGHT)
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -406,36 +641,35 @@ async def _resolve_credentials(
     )
 
 
+def _inbound_cookie(request: Request) -> str | None:
+    """The caller's ``Cookie`` header, every field line joined with ``; ``.
+
+    HTTP/2 lets a client split cookies over several ``cookie`` fields; joining
+    them keeps every cookie rather than only the first line.
+    """
+    return "; ".join(request.headers.getlist("cookie")) or None
+
+
 def _apply_injection(
     upstream_url: str,
     injection: InjectedAuth,
     request: Request,
     server_variable_defaults: dict[str, str] | None = None,
 ) -> tuple[str, dict[str, str]]:
-    """Apply injected auth to the outbound URL + headers.
+    """The outbound URL and forwarded headers with injected auth applied.
 
-    Server-variable creds are substituted into the URL template (remaining
-    declared placeholders fall back to their spec defaults); query-param
-    creds are merged into the URL query; cookie creds are **appended** to the
-    inbound ``Cookie`` header (never overwriting forwarded cookies).
+    Filters the inbound headers for forwarding, then applies ``injection``
+    through the shared :func:`~jentic_one.shared.http.injection.apply_injection`
+    the async worker also uses, so a call sent inline and the same call sent
+    with ``Prefer: respond-async`` reach the upstream alike.
     """
-    if injection.server_variables or server_variable_defaults:
-        upstream_url = apply_server_variables(
-            upstream_url, injection.server_variables, server_variable_defaults
-        )
-
-    if injection.query_params:
-        parsed = urlparse(upstream_url)
-        sep = "&" if parsed.query else ""
-        new_query = parsed.query + sep + urlencode(injection.query_params)
-        upstream_url = urlunparse(parsed._replace(query=new_query))
-
-    headers = dict(injection.headers)
-    if injection.cookies:
-        injected = "; ".join(f"{name}={value}" for name, value in injection.cookies.items())
-        existing = request.headers.get("cookie")
-        headers["Cookie"] = f"{existing}; {injected}" if existing else injected
-    return upstream_url, headers
+    return apply_injection(
+        forward_headers(request.headers, {}),
+        upstream_url,
+        injection,
+        inbound_cookie=_inbound_cookie(request),
+        server_variable_defaults=server_variable_defaults,
+    )
 
 
 def _resolve_broker(request: Request, runner: UpstreamRunner) -> Broker:
@@ -497,6 +731,15 @@ async def _handle_unregistered_url(
     return response
 
 
+async def _check_egress(url: str, ctx: Context) -> str:
+    """Run the egress allowlist check (with DNS resolution) as the egress stage."""
+    with stage(ServerTimingStage.EGRESS):
+        try:
+            return await validate_upstream_url_async(url, ctx.config.broker.egress)
+        except ValueError as exc:
+            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -515,10 +758,7 @@ async def _handle(
         )
 
     raw_url = reconstruct_upstream_url(request.scope)
-    try:
-        upstream_url = await validate_upstream_url_async(raw_url, ctx.config.broker.egress)
-    except ValueError as exc:
-        raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
+    upstream_url = await _check_egress(raw_url, ctx)
 
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
 
@@ -527,53 +767,50 @@ async def _handle(
     # lookup — never an uncaught 500 mid-discovery.
     pins = parse_revisions(_revision_header(request))
 
-    resolved = await discover(resolver, method=method, url=upstream_url)
-    pinned_revisions: dict[str, str] | None = None
-    if resolved is None and pins:
-        # No live revision serves this URL; a pinned (e.g. never-promoted draft)
-        # revision still may.
-        via_pin = await discover_via_pins(
-            resolver, method=method, url=upstream_url, pins=pins, identity=identity
-        )
-        if via_pin is not None:
-            resolved, pinned_revision_id = via_pin
-            pinned_revisions = {
-                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                    pinned_revision_id
-                )
-            }
-    if resolved is None:
-        handled = await _handle_unregistered_url(
-            request, method=method, upstream_url=upstream_url, identity=identity
-        )
-        if handled is not None:
-            return handled
-        raise OperationNotFoundError(
-            detail="Operation not found — unregistered upstream URL.",
-            type="operation_not_found",
-        )
-
-    # If a pin applies to the discovered API, translate it to a revision_id
-    # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
-    if pins and pinned_revisions is None:
-        revision_id = await resolve_pin_for_api(
-            resolver, api=resolved.api, pins=pins, identity=identity
-        )
-        if revision_id is not None:
-            pinned = await discover(
-                resolver, method=method, url=upstream_url, revision_id=revision_id
+    with stage(ServerTimingStage.DISCOVER):
+        resolved = await discover(resolver, method=method, url=upstream_url)
+        pinned_revisions: dict[str, str] | None = None
+        if resolved is None and pins:
+            # No live revision serves this URL; a pinned (e.g. never-promoted draft)
+            # revision still may.
+            via_pin = await discover_via_pins(
+                resolver, method=method, url=upstream_url, pins=pins, identity=identity
             )
-            if pinned is None:
-                raise OperationNotFoundError(
-                    detail="Operation not found in the pinned revision.",
-                    type="operation_not_found",
+            if via_pin is not None:
+                resolved, pinned_revision_id = via_pin
+                pinned_revisions = {
+                    f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                        pinned_revision_id
+                    )
+                }
+        if resolved is None:
+            handled = await _handle_unregistered_url(
+                request, method=method, upstream_url=upstream_url, identity=identity
+            )
+            if handled is not None:
+                return handled
+            raise OperationNotFoundError(detail="Operation not found — unregistered upstream URL.")
+
+        # If a pin applies to the discovered API, translate it to a revision_id
+        # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
+        if pins and pinned_revisions is None:
+            revision_id = await resolve_pin_for_api(
+                resolver, api=resolved.api, pins=pins, identity=identity
+            )
+            if revision_id is not None:
+                pinned = await discover(
+                    resolver, method=method, url=upstream_url, revision_id=revision_id
                 )
-            resolved = pinned
-            pinned_revisions = {
-                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
-                    revision_id
-                )
-            }
+                if pinned is None:
+                    raise OperationNotFoundError(
+                        detail="Operation not found in the pinned revision."
+                    )
+                resolved = pinned
+                pinned_revisions = {
+                    f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                        revision_id
+                    )
+                }
 
     ctx_req = _context_from_discovery(
         upstream_url=upstream_url, method=method, request=request, resolved=resolved
@@ -586,24 +823,27 @@ async def _handle(
     # Direct agent→credential bindings (theme-5): every caller kind rides this
     # path — retired toolkit keys resolve as successor agents. The legacy
     # toolkit-derivation path was deleted in Phase 6b.
-    authorization = await authorize_execution(
-        ctx=ctx,
-        identity=identity,
-        api=resolved.api,
-        operation_id=resolved.operation.id,
-        method=method,
-        path=rule_request_path(
-            resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
-        ),
-        upstream_url=upstream_url,
-        instance=request.url.path,
-        credential_deriver=credential_deriver,
-        agent_rule_evaluator=agent_rule_evaluator,
-        credential_name=request.headers.get("jentic-credential-name"),
-        credential_id=request.headers.get("jentic-credential-id"),
-        request_server_variables=ctx_req.server_variables,
-        server_variables_unresolved=ctx_req.server_variables_unresolved,
-    )
+    with stage(ServerTimingStage.RULES):
+        authorization = await authorize_execution(
+            ctx=ctx,
+            identity=identity,
+            api=resolved.api,
+            operation_id=resolved.operation.id,
+            method=method,
+            path=rule_request_path(
+                resolved.operation.relative_path, upstream_url, operation_id=resolved.operation.id
+            ),
+            upstream_url=upstream_url,
+            instance=request.url.path,
+            credential_deriver=credential_deriver,
+            agent_rule_evaluator=agent_rule_evaluator,
+            credential_name=request.headers.get("jentic-credential-name"),
+            credential_id=request.headers.get("jentic-credential-id"),
+            request_server_variables=ctx_req.server_variables,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+            trace_id=ctx_req.trace_id,
+            operation_path=resolved.operation.path,
+        )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
     if selected_credential is not None:
@@ -653,7 +893,8 @@ async def _handle(
         )
 
     # Buffer the body once (needed for the idempotency fingerprint and the call).
-    body = await _read_request_body(request, method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, method, ctx)
 
     # Claim/replay on Idempotency-Key. Async same-job_id replay is future
     # work — only the sync path is idempotent here.
@@ -668,7 +909,8 @@ async def _handle(
             ctx_req.credential_id or "",
             body,
         )
-        outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
+        with stage(ServerTimingStage.IDEMPOTENCY):
+            outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
         if outcome_idem.state is IdempotencyState.CONFLICT:
             raise IdempotencyConflictError(
                 detail="Idempotency-Key reused with a different request.",
@@ -692,19 +934,19 @@ async def _handle(
         body,
         selected_credential=selected_credential,
         allowed_credential_ids=allowed_credential_ids,
-        has_idempotency_key=bool(idem_key),
     )
 
     response = _assemble_response(outcome, ctx_req)
     if idempotency is not None and idem_key and fp is not None:
-        await idempotency.complete(
-            identity.sub,
-            idem_key,
-            fp,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            body=outcome.result.body,
-        )
+        with stage(ServerTimingStage.IDEMPOTENCY):
+            await idempotency.complete(
+                identity.sub,
+                idem_key,
+                fp,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                body=outcome.result.body,
+            )
     return response
 
 
@@ -718,7 +960,6 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
-    has_idempotency_key: bool = False,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -729,26 +970,23 @@ async def _execute_buffered(
     connection (or, on SQLite, the database write lock).
     """
     credential_name = request.headers.get("jentic-credential-name")
-    injection = await _resolve_credentials(
-        ctx_req,
-        ctx,
-        identity,
-        credential_name,
-        preresolved=selected_credential,
-        allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
-    )
-    ctx_req.upstream_url, auth_headers = _apply_injection(
-        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
-    )
+    with stage(ServerTimingStage.CRED):
+        injection = await _resolve_credentials(
+            ctx_req,
+            ctx,
+            identity,
+            credential_name,
+            preresolved=selected_credential,
+            allowed_credential_ids=allowed_credential_ids,
+            credential_id=request.headers.get("jentic-credential-id"),
+        )
+        ctx_req.upstream_url, forwarded = _apply_injection(
+            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+        )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
-        try:
-            await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
-        except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
-    forwarded = forward_headers(request.headers, auth_headers)
+        await _check_egress(ctx_req.upstream_url, ctx)
 
     broker = _resolve_broker(request, runner)
     return await run_execution(
@@ -762,8 +1000,8 @@ async def _execute_buffered(
         actor_type=identity.actor_type.value,
         origin=identity.origin.value,
         security_config=ctx.config.security,
+        repeated_failure_counter=get_repeated_failure_counter(request),
         signing=injection.signing,
-        has_idempotency_key=has_idempotency_key,
     )
 
 
@@ -785,32 +1023,37 @@ async def _handle_streaming(
     response-size cap + transfer deadline + client-disconnect teardown owned by
     ``open_streaming_response``.
 
-    Persistence is best-effort via a Starlette BackgroundTask that fires after the
-    streaming body completes (or errors). A DB failure is logged + counted but does
-    not affect the already-sent response.
+    Persistence is best-effort and never holds the response: once the
+    streaming body ends — completed, failed mid-body, or cut off by a client
+    disconnect — or the stream ends before its response headers (it fails to
+    open or is cancelled, recording a FAILED outcome with no upstream status),
+    the completion callback schedules ``_persist_streaming_outcome`` exactly
+    once on the app's background-task registry and returns, once the request
+    has released its admission slot. Neither an aborted response's connection
+    nor a pre-header 5xx — a circuit-open fast-fail included — waits on the
+    database. A DB failure, timeout or shutdown cancellation is logged +
+    counted and never affects the response.
     """
-    body = await _read_request_body(request, ctx_req.method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, ctx_req.method, ctx)
     credential_name = request.headers.get("jentic-credential-name")
-    injection = await _resolve_credentials(
-        ctx_req,
-        ctx,
-        identity,
-        credential_name,
-        preresolved=preresolved,
-        allowed_credential_ids=allowed_credential_ids,
-        credential_id=request.headers.get("jentic-credential-id"),
-    )
-    ctx_req.upstream_url, auth_headers = _apply_injection(
-        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
-    )
+    with stage(ServerTimingStage.CRED):
+        injection = await _resolve_credentials(
+            ctx_req,
+            ctx,
+            identity,
+            credential_name,
+            preresolved=preresolved,
+            allowed_credential_ids=allowed_credential_ids,
+            credential_id=request.headers.get("jentic-credential-id"),
+        )
+        ctx_req.upstream_url, forwarded = _apply_injection(
+            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+        )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
     if injection.server_variables or ctx_req.server_variable_defaults:
-        try:
-            await validate_upstream_url_async(ctx_req.upstream_url, ctx.config.broker.egress)
-        except ValueError as exc:
-            raise UpstreamUrlNotAllowedError(detail=str(exc), type="invalid_upstream_url") from exc
-    forwarded = forward_headers(request.headers, auth_headers)
+        await _check_egress(ctx_req.upstream_url, ctx)
 
     execution_id = mint_execution_id()
     started_at = datetime.now(UTC)
@@ -821,11 +1064,26 @@ async def _handle_streaming(
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
         signing=injection.signing,
-        has_idempotency_key=bool(request.headers.get("idempotency-key")),
     )
 
+    background_tasks = get_background_tasks(request.app)
+    persist_timeout_s = ctx.config.broker.streaming_persist_timeout_s
+    persisted = False
+
     async def _persist_callback(outcome: StreamingOutcome) -> None:
-        await _persist_streaming_outcome(
+        # One record per execution id, whichever delivery comes first. The
+        # default broker delivers once; an injected broker that delivers again
+        # breaks the seam's contract, so the drop is logged, not silent.
+        nonlocal persisted
+        if persisted:
+            logger.warning(
+                "streaming_outcome_duplicate_ignored",
+                execution_id=outcome.execution_id,
+                trace_id=ctx_req.trace_id,
+            )
+            return
+        persisted = True
+        persist = _persist_streaming_outcome(
             outcome,
             ctx,
             ctx_req,
@@ -833,17 +1091,34 @@ async def _handle_streaming(
             identity.sub,
             identity.actor_type.value,
             origin=identity.origin.value,
+            repeated_failure_counter=get_repeated_failure_counter(request),
+        )
+        if background_tasks is None:
+            # An app built without a registry (a bare test app) writes inline,
+            # still bounded; every app from ``create_surface_app`` has one.
+            async with asyncio.timeout(persist_timeout_s):
+                await persist
+            return
+        background_tasks.spawn(
+            persist,
+            kind="streaming_execution_persist",
+            timeout_s=persist_timeout_s,
+            log_fields={"execution_id": outcome.execution_id, "trace_id": ctx_req.trace_id},
         )
 
     broker = _resolve_broker(request, runner)
-    return await broker.execute_streaming(
-        runner,
-        runner_request,
-        ctx_req,
-        execution_id,
-        transfer_deadline_s=upstream_cfg.transfer_deadline_s,
-        background_callback=_persist_callback,
-    )
+    # Returns once the upstream response headers are in; the body (and its
+    # persistence) follow after this response's headers are sent, so the
+    # streaming upstream stage is the header wait and persist is absent.
+    with stage(ServerTimingStage.UPSTREAM):
+        return await broker.execute_streaming(
+            runner,
+            runner_request,
+            ctx_req,
+            execution_id,
+            transfer_deadline_s=upstream_cfg.transfer_deadline_s,
+            background_callback=_persist_callback,
+        )
 
 
 def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> str | None:
@@ -886,8 +1161,11 @@ def _replay_response(stored: StoredResponse) -> Response:
     status/headers with an empty body and a marker header so the caller knows the
     body wasn't cached (the no-duplicate-side-effect guarantee still held).
     """
-    headers = dict(stored.headers)
+    # A replay re-emits a passthrough body, so it carries the passthrough
+    # Cache-Control whatever the stored record holds (#1835).
+    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
     headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
+    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
     if stored.body_omitted:
         headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
         # The stored content-length described the original (uncached) body; drop
@@ -909,12 +1187,15 @@ def _async_job_payload(
     allowed_credential_ids: list[str] | None = None,
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
+    inbound_cookie_enc: str | None = None,
 ) -> dict[str, Any]:
     """Build the job payload for an async (202) execution.
 
     ``headers`` are the request headers the run replays (see
     ``REPLAY_HEADERS``) — without them a JSON body would reach the upstream
-    with no ``Content-Type``.
+    with no ``Content-Type``. ``inbound_cookie_enc`` is the caller's
+    ``Cookie`` as platform-key ciphertext (see :func:`_captured_cookie`); the
+    worker decrypts it and applies it like the sync route.
 
     A standalone builder so the payload contract is unit-testable at the
     producer: the worker seams (handler forwarding, executor rebuild) each
@@ -947,7 +1228,26 @@ def _async_job_payload(
         payload["body_b64"] = base64.b64encode(body).decode()
     if headers:
         payload["headers"] = dict(headers)
+    if inbound_cookie_enc:
+        payload[INBOUND_COOKIE_PAYLOAD_KEY] = inbound_cookie_enc
     return payload
+
+
+def _captured_cookie(request: Request, ctx: Context) -> str | None:
+    """The caller's ``Cookie`` encrypted for an async or held job payload.
+
+    The job sits in the admin DB until a worker claims it, so the cookie is
+    kept only as platform-key ciphertext. Without an encryption keyset there
+    is nowhere safe to keep it: the run is still queued, without the caller's
+    cookies, and the drop is logged.
+    """
+    cookie = _inbound_cookie(request)
+    if cookie is None:
+        return None
+    if not ctx.has_encryption_keyset:
+        logger.warning("async_execution_cookie_not_kept", reason="no_encryption_keyset")
+        return None
+    return ctx.encryption.encrypt(cookie)
 
 
 def _review_url(ctx: Context, request: Request, approval_id: str) -> str:
@@ -979,7 +1279,9 @@ async def _handle_hold(
     claim. Filing, the approval row and ``execution.approval_requested`` share
     one admin-DB transaction; an identical pending request joins its existing
     hold (even at the cap), and an agent at its pending cap is otherwise denied
-    before anything is written.
+    before anything is written. The fingerprint a join matches on leaves out the
+    ``Cookie``, so a joined hold runs with the first request's captured cookie
+    and the joining request's cookie is not kept.
     """
     if not ctx.has_encryption_keyset:
         raise ApprovalHoldUnavailableError(
@@ -993,7 +1295,8 @@ async def _handle_hold(
     parsed_url = urlparse(ctx_req.upstream_url)
     path = parsed_url.path
     execution_id = mint_execution_id()
-    body = await _read_request_body(request, ctx_req.method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, ctx_req.method, ctx)
     raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1002,12 +1305,13 @@ async def _handle_hold(
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
+        inbound_cookie_enc=_captured_cookie(request, ctx),
     )
     payload: dict[str, object] = {
         ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(raw_payload))
     }
 
-    async with ctx.admin_db.transaction() as session:
+    async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:
         try:
             hold = await file_hold(
                 session,
@@ -1040,12 +1344,15 @@ async def _handle_hold(
             ) from exc
         review_url = _review_url(ctx, request, hold.approval_id)
         if not hold.joined:
-            summary_path = path[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            # An identity resolved from a JWT carries no name; read it from the
+            # agent row then, so every approval event names the agent alike.
+            name = identity.actor_name or await held_agent_name(session, identity.sub)
+            agent = summary_label(name, identity.sub)
             await emit_event_best_effort(
                 session,
                 type=EventType.EXECUTION_APPROVAL_REQUESTED,
                 severity=EventSeverity.WARNING,
-                summary=f"Agent {identity.sub} wants to {ctx_req.method} {summary_path}",
+                summary=f"Agent {agent} wants to {ctx_req.method} {summary_text(path)}",
                 requires_action=True,
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,
@@ -1079,7 +1386,11 @@ async def _handle_hold(
         held_execution_id=hold.approval_id,
         review_url=review_url,
         expires_at=hold.expires_at,
-        agent_directive=HELD_AGENT_DIRECTIVE,
+        agent_directive=held_execution_directive(
+            held_execution_id=hold.approval_id,
+            review_url=review_url,
+            instruction=HELD_AGENT_DIRECTIVE,
+        ),
         links=HeldExecutionAcceptedLinks(
             self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
         ),
@@ -1112,7 +1423,8 @@ async def _handle_async(
     rules were already enforced here at the edge.
     """
     execution_id = mint_execution_id()
-    body = await _read_request_body(request, ctx_req.method, ctx)
+    with stage(ServerTimingStage.BODY):
+        body = await _read_request_body(request, ctx_req.method, ctx)
 
     payload = _async_job_payload(
         ctx_req,
@@ -1122,9 +1434,10 @@ async def _handle_async(
         allowed_credential_ids=allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
+        inbound_cookie_enc=_captured_cookie(request, ctx),
     )
 
-    async with ctx.admin_db.transaction() as session:
+    async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
             session,
             JobKind.EXECUTION,

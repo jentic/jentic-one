@@ -74,8 +74,10 @@ var brokerTimeoutProblemTypes = map[string]bool{
 // runner_scheme_unsupported (RunnerSchemeUnsupportedError, 501) needs a
 // different operation. Everything else is unknown, including
 // upstream_response_too_large (UpstreamResponseTooLargeError, 502: the upstream
-// answered, so the call ran) and upstream_transport_error
-// (UpstreamTransportError, 502: the connection failed mid-request).
+// answered, so the call ran), upstream_transport_error
+// (UpstreamTransportError, 502: the connection failed mid-request) and
+// upstream_request_invalid (500: the broker built a request its HTTP client
+// refused to send, so re-sending the same call will fail the same way).
 func BrokerTransportRecoveryFor(status int, problemType string) BrokerTransportRecovery {
 	switch {
 	case status == http.StatusTooManyRequests || brokerTransientProblemTypes[problemType]:

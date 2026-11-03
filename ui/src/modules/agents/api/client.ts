@@ -19,6 +19,7 @@ import {
 	EventsService,
 	ExecutionsService,
 	GroupBy,
+	IntegrationsService,
 	MonitoringService,
 	OAuthService,
 	PermissionRuleSetsService,
@@ -278,15 +279,35 @@ export async function unbindCredentialFromAgent(
 	}
 }
 
-/** Lift a suspended binding (`POST …/credentials/{id}:resume`). */
+/**
+ * A person's own change to a binding, applied at once through an edit
+ * session (`POST /integrations:edit-connection` with `apply`): the same path
+ * an agent's request is approved through, so an agent's open request merges
+ * onto it. A change already in place (422 `nothing_to_change`) is no error.
+ */
+async function applyBindingEdit(
+	agentId: string,
+	credentialId: string,
+	change: { rules?: { set: PermissionRuleSchema[] }; resume?: boolean },
+): Promise<void> {
+	try {
+		await IntegrationsService.integrationsEditConnection({
+			requestBody: { agent_id: agentId, credential_id: credentialId, apply: true, ...change },
+		});
+	} catch (error) {
+		const type = error instanceof ApiError ? (error.body as { type?: unknown })?.type : null;
+		if (type === 'nothing_to_change') return;
+		throw error;
+	}
+}
+
+/** Lift a suspended binding, as a change applied at once. */
 export async function resumeAgentCredentialBinding(
 	agentId: string,
 	credentialId: string,
-): Promise<CredentialBindingEntity> {
+): Promise<void> {
 	try {
-		return bindingToEntity(
-			await AgentsService.resumeAgentCredentialBinding({ agentId, credentialId }),
-		);
+		await applyBindingEdit(agentId, credentialId, { resume: true });
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to resume the binding.');
 	}
@@ -309,17 +330,17 @@ export async function listAgentBindingPermissions(
 	}
 }
 
-/** Replace the full rule set on one direct binding (idempotent PUT). */
+/** Replace the full rule list on one direct binding, as a change applied at once. */
 export async function replaceAgentBindingPermissions(
 	agentId: string,
 	credentialId: string,
 	rules: PermissionRuleSchema[],
 ): Promise<PermissionRuleReadSchema[]> {
 	try {
-		const res = await CredentialsService.replaceAgentCredentialPermissions({
+		await applyBindingEdit(agentId, credentialId, { rules: { set: rules } });
+		const res = await CredentialsService.listAgentCredentialPermissions({
 			credentialId,
 			agentId,
-			requestBody: rules,
 		});
 		return res.data;
 	} catch (error) {

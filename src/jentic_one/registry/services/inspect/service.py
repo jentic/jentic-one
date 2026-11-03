@@ -9,7 +9,6 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.url_index import expand_server_variables, merge_paths
 from jentic_one.registry.repos.operation_repo import OperationRepository
 from jentic_one.registry.repos.security_repo import SecurityRepository
-from jentic_one.registry.services.errors import OperationNotFoundError
 from jentic_one.registry.services.inspect.auth import translate_security_schemes
 from jentic_one.registry.services.inspect.inputs import build_operation_inputs
 from jentic_one.registry.services.inspect.models import (
@@ -20,6 +19,7 @@ from jentic_one.registry.services.inspect.models import (
     OperationInspectResult,
     TagDescription,
 )
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 
 
 class InspectService:

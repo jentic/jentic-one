@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import warnings
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import patch
@@ -229,10 +228,7 @@ async def test_stream_delivers_event_committed_after_watermark_passed(
     # Connect FIRST: watermark = now. The event then appears with a created_at
     # 5 seconds in the past (inside the overlap), as if its transaction had
     # been open across the connect and committed late.
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(identity=_ADMIN, poll_interval_seconds=0, overlap_seconds=15.0),
-    )
+    gen = service.stream(identity=_ADMIN, poll_interval_seconds=0, overlap_seconds=15.0)
     first = await gen.__anext__()
     assert isinstance(first, Heartbeat)
 
@@ -288,10 +284,7 @@ async def test_stream_accepts_timezone_naive_since(
 
     naive_since = (datetime.now(UTC) - timedelta(seconds=1)).replace(tzinfo=None)
     service = EventStreamService(ctx)
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(identity=_ADMIN, since=naive_since, poll_interval_seconds=0),
-    )
+    gen = service.stream(identity=_ADMIN, since=naive_since, poll_interval_seconds=0)
     item = await gen.__anext__()
     assert isinstance(item, EventView)
     assert item.summary == "After naive since"
@@ -325,10 +318,7 @@ async def test_stream_fresh_connect_does_not_replay_visible_history(
         await session.commit()
 
     service = EventStreamService(ctx)
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(identity=_ADMIN, poll_interval_seconds=0, overlap_seconds=15.0),
-    )
+    gen = service.stream(identity=_ADMIN, poll_interval_seconds=0, overlap_seconds=15.0)
     first = await gen.__anext__()
     assert isinstance(first, Heartbeat)
     await gen.aclose()
@@ -346,14 +336,11 @@ async def test_stream_future_since_is_clamped_to_now(
     """
     ctx = integration_context
     service = EventStreamService(ctx)
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(
-            identity=_ADMIN,
-            since=datetime.now(UTC) + timedelta(seconds=120),
-            poll_interval_seconds=0,
-            overlap_seconds=15.0,
-        ),
+    gen = service.stream(
+        identity=_ADMIN,
+        since=datetime.now(UTC) + timedelta(seconds=120),
+        poll_interval_seconds=0,
+        overlap_seconds=15.0,
     )
     first = await gen.__anext__()
     assert isinstance(first, Heartbeat)
@@ -481,10 +468,7 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
         return []
 
     service = EventStreamService(ctx)
-    gen = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(identity=_ADMIN, since=datetime.now(UTC), poll_interval_seconds=60),
-    )
+    gen = service.stream(identity=_ADMIN, since=datetime.now(UTC), poll_interval_seconds=60)
 
     async def drive() -> None:
         async for _ in gen:

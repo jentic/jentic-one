@@ -20,7 +20,6 @@ from jentic_one.registry.web.schemas.notes import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -31,9 +30,11 @@ router = APIRouter(prefix="/notes")
 # by design: there is no ``notes:*`` scope in the
 # catalogue, and access is governed by ownership rather than a scope. Notes carry
 # ``created_by`` and the service layer scopes rows via ``build_access_filters``
-# (``registry/services/note_service.py``), so a caller only ever sees its own
-# notes. Adding a route-level scope here would gate on a permission that does not
-# exist; the ownership model in the service is the enforcement boundary.
+# (``registry/services/note_service.py``): a caller reads its own notes, and a
+# user also reads the notes of agents they own. Writes stay with the note's
+# author (and ``org:admin``). Adding a route-level scope here would gate on a
+# permission that does not exist; the ownership model in the service is the
+# enforcement boundary.
 
 
 def _parse_if_match(header: str | None, *, instance: str) -> int | None:
@@ -98,7 +99,7 @@ def _build_response(request: Request, view: NoteView) -> NoteResponse:
     )
 
 
-@router.post("", status_code=201)
+@router.post("", summary="Create a note", status_code=201, response_model=NoteResponse)
 async def create_note(
     request: Request,
     body: NoteCreateRequest,
@@ -131,7 +132,7 @@ async def create_note(
     return JSONResponse(status_code=201, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("")
+@router.get("", summary="List notes", response_model=NoteListResponse)
 async def list_notes(
     request: Request,
     identity: Identity = get_current_identity(),
@@ -179,32 +180,29 @@ async def list_notes(
         openapi_examples=ex.example(ex.USER_ID),
     ),
 ) -> JSONResponse:
-    """List notes with optional filters and cursor pagination."""
+    """List notes with optional filters and cursor pagination.
+
+    Returns the caller's own notes; a user also sees the notes of agents they own.
+    """
     svc = NoteService(ctx)
-    try:
-        page = await svc.list_page(
-            limit=limit,
-            cursor=cursor,
-            api=api,
-            operation_id=operation_id,
-            execution_id=execution_id,
-            credential_id=credential_id,
-            type=type,
-            created_by=created_by,
-            identity=identity,
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_page(
+        limit=limit,
+        cursor=cursor,
+        api=api,
+        operation_id=operation_id,
+        execution_id=execution_id,
+        credential_id=credential_id,
+        type=type,
+        created_by=created_by,
+        identity=identity,
+    )
 
     data = [_build_response(request, item) for item in page.data]
     resp = NoteListResponse(data=data, has_more=page.has_more, next_cursor=page.next_cursor)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/{note_id}")
+@router.get("/{note_id}", summary="Get a note", response_model=NoteResponse)
 async def get_note(
     request: Request,
     note_id: Annotated[
@@ -213,7 +211,11 @@ async def get_note(
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
-    """Retrieve a single note by ID."""
+    """Retrieve a single note by ID.
+
+    A user can read the notes of agents they own, but only a note's author (or
+    an org admin) can update or delete it.
+    """
     svc = NoteService(ctx)
     view = await svc.get(note_id, identity=identity)
 
@@ -226,7 +228,7 @@ async def get_note(
     )
 
 
-@router.patch("/{note_id}")
+@router.patch("/{note_id}", summary="Update a note", response_model=NoteResponse)
 async def update_note(
     request: Request,
     note_id: Annotated[
@@ -281,7 +283,7 @@ async def update_note(
     )
 
 
-@router.delete("/{note_id}", status_code=204)
+@router.delete("/{note_id}", summary="Delete a note", status_code=204)
 async def delete_note(
     request: Request,
     note_id: Annotated[

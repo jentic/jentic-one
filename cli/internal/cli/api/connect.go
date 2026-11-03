@@ -45,11 +45,13 @@ const connectWaitDefault = 5 * time.Minute
 var errConnectSessionEnded = errors.New("connect session ended or replaced by a newer request")
 
 // connectTerminalStatuses ends the --wait loop
-// (GET /connect-sessions/{id}/status: pending|polling|connected|failed|expired).
+// (GET /connect-sessions/{id}/status: pending|polling|connected|applied|failed|expired;
+// applied is an edit session's success).
 // A rejection arrives as failed with error_code "rejected", a cancel as failed
 // with error_code "cancelled".
 var connectTerminalStatuses = map[string]bool{
 	"connected": true,
+	"applied":   true,
 	"failed":    true,
 	"expired":   true,
 }
@@ -212,6 +214,19 @@ func newConnectCmd(a *app) *cobra.Command {
 			// control plane injects the identity and refuses an override);
 			// a user token connecting FOR an agent uses the dashboard.
 			resp, callErr := client.IntegrationsConnectWithResponse(cmd.Context(), body)
+			if open := connectOpenSession(resp, callErr); open != nil {
+				// An earlier ask for the target is still open: point at it. There
+				// is no poll token for it here, so --wait does not apply.
+				aud.Render(map[string]any{
+					"session_id":   open.SessionID,
+					"approval_url": open.ApprovalURL,
+					"already_open": true,
+					"next_step": "You already asked for this connection and the request is still open: " +
+						"relay its approval_url to your human operator instead of asking again. Then " +
+						"confirm the new binding with `jentic whoami` and retry the call that was blocked.",
+				})
+				return nil
+			}
 			if err := apiErrorFor(resp, callErr); err != nil {
 				return reportCoded(aud, connectCoded(cmd.Context(), client, target, api != nil, err))
 			}
@@ -347,6 +362,11 @@ func (a *app) waitForConnectSession(
 		// never fall through to the failed arm.
 		status.Status = strings.ToLower(strings.TrimSpace(status.Status))
 		if connectTerminalStatuses[status.Status] {
+			return &status, nil
+		}
+		// An edit its binding moved under in a way it can't follow waits on an
+		// amend, not on the approver: stop and say so.
+		if status.Status == "pending" && status.ErrorCode == "conflicted" {
 			return &status, nil
 		}
 		if time.Now().After(deadline) {

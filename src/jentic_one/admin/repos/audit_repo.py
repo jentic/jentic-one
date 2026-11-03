@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.pagination import Cursor
 
 
 class AuditRepository:
@@ -114,22 +116,21 @@ class AuditRepository:
         target_id: str,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         actor_id: str | None = None,
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[AuditEntry]:
-        """List entries for a target, ordered by occurred_at DESC, cursor-paginated."""
+        """List entries for a target, ordered by (occurred_at, id) DESC, keyset-paginated."""
         stmt = (
             select(AuditEntry)
             .where(AuditEntry.target_type == target_type, AuditEntry.target_id == target_id)
-            .order_by(AuditEntry.occurred_at.desc())
+            .order_by(AuditEntry.occurred_at.desc(), AuditEntry.id.desc())
             .limit(limit)
         )
-        if cursor is not None:
-            stmt = stmt.where(AuditEntry.occurred_at < cursor)
+        stmt = apply_desc_keyset(stmt, AuditEntry.occurred_at, AuditEntry.id, cursor)
         if actor_id is not None:
             stmt = stmt.where(AuditEntry.actor_id == actor_id)
         if origin is not None:
@@ -149,21 +150,20 @@ class AuditRepository:
         actor_id: str,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[AuditEntry]:
-        """List entries for an actor, ordered by occurred_at DESC, cursor-paginated."""
+        """List entries for an actor, ordered by (occurred_at, id) DESC, keyset-paginated."""
         stmt = (
             select(AuditEntry)
             .where(AuditEntry.actor_id == actor_id)
-            .order_by(AuditEntry.occurred_at.desc())
+            .order_by(AuditEntry.occurred_at.desc(), AuditEntry.id.desc())
             .limit(limit)
         )
-        if cursor is not None:
-            stmt = stmt.where(AuditEntry.occurred_at < cursor)
+        stmt = apply_desc_keyset(stmt, AuditEntry.occurred_at, AuditEntry.id, cursor)
         if origin is not None:
             stmt = stmt.where(AuditEntry.origin == origin)
         if since is not None:
@@ -180,16 +180,19 @@ class AuditRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         origin: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[AuditEntry]:
-        """Global feed ordered by occurred_at DESC with optional time bounds."""
-        stmt = select(AuditEntry).order_by(AuditEntry.occurred_at.desc()).limit(limit)
-        if cursor is not None:
-            stmt = stmt.where(AuditEntry.occurred_at < cursor)
+        """Global feed ordered by (occurred_at, id) DESC with optional time bounds."""
+        stmt = (
+            select(AuditEntry)
+            .order_by(AuditEntry.occurred_at.desc(), AuditEntry.id.desc())
+            .limit(limit)
+        )
+        stmt = apply_desc_keyset(stmt, AuditEntry.occurred_at, AuditEntry.id, cursor)
         if origin is not None:
             stmt = stmt.where(AuditEntry.origin == origin)
         if since is not None:

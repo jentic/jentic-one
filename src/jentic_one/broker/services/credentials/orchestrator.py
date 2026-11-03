@@ -17,20 +17,22 @@ from typing import Any
 
 import structlog
 
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import (
     AgentDirective,
-    AmbiguousMatchError,
-    CredentialNeedsReconnectError,
-    CredentialRefreshTransientError,
-    CredentialUndecryptableError,
-    InvalidCredentialNameError,
     ambiguous_credential_binding_directive,
     api_connect_hint,
     api_connect_parameters,
     connect_parameters,
     suggested_permission_rules,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.errors import (
+    AmbiguousCredentialMatchError,
+    CredentialNeedsReconnectError,
+    CredentialRefreshTransientError,
+    CredentialUndecryptableError,
+    InvalidCredentialNameError,
+)
+from jentic_one.broker.core.errors import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
 )
 from jentic_one.broker.core.injection import inject_auth
@@ -271,7 +273,12 @@ class CredentialService:
                 type="credential_needs_reconnect",
                 directive=AgentDirective(
                     strategy="prompt_human",
-                    human_readable_instruction="The connected credential must be reconnected.",
+                    human_readable_instruction=(
+                        "Your own access token is fine — do not re-authenticate and do not "
+                        "retry this call as is. The stored credential this API uses was "
+                        "revoked at the provider, so ask your operator to reconnect it in "
+                        "the dashboard, then retry."
+                    ),
                 ),
             ) from exc
         except RefreshTransientError as exc:
@@ -390,7 +397,7 @@ class CredentialService:
             # with the Jentic-Credential-Id header — so it gets the Phase-2 wire
             # type + directive. The legacy unfiltered path keeps its vocabulary.
             if allowed_credential_ids is not None:
-                raise AmbiguousMatchError(
+                raise AmbiguousCredentialMatchError(
                     detail=str(exc),
                     type="ambiguous_credential_binding",
                     extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
@@ -398,7 +405,7 @@ class CredentialService:
                         [c.id for c in exc.candidates]
                     ),
                 ) from exc
-            raise AmbiguousMatchError(
+            raise AmbiguousCredentialMatchError(
                 detail=str(exc),
                 type="ambiguous_credential",
                 extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},

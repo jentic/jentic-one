@@ -18,6 +18,7 @@ from jentic_one.admin.repos import (
     UserSecretRepository,
 )
 from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.errors import (
     ConflictError,
     EmailAlreadyExistsError,
@@ -237,6 +238,65 @@ async def test_delete_anonymises(integration_context: Context, admin_user: str) 
     assert user.email.startswith("deleted-") and user.email.endswith("@local")
 
     # Cleanup
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(InviteToken).where(InviteToken.user_id == user_id))
+        await session.execute(
+            delete(UserPermissionGrant).where(UserPermissionGrant.user_id == user_id)
+        )
+        await session.execute(delete(UserSecret).where(UserSecret.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+async def test_deleted_user_stays_deleted_after_email_patch(
+    integration_context: Context, admin_user: str
+) -> None:
+    """Delete is terminal: ``deleted_at``, not the tombstone email, is the marker.
+
+    An operator cannot launder a deleted row back to life by rewriting its
+    email first: the PATCH itself is refused, and enable, invite reissue and a
+    password reset stay refused whatever the email reads.
+    """
+    ctx = integration_context
+    service = UserService(ctx)
+    org_admin = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+    created = await service.create(
+        UserCreatePayload(email="undelete-me@test.local", first_name="Un", last_name="Del"),
+        identity=org_admin,
+    )
+    user_id = created.user.id
+    await service.delete(user_id, identity=org_admin)
+
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+    assert user is not None and user.deleted_at is not None
+
+    with pytest.raises(ConflictError, match="deleted user"):
+        await service.update(
+            user_id, UserUpdatePayload(email="revived@test.local"), identity=org_admin
+        )
+
+    # Even with the email rewritten underneath the service (the guard does not
+    # key on it), the row stays terminal.
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(User).where(User.id == user_id).values(email="revived@test.local")
+        )
+        await session.commit()
+    with pytest.raises(ConflictError, match="deleted user"):
+        await service.enable(user_id, identity=org_admin)
+    with pytest.raises(ConflictError, match="deleted user"):
+        await service.reissue_invite(user_id, identity=org_admin)
+    with pytest.raises(ConflictError, match="deleted user"):
+        await AuthService(ctx).reset_password(
+            email="revived@test.local",
+            temporary_password="temporary-pass-123",  # pragma: allowlist secret
+        )
+
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.get_by_id(session, user_id)
+    assert user is not None and user.active is False
+
     async with ctx.admin_db.session() as session:
         await session.execute(delete(InviteToken).where(InviteToken.user_id == user_id))
         await session.execute(

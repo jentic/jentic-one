@@ -168,6 +168,10 @@ class CatalogService:
             count = await CatalogRepository.replace(
                 session, source_url=self._cfg.manifest_url, entries=entries
             )
+        # An explicit refresh is the operator's "pick up upstream changes" lever,
+        # so cached preview projections are dropped along with the old snapshot.
+        # The cache is per process: other workers/replicas refetch after the TTL.
+        self._ctx.catalog_preview_cache.clear()
         return CatalogRefreshResult(count=count)
 
     def _is_stale(self, fetched_at: datetime | None) -> bool:
@@ -754,27 +758,43 @@ class CatalogService:
         windowing, so the search box / tag chips in the UI cover every operation
         in the spec — not just the loaded page — and ``total`` reflects the
         filtered count the "Load more" affordance pages through.
+
+        The upstream fetch + projection is cached per spec URL on the process
+        (``Context.catalog_preview_cache``), so paging, filtering, or reloading
+        the same entry within ``catalog.preview_cache_ttl_seconds`` does not
+        refetch it; concurrent misses for one URL share a single fetch (and its
+        failure), and a failed load is remembered for
+        ``catalog.preview_cache_failure_ttl_seconds``.
         """
         entry = await self.get(api_id)
-        if not entry.spec_url:
+        spec_url = entry.spec_url
+        if not spec_url:
             raise CatalogUnavailableError(f"catalog entry '{api_id}' has no spec url")
-        try:
-            doc = await fetch_json(entry.spec_url, config=self._ingest_cfg)
-        except CatalogFetchError as exc:
-            raise CatalogUnavailableError(f"catalog spec unavailable: {exc}") from exc
 
-        projection = mb.project_preview(doc, tag=tag, q=q)
-        total = len(projection.operations)
+        async def _load() -> mb.PreviewProjection:
+            try:
+                doc = await fetch_json(spec_url, config=self._ingest_cfg)
+            except CatalogFetchError as exc:
+                raise CatalogUnavailableError(f"catalog spec unavailable: {exc}") from exc
+            return mb.project_preview(doc)
+
+        # The unfiltered projection is cached (not the raw doc, which can be tens
+        # of MB once parsed); tag/q filtering and windowing run per request on it.
+        projection = await self._ctx.catalog_preview_cache.get_or_load(spec_url, _load)
+        operations = mb.filter_preview_operations(projection.operations, tag=tag, q=q)
+        total = len(operations)
         capped_limit = max(0, min(limit, mb.PREVIEW_MAX_OPERATIONS))
         start = max(0, offset)
-        window = projection.operations[start : start + capped_limit]
+        window = operations[start : start + capped_limit]
         return CatalogPreviewView(
             operations=window,
             total=total,
             offset=start,
             truncated=start + len(window) < total,
             info=projection.info,
-            security_schemes=projection.security_schemes,
+            security_schemes={
+                name: dict(scheme) for name, scheme in projection.security_schemes.items()
+            },
         )
 
     # ── import ───────────────────────────────────────────────────────────────
@@ -966,8 +986,8 @@ class CatalogService:
         silently reverting the operator's fix.
 
         If the re-import would change the server hosts of an API with bound credentials,
-        only a caller holding ``credentials:write`` makes it current; otherwise the worker
-        keeps the new revision as a draft for operator review (see
+        only an organisation admin makes it current; otherwise the worker keeps the new
+        revision as a draft for an organisation admin to review and promote (see
         ``registry/ingest/host_change_guard.py``).
         """
         entry = await self.get(api_id)
@@ -976,10 +996,11 @@ class CatalogService:
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
         if may_approve_host_change(identity.permissions):
-            # Server-host change guard: an operator (``credentials:write``) may let a
-            # re-import that changes the API's server hosts become current even when
-            # the API has bound credentials. Everyone else gets such a revision held
-            # as a draft for review. Server-set only; client schemas cannot carry it.
+            # Server-host change guard: an organisation admin may let a re-import that
+            # changes the API's server hosts become current even when the API has
+            # bound credentials. Everyone else gets such a revision held as a draft
+            # for an organisation admin to review and promote. Server-set only; client
+            # schemas cannot carry it.
             source["host_change_approved"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:

@@ -31,7 +31,7 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.core.url_index import URL_INDEX_FORMAT_MARKER
-from jentic_one.registry.ingest.exc import IngestPipelineError
+from jentic_one.registry.ingest.errors import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.registry.repos import ApiRepository, UrlIndexRepository

@@ -35,7 +35,12 @@ import {
 	useCanAccess,
 	useOptionalCurrentUser,
 } from '@/shared/auth';
-import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
+import {
+	useBindingAccess,
+	useCredentialAgents,
+	useDeleteCredential,
+	useOpenConnectRequests,
+} from '@/shared/credentials/api';
 import {
 	useConnectAfterCreate,
 	CredentialDeleteDialog,
@@ -43,6 +48,7 @@ import {
 	useActionCatalog,
 	useAllowedOperationCount,
 	useUnappliedChoices,
+	CreateCredentialFlow,
 } from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
@@ -186,6 +192,20 @@ export function ApiAccessSidebar({
 	const credentialLocked = credentialReadOnly || !canWriteCredentials || archived;
 
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
+	// Whether the credential's scopes can change (the Edit scopes entry).
+	const access = useBindingAccess(agent.id, credentialId ?? '', {
+		enabled: open && credentialId != null && !credentialLocked,
+	});
+	// The agent's own request to change this binding, waiting on a review. A
+	// change made here merges into it, or leaves it for the agent to amend.
+	const openRequests = useOpenConnectRequests({ enabled: open && canWriteCredentials });
+	const openEdit = openRequests.data?.find(
+		(r) =>
+			String(r.intent) === 'edit' &&
+			r.agent_id === agent.id &&
+			r.requested_by_actor_id === agent.id &&
+			r.credential_id === credentialId,
+	);
 	// What the broker evaluates: an attached rule set's rules, else the inline ones.
 	const effective = useAgentBindingEffectiveRules(open ? agent.id : null, credentialId);
 
@@ -320,6 +340,8 @@ export function ApiAccessSidebar({
 	// The edit sheet is a SECOND SheetPrimitive: its Escape must not tear down this
 	// sidebar. The confirms are native `<dialog>`s, which SheetPrimitive yields to.
 	const [editOpen, setEditOpen] = useState(false);
+	const [editScopesOpen, setEditScopesOpen] = useState(false);
+	const [reviewingEdit, setReviewingEdit] = useState<string | null>(null);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [unbindOpen, setUnbindOpen] = useState(false);
 	const close = (): void =>
@@ -328,7 +350,7 @@ export function ApiAccessSidebar({
 			onClose();
 		});
 	const guardedClose = (): void => {
-		if (editOpen || guard || unapplied.settling) return;
+		if (editOpen || editScopesOpen || reviewingEdit || guard || unapplied.settling) return;
 		close();
 	};
 
@@ -560,10 +582,34 @@ export function ApiAccessSidebar({
 								sharedWithViewer={credentialReadOnly}
 								canEdit={!credentialLocked}
 								onEdit={() => setEditOpen(true)}
+								onEditScopes={
+									access.data?.scopes_editable
+										? () => setEditScopesOpen(true)
+										: undefined
+								}
 								accountCount={accountCount}
 								otherApisPhrase={othersPhrase}
 							/>
 							<section aria-label="Access" className="space-y-4">
+								{openEdit && (
+									<div
+										role="status"
+										className="bg-surface-inset flex items-center justify-between gap-3 rounded-lg px-3.5 py-2.5 text-xs"
+									>
+										<span className="text-foreground-lighter">
+											<AgentNameText name={agent.name} /> asked to change this
+											access. Changes you make here are merged into its
+											request.
+										</span>
+										<Button
+											size="xs"
+											variant="tonal"
+											onClick={() => setReviewingEdit(openEdit.session_id)}
+										>
+											Review
+										</Button>
+									</div>
+								)}
 								{accessBody}
 							</section>
 							{/* The dry run of the SAVED rules: the broker's own decision. */}
@@ -601,6 +647,29 @@ export function ApiAccessSidebar({
 
 			{/* Stacked edit sheet (shared machinery: write-only secrets, OAuth
 			    read-only after creation). */}
+			{reviewingEdit && (
+				<CreateCredentialFlow
+					open
+					approvalSession={{ sessionId: reviewingEdit }}
+					onClose={() => setReviewingEdit(null)}
+					onCreated={() => setReviewingEdit(null)}
+				/>
+			)}
+
+			{editScopesOpen && shown && (
+				<CreateCredentialFlow
+					open
+					editScopes={{
+						agentId: agent.id,
+						credentialId: shown.credentialId,
+						credentialName: shown.credentialName,
+						vendorKey: shown.vendor,
+					}}
+					onClose={() => setEditScopesOpen(false)}
+					onCreated={() => setEditScopesOpen(false)}
+				/>
+			)}
+
 			<EditCredentialSheet
 				credentialId={credentialId}
 				open={editOpen}

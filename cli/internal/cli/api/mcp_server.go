@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -226,7 +227,8 @@ var inspectOperationSchema = map[string]any{
 // inspect_operation), the 1-C execute surface (execute, execute_read,
 // get_execution_result — mcp_execute.go), the catalog tools
 // (search_catalog, import_api — mcp_catalog.go), and the connect tool
-// (request_connection — mcp_request_connection.go). Docstrings
+// (request_connection — mcp_request_connection.go), and the agent's own access
+// (show_access, request_access_change, amend_request — mcp_access.go). Docstrings
 // encode the flow (get_started first, whoami before discovery, search →
 // inspect → execute, access is granted by a human operator — never probe by
 // executing) per §3.2, with concrete argument examples a model can copy.
@@ -235,7 +237,8 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	execSpecs := s.executeToolSpecs()
 	catalogSpecs := s.catalogToolSpecs()
 	connectSpecs := s.connectToolSpecs()
-	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs)+len(connectSpecs))
+	accessSpecs := append(s.accessToolSpecs(), s.editToolSpecs()...)
+	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs)+len(connectSpecs)+len(accessSpecs))
 	specs = append(specs, []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
@@ -327,7 +330,8 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	}...)
 	specs = append(specs, execSpecs...)
 	specs = append(specs, catalogSpecs...)
-	return append(specs, connectSpecs...)
+	specs = append(specs, connectSpecs...)
+	return append(specs, accessSpecs...)
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;
@@ -346,7 +350,26 @@ func (s *mcpServer) registerTools() {
 			s.logger.Info("tool withheld by --read-only", "tool", spec.tool.Name)
 			continue
 		}
-		s.server.AddTool(spec.tool, spec.handler)
+		s.server.AddTool(spec.tool, s.argumentErrorsAsToolErrors(spec.handler))
+	}
+}
+
+// argumentErrorsAsToolErrors returns a handler's malformed-arguments error as a
+// coded tool result (MISSING_ARGUMENT, naming what to fix) instead of a
+// protocol error: a client may show the model a protocol error only as a
+// generic failure, hiding the reason it needs to fix the call.
+func (s *mcpServer) argumentErrorsAsToolErrors(handler mcp.ToolHandler) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		res, err := handler(ctx, req)
+		var rpcErr *jsonrpc.Error
+		if err != nil && errors.As(err, &rpcErr) && rpcErr.Code == jsonrpc.CodeInvalidParams {
+			return s.softError(ctx, &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        rpcErr.Message,
+				Actionable: "Fix the argument the error names and call the tool again.",
+			}), nil
+		}
+		return res, err
 	}
 }
 

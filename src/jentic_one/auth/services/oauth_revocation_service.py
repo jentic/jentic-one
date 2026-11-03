@@ -81,35 +81,43 @@ class OAuthRevocationService:
         both token types are always tried.
         """
 
+        revoked_actor_id: str | None = None
+
         async def _write(session: AsyncSession) -> None:
+            nonlocal revoked_actor_id
             if token_type_hint == "refresh_token":
-                if not await self._try_revoke_refresh(session, token, client_id):
-                    await self._try_revoke_access(session, token, client_id)
+                found, actor_id = await self._try_revoke_refresh(session, token, client_id)
+                if not found:
+                    _, actor_id = await self._try_revoke_access(session, token, client_id)
             else:
                 # No hint, access_token hint, or an unknown hint value: try
                 # access first, then fall through to refresh (§2.1).
-                if not await self._try_revoke_access(session, token, client_id):
-                    await self._try_revoke_refresh(session, token, client_id)
+                found, actor_id = await self._try_revoke_access(session, token, client_id)
+                if not found:
+                    _, actor_id = await self._try_revoke_refresh(session, token, client_id)
+            revoked_actor_id = actor_id
 
         await self._ctx.admin_db.run_in_transaction(_write)
+        self._ctx.invalidate_broker_caches(agent_id=revoked_actor_id, token=token)
 
     async def _try_revoke_access(
         self, session: AsyncSession, token: str, client_id: str | None
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """Access-token arm: the single token dies, the grant survives.
 
-        Returns True when the token row was *found* (regardless of whether it
-        was revoked — a found-but-foreign or found-but-dead token must not
-        fall through to the refresh lookup and must not error).
+        Returns ``(found, revoked_actor_id)``: ``found`` is True when the token
+        row was found (regardless of whether it was revoked — a found-but-foreign
+        or found-but-dead token must not fall through to the refresh lookup and
+        must not error).
         """
         at = await AccessTokenRepository.get_by_hash(session, _hash_token(token))
         if at is None:
-            return False
+            return False, None
         if at.oauth_client_id is None or at.oauth_client_id != client_id:
             # Foreign or platform-lineage token: succeed-as-noop, no oracle.
-            return True
+            return True, None
         if at.revoked_at is not None:
-            return True
+            return True, None
         await AccessTokenRepository.revoke(session, at.id)
         # ``actor_type`` stays the opaque persisted string (never ``ActorType(...)``):
         # a residual row of a retired actor type (``service_account``) must still
@@ -130,22 +138,22 @@ class OAuthRevocationService:
             oauth_client_id=at.oauth_client_id,
             oauth_grant_id=at.oauth_grant_id,
         )
-        return True
+        return True, at.actor_id
 
     async def _try_revoke_refresh(
         self, session: AsyncSession, token: str, client_id: str | None
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """Refresh-token arm: the full disconnect (grant + every grant token).
 
-        Returns True when the token row was *found* (see access arm).
+        Returns ``(found, revoked_actor_id)`` (see access arm).
         """
         rt = await RefreshTokenRepository.get_by_hash(session, _hash_token(token))
         if rt is None:
-            return False
+            return False, None
         if rt.oauth_client_id is None or rt.oauth_client_id != client_id:
-            return True
+            return True, None
         if rt.revoked_at is not None:
-            return True
+            return True, None
 
         # The family sweep is the RFC 7009 §2.1 SHOULD (related access tokens
         # + the refresh token itself); it also covers any grant-less
@@ -191,4 +199,4 @@ class OAuthRevocationService:
             oauth_grant_id=rt.oauth_grant_id,
             full_disconnect=grant is not None,
         )
-        return True
+        return True, rt.actor_id

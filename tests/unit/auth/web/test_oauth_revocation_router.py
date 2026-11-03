@@ -7,7 +7,7 @@ negotiation between the two arms (owned by ``_RevocationRoute``), the
 ``server.mcp.oauth.enabled`` gate on the form arm (plain 404, before the size
 cap, rate limiting, and parsing — the DCR-door posture), the form arm's
 RFC 6749 §5.2 error dialect (400/413/429), the namespaced
-per-IP rate limit, and the pre-G11 JSON+bearer contract staying byte-identical
+per-client-network rate limit, and the pre-G11 JSON+bearer contract staying byte-identical
 including every 422 body and the 422/401 precedence (pinned
 against a live replica of the pre-G11 route).
 """
@@ -197,7 +197,7 @@ def test_form_arm_needs_no_authorization_header(mock_svc_cls: MagicMock) -> None
 
 @patch("jentic_one.auth.web.routers.oauth.OAuthRevocationService")
 def test_form_arm_rate_limit_answers_429_with_retry_after(mock_svc_cls: MagicMock) -> None:
-    """Own namespaced per-IP bucket (`oauth-revocation`), matching the
+    """Own namespaced per-client-network bucket (`oauth-revocation`), matching the
     DCR-door pattern: over-quota answers 429 + Retry-After — body pinned to the
     RFC 6749 §5.2 dialect (`slow_down`, RFC 8628 §3.5), not Problem Details."""
     mock_svc_cls.return_value.revoke_client_token = AsyncMock()

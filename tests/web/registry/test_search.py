@@ -10,6 +10,7 @@ at query time maps to the 501 ``search_unsupported`` problem (#965).
 
 from __future__ import annotations
 
+import base64
 import uuid
 from collections.abc import AsyncGenerator, Iterator
 
@@ -130,3 +131,20 @@ async def test_search_query_time_unsupported_returns_501(
     body = resp.json()
     assert body["type"] == "search_unsupported"
     assert body["detail"] == "embedding provider unreachable"
+
+
+#: Cursors that base64-decode to JSON of the wrong shape (#1956).
+_WRONG_SHAPE_CURSORS = [
+    base64.b64encode(raw.encode()).decode()
+    for raw in ("null", "[1]", '{"t": 1, "id": "x"}', '{"t": "2024-01-01", "id": 1}')
+]
+
+
+@pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
+async def test_search_wrong_shape_cursor_returns_400(
+    authed_client: TestClient, cursor: str
+) -> None:
+    """A tampered search cursor is a 400 ``invalid_cursor``, like every list cursor."""
+    resp = authed_client.post("/search", json={"query": "anything", "cursor": cursor})
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_cursor"

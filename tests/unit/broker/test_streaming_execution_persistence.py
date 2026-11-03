@@ -1,8 +1,9 @@
 """Unit tests for streaming-path execution record persistence.
 
-Proves that the streaming path attaches a BackgroundTask that persists an
-execution record on success, client disconnect, and upstream error — and that
-a persistence failure is logged but does not raise.
+Proves that the streaming response hands its outcome to the persistence
+callback exactly once on success, client disconnect, upstream error, and a
+failure or cancellation before the response headers (#1753) — and that a
+persistence failure is logged but does not raise.
 """
 
 from __future__ import annotations
@@ -13,11 +14,21 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+import structlog
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, StreamingResult
-from jentic_one.broker.core.exceptions import UpstreamTimeoutError
+from jentic_one.broker.adapters.runners.http import HttpRunner
+from jentic_one.broker.core.errors import (
+    BrokerError,
+    CircuitOpenError,
+    UpstreamBodyInterruptedError,
+    UpstreamResponseTooLargeError,
+    UpstreamTimeoutError,
+)
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.services.execution import service as service_module
 from jentic_one.broker.web.routers.execute import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
@@ -27,8 +38,11 @@ from jentic_one.broker.web.streaming import (
     guarded_body,
     open_streaming_response,
 )
+from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
+from jentic_one.shared.web.background_tasks import BackgroundTaskRegistry
 
 
 def _ctx_req() -> ExecuteRequestContext:
@@ -42,6 +56,15 @@ def _ctx_req() -> ExecuteRequestContext:
         api_name="name",
         api_version="v1",
     )
+
+
+def _mock_ctx() -> MagicMock:
+    """A stand-in Context whose persist-gate knobs are real numbers."""
+    ctx = MagicMock()
+    ctx.config.broker.streaming_persist_max_concurrency = 5
+    ctx.config.broker.streaming_persist_acquire_timeout_s = 5.0
+    ctx.config.databases.admin.pool_max = 10
+    return ctx
 
 
 @asynccontextmanager
@@ -152,11 +175,42 @@ async def test_outcome_upstream_error_sets_error() -> None:
     assert outcome.bytes_transferred == 7
 
 
-# --- open_streaming_response BackgroundTask tests ---
+_SPECS = pytest.mark.parametrize("spec", ["2.3", "2.4"])
+
+
+async def _serve(
+    resp: object, *, spec: str = "2.4", disconnect: asyncio.Event | None = None
+) -> list[dict[str, object]]:
+    """Drive ``resp`` as an ASGI app and return its sends.
+
+    Spec 2.4 has no disconnect listener; under 2.3 (what uvicorn's HTTP
+    protocols advertise) Starlette listens on ``receive`` alongside the body, so
+    ``receive`` blocks until ``disconnect`` is set, then reports the client gone.
+    """
+    sent: list[dict[str, object]] = []
+    requested = False
+
+    async def _receive() -> dict[str, object]:
+        nonlocal requested
+        if spec == "2.4" or not requested:
+            requested = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await (disconnect or asyncio.Event()).wait()
+        return {"type": "http.disconnect"}
+
+    async def _send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    scope = {"type": "http", "asgi": {"spec_version": spec}}
+    await resp(scope, _receive, _send)  # type: ignore[operator]
+    return sent
+
+
+# --- open_streaming_response completion-callback tests ---
 
 
 @pytest.mark.asyncio
-async def test_attaches_background_task_when_callback_provided() -> None:
+async def test_callback_receives_outcome_once_after_body() -> None:
     result = StreamingResult(
         status_code=200,
         headers={"content-type": "text/plain"},
@@ -178,11 +232,18 @@ async def test_attaches_background_task_when_callback_provided() -> None:
         background_callback=callback,
     )
 
-    assert resp.background is not None
+    sent = await _serve(resp)
+
+    assert sent[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+    callback.assert_awaited_once()
+    (outcome,) = callback.await_args_list[0].args
+    assert outcome.execution_id == "exec-bg-1"
+    assert outcome.error is None
+    assert outcome.bytes_transferred == 2
 
 
-@pytest.mark.asyncio
-async def test_no_background_when_callback_is_none() -> None:
+@_SPECS
+async def test_response_without_a_callback_is_served_to_completion(spec: str) -> None:
     result = StreamingResult(
         status_code=200,
         headers={},
@@ -201,8 +262,12 @@ async def test_no_background_when_callback_is_none() -> None:
         "exec-bg-2",
         transfer_deadline_s=0,
     )
+    with structlog.testing.capture_logs() as logs:
+        sent = await _serve(resp, spec=spec)
 
-    assert resp.background is None
+    assert sent[1] == {"type": "http.response.body", "body": b"ok", "more_body": True}
+    assert sent[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+    assert [e for e in logs if e["log_level"] in ("warning", "error")] == []
 
 
 @pytest.mark.asyncio
@@ -240,10 +305,7 @@ async def test_duration_includes_connect_and_ttfb() -> None:
         background_callback=_callback,
     )
 
-    async for _ in resp.body_iterator:  # type: ignore[attr-defined]
-        pass
-    assert resp.background is not None
-    await resp.background()
+    await _serve(resp)
 
     assert len(captured) == 1
     assert captured[0].duration_ms >= 50
@@ -263,7 +325,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
     mock_tx = AsyncMock()
     mock_tx.__aenter__.return_value = mock_session
     mock_tx.__aexit__.return_value = False
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.return_value = mock_tx
 
     started_at = datetime.now(UTC)
@@ -294,6 +356,8 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
             actor_type="agent",
             origin=None,
             security_config=mock_ctx.config.security,
+            repeated_failure_counter=None,
+            cancelled=False,
         )
 
 
@@ -308,7 +372,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
     mock_tx = AsyncMock()
     mock_tx.__aenter__.return_value = mock_session
     mock_tx.__aexit__.return_value = False
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.return_value = mock_tx
 
     started_at = datetime.now(UTC)
@@ -339,6 +403,8 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
             actor_type="agent",
             origin=None,
             security_config=mock_ctx.config.security,
+            repeated_failure_counter=None,
+            cancelled=False,
         )
 
 
@@ -348,7 +414,7 @@ async def test_persist_failure_is_logged_not_raised() -> None:
     outcome = StreamingOutcome(execution_id="exec-p-2", http_status=200)
     outcome.duration_ms = 10
 
-    mock_ctx = MagicMock()
+    mock_ctx = _mock_ctx()
     mock_ctx.admin_db.transaction.side_effect = RuntimeError("DB down")
 
     with patch.object(_streaming_persist_failures, "add") as mock_counter:
@@ -360,4 +426,733 @@ async def test_persist_failure_is_logged_not_raised() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
-        mock_counter.assert_called_once_with(1)
+        mock_counter.assert_called_once_with(1, {"reason": "write_error"})
+
+
+async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() -> None:
+    """A write cut off by its timeout or the shutdown drain is a counted loss."""
+    outcome = StreamingOutcome(execution_id="exec-p-4", http_status=200)
+
+    @asynccontextmanager
+    async def _hung_tx() -> AsyncIterator[None]:
+        await asyncio.sleep(10)
+        yield
+
+    mock_ctx = _mock_ctx()
+    mock_ctx.admin_db.transaction.side_effect = _hung_tx
+
+    with (
+        patch.object(_streaming_persist_failures, "add") as mock_counter,
+        structlog.testing.capture_logs() as logs,
+    ):
+        task = asyncio.create_task(
+            _persist_streaming_outcome(
+                outcome,
+                ctx=mock_ctx,
+                ctx_req=_ctx_req(),
+                started_at=datetime.now(UTC),
+                actor_id="agent-1",
+                actor_type="agent",
+            )
+        )
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    mock_counter.assert_called_once_with(1, {"reason": "cancelled"})
+    (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
+    assert abandoned["execution_id"] == "exec-p-4"
+    assert abandoned["trace_id"] == "trace-1"
+    assert abandoned["reason"] == "cancelled"
+    assert abandoned["stage"] == "writing"
+    assert "exc_info" not in abandoned
+
+
+# --- OutcomeStreamingResponse: every exit path settles the outcome once ---
+
+
+class _Runner:
+    def __init__(self, result: StreamingResult) -> None:
+        self._result = result
+
+    def stream(self, _req: RunnerRequest) -> object:
+        return _fake_stream_ctx(self._result)
+
+
+async def _response_over(
+    aiter: AsyncIterator[bytes],
+    callback: object,
+    *,
+    status: int = 200,
+    transfer_deadline_s: float = 0,
+) -> object:
+    result = StreamingResult(status_code=status, headers={}, content_type=None, aiter=aiter)
+    return await open_streaming_response(
+        _Runner(result),  # type: ignore[arg-type]
+        RunnerRequest(method="GET", url="https://api.example.com/x"),
+        _ctx_req(),
+        "exec-abort-1",
+        transfer_deadline_s=transfer_deadline_s,
+        background_callback=callback,  # type: ignore[arg-type]
+    )
+
+
+@_SPECS
+async def test_midbody_transport_failure_aborts_logs_once_and_settles_outcome(spec: str) -> None:
+    """Pins #1712/#1736: no final body frame, one structured log, one callback."""
+
+    async def _dropping() -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise UpstreamBodyInterruptedError(
+            detail="Upstream transport error (RemoteProtocolError)",
+            transport_error="RemoteProtocolError",
+        )
+
+    callback = AsyncMock()
+    resp = await _response_over(_dropping(), callback)
+    with structlog.testing.capture_logs() as logs:
+        sent = await _serve(resp, spec=spec)
+
+    assert sent[-1] == {"type": "http.response.body", "body": b"partial", "more_body": True}
+    callback.assert_awaited_once()
+    (outcome,) = callback.await_args_list[0].args
+    assert outcome.error == "upstream_error: RemoteProtocolError"
+    assert outcome.bytes_transferred == 7
+    failures = [e for e in logs if e["event"] == "upstream_network_failure"]
+    assert len(failures) == 1
+    assert failures[0]["log_level"] == "error"
+    assert failures[0]["host"] == "api.example.com"
+    assert failures[0]["trace_id"] == "trace-1"
+    assert failures[0]["execution_id"] == "exec-abort-1"
+    assert failures[0]["error_type"] == "RemoteProtocolError"
+    assert "exc_info" not in failures[0]
+
+
+class _DroppingStream(httpx.AsyncByteStream):
+    """An upstream body that fails with a transport error after one chunk."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"partial"
+        raise httpx.RemoteProtocolError("peer closed connection without sending complete body")
+
+
+async def test_real_runner_midbody_drop_is_logged_as_an_upstream_network_failure() -> None:
+    """The runner's mapping and the edge's classification agree end to end.
+
+    Drives a real ``HttpRunner`` mid-body failure through the streaming edge, so
+    a change to how the runner types that failure cannot silently downgrade it
+    to a ``streaming_response_aborted`` warning.
+    """
+
+    def _handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_DroppingStream())
+
+    callback = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handle)) as client:
+        resp = await open_streaming_response(
+            HttpRunner(client),
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-real-1",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+        with structlog.testing.capture_logs() as logs:
+            sent = await _serve(resp)
+
+    assert sent[-1]["more_body"] is True
+    (failure,) = [e for e in logs if e["event"] == "upstream_network_failure"]
+    assert failure["log_level"] == "error"
+    assert failure["error_type"] == "RemoteProtocolError"
+    assert "peer closed" not in str(failure)
+    assert [e for e in logs if e["event"] == "streaming_response_aborted"] == []
+    assert callback.await_args_list[0].args[0].error == "upstream_error: RemoteProtocolError"
+
+
+async def test_size_cap_abort_logs_a_warning() -> None:
+    async def _oversized() -> AsyncIterator[bytes]:
+        yield b"x"
+        raise UpstreamResponseTooLargeError(detail="too big", type="upstream_response_too_large")
+
+    callback = AsyncMock()
+    resp = await _response_over(_oversized(), callback)
+    with structlog.testing.capture_logs() as logs:
+        await _serve(resp)
+
+    aborts = [e for e in logs if e["event"] == "streaming_response_aborted"]
+    assert len(aborts) == 1
+    assert aborts[0]["log_level"] == "warning"
+    assert aborts[0]["reason"] == "upstream_error: UpstreamResponseTooLargeError"
+    callback.assert_awaited_once()
+    assert (
+        callback.await_args_list[0].args[0].error == "upstream_error: UpstreamResponseTooLargeError"
+    )
+
+
+@_SPECS
+async def test_transfer_deadline_abort_logs_a_warning_with_the_recorded_reason(spec: str) -> None:
+    callback = AsyncMock()
+    resp = await _response_over(
+        _slow_iter([b"a", b"b", b"c"], delay_s=0.05), callback, transfer_deadline_s=0.07
+    )
+    with structlog.testing.capture_logs() as logs:
+        sent = await _serve(resp, spec=spec)
+
+    assert sent[-1]["more_body"] is True
+    (abort,) = [e for e in logs if e["event"] == "streaming_response_aborted"]
+    assert abort["log_level"] == "warning"
+    assert abort["reason"] == "transfer_deadline_exceeded"
+    callback.assert_awaited_once()
+    assert callback.await_args_list[0].args[0].error == "transfer_deadline_exceeded"
+
+
+@_SPECS
+async def test_unexpected_body_error_is_logged_with_traceback_and_settles_once(spec: str) -> None:
+    async def _defect() -> AsyncIterator[bytes]:
+        yield b"x"
+        raise RuntimeError("bug")
+
+    callback = AsyncMock()
+    resp = await _response_over(_defect(), callback)
+    with structlog.testing.capture_logs() as logs:
+        sent = await _serve(resp, spec=spec)
+
+    assert sent[-1]["more_body"] is True
+    (failed,) = [e for e in logs if e["event"] == "streaming_body_failed"]
+    assert failed["log_level"] == "error"
+    assert isinstance(failed["exc_info"], RuntimeError)
+    callback.assert_awaited_once()
+    assert callback.await_args_list[0].args[0].error == "upstream_error: RuntimeError"
+
+
+async def test_failing_callback_never_escapes_the_response() -> None:
+    callback = AsyncMock(side_effect=RuntimeError("persist exploded"))
+    resp = await _response_over(_finite_iter([b"ok"]), callback)
+    with structlog.testing.capture_logs() as logs:
+        await _serve(resp)
+
+    callback.assert_awaited_once()
+    assert [e["event"] for e in logs].count("streaming_outcome_callback_failed") == 1
+
+
+async def _endless(started: asyncio.Event) -> AsyncIterator[bytes]:
+    while True:
+        started.set()
+        yield b"tick"
+        await asyncio.sleep(0.01)
+
+
+async def test_cancelled_response_hands_off_its_outcome_once() -> None:
+    """A cancellation mid-body (spec 2.4: the request task itself) still hands off.
+
+    The slow write runs on the registry, so it survives the cancelled request
+    task and lands exactly once when the registry drains.
+    """
+    started = asyncio.Event()
+    registry = BackgroundTaskRegistry()
+    persisted: list[StreamingOutcome] = []
+
+    async def _slow_persist(outcome: StreamingOutcome) -> None:
+        await asyncio.sleep(0.05)
+        persisted.append(outcome)
+
+    async def _callback(outcome: StreamingOutcome) -> None:
+        registry.spawn(_slow_persist(outcome), kind="test", timeout_s=5)
+
+    resp = await _response_over(_endless(started), _callback)
+    task = asyncio.create_task(_serve(resp))
+    await started.wait()
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert persisted == []
+    assert registry.pending == 1
+    await registry.drain(5)
+
+    assert len(persisted) == 1
+    assert persisted[0].error == "client_disconnect"
+    assert persisted[0].bytes_transferred > 0
+
+
+async def test_client_disconnect_under_spec_2_3_settles_outcome_once() -> None:
+    """Under spec 2.3 a disconnect cancels only the body task; the hand-off still runs."""
+    started = asyncio.Event()
+    disconnect = asyncio.Event()
+    callback = AsyncMock()
+
+    resp = await _response_over(_endless(started), callback)
+    task = asyncio.create_task(_serve(resp, spec="2.3", disconnect=disconnect))
+    await started.wait()
+    disconnect.set()
+    await task
+
+    callback.assert_awaited_once()
+    (outcome,) = callback.await_args_list[0].args
+    assert outcome.error == "client_disconnect"
+    assert outcome.bytes_transferred > 0
+
+
+# --- A stream that ends before its headers settles one FAILED outcome (#1753) ---
+
+
+class _FailingOpenRunner:
+    """A runner whose ``stream()`` raises before yielding a result (no headers)."""
+
+    def __init__(self, exc: BaseException, *, delay_s: float = 0.0) -> None:
+        self._exc = exc
+        self._delay_s = delay_s
+        self.closed = False
+
+    @asynccontextmanager
+    async def stream(self, _req: RunnerRequest) -> AsyncIterator[StreamingResult]:
+        try:
+            await asyncio.sleep(self._delay_s)
+            raise self._exc
+            yield  # pragma: no cover - makes this an async generator
+        finally:
+            self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "expected_error", "circuit_open"),
+    [
+        (
+            UpstreamTimeoutError(detail="no headers in time", type="upstream_timeout"),
+            "upstream_timeout",
+            False,
+        ),
+        (
+            UpstreamTimeoutError(detail="no connection", type="upstream_connect_failed"),
+            "upstream_connect_failed",
+            False,
+        ),
+        (CircuitOpenError(detail="circuit open", type="circuit_open"), "circuit_open", True),
+        (
+            CircuitOpenError(detail="circuit open", type="circuit_open", report=False),
+            "circuit_open",
+            False,
+        ),
+        (
+            BrokerError(detail="connect refused", type="upstream_transport_error"),
+            "upstream_transport_error",
+            False,
+        ),
+        (RuntimeError("defect"), "server_error: RuntimeError", False),
+    ],
+)
+async def test_stream_open_failure_settles_failed_outcome_once_and_reraises(
+    exc: Exception, expected_error: str, circuit_open: bool
+) -> None:
+    """Pins #1753: the record names the problem ``type`` the caller gets, and nothing is lost.
+
+    ``circuit_open`` is set only for the refusal holding the breaker's per-host
+    report claim, so the record write raises one circuit event per cooldown.
+    """
+    runner = _FailingOpenRunner(exc, delay_s=0.02)
+    callback = AsyncMock()
+
+    with pytest.raises(type(exc)) as raised:
+        await open_streaming_response(
+            runner,  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-1",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    assert raised.value is exc
+    # The runner's own ``@asynccontextmanager`` generator unwinds through its
+    # ``finally`` as ``__aenter__`` raises; the exit stack holds nothing for it
+    # (see ``test_a_stream_that_never_opens_leaves_the_exit_stack_empty``).
+    assert runner.closed
+    callback.assert_awaited_once()
+    (outcome,) = callback.await_args_list[0].args
+    assert outcome.execution_id == "exec-open-1"
+    assert outcome.http_status is None
+    assert outcome.error == expected_error
+    assert outcome.circuit_open is circuit_open
+    # A loop timer may fire up to the clock resolution early, and the duration
+    # truncates to whole milliseconds.
+    assert outcome.duration_ms >= 15
+    assert outcome.bytes_transferred == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_open_failure_with_failing_callback_still_reraises_the_cause() -> None:
+    """A persist callback that raises is logged; the client still sees the real failure."""
+    exc = UpstreamTimeoutError(detail="no headers in time", type="upstream_timeout")
+    callback = AsyncMock(side_effect=RuntimeError("persist exploded"))
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(UpstreamTimeoutError) as raised:
+        await open_streaming_response(
+            _FailingOpenRunner(exc),  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-2",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    assert raised.value is exc
+    callback.assert_awaited_once()
+    assert [e["event"] for e in logs].count("streaming_outcome_callback_failed") == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_open_cancellation_settles_a_cancelled_outcome_and_propagates() -> None:
+    """A cancel before the headers (shutdown, an outer cancel) still records the call.
+
+    Streaming serves non-idempotent calls, so the request may already have
+    reached the upstream; the outcome is ``cancelled``, never an upstream
+    failure, and the cancellation itself propagates.
+    """
+    runner = _FailingOpenRunner(asyncio.CancelledError())
+    callback = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await open_streaming_response(
+            runner,  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-3",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    # The runner's own generator ``finally``, as above.
+    assert runner.closed
+    callback.assert_awaited_once()
+    (outcome,) = callback.await_args_list[0].args
+    assert outcome.execution_id == "exec-open-3"
+    assert outcome.http_status is None
+    assert outcome.error == "cancelled"
+    assert outcome.circuit_open is False
+    assert outcome.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_request_task_hands_off_its_outcome_through_the_registry() -> None:
+    """Cancelling the request task mid-open hands the write to the registry, which outlives it."""
+    registry = BackgroundTaskRegistry()
+    persisted: list[StreamingOutcome] = []
+
+    async def _persist(outcome: StreamingOutcome) -> None:
+        persisted.append(outcome)
+
+    async def _callback(outcome: StreamingOutcome) -> None:
+        registry.spawn(_persist(outcome), kind="test", timeout_s=5)
+
+    task = asyncio.create_task(
+        open_streaming_response(
+            _FailingOpenRunner(RuntimeError("unreached"), delay_s=30),  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-4",
+            transfer_deadline_s=0,
+            background_callback=_callback,
+        )
+    )
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await registry.drain(5)
+
+    assert [(o.execution_id, o.error, o.http_status) for o in persisted] == [
+        ("exec-open-4", "cancelled", None)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_persist_outcome_without_upstream_status_records_failed(cancelled: bool) -> None:
+    """An outcome with no upstream status records FAILED and forwards ``cancelled``."""
+    outcome = StreamingOutcome(
+        execution_id="exec-p-4",
+        http_status=None,
+        error="cancelled" if cancelled else "upstream_timeout",
+        cancelled=cancelled,
+    )
+    outcome.duration_ms = 3
+
+    mock_session = AsyncMock()
+    mock_tx = AsyncMock()
+    mock_tx.__aenter__.return_value = mock_session
+    mock_tx.__aexit__.return_value = False
+    mock_ctx = _mock_ctx()
+    mock_ctx.admin_db.transaction.return_value = mock_tx
+    started_at = datetime.now(UTC)
+
+    with patch(
+        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        new_callable=AsyncMock,
+    ) as mock_persist:
+        await _persist_streaming_outcome(
+            outcome,
+            ctx=mock_ctx,
+            ctx_req=_ctx_req(),
+            started_at=started_at,
+            actor_id="agent-1",
+            actor_type="agent",
+        )
+
+    mock_persist.assert_called_once_with(
+        mock_session,
+        execution_id="exec-p-4",
+        started_at=started_at,
+        status=ExecutionStatus.FAILED,
+        http_status=None,
+        duration_ms=3,
+        error=outcome.error,
+        ctx_req=_ctx_req(),
+        actor_id="agent-1",
+        actor_type="agent",
+        origin=None,
+        security_config=mock_ctx.config.security,
+        repeated_failure_counter=None,
+        cancelled=cancelled,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("http_status", "duration_samples"), [(None, 0), (200, 1)])
+async def test_streaming_metrics_skip_the_duration_sample_without_an_upstream_response(
+    http_status: int | None, duration_samples: int
+) -> None:
+    """Like the buffered path: every execution counts, only an upstream round trip is timed."""
+    with (
+        patch.object(service_module, "record_execution", new_callable=AsyncMock),
+        patch.object(service_module, "_emit_execution_lifecycle", new_callable=AsyncMock),
+        patch.object(service_module._executions_total, "add") as count,
+        patch.object(service_module._execution_duration, "record") as duration,
+    ):
+        await service_module.persist_streaming_execution(
+            AsyncMock(),
+            execution_id="exec-m-1",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.FAILED,
+            http_status=http_status,
+            duration_ms=4,
+            error="upstream_timeout",
+            ctx_req=_ctx_req(),
+            actor_id="agent-1",
+            actor_type="agent",
+        )
+
+    count.assert_called_once_with(1, {"operation": "op-1", "status": ExecutionStatus.FAILED})
+    assert duration.call_count == duration_samples
+
+
+class _RaisingEnterRunner:
+    """A runner whose ``stream()`` context manager raises from ``__aenter__``.
+
+    A plain context-manager object, not an ``@asynccontextmanager`` generator,
+    so the only thing that can release it is the exit stack calling
+    ``__aexit__``.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+        self.exited = False
+
+    def stream(self, _req: RunnerRequest) -> _RaisingEnterRunner:
+        return self
+
+    async def __aenter__(self) -> StreamingResult:
+        raise self._exc
+
+    async def __aexit__(self, *_args: object) -> bool:
+        self.exited = True
+        return False
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_never_opens_leaves_the_exit_stack_empty() -> None:
+    """Pins the control flow the pre-header branch rests on: there is nothing to unwind.
+
+    ``AsyncExitStack.enter_async_context`` registers its unwind callback only
+    after ``__aenter__`` returns, so a context manager whose ``__aenter__``
+    raises is never ``__aexit__``ed by the stack. The only cleanup the branch
+    owes is the outcome hand-off.
+    """
+    runner = _RaisingEnterRunner(UpstreamTimeoutError(detail="no headers", type="upstream_timeout"))
+    callback = AsyncMock()
+
+    with pytest.raises(UpstreamTimeoutError):
+        await open_streaming_response(
+            runner,  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-5",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    assert runner.exited is False
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelling_callback_does_not_replace_the_failure_the_caller_sees() -> None:
+    """A ``CancelledError`` out of the hand-off must not become the caller's response.
+
+    The problem+json the client receives is mapped from the exception leaving
+    ``open_streaming_response``; a cancellation raised by the callback would
+    turn a mapped 504 into a cancelled request and lose the error the upstream
+    actually produced.
+    """
+    exc = UpstreamTimeoutError(detail="no headers in time", type="upstream_timeout")
+    callback = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(UpstreamTimeoutError) as raised:
+        await open_streaming_response(
+            _FailingOpenRunner(exc),  # type: ignore[arg-type]
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            _ctx_req(),
+            "exec-open-6",
+            transfer_deadline_s=0,
+            background_callback=callback,
+        )
+
+    assert raised.value is exc
+    callback.assert_awaited_once()
+    assert [e["event"] for e in logs].count("streaming_outcome_callback_failed") == 1
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_with_neither_a_status_nor_an_error_records_failed() -> None:
+    """An outcome that names no failure and reached no upstream is never COMPLETED.
+
+    The seam's contract is that an outcome with no ``http_status`` names the
+    failure that ended the call; an injected broker that breaks it describes a
+    call that never reached an upstream, so a COMPLETED record (and its
+    ``execution.completed`` event) would be a lie about a call that happened.
+    """
+    outcome = StreamingOutcome(execution_id="exec-p-5", http_status=None)
+
+    mock_session = AsyncMock()
+    mock_tx = AsyncMock()
+    mock_tx.__aenter__.return_value = mock_session
+    mock_tx.__aexit__.return_value = False
+    mock_ctx = _mock_ctx()
+    mock_ctx.admin_db.transaction.return_value = mock_tx
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch(
+            "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+            new_callable=AsyncMock,
+        ) as mock_persist,
+    ):
+        await _persist_streaming_outcome(
+            outcome,
+            ctx=mock_ctx,
+            ctx_req=_ctx_req(),
+            started_at=datetime.now(UTC),
+            actor_id="agent-1",
+            actor_type="agent",
+        )
+
+    kwargs = mock_persist.await_args_list[0].kwargs
+    assert kwargs["status"] is ExecutionStatus.FAILED
+    assert kwargs["error"] == "server_error: missing_outcome_error"
+    assert [e["event"] for e in logs].count("streaming_outcome_missing_error") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("circuit_open", [False, True])
+async def test_the_circuit_event_survives_a_record_write_that_never_lands(
+    circuit_open: bool,
+) -> None:
+    """Pins #1753: the once-per-cooldown circuit event does not die with the record write.
+
+    The breaker's report claim is consumed on the request, so every later
+    refusal in that cooldown carries ``report=False``: an event written only
+    alongside the execution record would be the operator's single notice for
+    the whole cooldown and would vanish whenever that write did.
+    """
+    outcome = StreamingOutcome(
+        execution_id="exec-p-6",
+        http_status=None,
+        error="circuit_open" if circuit_open else "upstream_timeout",
+        circuit_open=circuit_open,
+    )
+
+    mock_session = AsyncMock()
+    mock_tx = AsyncMock()
+    mock_tx.__aenter__.return_value = mock_session
+    mock_tx.__aexit__.return_value = False
+    mock_ctx = _mock_ctx()
+    mock_ctx.admin_db.transaction.return_value = mock_tx
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        patch.object(
+            service_module,
+            "record_execution",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("admin write failed"),
+        ),
+        patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit,
+    ):
+        await _persist_streaming_outcome(
+            outcome,
+            ctx=mock_ctx,
+            ctx_req=_ctx_req(),
+            started_at=datetime.now(UTC),
+            actor_id="agent-1",
+            actor_type="agent",
+        )
+
+    circuit_events = [
+        c
+        for c in mock_emit.await_args_list
+        if c.kwargs.get("type") == EventType.UPSTREAM_CIRCUIT_OPEN
+    ]
+    assert len(circuit_events) == (1 if circuit_open else 0)
+    # The record itself is still lost, counted and logged as such.
+    assert [e["event"] for e in logs].count("streaming_execution_persist_failed") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_a_cancelled_execution_raises_no_action_required_failure(cancelled: bool) -> None:
+    """Pins #1753: a cancelled stream's FAILED record is not an operator action item.
+
+    A rolling restart cancels every stream in flight at once. Each one is
+    recorded — a non-idempotent call may already have reached its upstream —
+    but none is the actor's failure, so none sets ``requires_action`` or feeds
+    repeated-failure detection.
+    """
+    with (
+        patch.object(service_module, "record_execution", new_callable=AsyncMock),
+        patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit,
+        patch.object(
+            service_module, "maybe_emit_repeated_failure", new_callable=AsyncMock
+        ) as mock_repeated,
+    ):
+        await service_module.persist_streaming_execution(
+            AsyncMock(),
+            execution_id="exec-c-1",
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.FAILED,
+            http_status=None,
+            duration_ms=1,
+            error="cancelled" if cancelled else "upstream_timeout",
+            ctx_req=_ctx_req(),
+            actor_id="agent-1",
+            actor_type="agent",
+            security_config=SecurityConfig(),
+            cancelled=cancelled,
+        )
+
+    failures = [
+        c for c in mock_emit.await_args_list if c.kwargs.get("type") == EventType.EXECUTION_FAILED
+    ]
+    assert len(failures) == 1
+    assert failures[0].kwargs["requires_action"] is not cancelled
+    assert mock_repeated.await_count == (0 if cancelled else 1)

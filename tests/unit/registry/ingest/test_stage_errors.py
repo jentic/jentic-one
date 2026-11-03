@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from structlog.testing import capture_logs
 
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage

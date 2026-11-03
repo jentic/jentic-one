@@ -28,7 +28,7 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
-from jentic_one.auth.web.ratelimit import client_ip
+from jentic_one.auth.web.ratelimit import client_rate_limit_key, get_auth_backend
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
@@ -39,7 +39,6 @@ from jentic_one.auth.web.schemas.oauth import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
-from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
@@ -50,20 +49,12 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-def _get_auth_backend(request: Request) -> SharedStateBackend:
-    backend: object = getattr(request.app.state, "auth_state_backend", None)
-    if isinstance(backend, SharedStateBackend):
-        return backend
-    logger.warning("auth_state_backend missing from app.state, using in-memory fallback")
-    return MemoryStateBackend()
-
-
 def _get_token_limiter(request: Request, ctx: Context) -> RateLimiter:
     limiter: RateLimiter | None = getattr(request.app.state, "_token_limiter", None)
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     limiter = RateLimiter(backend, default_rpm=cfg.exchange_rpm, burst=cfg.exchange_burst)
     request.app.state._token_limiter = limiter
     return limiter
@@ -87,11 +78,16 @@ async def _extract_client_id(request: Request) -> str | None:
 
 
 async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_ctx)) -> None:
-    """Per-client+IP rate limiter for the token endpoint."""
+    """Per-client_id+client-network rate limiter for the token endpoint.
+
+    The network half is the IPv4 address or IPv6 /64 (see
+    :func:`client_rate_limit_key`); the ``client_id`` half comes from the
+    unauthenticated body.
+    """
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    network = client_rate_limit_key(request, trusted)
     client_id = await _extract_client_id(request)
-    key = f"{client_id}:{ip}" if client_id else ip
+    key = f"{client_id}:{network}" if client_id else network
     limiter = _get_token_limiter(request, ctx)
     outcome = await limiter.acquire(key)
     if not outcome.allowed:
@@ -141,15 +137,16 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
     if limiter is not None:
         return limiter
     cfg = ctx.config.auth.oauth_rate_limit
-    backend = _get_auth_backend(request)
+    backend = get_auth_backend(request)
     # Own bucket namespace (the fix-wave pattern, see the DCR door's
-    # `oauth-registration` limiter): this limiter keys on the bare IP, and the
-    # shared store would otherwise hand it the same bucket as another
-    # bare-IP-keyed limiter with different rate/burst params. Keyed on IP
-    # only — the form's client_id is caller-chosen, so including it would let
-    # one host sidestep the bucket by rotating ids. Reuses the exchange
-    # rpm/burst knobs (config schema unchanged): revocation traffic is
-    # bounded by the same client population as /oauth/token.
+    # `oauth-registration` limiter): this limiter keys on the client network,
+    # and the shared store would otherwise hand it the same bucket as another
+    # limiter keyed the same way with different rate/burst params. Keyed on
+    # the client network only — the form's client_id is caller-chosen, so
+    # including it would let one host sidestep the bucket by rotating ids.
+    # Reuses the exchange rpm/burst knobs (config schema unchanged):
+    # revocation traffic is bounded by the same client population as
+    # /oauth/token.
     limiter = RateLimiter(
         backend,
         default_rpm=cfg.exchange_rpm,
@@ -161,11 +158,11 @@ def _get_revocation_limiter(request: Request, ctx: Context) -> RateLimiter:
 
 
 async def _check_revocation_rate_limit(request: Request, ctx: Context) -> None:
-    """Per-IP rate limiter for the RFC 7009 form arm (called after the gate)."""
+    """Per-client-network rate limiter for the RFC 7009 form arm (called after the gate)."""
     trusted = ctx.config.auth.oauth_rate_limit.trusted_networks
-    ip = client_ip(request, trusted)
+    key = client_rate_limit_key(request, trusted)
     limiter = _get_revocation_limiter(request, ctx)
-    outcome = await limiter.acquire(ip)
+    outcome = await limiter.acquire(key)
     if not outcome.allowed:
         raise RateLimitExceededError(retry_after=outcome.retry_after_s)
 
@@ -299,6 +296,7 @@ token_router = APIRouter(route_class=_TokenRoute)
 
 @token_router.post(
     "/oauth/token",
+    summary="Exchange a grant for OAuth tokens",
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
     responses={
@@ -315,8 +313,15 @@ token_router = APIRouter(route_class=_TokenRoute)
             "RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status "
             "401 and a `WWW-Authenticate: Basic` challenge, per §5.2."
         ),
+        401: oauth_error(
+            "Client authentication failed after the client attempted HTTP Basic "
+            "(RFC 6749 §2.3.1): the same `invalid_client` dialect body as the 400 arm, "
+            "plus a `WWW-Authenticate: Basic` challenge. A client that did not attempt "
+            "Basic gets `invalid_client` as a 400 instead, so branch on the body's "
+            "`error` member rather than on the status code."
+        ),
         429: oauth_error(
-            "Per-client+IP rate limit exceeded (`Retry-After` header set; "
+            "Per-client_id + client-network rate limit exceeded (`Retry-After` header set; "
             "RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).",
             error="slow_down",
             error_description="rate limit exceeded, retry later",
@@ -494,7 +499,7 @@ async def _rfc7009_form_arm(request: Request) -> Response:
 
     Runs entirely outside the FastAPI dependency/validation machinery (see
     ``_RevocationRoute``), in the DCR front door's order: gate, declared-length
-    cap, per-IP rate limit, form parse, service. Error responses speak the
+    cap, per-client-network rate limit, form parse, service. Error responses speak the
     RFC 6749 §5.2 dialect required by RFC 7009 §2.2.1 (top-level ``error``
     member) — never platform Problem Details.
     """
@@ -596,9 +601,24 @@ _REVOKE_FORM_BODY: dict[str, object] = {
 
 @revocation_router.post(
     "/oauth/revoke",
+    summary="Revoke an OAuth token",
     status_code=200,
+    # Both arms answer ``Response(status_code=200)``: no body, which RFC 7009
+    # §2.2 prescribes. ``response_class=Response`` keeps the generated ``200``
+    # body-less instead of inventing an empty JSON schema for it.
+    response_class=Response,
     openapi_extra=_REVOKE_FORM_BODY,
     responses={
+        200: {
+            "description": (
+                "The token is revoked, or there was nothing to revoke. The response body "
+                "is **empty** (RFC 7009 §2.2) — there is nothing to parse, and success is "
+                "indistinguishable from a no-op on both arms, deliberately: neither tells "
+                "the caller whether the token existed. Both arms answer this same empty "
+                "`200` — the form-encoded RFC 7009 arm and the bearer-authenticated JSON "
+                "arm."
+            )
+        },
         400: oauth_error(
             "Form-encoded (RFC 7009) requests only: missing `token` "
             "(RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): "
@@ -617,8 +637,8 @@ _REVOKE_FORM_BODY: dict[str, object] = {
             error_description="request body too large",
         ),
         429: oauth_error(
-            "Form-encoded (RFC 7009) requests only: per-IP rate limit "
-            "exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, "
+            "Form-encoded (RFC 7009) requests only: per-client-network rate "
+            "limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, "
             "`error=slow_down` per RFC 8628 §3.5).",
             error="slow_down",
             error_description="rate limit exceeded, retry later",
@@ -647,8 +667,9 @@ async def revoke_endpoint(
       die, so reconnecting requires fresh consent (deliberately beyond the
       RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
       is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-      64 KiB declared body length, and per-IP rate limited; its errors speak
-      the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+      64 KiB declared body length, and rate limited per client network
+      (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+      (RFC 7009 §2.2.1), not Problem Details.
     - **JSON** (any other content type — the pre-G11 contract, byte-identical
       including 422 shapes): requires a platform bearer identity; revokes the
       caller's own token (access → that token, refresh → its family). Used by
@@ -738,6 +759,7 @@ introspection_router = APIRouter(route_class=_IntrospectionRoute)
 
 @introspection_router.post(
     "/oauth/introspect",
+    summary="Introspect an OAuth token",
     openapi_extra=_INTROSPECT_REQUEST_BODY,
     responses={
         400: {

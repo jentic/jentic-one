@@ -36,12 +36,13 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingResult,
     UpstreamRunner,
 )
-from jentic_one.broker.core.exceptions import (
+from jentic_one.broker.core.directives import switch_toolkit_directive
+from jentic_one.broker.core.errors import (
     BrokerError,
+    UpstreamBodyInterruptedError,
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     UpstreamTransportError,
-    switch_toolkit_directive,
 )
 from jentic_one.shared.broker.protocols import RunnerCapabilities
 from jentic_one.shared.egress import UpstreamHostUnresolvedError
@@ -83,31 +84,43 @@ def _record_transport_error(span: Span, exc: _TransportFailure) -> None:
     span.set_status(StatusCode.ERROR)
 
 
-#: Transport failures on the upstream leg — the connection dropped (including
-#: mid-body), broke the protocol, or a proxy in front of the upstream failed.
-#: The broker answers these as a gateway: 502.
-_UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
+#: Transport failures on the upstream leg after the connection is established —
+#: the connection dropped (including mid-body) or broke the protocol. The broker
+#: answers these as a gateway: 502.
+_UPSTREAM_LEG_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError)
 
 
 def _map_transport_error(exc: _TransportFailure) -> BrokerError:
     """The domain error for a transport failure on either runner path.
 
+    - ``PoolTimeout`` → :class:`UpstreamTimeoutError` (504),
+      ``upstream_connect_failed``, ``pre_send``, ``local_only`` (the broker's
+      own connection pool had no free slot, so no bytes were sent and the
+      target host's circuit breaker is not charged).
     - ``ConnectTimeout`` → :class:`UpstreamTimeoutError` (504),
       ``upstream_connect_failed``, ``pre_send``.
     - Any other timeout → :class:`UpstreamTimeoutError` (504), ``upstream_timeout``.
-    - ``ConnectError``, or :class:`UpstreamHostUnresolvedError` from the
-      DNS-pinning transport → :class:`UpstreamTransportError` (502),
-      ``upstream_connect_failed``, ``pre_send``.
+    - ``ConnectError``, ``ProxyError`` (refused proxy ``CONNECT`` tunnel), or
+      :class:`UpstreamHostUnresolvedError` from the DNS-pinning transport →
+      :class:`UpstreamTransportError` (502), ``upstream_connect_failed``,
+      ``pre_send``.
     - Any other upstream-leg failure (:data:`_UPSTREAM_LEG_ERRORS`) →
       :class:`UpstreamTransportError` (502), ``upstream_transport_error``.
     - Anything else (``LocalProtocolError``: the broker built a request httpx
       refuses to send; ``UnsupportedProtocol``) → a plain :class:`BrokerError`
-      (500), ``upstream_transport_error``.
+      (500), ``upstream_request_invalid``.
 
     ``pre_send`` marks a connect-phase failure: no request bytes reached the
     upstream, so a retry is safe for any method. The caller-facing detail never
     carries the exception message (see :func:`_transport_error_detail`).
     """
+    if isinstance(exc, httpx.PoolTimeout):
+        return UpstreamTimeoutError(
+            detail="The broker's upstream connection pool had no free connection in time.",
+            type="upstream_connect_failed",
+            pre_send=True,
+            local_only=True,
+        )
     if isinstance(exc, httpx.ConnectTimeout):
         return UpstreamTimeoutError(
             detail="The upstream connection could not be established in time.",
@@ -119,7 +132,7 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
             detail="The upstream did not respond within the deadline.",
             type="upstream_timeout",
         )
-    if isinstance(exc, httpx.ConnectError | UpstreamHostUnresolvedError):
+    if isinstance(exc, httpx.ConnectError | httpx.ProxyError | UpstreamHostUnresolvedError):
         return UpstreamTransportError(
             detail="The upstream connection could not be established.",
             type="upstream_connect_failed",
@@ -127,7 +140,7 @@ def _map_transport_error(exc: _TransportFailure) -> BrokerError:
         )
     if isinstance(exc, _UPSTREAM_LEG_ERRORS):
         return UpstreamTransportError(detail=_transport_error_detail(exc))
-    return BrokerError(detail=_transport_error_detail(exc), type="upstream_transport_error")
+    return BrokerError(detail=_transport_error_detail(exc), type="upstream_request_invalid")
 
 
 class _HostSlot:
@@ -312,6 +325,33 @@ class HttpRunner(UpstreamRunner):
                 )
             yield chunk
 
+    async def _stream_body(self, resp: httpx.Response) -> AsyncIterator[bytes]:
+        """The streaming passthrough's body: :meth:`_cap_iter` with transport errors mapped.
+
+        A failure here happens after the response has started (the upstream
+        dropped or stalled partway through the body), so it is raised as
+        :class:`UpstreamBodyInterruptedError` for the streaming edge to log,
+        abort and record — never as a raw ``httpx`` exception, and never as the
+        open-phase error a failure before the headers maps to. Its
+        ``transport_error`` names the failure class; the message is never
+        surfaced (see :func:`_transport_error_detail`).
+        """
+        try:
+            async for chunk in self._cap_iter(resp.aiter_raw(), resp.status_code):
+                yield chunk
+        except httpx.TimeoutException as exc:
+            raise UpstreamBodyInterruptedError(
+                detail="The upstream stopped sending the response body within the deadline.",
+                type="upstream_timeout",
+                transport_error=type(exc).__name__,
+            ) from None
+        except httpx.HTTPError as exc:
+            raise UpstreamBodyInterruptedError(
+                detail=_transport_error_detail(exc),
+                type="upstream_transport_error",
+                transport_error=type(exc).__name__,
+            ) from None
+
     @contextlib.asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
         """Open the upstream response and stream it without buffering.
@@ -322,7 +362,9 @@ class HttpRunner(UpstreamRunner):
         ``CancelledError`` propagating out of the consuming generator — the
         response is ``aclose()``d and the pool slot released (no zombie drain).
         The yielded ``aiter`` enforces the same mid-stream size cap as
-        :meth:`run`. The per-host bulkhead is held for the full stream lifetime.
+        :meth:`run` and raises a mid-body transport failure as a domain error
+        (see :meth:`_stream_body`). The per-host bulkhead is held for the full
+        stream lifetime.
         """
         host = httpx.URL(request.url).host
         async with self._bulkhead.guard(host):
@@ -338,7 +380,7 @@ class HttpRunner(UpstreamRunner):
                         status_code=resp.status_code,
                         headers=dict(resp.headers),
                         content_type=resp.headers.get("content-type"),
-                        aiter=self._cap_iter(resp.aiter_raw(), resp.status_code),
+                        aiter=self._stream_body(resp),
                     )
             except _TRANSPORT_FAILURES as exc:
                 # Same mapping as the buffered path. The edge drains the body

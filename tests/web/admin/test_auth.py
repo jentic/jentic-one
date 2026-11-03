@@ -131,6 +131,37 @@ def test_change_password_wrong_current(authed_client: TestClient) -> None:
     assert resp.status_code == 401
 
 
+async def test_change_password_locked_account_matches_wrong_password(
+    authed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """While the login lock holds, the right ``current_password`` gets the same
+    401 a wrong one gets and the password is not changed."""
+    wrong = authed_client.post(
+        "/users/me:change-password",
+        json={"current_password": "wrong", "new_password": "new-secure-pw-12chars"},
+    )
+    async with web_context.admin_db.transaction() as session:
+        await UserSecretRepository.lock_until(
+            session, admin_user_id, locked_until=datetime.now(UTC) + timedelta(minutes=15)
+        )
+    locked = authed_client.post(
+        "/users/me:change-password",
+        json={"current_password": ADMIN_PASSWORD, "new_password": "new-secure-pw-12chars"},
+    )
+
+    assert wrong.status_code == locked.status_code == 401
+    assert locked.content == wrong.content
+    assert locked.json()["type"] == "invalid_credentials"
+    assert admin_user_id not in locked.text
+
+    async with web_context.admin_db.transaction() as session:
+        await UserSecretRepository.unlock(session, admin_user_id)
+    login = authed_client.post(
+        "/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    )
+    assert login.status_code == 200
+
+
 def test_change_password_too_short(authed_client: TestClient) -> None:
     """Password must be at least 12 characters."""
     resp = authed_client.post(
@@ -272,12 +303,16 @@ def test_refresh_past_absolute_window_rejected(
 def test_refresh_unknown_user_rejected(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str
 ) -> None:
-    """A token whose subject no longer exists cannot be refreshed."""
+    """A token whose subject no longer exists cannot be refreshed.
+
+    The auth gate's per-request user re-check (#1139) refuses it before the
+    refresh service runs, so the answer is the gate's uniform 401.
+    """
     now = int(datetime.now(UTC).timestamp())
     token = _mint_login_jwt(web_context, sub="usr_00000000000000000000000000", auth_time=now)
     resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
     assert resp.status_code == 401
-    assert resp.json()["type"] == "invalid_credentials"
+    assert resp.json()["type"] == "unauthorized"
 
 
 def test_refresh_token_without_auth_time_rejected(

@@ -2,30 +2,38 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
+from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.__main__ import _build_app
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import AgentRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.admin.web.routers.actors import MAX_LOOKUP_ID_LENGTH, MAX_LOOKUP_IDS
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.scoping import filters as control_filters
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus
+from tests.web.conftest import noop_lifespan
 
 pytestmark = pytest.mark.integration
 
 
-def _member_headers(ctx: Context, user_id: str) -> dict[str, str]:
+def _member_headers(
+    ctx: Context, user_id: str, permissions: tuple[str, ...] = ("agents:read", "events:read")
+) -> dict[str, str]:
     """Bearer header for a signed-in member holding neither users:read nor org:admin."""
     config = ctx.config.admin.auth
     claims = {
         "sub": user_id,
         "email": "web-managed@test.local",
         "actor_type": "user",
-        "permissions": ["agents:read", "events:read"],
+        "permissions": list(permissions),
         "must_change_password": False,
     }
     token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
@@ -33,7 +41,10 @@ def _member_headers(ctx: Context, user_id: str) -> dict[str, str]:
 
 
 @pytest.fixture()
-async def agent_id(web_context: Context, managed_user_id: str) -> AsyncGenerator[str, None]:
+async def agent_id(
+    web_context: Context, managed_user_id: str, admin_user_id: str
+) -> AsyncGenerator[str, None]:
+    """The member's own agent, approved by the admin."""
     async with web_context.admin_db.session() as session:
         agent = await AgentRepository.create(
             session,
@@ -43,6 +54,7 @@ async def agent_id(web_context: Context, managed_user_id: str) -> AsyncGenerator
             created_by=managed_user_id,
             status=ActorStatus.ACTIVE,
         )
+        agent.approved_by = admin_user_id
         await session.commit()
         created = agent.id
     yield created
@@ -110,11 +122,13 @@ def test_member_resolves_names_by_id(
     managed_user_id: str,
     agent_id: str,
 ) -> None:
+    """The member resolves itself, its agent, and that agent's approver."""
     resp = unauthed_client.get(
         "/actors/lookup",
         params=[
             ("id", admin_user_id),
             ("id", agent_id),
+            ("id", managed_user_id),
             ("id", "usr_does_not_exist"),
             ("id", admin_user_id),
         ],
@@ -122,7 +136,7 @@ def test_member_resolves_names_by_id(
     )
     assert resp.status_code == 200, resp.text
     data = {entry["id"]: entry for entry in resp.json()["data"]}
-    assert set(data) == {admin_user_id, agent_id}
+    assert set(data) == {admin_user_id, agent_id, managed_user_id}
     assert data[admin_user_id] == {
         "id": admin_user_id,
         "actor_type": "user",
@@ -135,6 +149,27 @@ def test_member_resolves_names_by_id(
         "name": "lookup-web-agent",
         "active": True,
     }
+
+
+def test_member_lookup_of_unrelated_user_matches_unknown_id(
+    unauthed_client: TestClient,
+    authed_client: TestClient,
+    web_context: Context,
+    admin_user_id: str,
+    managed_user_id: str,
+) -> None:
+    """A user unrelated to the member answers byte-for-byte like an id that does not exist."""
+    headers = _member_headers(web_context, managed_user_id)
+    unrelated = unauthed_client.get("/actors/lookup", params={"id": admin_user_id}, headers=headers)
+    unknown = unauthed_client.get(
+        "/actors/lookup", params={"id": "usr_does_not_exist"}, headers=headers
+    )
+    assert unrelated.status_code == unknown.status_code == 200
+    assert unrelated.content == unknown.content
+    assert unrelated.json() == {"data": []}
+    # An admin resolves the same id.
+    resp = authed_client.get("/actors/lookup", params={"id": managed_user_id})
+    assert [a["id"] for a in resp.json()["data"]] == [managed_user_id]
 
 
 def test_member_cannot_list_full_directory(
@@ -179,3 +214,81 @@ def test_lookup_accepts_max_id_count(
     )
     assert resp.status_code == 200
     assert resp.json() == {"data": []}
+
+
+_COMBINED_SURFACES = ["registry", "admin", "control", "auth"]
+
+
+@pytest.fixture()
+async def admins_credential_id(
+    web_context: Context, admin_user_id: str
+) -> AsyncGenerator[str, None]:
+    """A credential the admin created; the member cannot read it unless it is shared."""
+    async with web_context.control_db.session() as session:
+        credential = Credential(
+            type="token_value",
+            name="lookup-web-shared-credential",
+            api_vendor="lookup-web.example.com",
+            created_by=admin_user_id,
+        )
+        session.add(credential)
+        await session.commit()
+        created = credential.id
+    yield created
+    async with web_context.control_db.session() as session:
+        await session.execute(delete(Credential).where(Credential.id == created))
+        await session.commit()
+
+
+@pytest.fixture()
+def share_with_member(managed_user_id: str, admins_credential_id: str) -> Iterator[None]:
+    """Share the admin's credential with the member through the access-filter provider seam."""
+
+    def _provider(identity: Identity, model: type) -> ColumnElement[bool] | None:
+        if model is Credential and identity.sub == managed_user_id:
+            return Credential.id == admins_credential_id
+        return None
+
+    control_filters.register_access_filter_provider(_provider)
+    yield
+    control_filters._ACCESS_FILTER_PROVIDERS.remove(_provider)
+
+
+@pytest.fixture()
+def combined_client(web_context: Context) -> Iterator[TestClient]:
+    """The production combined app shape, composition-root wiring included."""
+    app = _build_app(web_context, _COMBINED_SURFACES)
+    app.router.lifespan_context = noop_lifespan
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.mark.usefixtures("admins_credential_id")
+def test_combined_app_resolves_creator_only_of_a_credential_shared_with_member(
+    request: pytest.FixtureRequest,
+    combined_client: TestClient,
+    web_context: Context,
+    admin_user_id: str,
+    managed_user_id: str,
+) -> None:
+    """Through the real wiring, sharing a credential is what lets the member label its creator."""
+    headers = _member_headers(web_context, managed_user_id, ("credentials:read",))
+    params = {"id": admin_user_id}
+    unknown = combined_client.get(
+        "/actors/lookup", params={"id": "usr_does_not_exist"}, headers=headers
+    )
+    before = combined_client.get("/actors/lookup", params=params, headers=headers)
+    assert before.status_code == 200, before.text
+    assert before.content == unknown.content
+
+    request.getfixturevalue("share_with_member")
+    shared = combined_client.get("/actors/lookup", params=params, headers=headers)
+    assert shared.status_code == 200, shared.text
+    assert shared.json() == {
+        "data": [{"id": admin_user_id, "actor_type": "user", "name": "Web Admin", "active": True}]
+    }
+
+    # Without a credential read permission, the share labels nobody.
+    no_read = _member_headers(web_context, managed_user_id, ("agents:read",))
+    withheld = combined_client.get("/actors/lookup", params=params, headers=no_read)
+    assert withheld.content == unknown.content

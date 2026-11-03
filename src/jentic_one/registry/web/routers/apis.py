@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
 import yaml
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
-from jentic.problem_details import BadRequest, ProblemDetailException
+from fastapi.routing import APIRoute
+from jentic.problem_details import ErrorItem, ProblemDetailException
+from starlette.types import Message
 
 from jentic_one.registry.services.api_service import ApiService, ApiView
 from jentic_one.registry.services.operation_service import OperationService, OperationSummaryPage
@@ -19,6 +22,12 @@ from jentic_one.registry.services.revision_service import (
 from jentic_one.registry.services.spec_download_service import SpecDocument, SpecDownloadService
 from jentic_one.registry.web.content_negotiation import accepted_media_types
 from jentic_one.registry.web.deps import get_api_service
+from jentic_one.registry.web.params import (
+    ApiNamePath,
+    ApiVendorPath,
+    ApiVendorQuery,
+    ApiVersionPath,
+)
 from jentic_one.registry.web.schemas.apis import (
     ApiImportLinksResponse,
     ApiImportRequest,
@@ -32,6 +41,7 @@ from jentic_one.registry.web.schemas.apis import (
     ApiRevisionResponse,
     ApiRevisionSourceInlineResponse,
     ApiRevisionSourceUrlResponse,
+    ApiSourceInline,
     ApiUpdateRequest,
     OperationSummaryLinksResponse,
     OperationSummaryListResponse,
@@ -39,29 +49,31 @@ from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeListResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
 from jentic_one.shared.models.jobs import JobKind
-from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict, not_found
+from jentic_one.shared.web.openapi_responses import conflict, not_found, problem
 
 router = APIRouter()
 
 
-@router.get("/apis", response_model=ApiListResponse, response_model_by_alias=True)
+@router.get(
+    "/apis",
+    response_model=ApiListResponse,
+    response_model_by_alias=True,
+    summary="List registered APIs",
+)
 async def list_apis(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     api_svc: ApiService = Depends(get_api_service),
-    vendor: str | None = Query(
-        default=None,
-        description="Only return APIs from this vendor.",
-        openapi_examples=ex.example(ex.API_VENDOR),
-    ),
+    vendor: ApiVendorQuery = None,
     cursor: str | None = Query(
         default=None,
         description="Opaque cursor from a previous page's `next_cursor`; omit for the first page.",
@@ -81,10 +93,7 @@ async def list_apis(
     public catalog of importable-but-not-yet-imported APIs is a separate surface
     (``GET /catalog``); the two are not blended.
     """
-    try:
-        page = await api_svc.list_all(vendor=vendor, cursor=cursor, limit=limit)
-    except InvalidCursorError:
-        raise BadRequest(detail="Invalid pagination cursor", instance="/apis") from None
+    page = await api_svc.list_all(vendor=vendor, cursor=cursor, limit=limit)
 
     data: list[ApiResponse] = []
     for item in page.data:
@@ -133,18 +142,12 @@ async def list_apis(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse)
+@router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse, summary="Get an API")
 async def get_api(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
@@ -166,15 +169,9 @@ async def get_api(
     responses=not_found(),
 )
 async def list_api_security_schemes(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
@@ -184,22 +181,120 @@ async def list_api_security_schemes(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.post("/apis", status_code=202)
+def _payload_too_large(
+    detail: str, *, instance: str, errors: list[ErrorItem | dict[str, Any]] | None = None
+) -> Exception:
+    return ProblemDetailException(
+        status_code=413,
+        title="Content Too Large",
+        detail=detail,
+        type="payload_too_large",
+        instance=instance,
+        errors=errors,
+    )
+
+
+class _ImportBodyCapRoute(APIRoute):
+    """Bounds the raw ``POST /apis`` body while FastAPI reads it.
+
+    FastAPI reads the whole body ahead of dependency resolution (auth included),
+    so the cap has to sit in the route handler. A declared ``Content-Length``
+    over the cap is rejected up front; otherwise ``receive`` is wrapped to count
+    bytes as Starlette buffers them, so a chunked body without a length is cut
+    off at the cap without a second copy being held. The detail omits the byte
+    figure because this runs before the caller is authenticated.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            ctx = get_ctx(request)
+            cap = ctx.config.ingest.import_request_cap_bytes
+            instance = request.url.path
+            too_large = "Import request body exceeds the size limit"
+            declared = (request.headers.get("content-length") or "").strip()
+            if declared.isdigit() and int(declared) > cap:
+                raise _payload_too_large(too_large, instance=instance)
+            total = 0
+
+            async def capped_receive() -> Message:
+                nonlocal total
+                message = await request.receive()
+                if message["type"] == "http.request":
+                    total += len(message.get("body", b""))
+                    if total > cap:
+                        raise _payload_too_large(too_large, instance=instance)
+                return message
+
+            return await original(Request(request.scope, capped_receive))
+
+        return handler
+
+
+_import_router = APIRouter(route_class=_ImportBodyCapRoute)
+
+
+def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int, instance: str) -> None:
+    """Reject inline sources whose content exceeds the ingest per-spec cap (413)."""
+    errors: list[ErrorItem | dict[str, Any]] = [
+        ErrorItem(
+            detail=f"Inline content exceeds the {max_bytes}-byte limit",
+            pointer=f"#/sources/{index}/content",
+        )
+        for index, source in enumerate(body.sources)
+        if isinstance(source, ApiSourceInline) and len(source.content.encode("utf-8")) > max_bytes
+    ]
+    if errors:
+        raise _payload_too_large(
+            f"{len(errors)} inline source(s) exceed the {max_bytes}-byte spec size limit",
+            instance=instance,
+            errors=errors,
+        )
+
+
+@_import_router.post(
+    "/apis",
+    status_code=202,
+    response_model=ApiImportResponse,
+    summary="Import OpenAPI or Arazzo specs",
+    responses={
+        413: problem(
+            "The request body exceeds `ingest.max_import_request_bytes`, or an inline "
+            "source's content exceeds `ingest.max_spec_bytes` (type `payload_too_large`). "
+            "Nothing was queued."
+        )
+    },
+)
 async def import_apis(
     request: Request,
     body: ApiImportRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Import OpenAPI/Arazzo content as new API revisions (async)."""
-    # Attribute each resulting revision to the authenticated principal unless the
-    # client supplied an explicit `submitted_by` override (e.g. importing on
-    # behalf of someone else). The job row's `created_by` records the caller
-    # either way; this default carries the same principal through the ingest
-    # pipeline onto ApiRevision.submitted_by.
+    """Import OpenAPI/Arazzo content as new API revisions (async).
+
+    The whole request body is capped at `ingest.max_import_request_bytes`
+    (twice `ingest.max_spec_bytes` unless configured) and each inline source's
+    content at `ingest.max_spec_bytes` (UTF-8 bytes); over either limit the
+    request is refused with 413 before any job is queued.
+    """
+    _check_inline_source_sizes(body, ctx.config.ingest.max_spec_bytes, request.url.path)
+    # Attribute each resulting revision to the authenticated principal. Only an
+    # organisation admin may name someone else in `submitted_by` (importing on
+    # their behalf): a draft's submitter is who may pin it, so anyone else's
+    # value is replaced with the caller. The job row's `created_by` records the
+    # caller either way; this carries the principal through the ingest pipeline
+    # onto ApiRevision.submitted_by.
+    # A gate on the same permission as the server-host guard's
+    # `may_approve_host_change`, but a deliberately separate one: this governs who
+    # a revision is attributed to, not who may move an API's hosts. Relaxing one
+    # does not imply relaxing the other. Both expand the implication map, so a
+    # grant that only implies `org:admin` counts here too.
+    may_attribute = has_effective_permission(identity.permissions, ORG_ADMIN)
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
-        if source.get("submitted_by") is None:
+        if not may_attribute or source.get("submitted_by") is None:
             source["submitted_by"] = identity.sub
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
@@ -219,6 +314,9 @@ async def import_apis(
         status_code=202,
         content=resp.model_dump(by_alias=True),
     )
+
+
+router.include_router(_import_router)
 
 
 def _build_api_response(view: ApiView, request: Request) -> ApiResponse:
@@ -297,18 +395,16 @@ def _build_revision_links(
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions", summary="List an API's revisions")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/revisions",
+    response_model=ApiRevisionListResponse,
+    summary="List an API's revisions",
+)
 async def list_api_revisions(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     state: list[str] | None = Query(
@@ -340,20 +436,14 @@ async def list_api_revisions(
     `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
     """
     svc = RevisionService(ctx)
-    try:
-        page = await svc.list_revisions(
-            vendor=vendor,
-            name=name,
-            version=version,
-            states=state,
-            cursor=cursor,
-            limit=limit,
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_revisions(
+        vendor=vendor,
+        name=name,
+        version=version,
+        states=state,
+        cursor=cursor,
+        limit=limit,
+    )
 
     data: list[ApiRevisionResponse] = []
     for item in page.data:
@@ -387,19 +477,18 @@ async def list_api_revisions(
 
 
 @router.get(
-    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}", summary="Get an API revision"
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
+    response_model=ApiRevisionResponse,
+    summary="Get an API revision",
+    responses=not_found(
+        "The API (type `api_not_found`) or the revision (type `revision_not_found`) does not exist."
+    ),
 )
 async def get_api_revision(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -487,18 +576,16 @@ def _build_operations_response(
     response_model=OperationSummaryListResponse,
     response_model_by_alias=True,
     summary="List the operations an API currently serves",
+    responses=not_found(
+        "The API does not exist (type `api_not_found`), or it exists but has no live "
+        "revision to list operations from (type `no_current_revision`)."
+    ),
 )
 async def list_api_operations(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     cursor: str | None = Query(
@@ -524,15 +611,9 @@ async def list_api_operations(
     revision.
     """
     svc = OperationService(ctx)
-    try:
-        page = await svc.list_for_live_revision(
-            vendor=vendor, name=name, version=version, cursor=cursor, limit=limit
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_for_live_revision(
+        vendor=vendor, name=name, version=version, cursor=cursor, limit=limit
+    )
 
     resp = _build_operations_response(page, request)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
@@ -540,19 +621,18 @@ async def list_api_operations(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations",
+    response_model=OperationSummaryListResponse,
+    response_model_by_alias=True,
     summary="List the operations in an API revision",
+    responses=not_found(
+        "The API (type `api_not_found`) or the revision (type `revision_not_found`) does not exist."
+    ),
 )
 async def list_api_revision_operations(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -580,37 +660,29 @@ async def list_api_revision_operations(
     for full detail. 404 if the API or revision does not exist.
     """
     svc = OperationService(ctx)
-    try:
-        page = await svc.list_for_revision(
-            vendor=vendor,
-            name=name,
-            version=version,
-            revision_id=revision_id,
-            cursor=cursor,
-            limit=limit,
-        )
-    except InvalidCursorError:
-        raise BadRequest(
-            detail="Invalid pagination cursor",
-            instance=request.url.path,
-        ) from None
+    page = await svc.list_for_revision(
+        vendor=vendor,
+        name=name,
+        version=version,
+        revision_id=revision_id,
+        cursor=cursor,
+        limit=limit,
+    )
 
     resp = _build_operations_response(page, request)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/apis/{vendor}/{name}/{version}")
+@router.patch(
+    "/apis/{vendor}/{name}/{version}",
+    response_model=ApiResponse,
+    summary="Update an API",
+)
 async def update_api(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     body: ApiUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
@@ -630,6 +702,7 @@ async def update_api(
 @router.delete(
     "/apis/{vendor}/{name}/{version}",
     status_code=204,
+    summary="Delete an API",
     responses={
         **not_found(),
         **conflict(
@@ -639,15 +712,9 @@ async def update_api(
     },
 )
 async def delete_api(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
@@ -657,18 +724,16 @@ async def delete_api(
     return Response(status_code=204)
 
 
-@router.post("/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote")
+@router.post(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote",
+    response_model=ApiResponse,
+    summary="Promote an API revision",
+)
 async def promote_revision(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -680,8 +745,8 @@ async def promote_revision(
 
     If the draft declares different server hosts than the API's current (or last
     live) revision, or serves a host over plaintext http that was https-only, and
-    the API has credentials bound to agents, the caller also needs
-    ``credentials:write``; otherwise the promote is refused with 403
+    the API has credentials bound to agents, the caller must be an organisation
+    admin (``org:admin``); otherwise the promote is refused with 403
     ``host_change_requires_operator``.
     """
     svc = RevisionService(ctx)
@@ -693,19 +758,19 @@ async def promote_revision(
 
 @router.post(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive",
+    response_model=ApiRevisionResponse,
     summary="Archive an API revision",
+    responses=conflict(
+        "Only a `draft` or `imported` revision can be archived; any other state "
+        "(`published`, `archived`) is refused with type `revision_state_conflict`. "
+        "Nothing was archived."
+    ),
 )
 async def archive_revision(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -753,17 +818,16 @@ async def archive_revision(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
     status_code=204,
     summary="Delete an archived API revision",
+    responses=conflict(
+        "Only an `archived` revision can be deleted; a `draft`, `imported` or "
+        "`published` revision is refused with type `revision_state_conflict`. "
+        "Nothing was deleted."
+    ),
 )
 async def delete_revision(
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),
@@ -783,6 +847,48 @@ async def delete_revision(
 
 
 _SPEC_SUPPORTED_MEDIA_TYPES = {"application/json", "application/openapi+yaml", "application/yaml"}
+
+# The body is a third-party OpenAPI document, so it has no fixed shape and is not
+# modelled. Declaring a permissive schema per media type tells a caller what they
+# are getting instead of leaving the response untyped.
+_SPEC_DOWNLOAD_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "The stored OpenAPI document, served as-is, with "
+            "`Content-Disposition: attachment`. `application/json` is the default; request "
+            "`application/openapi+yaml` or `application/yaml` via `Accept` for YAML."
+        ),
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    # The shape is the third-party document's own, so every member is
+                    # unknown here. Saying so explicitly tells a client generator that
+                    # arbitrary members are expected rather than leaving it to guess.
+                    "additionalProperties": True,
+                    "description": (
+                        "The API's OpenAPI document as stored on the revision — an OpenAPI "
+                        "object (`openapi`, `info`, `paths`, …) whose shape is the "
+                        "third-party spec's own, so it is not modelled here. Expect "
+                        "arbitrary members."
+                    ),
+                }
+            },
+            "application/openapi+yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": "The same OpenAPI document serialized as YAML.",
+                }
+            },
+            "application/yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": "The same OpenAPI document serialized as YAML.",
+                }
+            },
+        },
+    }
+}
 
 
 def _spec_response(request: Request, doc: SpecDocument) -> Response:
@@ -812,18 +918,16 @@ def _spec_response(request: Request, doc: SpecDocument) -> Response:
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/openapi")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/openapi",
+    summary="Get an API's OpenAPI document",
+    responses=_SPEC_DOWNLOAD_RESPONSES,
+)
 async def get_api_spec(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
     overlays: bool = Query(
@@ -848,19 +952,21 @@ async def get_api_spec(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi",
+    responses={
+        **_SPEC_DOWNLOAD_RESPONSES,
+        406: problem(
+            "`Accept` names none of the supported media types — `application/json`, "
+            "`application/openapi+yaml`, `application/yaml` (or `*/*`) — so the document "
+            "cannot be served in a format the caller asked for (type `not_acceptable`)."
+        ),
+    },
     summary="Download an API revision's OpenAPI document",
 )
 async def get_api_revision_spec(
     request: Request,
-    vendor: Annotated[
-        str, Path(description="Vendor of the API.", openapi_examples=ex.example(ex.API_VENDOR))
-    ],
-    name: Annotated[
-        str, Path(description="Name of the API.", openapi_examples=ex.example(ex.API_NAME))
-    ],
-    version: Annotated[
-        str, Path(description="Version of the API.", openapi_examples=ex.example(ex.API_VERSION))
-    ],
+    vendor: ApiVendorPath,
+    name: ApiNamePath,
+    version: ApiVersionPath,
     revision_id: Annotated[
         str,
         Path(description="ID of the API revision.", openapi_examples=ex.example(ex.REVISION_ID)),

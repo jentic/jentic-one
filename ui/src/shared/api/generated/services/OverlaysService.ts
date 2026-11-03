@@ -32,15 +32,15 @@ export class OverlaysService {
         status,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -100,15 +100,15 @@ export class OverlaysService {
         requestBody,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -154,15 +154,15 @@ export class OverlaysService {
         overlayId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -190,7 +190,7 @@ export class OverlaysService {
         });
     }
     /**
-     * Get Overlay
+     * Get an overlay
      * Retrieve a single overlay by ID.
      * @returns OverlayResponse Successful Response
      * @throws ApiError
@@ -202,15 +202,15 @@ export class OverlaysService {
         overlayId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -264,15 +264,15 @@ export class OverlaysService {
         requestBody,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -299,6 +299,7 @@ export class OverlaysService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `The edit is refused and the overlay is unchanged. \`overlay_conflict\` when the overlay is not editable in its state — a \`deprecated\` overlay, or a confirmed one whose revision is no longer the live one (rolled back or re-imported since). \`overlay_rollback_target_missing\` when a live confirmed overlay records no pre-overlay base revision, so the edit has no clean base to re-apply over.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -330,15 +331,15 @@ export class OverlaysService {
         requestBody,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -365,6 +366,7 @@ export class OverlaysService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `Nothing is applied and the overlay is unchanged. \`overlay_conflict\` when the overlay is not \`pending\` (a \`deprecated\` overlay cannot be confirmed). \`overlay_apply_conflict\` when the overlay cannot be applied to the base spec — an action fails to apply, the result is not a recognisable OpenAPI document, it exceeds \`ingest.max_spec_bytes\`, or it declares a \`servers[].url\` that egress policy rejects.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -396,15 +398,15 @@ export class OverlaysService {
         overlayId,
     }: {
         /**
-         * Vendor of the API.
+         * Vendor of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         vendor: string,
         /**
-         * Name of the API.
+         * Name of the API. Normalised to its stored slug (lowercased; each run of characters outside `[a-z0-9-]` becomes `-`; leading and trailing `-` removed), so `Stripe.com` and `stripe-com` are equivalent. Responses and `_links` use the slug form. A value with no slug characters is rejected with 422.
          */
         name: string,
         /**
-         * Version of the API.
+         * Version of the API. Matched exactly after trimming surrounding whitespace; it is not slugified, so `1.1.4` and `1-1-4` are different versions.
          */
         version: string,
         /**
@@ -425,6 +427,7 @@ export class OverlaysService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                409: `A precondition failed and nothing changed. \`overlay_conflict\` when the overlay is not \`confirmed\` or its revision is no longer the live one. \`overlay_rollback_target_missing\` when the revision it superseded was never recorded or is no longer restorable. \`host_owned_by_other_vendor\` when another vendor's live API now serves one of the restored revision's hosts.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -13,8 +13,9 @@ scope (workflows stay deferred per D-001).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from jentic_one.shared.models.api_identity import slugify_api_field
@@ -370,9 +371,9 @@ class PreviewOperation:
     summary: str
     description: str
     operation_id: str | None
-    parameters: list[PreviewParameter]
-    security: list[str]
-    tags: list[str]
+    parameters: tuple[PreviewParameter, ...]
+    security: tuple[str, ...]
+    tags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -384,13 +385,21 @@ class PreviewInfo:
     description: str | None
 
 
-@dataclass
+@dataclass(frozen=True)
 class PreviewProjection:
-    """Full pure projection of a spec doc for preview (pre-pagination)."""
+    """Full pure projection of a spec doc for preview (pre-pagination).
 
-    operations: list[PreviewOperation]
+    Immutable all the way down (frozen dataclasses, tuples, read-only mapping
+    views) because one instance is shared across requests by the catalog
+    preview cache; per-request filtering builds new lists rather than
+    mutating it.
+    """
+
+    operations: tuple[PreviewOperation, ...]
     info: PreviewInfo
-    security_schemes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    security_schemes: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 def resolve_local_ref(doc: dict[str, Any], ref: str) -> dict[str, Any] | None:
@@ -463,29 +472,50 @@ def slim_security_schemes(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
             slim["bearerFormat"] = scheme.get("bearerFormat")
         elif scheme_type == "oauth2":
             flows = scheme.get("flows") or {}
-            slim["flows"] = list(flows.keys()) if isinstance(flows, dict) else []
+            slim["flows"] = tuple(flows.keys()) if isinstance(flows, dict) else ()
         elif scheme_type == "openIdConnect":
             slim["openIdConnectUrl"] = scheme.get("openIdConnectUrl")
         out[name] = slim
     return out
 
 
-def parse_preview_operations(
-    doc: dict[str, Any], *, tag: str | None = None, q: str | None = None
+def filter_preview_operations(
+    ops: Sequence[PreviewOperation], *, tag: str | None = None, q: str | None = None
 ) -> list[PreviewOperation]:
-    """Extract a UI-friendly operation list from an OpenAPI doc.
+    """Apply the preview ``tag`` / ``q`` filters to an already-projected operation list.
+
+    ``tag`` is a case-insensitive substring match on any of the operation's tags;
+    ``q`` is a case-insensitive substring match over method + path + summary +
+    operationId. Apply both before counting, so a caller paginating the result
+    sees a total that reflects the filtered set. Order is preserved. Always
+    returns a new list, so a cached unfiltered projection can be filtered per
+    request without being aliased.
+    """
+    tag_lower = tag.lower() if tag else None
+    q_lower = q.strip().lower() if q and q.strip() else None
+    if tag_lower is None and q_lower is None:
+        return list(ops)
+    out: list[PreviewOperation] = []
+    for op in ops:
+        if tag_lower is not None and not any(tag_lower in t.lower() for t in op.tags):
+            continue
+        if q_lower is not None:
+            haystack = " ".join([op.method, op.path, op.summary, op.operation_id or ""]).lower()
+            if q_lower not in haystack:
+                continue
+        out.append(op)
+    return out
+
+
+def parse_preview_operations(doc: dict[str, Any]) -> tuple[PreviewOperation, ...]:
+    """Extract a UI-friendly operation list from an OpenAPI doc (unfiltered, spec order).
 
     Path-level + op-level parameters are merged (op overrides path on the same
     ``(name, in)`` key). Op security overrides doc security entirely; absence
-    inherits doc security. Optional ``tag`` is a case-insensitive substring filter
-    on ``op.tags[]``; optional ``q`` is a case-insensitive substring filter over
-    method + path + summary + operationId. Both are applied before counting, so a
-    caller paginating the result sees a total that reflects the filtered set.
+    inherits doc security. Filter the result with :func:`filter_preview_operations`.
     """
     ops: list[PreviewOperation] = []
     doc_security = flatten_security(doc.get("security"))
-    tag_lower = tag.lower() if tag else None
-    q_lower = q.strip().lower() if q and q.strip() else None
     for path, methods in (doc.get("paths") or {}).items():
         if not isinstance(methods, dict):
             continue
@@ -515,19 +545,13 @@ def parse_preview_operations(
             )
             raw_tags = op.get("tags") or []
             op_tags = [t for t in raw_tags if isinstance(t, str)]
-            if tag_lower is not None and not any(tag_lower in t.lower() for t in op_tags):
-                continue
             # Coerce to str up front: a malformed upstream spec can carry a
             # non-string summary/operationId (e.g. a number or object), which
-            # would crash the q-filter join below and surface as an uncaught 500.
+            # would crash the q-filter join and surface as an uncaught 500.
             raw_summary = op.get("summary")
             summary = raw_summary if isinstance(raw_summary, str) else ""
             raw_operation_id = op.get("operationId")
             operation_id = raw_operation_id if isinstance(raw_operation_id, str) else None
-            if q_lower is not None:
-                haystack = " ".join([method.upper(), path, summary, operation_id or ""]).lower()
-                if q_lower not in haystack:
-                    continue
             ops.append(
                 PreviewOperation(
                     method=method.upper(),
@@ -535,25 +559,26 @@ def parse_preview_operations(
                     summary=summary,
                     description=op.get("description") or "",
                     operation_id=operation_id,
-                    parameters=merged,
-                    security=security,
-                    tags=op_tags,
+                    parameters=tuple(merged),
+                    security=tuple(security),
+                    tags=tuple(op_tags),
                 )
             )
-    return ops
+    return tuple(ops)
 
 
-def project_preview(
-    doc: dict[str, Any], *, tag: str | None = None, q: str | None = None
-) -> PreviewProjection:
-    """Full preview projection: operations + info + slimmed security schemes."""
+def project_preview(doc: dict[str, Any]) -> PreviewProjection:
+    """Full unfiltered preview projection: operations + info + slimmed security schemes."""
     info_raw = doc.get("info") or {}
+    schemes = slim_security_schemes(doc)
     return PreviewProjection(
-        operations=parse_preview_operations(doc, tag=tag, q=q),
+        operations=parse_preview_operations(doc),
         info=PreviewInfo(
             title=info_raw.get("title"),
             version=info_raw.get("version"),
             description=info_raw.get("description"),
         ),
-        security_schemes=slim_security_schemes(doc),
+        security_schemes=MappingProxyType(
+            {name: MappingProxyType(scheme) for name, scheme in schemes.items()}
+        ),
     )

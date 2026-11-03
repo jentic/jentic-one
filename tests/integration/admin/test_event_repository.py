@@ -11,6 +11,7 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.pagination import Cursor
 
 pytestmark = pytest.mark.integration
 
@@ -128,6 +129,6 @@ async def test_list_after_cursor(admin_db: DatabaseSession, clean_events: None) 
         await session.commit()
 
     async with admin_db.session() as session:
-        recent = await EventRepository.list_after_cursor(session, (cutoff, ""))
+        recent = await EventRepository.list_after_cursor(session, Cursor(timestamp=cutoff, id=""))
         assert len(recent) >= 1
         assert all(e.created_at > cutoff for e in recent)

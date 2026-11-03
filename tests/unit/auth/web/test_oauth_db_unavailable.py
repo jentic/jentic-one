@@ -22,6 +22,7 @@ from jentic_one.auth.web.app import get_exception_handlers
 from jentic_one.auth.web.routers import oauth
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.db.errors import DatabaseUnavailableError
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 
 @pytest.fixture()
@@ -37,6 +38,7 @@ def client() -> TestClient:
         assertion_max_ttl_seconds=300,
     )
     app.state.ctx = mock_ctx
+    app.state.auth_state_backend = MemoryStateBackend()
     return TestClient(app, raise_server_exceptions=False)
 
 

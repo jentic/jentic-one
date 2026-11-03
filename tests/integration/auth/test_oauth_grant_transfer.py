@@ -23,12 +23,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
-from jentic_one.admin.repos import AgentRepository
+from jentic_one.admin.repos import AgentCredentialBindingRepository, AgentRepository
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.authorize_service import AuthorizeService
@@ -45,9 +46,11 @@ from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import agents
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import StoredCredentialType
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.web.deps import resolve_identity
 from tests.integration.auth import seeds
@@ -386,3 +389,86 @@ async def test_transfer_from_unowned_agent_runs_empty_sweep(
     view = await svc.update_agent(agent_id, update_data={"owner_id": new_owner}, identity=admin)
     assert view.owner_id == new_owner
     assert await _transfer_revoked_events(ctx, agent_id) == []
+
+
+async def test_transfer_suspends_foreign_credential_bindings_and_keeps_new_owner_and_self(
+    integration_context: Context, clean_grants: None
+) -> None:
+    """Owner transfer suspends active bindings to credentials created by the old
+    owner (or any other foreign actor) while preserving bindings to credentials
+    created by the new owner or by the agent itself."""
+    ctx = integration_context
+    old_owner = await seeds.seed_user(ctx, "usr_t_cred_old")
+    new_owner = await seeds.seed_user(ctx, "usr_t_cred_new")
+    admin_id = await seeds.seed_user(ctx, "usr_t_cred_admin")
+    agent_id = await seeds.seed_agent(ctx, owner_id=old_owner, scopes=["apis:read"])
+
+    cred_old = "cred_t_old_owner"
+    cred_new = "cred_t_new_owner"
+    cred_self = "cred_t_self_agent"
+    cred_ids = (cred_old, cred_new, cred_self)
+
+    try:
+        async with ctx.control_db.transaction() as c_session:
+            for cid, creator in (
+                (cred_old, old_owner),
+                (cred_new, new_owner),
+                (cred_self, agent_id),
+            ):
+                c_session.add(
+                    Credential(
+                        id=cid,
+                        type=StoredCredentialType.API_KEY,
+                        name=f"Name {cid}",
+                        api_vendor="stripe",
+                        api_name="payments",
+                        api_version="v1",
+                        created_by=creator,
+                    )
+                )
+        async with ctx.admin_db.transaction() as a_session:
+            for cid in cred_ids:
+                await AgentCredentialBindingRepository.bind(
+                    a_session,
+                    agent_id=agent_id,
+                    credential_id=cid,
+                    created_by=old_owner,
+                )
+
+        admin = _admin_identity(admin_id)
+        svc = AgentService(ctx)
+        view = await svc.update_agent(agent_id, update_data={"owner_id": new_owner}, identity=admin)
+        assert view.owner_id == new_owner
+
+        async with ctx.admin_db.session() as a_session:
+            bindings = await AgentCredentialBindingRepository.list_for_agent(a_session, agent_id)
+        by_cred = {b.credential_id: b.suspended for b in bindings}
+        assert by_cred == {
+            cred_old: True,
+            cred_new: False,
+            cred_self: False,
+        }
+
+        async with ctx.admin_db.session() as a_session:
+            audit_rows = (
+                (
+                    await a_session.execute(
+                        select(AuditEntry).where(
+                            AuditEntry.target_type == "credential_binding",
+                            AuditEntry.target_parent_id == agent_id,
+                            AuditEntry.action == "disable",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert [a.target_id for a in audit_rows] == [cred_old]
+        assert audit_rows[0].reason == "suspend_credential_binding: agent ownership transferred"
+    finally:
+        async with ctx.admin_db.transaction() as a_session:
+            await a_session.execute(
+                delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent_id)
+            )
+        async with ctx.control_db.transaction() as c_session:
+            await c_session.execute(delete(Credential).where(Credential.id.in_(cred_ids)))

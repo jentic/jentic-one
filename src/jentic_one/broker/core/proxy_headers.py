@@ -32,13 +32,19 @@ _DECODED_BODY_HEADERS: frozenset[str] = frozenset({"content-length", "content-en
 # match, failing the request before it reaches the upstream.
 _INBOUND_FRAMING_HEADERS: frozenset[str] = frozenset({"content-length"})
 
+#: ``Cache-Control`` on every passthrough response — the same directive the
+#: control plane stamps on authenticated JSON
+#: (:data:`jentic_one.shared.web.cache_control.PRIVATE_NO_STORE`).
+PASSTHROUGH_CACHE_CONTROL = "private, no-store"
+
 # Request headers an async (``Prefer: respond-async``) or held execution keeps
 # for its worker run. The job payload sits in the admin DB (a held one for its
 # whole approval window), so this is an explicit
 # allow-list of headers that describe the body, the response the caller wants,
 # and the API version a vendor requires — never the caller's credentials,
 # cookies, hop-by-hop or broker headers. The run re-injects upstream
-# credentials itself.
+# credentials itself; the caller's ``Cookie`` rides separately, encrypted
+# (``INBOUND_COOKIE_PAYLOAD_KEY`` in ``shared/jobs/hold.py``).
 REPLAY_HEADERS: frozenset[str] = frozenset(
     {
         "accept",
@@ -93,9 +99,10 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
     computes the outbound length from the body actually sent. Injected auth
     headers win on conflict.
 
-    ``Cookie`` is intentionally **not** special-cased here: a cookie-located
-    credential is merged explicitly at the call site by appending to the
-    forwarded ``Cookie`` rather than overwriting it.
+    ``Cookie`` is intentionally **not** special-cased here: the router passes
+    the result to :func:`~jentic_one.shared.http.injection.apply_injection`,
+    which appends cookie credentials to the caller's ``Cookie`` rather than
+    overwriting it.
     """
     out = {
         key: value
@@ -148,6 +155,20 @@ def replay_headers(inbound: Mapping[str, str]) -> dict[str, str]:
     return {key.lower(): value for key, value in inbound.items() if is_replay_header(key)}
 
 
+def _private_cache_control(passthrough: dict[str, str]) -> dict[str, str]:
+    """Replace any upstream ``Cache-Control`` with ``private, no-store`` (#1835).
+
+    Every passthrough body was produced with a credential the broker injected,
+    so it belongs to that caller whatever the upstream said: an upstream
+    ``public, max-age=…`` would let a shared cache in front of the broker serve
+    it to another caller. Applies to every content type. ``ETag`` and the
+    other validators pass through untouched.
+    """
+    out = {key: value for key, value in passthrough.items() if key.lower() != "cache-control"}
+    out["cache-control"] = PASSTHROUGH_CACHE_CONTROL
+    return out
+
+
 def passthrough_response_headers(upstream: Mapping[str, str]) -> dict[str, str]:
     """Filter upstream *response* headers for passthrough.
 
@@ -156,14 +177,17 @@ def passthrough_response_headers(upstream: Mapping[str, str]) -> dict[str, str]:
     *decoded* bytes — forwarding the upstream ``content-encoding`` (e.g. ``gzip``)
     or its now-stale ``content-length`` would misdescribe the body to the
     downstream client. The ASGI server recomputes ``content-length`` from the
-    actual body. Everything else passes through verbatim — no ``x-upstream-``
-    prefixing (B-002).
+    actual body. ``Cache-Control`` is always ``private, no-store`` (see
+    :func:`_private_cache_control`). Everything else passes through verbatim —
+    no ``x-upstream-`` prefixing (B-002).
     """
-    return {
-        key: value
-        for key, value in upstream.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() not in _DECODED_BODY_HEADERS
-    }
+    return _private_cache_control(
+        {
+            key: value
+            for key, value in upstream.items()
+            if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() not in _DECODED_BODY_HEADERS
+        }
+    )
 
 
 def passthrough_streaming_headers(upstream: Mapping[str, str]) -> dict[str, str]:
@@ -174,10 +198,14 @@ def passthrough_streaming_headers(upstream: Mapping[str, str]) -> dict[str, str]
     **preserved** (the bytes really are still in that encoding). ``content-length``
     is dropped: we may abort the stream early (size cap / deadline), and a partial
     body must not be described by the original full length; the ASGI server uses
-    chunked transfer instead. Only hop-by-hop headers are otherwise stripped.
+    chunked transfer instead. ``Cache-Control`` is always ``private, no-store``
+    (see :func:`_private_cache_control`). Only hop-by-hop headers are otherwise
+    stripped.
     """
-    return {
-        key: value
-        for key, value in upstream.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "content-length"
-    }
+    return _private_cache_control(
+        {
+            key: value
+            for key, value in upstream.items()
+            if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "content-length"
+        }
+    )

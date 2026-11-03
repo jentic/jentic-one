@@ -6,13 +6,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, Text, case, cast, false, func, literal, select
+from sqlalchemy import Integer, Select, Text, case, cast, false, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import ColumnElement, SQLColumnExpression
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
+
+# SQLAlchemy 2.1 parameterizes Select over a TypeVarTuple (Select[*_Ts]).
+# A PEP 695 alias to the unsubscripted Select covers multi-column selects.
+type _AnySelect = Select
 
 
 def _is_postgres(session: AsyncSession) -> bool:
@@ -25,15 +29,15 @@ def _is_postgres(session: AsyncSession) -> bool:
     return session.bind.dialect.name == "postgresql" if session.bind else True
 
 
-def _epoch_seconds(session: AsyncSession) -> SQLColumnExpression[Any]:
+def _epoch_seconds(session: AsyncSession) -> ColumnElement[int]:
     """Epoch seconds of ``started_at`` as a numeric expression, per dialect.
 
     Postgres has ``extract('epoch', ts)``; SQLite has no ``extract`` but
-    ``strftime('%s', ts)`` yields the unix seconds (as text, cast to a number).
+    ``strftime('%s', ts)`` yields the unix seconds as text, cast to ``Integer``.
     """
     if _is_postgres(session):
         return func.extract("epoch", ExecutionRecord.started_at)
-    return cast(func.strftime("%s", ExecutionRecord.started_at), Text)
+    return cast(func.strftime("%s", ExecutionRecord.started_at), Integer)
 
 
 def _slash_join(*parts: Any) -> SQLColumnExpression[Any]:
@@ -143,7 +147,6 @@ class OverallStatsRow:
     p50_ms: float | None
     p95_ms: float | None
     pending: int
-    active_now: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -169,7 +172,9 @@ class MonitoringRepository:
     """Data access layer for execution monitoring aggregations — read-only."""
 
     @staticmethod
-    async def daily_buckets(session: AsyncSession, cutoff: datetime) -> list[DailyBucketRow]:
+    async def daily_buckets(
+        session: AsyncSession, cutoff: datetime, until: datetime
+    ) -> list[DailyBucketRow]:
         if _is_postgres(session):
             day_col = cast(func.date_trunc("day", ExecutionRecord.started_at), Text).label("day")
         else:
@@ -186,7 +191,7 @@ class MonitoringRepository:
                 .filter(ExecutionRecord.status == ExecutionStatus.FAILED)
                 .label("failed"),
             )
-            .where(ExecutionRecord.started_at >= cutoff)
+            .where(ExecutionRecord.started_at >= cutoff, ExecutionRecord.started_at < until)
             .group_by(day_col)
             .order_by(day_col)
         )
@@ -203,7 +208,7 @@ class MonitoringRepository:
 
     @staticmethod
     async def top_operations(
-        session: AsyncSession, cutoff: datetime, *, limit: int = 10
+        session: AsyncSession, cutoff: datetime, until: datetime, *, limit: int = 10
     ) -> list[TopOperationRow]:
         stmt = (
             select(
@@ -220,6 +225,7 @@ class MonitoringRepository:
             )
             .where(
                 ExecutionRecord.started_at >= cutoff,
+                ExecutionRecord.started_at < until,
                 ExecutionRecord.operation_id.is_not(None),
                 ExecutionRecord.api_vendor.is_not(None),
                 ExecutionRecord.api_name.is_not(None),
@@ -266,8 +272,10 @@ class MonitoringRepository:
         # Executions are recorded only once they finish, so the unfinished ones
         # come from the execution jobs (async runs; a synchronous run has no row
         # until it returns). `pending` is every unfinished job queued in the
-        # window; `active_now` is only the jobs a worker is running right now.
-        # Scalar subqueries keep everything in one round trip.
+        # window, so it belongs to the window and is read here, in the same
+        # snapshot as the counts it sits beside. A scalar subquery keeps it in
+        # this round trip. `active_now` is a live gauge rather than a window
+        # figure, so :meth:`active_now` reads it separately.
         execution_job = [
             Job.kind == JobKind.EXECUTION,
             *(filters.to_job_clauses() if filters else []),
@@ -284,13 +292,6 @@ class MonitoringRepository:
             .scalar_subquery()
             .label("pending")
         )
-        active_now_col = (
-            select(func.count())
-            .select_from(Job)
-            .where(*execution_job, Job.status == JobStatus.RUNNING)
-            .scalar_subquery()
-            .label("active_now")
-        )
         stmt = select(
             func.count().label("total"),
             func.count()
@@ -299,7 +300,6 @@ class MonitoringRepository:
             func.count().filter(ExecutionRecord.status == ExecutionStatus.FAILED).label("failed"),
             func.coalesce(func.avg(ExecutionRecord.duration_ms), 0).label("avg_ms"),
             pending_col,
-            active_now_col,
             *percentile_cols,
         ).where(ExecutionRecord.started_at >= cutoff, ExecutionRecord.started_at < until)
         if filters:
@@ -315,8 +315,26 @@ class MonitoringRepository:
             p50_ms=float(p50) if p50 is not None else None,
             p95_ms=float(p95) if p95 is not None else None,
             pending=row.pending,
-            active_now=row.active_now,
         )
+
+    @staticmethod
+    async def active_now(session: AsyncSession, filters: UsageQueryFilters | None = None) -> int:
+        """How many execution jobs a worker is running right now.
+
+        A live gauge, not a window figure: it carries no time bound, and the
+        caller reads it outside the snapshot the window aggregates share, so
+        it answers "running now" rather than "running as of the snapshot".
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Job)
+            .where(
+                Job.kind == JobKind.EXECUTION,
+                *(filters.to_job_clauses() if filters else []),
+                Job.status == JobStatus.RUNNING,
+            )
+        )
+        return (await session.execute(stmt)).scalar_one()
 
     @staticmethod
     async def time_buckets(
@@ -385,7 +403,7 @@ class MonitoringRepository:
         """
         key_expr, group_cols = _group_key(group_by)
 
-        stmt: Select[Any] = (
+        stmt: _AnySelect = (
             select(
                 key_expr.label("key"),
                 key_expr.label("label"),
@@ -443,7 +461,7 @@ class MonitoringRepository:
             Text,
         ).label("seg")
 
-        stmt: Select[Any] = (
+        stmt: _AnySelect = (
             select(
                 key_expr.label("key"),
                 segment_idx,

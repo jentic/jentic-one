@@ -10,6 +10,7 @@ for a lost one.
 
 from __future__ import annotations
 
+import asyncio
 import socket
 from collections.abc import AsyncGenerator
 
@@ -115,13 +116,21 @@ async def test_terminated_pooled_connection_is_replaced_transparently(
 ) -> None:
     """A pooled connection killed server-side costs a reconnect, not an error.
 
-    Mirrors a connection dropped while idle (VM sleep, proxy timeout): the next
-    checkout's pre-ping detects it and the pool reconnects before the caller's
-    statement runs — so even a bare ``transaction()`` (no retry) succeeds.
+    Even within ``pool_pre_ping_idle_s``, once the client transport observes the
+    peer close, checkout's pre-ping check detects the closed driver connection
+    without a wire round trip and reconnects before the caller's statement runs
+    — so even a bare ``transaction()`` (no retry) succeeds.
     """
     _require_postgres(admin_db)
-    stale_pid = await admin_db.run_in_transaction(_backend_pid)
+    async with admin_db.transaction() as session:
+        raw = await (await session.connection()).get_raw_connection()
+        driver = raw.driver_connection
+        assert driver is not None
+        stale_pid = await _backend_pid(session)
     await _terminate_backend(admin_db, stale_pid)
+    async with asyncio.timeout(2.0):
+        while not driver.is_closed():
+            await asyncio.sleep(0.001)
 
     async with admin_db.transaction() as session:
         fresh_pid = await _backend_pid(session)
@@ -138,11 +147,98 @@ async def _terminate_backend(db: DatabaseSession, pid: int) -> None:
     try:
         async with killer_engine.connect() as killer:
             killed = (
-                await killer.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
+                await killer.execute(text("SELECT pg_terminate_backend(:pid, 5000)"), {"pid": pid})
             ).scalar_one()
     finally:
         await killer_engine.dispose()
     assert killed is True
+
+
+@pytest.mark.asyncio
+async def test_idle_gated_pre_ping_skips_active_checkouts_and_pings_after_idle(
+    admin_db: DatabaseSession, integration_config: AppConfig
+) -> None:
+    """Active checkouts skip wire pings; checkouts after ``pool_pre_ping_idle_s`` ping (#1935)."""
+    _require_postgres(admin_db)
+    config = integration_config.databases.admin.model_copy(
+        update={"pool_max": 1, "pool_pre_ping": True, "pool_pre_ping_idle_s": 0.05}
+    )
+    db = DatabaseSession(config)
+    await db.connect()
+    wire_queries: list[str] = []
+    try:
+        # First checkout creates the connection (fresh -> no pre-ping); attach wire logger.
+        async with db.read_session() as session:
+            raw = await (await session.connection()).get_raw_connection()
+            driver = raw.driver_connection
+            assert driver is not None
+            driver.add_query_logger(lambda rec: wire_queries.append(rec.query))
+            first_pid = await _backend_pid(session)
+        assert ";" not in wire_queries
+
+        # Immediate back-to-back checkouts across read_session, session, and transaction
+        # reuse the same connection within the 50ms window without any wire ping.
+        wire_queries.clear()
+        async with db.read_session() as session:
+            assert await _backend_pid(session) == first_pid
+        assert wire_queries == []
+
+        async with db.session() as session:
+            assert await _backend_pid(session) == first_pid
+        assert ";" not in wire_queries
+
+        wire_queries.clear()
+        assert await db.run_in_transaction(_backend_pid) == first_pid
+        assert ";" not in wire_queries
+
+        # Once the connection sits idle past pool_pre_ping_idle_s, checkout runs the wire ping.
+        wire_queries.clear()
+        await asyncio.sleep(0.08)
+        async with db.read_session() as session:
+            assert await _backend_pid(session) == first_pid
+        assert wire_queries == ["BEGIN;", ";", "ROLLBACK;"]
+
+        # And a checkout right after skips the wire ping again.
+        wire_queries.clear()
+        async with db.read_session() as session:
+            assert await _backend_pid(session) == first_pid
+        assert wire_queries == []
+
+        # A backend killed while idle past the threshold is replaced on checkout via wire ping.
+        await _terminate_backend(db, first_pid)
+        await asyncio.sleep(0.08)
+        async with db.transaction() as session:
+            fresh_pid = await _backend_pid(session)
+        assert fresh_pid != first_pid
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_zero_pre_ping_idle_threshold_pings_on_immediate_checkout(
+    admin_db: DatabaseSession, integration_config: AppConfig
+) -> None:
+    """``pool_pre_ping_idle_s: 0`` runs the wire ping on every checkout after creation."""
+    _require_postgres(admin_db)
+    config = integration_config.databases.admin.model_copy(
+        update={"pool_max": 1, "pool_pre_ping": True, "pool_pre_ping_idle_s": 0}
+    )
+    db = DatabaseSession(config)
+    await db.connect()
+    wire_queries: list[str] = []
+    try:
+        async with db.read_session() as session:
+            raw = await (await session.connection()).get_raw_connection()
+            assert raw.driver_connection is not None
+            raw.driver_connection.add_query_logger(lambda rec: wire_queries.append(rec.query))
+            await _backend_pid(session)
+
+        wire_queries.clear()
+        async with db.read_session() as session:
+            await _backend_pid(session)
+        assert wire_queries == ["BEGIN;", ";", "ROLLBACK;"]
+    finally:
+        await db.close()
 
 
 @pytest.fixture()

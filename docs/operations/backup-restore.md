@@ -41,6 +41,10 @@ docker run --rm -v jentic-data:/data -v "$PWD":/backup alpine \
   tar xzf /backup/jentic-data-YYYYMMDDTHHMMSSZ.tgz -C /data
 ```
 
+The quickstart keeps its keyset outside the volume: in `quickstart.env` for the
+`docker run` shape, or in the `.env` next to the quickstart compose file. Copy
+that file with every volume snapshot.
+
 CLI-managed installs (`jenticctl install`): the volume is
 `jentic_jentic-data` and the config to keep is `~/.jentic/jentic-one.yaml` +
 `~/.jentic/.env` — the same invariant, spelled out in the runbook's

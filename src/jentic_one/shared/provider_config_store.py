@@ -4,7 +4,7 @@ The control module owns the credential ``ProviderRegistry`` but may not import
 admin ORM models (enforced by ``tests/arch/test_module_boundaries.py``). This
 helper exposes a raw, parameterized-SQL reader against the admin
 ``provider_configs`` table so the registry can pick up runtime configuration
-without crossing the module boundary. Mirrors ``shared/lookups.py``.
+without crossing the module boundary.
 
 The returned dicts are the stored JSON payloads verbatim — any secret fields
 (e.g. ``client_secret``) are still encrypted; decryption is the caller's job.

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, case, delete, or_, select, update
+from sqlalchemy import case, delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,9 @@ from sqlalchemy.orm import selectinload
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
+from jentic_one.shared.pagination import Cursor
 
 # The unique constraints whose violation means "this revision already exists".
 #   - uq_api_revisions_api_id_spec_digest: identical content re-imported.
@@ -36,6 +38,24 @@ _DUPLICATE_REVISION_CONSTRAINTS = (
 def is_duplicate_revision_conflict(exc: DatabaseIntegrityError) -> bool:
     """True when ``exc`` is a violation of one of the "revision already exists" constraints."""
     return any(name in exc.detail for name in _DUPLICATE_REVISION_CONSTRAINTS)
+
+
+# The violation of ``uq_api_revisions_api_id_spec_digest`` alone, as Postgres
+# (constraint name) and SQLite (column list) report it.
+_DUPLICATE_DIGEST_CONSTRAINTS = (
+    "uq_api_revisions_api_id_spec_digest",
+    "UNIQUE constraint failed: api_revisions.api_id, api_revisions.spec_digest",
+)
+
+
+def is_duplicate_digest_conflict(exc: DatabaseIntegrityError) -> bool:
+    """True when ``exc`` means a revision with identical content already exists.
+
+    Narrower than :func:`is_duplicate_revision_conflict`: a lost race for the
+    one-active slot (``ix_api_revisions_one_active``) is not a match, since the
+    competing revision can hold different content.
+    """
+    return any(name in exc.detail for name in _DUPLICATE_DIGEST_CONSTRAINTS)
 
 
 async def _flush_new_revision(session: AsyncSession) -> None:
@@ -461,8 +481,7 @@ class ApiRevisionRepository:
         *,
         api_id: uuid.UUID,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         states: list[str] | None = None,
     ) -> list[ApiRevision]:
         stmt = (
@@ -471,16 +490,7 @@ class ApiRevisionRepository:
             .order_by(ApiRevision.created_at.desc(), ApiRevision.id.desc())
             .limit(limit)
         )
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                or_(
-                    ApiRevision.created_at < cursor_created_at,
-                    and_(
-                        ApiRevision.created_at == cursor_created_at,
-                        ApiRevision.id < cursor_id,
-                    ),
-                )
-            )
+        stmt = apply_desc_keyset(stmt, ApiRevision.created_at, ApiRevision.id, cursor)
         if states:
             stmt = stmt.where(ApiRevision.state.in_(states))
         result = await session.execute(stmt)
@@ -589,7 +599,7 @@ class ApiRevisionRepository:
             name,
             version,
         ) in result.all():
-            if api_id in seen:
+            if api_id in seen or source_url is None:
                 continue
             seen.add(api_id)
             specs.append(

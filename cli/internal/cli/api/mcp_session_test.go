@@ -160,15 +160,16 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	if importTool.Annotations == nil || !importTool.Annotations.IdempotentHint {
 		t.Errorf("import_api must carry idempotentHint (re-import of the same api_id converges)")
 	}
-	if len(names) != 10 {
-		t.Errorf("the stdio server serves exactly 10 tools, got %v", keys(names))
+	if len(names) != 14 {
+		t.Errorf("the stdio server serves exactly 14 tools, got %v", keys(names))
 	}
 }
 
 // TestMCPSession_ReadOnlyWithholdsMutatingTools pins the --read-only contract:
 // exactly execute, import_api, and request_connection lack
 // the read-only annotation, so the flag withholds exactly those three
-// (execute_read, get_execution_result, and search_catalog stay servable).
+// (execute_read, get_execution_result, search_catalog, show_access and
+// inspect_api stay servable).
 func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -180,7 +181,10 @@ func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	withheld := map[string]bool{"execute": true, "import_api": true, "request_connection": true}
+	withheld := map[string]bool{
+		"execute": true, "import_api": true, "request_connection": true,
+		"request_access_change": true, "amend_request": true,
+	}
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
@@ -195,8 +199,8 @@ func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	if !served["search_catalog"] {
 		t.Errorf("--read-only must still serve search_catalog (readOnlyHint), got %v", names)
 	}
-	if len(tools.Tools) != 7 {
-		t.Errorf("--read-only must serve the 7 read-only tools, got %v", names)
+	if len(tools.Tools) != 9 {
+		t.Errorf("--read-only must serve the 9 read-only tools, got %v", names)
 	}
 }
 
@@ -350,11 +354,11 @@ func TestMCPSession_FullRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMCPSession_MissingQueryIsProtocolError proves the invalid-params
-// contract over a real client session, not just a direct handler call: the
-// *jsonrpc.Error a handler returns must reach the CLIENT as a protocol error
-// (the SDK's error propagation), never be flattened into a tool result.
-func TestMCPSession_MissingQueryIsProtocolError(t *testing.T) {
+// TestMCPSession_MissingQueryIsAToolError proves the invalid-params contract
+// over a real client session: a handler's malformed-arguments error reaches
+// the CLIENT as a coded tool result (MISSING_ARGUMENT, naming what to fix), not
+// a protocol error a client might show the model only as a generic failure.
+func TestMCPSession_MissingQueryIsAToolError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -365,13 +369,19 @@ func TestMCPSession_MissingQueryIsProtocolError(t *testing.T) {
 		Name:      "search_apis",
 		Arguments: map[string]any{},
 	})
-	if err == nil {
-		t.Fatalf("want a protocol error at the client, got a result: %v", res)
+	if err != nil {
+		t.Fatalf("want a tool result, got a protocol error: %v", err)
 	}
-	// The invalid-params message must survive the round trip so the model can
-	// correct the call.
-	if !strings.Contains(err.Error(), "query") {
-		t.Errorf("client-side error %q must name the missing parameter", err.Error())
+	if !res.IsError {
+		t.Fatalf("want an error result, got %v", res)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != "MISSING_ARGUMENT" {
+		t.Errorf("error_code = %v, want MISSING_ARGUMENT", payload["error_code"])
+	}
+	// The message must name the parameter so the model can correct the call.
+	if msg, _ := payload["error"].(string); !strings.Contains(msg, "query") {
+		t.Errorf("error %q must name the missing parameter", msg)
 	}
 }
 
@@ -425,8 +435,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 9 {
-		t.Errorf("tools = %d, want 9 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 13 {
+		t.Errorf("tools = %d, want 13 after exclusion", len(tools.Tools))
 	}
 }
 

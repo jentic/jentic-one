@@ -1,8 +1,9 @@
 """HTTP fetch helper for the catalog slice — SSRF-guarded GET of JSON documents.
 
 A thin, redirect-safe wrapper around ``httpx.AsyncClient`` that reuses the same
-``validate_upstream_url_async`` SSRF guard and ingest-config knobs (timeout, size cap,
-redirect budget) as the import fetch layer. It exists so the catalog service can
+``validate_upstream_url_async`` SSRF guard, ingest-config knobs (timeout, size cap,
+redirect budget) and streamed byte-capped body read (``shared.bounded_read``) as
+the import fetch layer. It exists so the catalog service can
 pull the upstream manifest + individual specs without duplicating the redirect/size
 hardening and without coupling to the ingest pipeline's spec-shaped return type.
 """
@@ -13,10 +14,16 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
 
 import httpx
 
+from jentic_one.shared.bounded_read import (
+    ResponseTooLargeError,
+    UndecodableBodyError,
+    decode_body,
+    follow_redirects,
+    read_capped_body,
+)
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.url_validation import validate_upstream_url_async
@@ -55,55 +62,44 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
     """GET a URL and parse the body as JSON, with SSRF + redirect + size guards.
 
     Mirrors the hardening in ``registry.ingest.fetch.load_specification`` (manual
-    redirect following with per-hop URL revalidation, content-length + body-size
-    caps) but returns a plain decoded JSON object instead of an IngestSpecification.
+    redirect following with per-hop URL revalidation, content-length + streamed
+    body-size caps) but returns a plain decoded JSON object instead of an
+    IngestSpecification.
     """
     try:
         validated_url = await validate_upstream_url_async(url, config.egress)
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
+    headers = {"user-agent": _USER_AGENT}
     max_bytes = config.max_spec_bytes
+    limit_mb = max_bytes / (1024 * 1024)
     try:
         async with httpx.AsyncClient(
             timeout=config.fetch_timeout_s,
             follow_redirects=False,
             transport=build_pinned_transport(config.egress),
         ) as client:
-            resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
-            for _ in range(config.max_redirects):
-                if resp.status_code < 300 or resp.status_code >= 400:
-                    break
-                location = resp.headers.get("location")
-                if not location:
-                    break
-                try:
-                    validated_url = await validate_upstream_url_async(
-                        urljoin(validated_url, location), config.egress
-                    )
-                except ValueError as exc:
-                    raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
-                resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
-            else:
-                if 300 <= resp.status_code < 400:
-                    raise CatalogFetchError("too many redirects")
+            resp = await _open_following_redirects(
+                client, validated_url, headers=headers, config=config
+            )
+            try:
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
+                body = await read_capped_body(resp, max_bytes)
+            finally:
+                await resp.aclose()
     except CatalogFetchError:
         raise
+    except ResponseTooLargeError as exc:
+        raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)") from exc
+    except UndecodableBodyError as exc:
+        raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
     except httpx.HTTPError as exc:
         raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
 
-    if resp.status_code < 200 or resp.status_code >= 300:
-        raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
-
-    content_length = resp.headers.get("content-length")
-    limit_mb = max_bytes / (1024 * 1024)
-    if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-        raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)")
-    if len(resp.content) > max_bytes:
-        raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)")
-
     try:
-        parsed = json.loads(resp.text)
+        parsed = json.loads(decode_body(resp, body))
     except (json.JSONDecodeError, ValueError) as exc:
         raise CatalogFetchError(f"failed to parse JSON from {url}") from exc
 
@@ -122,8 +118,8 @@ async def fetch_bytes_conditional(
     ``304 Not Modified`` with no body transferred (``ConditionalFetch.not_modified``
     is then ``True``). Otherwise the body is returned with its ``sha256`` digest
     and the response ``ETag``. Redirects are followed manually with per-hop URL
-    revalidation and the same content-length + body-size caps as ``fetch_json``;
-    the conditional header is re-sent on each hop.
+    revalidation and the same content-length + streamed body-size caps as
+    ``fetch_json``; the conditional header is re-sent on each hop.
 
     raw.githubusercontent.com serves content-derived ETags, so a stable ETag (or
     stable digest) means the upstream spec is byte-identical to what we last saw.
@@ -144,43 +140,30 @@ async def fetch_bytes_conditional(
             follow_redirects=False,
             transport=build_pinned_transport(config.egress),
         ) as client:
-            resp = await client.get(validated_url, headers=headers)
-            for _ in range(config.max_redirects):
-                if resp.status_code < 300 or resp.status_code >= 400:
-                    break
-                location = resp.headers.get("location")
-                if not location:
-                    break
-                try:
-                    validated_url = await validate_upstream_url_async(
-                        urljoin(validated_url, location), config.egress
+            resp = await _open_following_redirects(
+                client, validated_url, headers=headers, config=config
+            )
+            try:
+                if resp.status_code == 304:
+                    return ConditionalFetch(
+                        not_modified=True,
+                        etag=resp.headers.get("etag") or etag,
+                        content=None,
+                        digest=None,
                     )
-                except ValueError as exc:
-                    raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
-                resp = await client.get(validated_url, headers=headers)
-            else:
-                if 300 <= resp.status_code < 400:
-                    raise CatalogFetchError("too many redirects")
+                if resp.status_code < 200 or resp.status_code >= 300:
+                    raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
+                body = await read_capped_body(resp, max_bytes)
+            finally:
+                await resp.aclose()
     except CatalogFetchError:
         raise
+    except ResponseTooLargeError as exc:
+        raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)") from exc
+    except UndecodableBodyError as exc:
+        raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
     except httpx.HTTPError as exc:
         raise CatalogFetchError(f"failed to fetch {url}: {exc}") from exc
-
-    if resp.status_code == 304:
-        return ConditionalFetch(
-            not_modified=True, etag=resp.headers.get("etag") or etag, content=None, digest=None
-        )
-
-    if resp.status_code < 200 or resp.status_code >= 300:
-        raise CatalogFetchError(f"non-success status {resp.status_code} fetching {url}")
-
-    content_length = resp.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-        raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)")
-
-    body = resp.content
-    if len(body) > max_bytes:
-        raise CatalogFetchError(f"response exceeds size limit ({limit_mb:.0f} MB)")
 
     return ConditionalFetch(
         not_modified=False,
@@ -188,3 +171,19 @@ async def fetch_bytes_conditional(
         content=body,
         digest=hashlib.sha256(body).hexdigest(),
     )
+
+
+async def _open_following_redirects(
+    client: httpx.AsyncClient, url: str, *, headers: dict[str, str], config: IngestConfig
+) -> httpx.Response:
+    """Open ``url`` via ``shared.bounded_read.follow_redirects`` with catalog errors."""
+    resp, _ = await follow_redirects(
+        client,
+        url,
+        headers=headers,
+        egress=config.egress,
+        max_redirects=config.max_redirects,
+        on_unsafe=lambda exc: CatalogFetchError(f"unsafe URL rejected: {exc}"),
+        on_too_many=lambda: CatalogFetchError("too many redirects"),
+    )
+    return resp

@@ -35,7 +35,7 @@ from typing import Protocol, runtime_checkable
 
 import structlog
 
-from jentic_one.broker.core.exceptions import IdempotencyUnavailableError
+from jentic_one.broker.core.errors import IdempotencyUnavailableError
 from jentic_one.broker.core.headers import SENSITIVE_RESPONSE_HEADERS
 from jentic_one.shared.state.backend import (
     AtomicStore,
@@ -44,6 +44,10 @@ from jentic_one.shared.state.backend import (
 )
 
 _logger = structlog.get_logger(__name__)
+
+# Response headers that describe one exchange only and so are not stored for
+# replay (lower-cased).
+_PER_EXCHANGE_HEADERS: frozenset[str] = frozenset({"server-timing"})
 
 
 @runtime_checkable
@@ -114,8 +118,17 @@ class IdempotencyOutcome:
 
 
 def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Drop security-bearing headers before a response is persisted."""
-    return {k: v for k, v in headers.items() if k.lower() not in SENSITIVE_RESPONSE_HEADERS}
+    """Drop headers that must not be persisted for replay.
+
+    Security-bearing headers are never hoarded; ``Server-Timing`` describes the
+    original exchange's latency, which a replay (no upstream call) must not
+    re-assert as its own.
+    """
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in SENSITIVE_RESPONSE_HEADERS and k.lower() not in _PER_EXCHANGE_HEADERS
+    }
 
 
 def _cap_headers(headers: dict[str, str]) -> dict[str, str]:

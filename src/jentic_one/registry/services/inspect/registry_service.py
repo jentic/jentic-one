@@ -30,14 +30,10 @@ from jentic_one.shared.broker.protocols import (
     RevisionPinOutcome,
     RevisionPinResult,
 )
+from jentic_one.shared.broker.revision_label import decode_rev_label
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ApiRevisionState
 from jentic_one.shared.schemas import OperationInfo
-
-# A ``Jentic-Revision`` value carries the revision id as ``rev_<uuid.hex>`` (the
-# 32-char hyphen-free hex form, which is what the spec ``rev_[A-Za-z0-9]+``
-# pattern admits). Stripping the prefix yields the ``ApiRevision.id`` hex.
-_REV_LABEL_PREFIX = "rev_"
 
 
 class RegistryService:
@@ -54,9 +50,10 @@ class RegistryService:
     ) -> ResolveResult | None:
         """Resolve a METHOD+URL to an operation and its API identity.
 
-        Returns ``None`` when no operation matches the URL. May raise the
-        registry lookup errors (``MethodNotAllowedError``, ``AmbiguousMatchError``,
-        ``TooManyCandidatesError``) for the same conditions as ``URLLookupService``.
+        Returns ``None`` when no operation matches the URL. May raise the shared
+        discovery errors (``shared/discovery/errors.py``: ``MethodNotAllowedError``,
+        ``AmbiguousMatchError``, ``TooManyCandidatesError``) for the same conditions
+        as ``URLLookupService``; the broker renders them as its own problems.
         """
         hit = await URLLookupService(self._session).resolve(
             method=method, url=url, revision_id=revision_id
@@ -98,18 +95,22 @@ class RegistryService:
         - ``archived`` revision → ``ARCHIVED`` (→ 422; resurrect by re-promoting),
         - unpublished ``draft`` not owned by the caller → ``FORBIDDEN`` (→ 403),
         - ``draft`` held for server-host review, for a caller without
-          ``credentials:write`` (even its submitter) → ``FORBIDDEN`` (→ 403),
+          ``org:admin`` (even its submitter) → ``FORBIDDEN`` (→ 403),
         - owned ``draft`` whose server hosts differ from the API's live ones, on
-          an API with bound credentials, for a caller without
-          ``credentials:write`` → ``HOST_CHANGE_HELD`` (→ 403): pinning it would
-          send those credentials to hosts no operator approved, which
+          an API with bound credentials, for a caller without ``org:admin`` →
+          ``HOST_CHANGE_HELD`` (→ 403): pinning it would send those credentials
+          to hosts nobody approved, which
           promoting it would refuse (``registry/ingest/host_change_guard.py``),
         - ``published`` revision, or an owned ``draft`` → ``RESOLVED``.
 
         Ownership of a ``draft`` is decided by ``submitted_by == identity.sub`` —
         the only ownership signal the revision carries today.
+
+        ``rev_label`` is the ``rev_<uuid.hex>`` label the broker's header parser
+        (``broker/core/revisions.py``) derives from every ``Jentic-Revision``
+        value; decoding it yields the ``ApiRevision.id``.
         """
-        revision_id = _parse_rev_label(rev_label)
+        revision_id = decode_rev_label(rev_label)
         if revision_id is None:
             return RevisionPinResult(RevisionPinOutcome.UNKNOWN)
 
@@ -126,8 +127,9 @@ class RegistryService:
 
         if revision.state == ApiRevisionState.DRAFT:
             # A draft with an origin is an import held for server-host review
-            # (``registry/ingest/host_change_guard.py``): only an operator who could
-            # promote it may route through it, not the agent that submitted it.
+            # (``registry/ingest/host_change_guard.py``): only an organisation admin,
+            # who could promote it, may route through it, not the agent that
+            # submitted it.
             if revision.origin is not None:
                 if not may_approve_host_change(identity.permissions):
                     return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
@@ -149,14 +151,3 @@ class RegistryService:
                     )
 
         return RevisionPinResult(RevisionPinOutcome.RESOLVED, revision_id=revision_id)
-
-
-def _parse_rev_label(rev_label: str) -> uuid.UUID | None:
-    """Decode a ``rev_<uuid.hex>`` label to its ``ApiRevision.id`` (``None`` if invalid)."""
-    if not rev_label.startswith(_REV_LABEL_PREFIX):
-        return None
-    raw = rev_label[len(_REV_LABEL_PREFIX) :]
-    try:
-        return uuid.UUID(hex=raw)
-    except ValueError:
-        return None

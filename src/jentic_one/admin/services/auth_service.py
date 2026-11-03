@@ -18,6 +18,7 @@ from jentic_one.admin.services._support.passwords import (
     PASSWORD_TOO_SHORT_MESSAGE,
     dummy_verify_password,
     hash_password,
+    run_argon2,
     verify_password,
 )
 from jentic_one.admin.services._support.tokens import InvalidTokenError, decode_jwt, issue_jwt
@@ -27,6 +28,7 @@ from jentic_one.admin.services.errors import (
     InvalidInputError,
     SessionExpiredError,
     SetupAlreadyCompleteError,
+    UserDeletedError,
     UserEmailNotFoundError,
 )
 from jentic_one.admin.services.metrics import login_counter
@@ -38,6 +40,7 @@ from jentic_one.admin.services.schemas.auth import (
     TokenBundle,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -60,12 +63,15 @@ class AuthService:
         email: str,
         must_change_password: bool,
         auth_time: int,
+        session_generation: int,
     ) -> TokenBundle:
         """Mint a login-JWT bundle with freshly-resolved effective permissions.
 
         ``auth_time`` (epoch seconds of the original credential authentication)
         rides in the claims so :meth:`refresh` can enforce the absolute session
         window (``admin.auth.session_ttl_seconds``) across re-mints.
+        ``session_generation`` (the user row's current value) rides as
+        ``sgen``: bumping the row's generation revokes the token.
         """
         config = self._ctx.config.admin.auth
         perm_service = PermissionService(self._ctx)
@@ -79,6 +85,7 @@ class AuthService:
             "permissions": perms_view.effective,
             "must_change_password": must_change_password,
             "auth_time": auth_time,
+            SESSION_GENERATION_CLAIM: session_generation,
         }
         token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
         return TokenBundle(
@@ -101,72 +108,68 @@ class AuthService:
         """
         config = self._ctx.config.admin.auth
 
+        user_id: str | None = None
         account_locked_user_id: str | None = None
+        password_hash: str | None = None
 
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_email(session, payload.email)
-            if user is None:
-                # Timing equalizer: every early rejection pays one argon2
-                # verification, so an anonymous caller cannot separate
-                # "unknown email" from "wrong password" by response time.
-                # Accepted residual (#1298): the wrong-password and lockout
-                # arms below also run a DB write transaction that these arms
-                # skip. That is one round-trip plus a commit (milliseconds),
-                # beneath the argon2id floor (``passwords._hasher`` uses
-                # argon2-cffi's RFC 9106 low-memory profile: t=3, m=64 MiB,
-                # p=4). Equalizing it would mean writing rows for unknown
-                # emails, an anonymous write amplifier.
-                dummy_verify_password()
-                raise InvalidCredentialsError()
+            # A deleted row is refused even if it reads active: delete is
+            # terminal, and its retained password hash must never sign in.
+            if user is not None and user.active and user.deleted_at is None:
+                secret = await UserSecretRepository.get_by_user_id(session, user.id)
+                if secret is not None and secret.password_hash is not None:
+                    user_id = user.id
+                    if secret.locked_until is not None and secret.locked_until > datetime.now(UTC):
+                        account_locked_user_id = user.id
+                    else:
+                        password_hash = secret.password_hash
 
-            if not user.active:
-                dummy_verify_password()
-                raise InvalidCredentialsError()
+        if password_hash is None:
+            # Timing equalizer: every early rejection (unknown email, inactive
+            # or deleted user, missing secret/hash, active lockout) pays one
+            # argon2 verification off the event loop under the concurrency cap,
+            # after the read session closes, so an anonymous caller cannot
+            # separate "unknown email" from "wrong password" by response time.
+            # Accepted residual (#1298): the wrong-password and lockout arms
+            # also run a DB write transaction that the unknown-email arms skip.
+            # That is one round-trip plus a commit (milliseconds), beneath the
+            # argon2id floor (``passwords._hasher`` uses argon2-cffi's RFC 9106
+            # low-memory profile: t=3, m=64 MiB, p=4). Equalizing it would mean
+            # writing rows for unknown emails, an anonymous write amplifier.
+            await run_argon2(dummy_verify_password, config=config)
+            if account_locked_user_id is not None:
+                login_counter.add(1, {"outcome": "lockout"})
+                async with self._ctx.admin_db.transaction() as audit_session:
+                    await record_audit(
+                        audit_session,
+                        action=AuditAction.LOGIN_FAILED,
+                        target_type=AuditTargetType.SESSION,
+                        target_id=account_locked_user_id,
+                        actor_type=ActorType.USER,
+                        actor_id=account_locked_user_id,
+                        reason="account_locked",
+                        origin=None,
+                    )
+                raise AccountLockedError(account_locked_user_id)
+            raise InvalidCredentialsError()
 
-            secret = await UserSecretRepository.get_by_user_id(session, user.id)
-            if secret is None or secret.password_hash is None:
-                dummy_verify_password()
-                raise InvalidCredentialsError()
-
-            if secret.locked_until is not None and secret.locked_until > datetime.now(UTC):
-                # Locked accounts also skip the real verify — burn the dummy
-                # here too so "locked" is not timing-distinguishable either.
-                dummy_verify_password()
-                # Defer the audit write until *after* this read session closes:
-                # holding this read connection open while opening a write
-                # transaction on the same database self-deadlocks under SQLite
-                # (the writer waits on a lock the outer read still holds).
-                account_locked_user_id = user.id
-            else:
-                password_valid = verify_password(payload.password, secret.password_hash)
-                failed_count = secret.failed_login_count
-
-        if account_locked_user_id is not None:
-            login_counter.add(1, {"outcome": "lockout"})
-            async with self._ctx.admin_db.transaction() as audit_session:
-                await record_audit(
-                    audit_session,
-                    action=AuditAction.LOGIN_FAILED,
-                    target_type=AuditTargetType.SESSION,
-                    target_id=account_locked_user_id,
-                    actor_type=ActorType.USER,
-                    actor_id=account_locked_user_id,
-                    reason="account_locked",
-                    origin=None,
-                )
-            raise AccountLockedError(account_locked_user_id)
+        assert user_id is not None
+        password_valid = await run_argon2(
+            verify_password, payload.password, password_hash, config=config
+        )
 
         if not password_valid:
             async with self._ctx.admin_db.transaction() as session:
-                await UserSecretRepository.record_failed_login(session, user.id)
-                if failed_count + 1 >= config.failed_login_lockout_threshold:
+                failed_count = await UserSecretRepository.record_failed_login(session, user_id)
+                if (failed_count or 0) >= config.failed_login_lockout_threshold:
                     locked_until = datetime.now(UTC) + timedelta(
                         seconds=config.failed_login_lockout_seconds
                     )
                     await UserSecretRepository.lock_until(
-                        session, user.id, locked_until=locked_until
+                        session, user_id, locked_until=locked_until
                     )
-                    logger.warning("account_locked", user_id=user.id, locked_until=locked_until)
+                    logger.warning("account_locked", user_id=user_id, locked_until=locked_until)
                     login_counter.add(1, {"outcome": "lockout"})
                 else:
                     logger.warning("login_failed", email=payload.email)
@@ -175,29 +178,29 @@ class AuthService:
                     session,
                     action=AuditAction.LOGIN_FAILED,
                     target_type=AuditTargetType.SESSION,
-                    target_id=user.id,
+                    target_id=user_id,
                     actor_type=ActorType.USER,
-                    actor_id=user.id,
+                    actor_id=user_id,
                     origin=None,
                 )
             raise InvalidCredentialsError()
 
         async with self._ctx.admin_db.transaction() as session:
-            await UserSecretRepository.reset_failed_logins(session, user.id)
+            await UserSecretRepository.reset_failed_logins(session, user_id)
             await record_audit(
                 session,
                 action=AuditAction.LOGIN,
                 target_type=AuditTargetType.SESSION,
-                target_id=user.id,
+                target_id=user_id,
                 actor_type=ActorType.USER,
-                actor_id=user.id,
+                actor_id=user_id,
                 origin=None,
             )
 
-        logger.info("login_success", user_id=user.id)
+        logger.info("login_success", user_id=user_id)
         login_counter.add(1, {"outcome": "success"})
 
-        return user.id
+        return user_id
 
     async def password_rotation_required(self, user_id: str) -> bool:
         """Whether the account must rotate its password before platform use.
@@ -221,9 +224,9 @@ class AuthService:
         # from token minting.
         async with self._ctx.admin_db.session() as session:
             user = await UserRepository.get_by_id(session, user_id)
-        if user is None:
-            # The account vanished between credential verification and minting
-            # (concurrent deletion) — treat it like any other bad credential.
+        if user is None or not user.active or user.deleted_at is not None:
+            # The account was disabled or deleted between credential
+            # verification and minting — treat it like any other bad credential.
             raise InvalidCredentialsError()
 
         return await self._mint_session_bundle(
@@ -231,6 +234,7 @@ class AuthService:
             email=user.email,
             must_change_password=user.must_change_password,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=user.session_generation,
         )
 
     async def refresh(self, raw_token: str) -> TokenBundle:
@@ -277,7 +281,11 @@ class AuthService:
 
         async with self._ctx.admin_db.transaction() as session:
             user = await UserRepository.get_by_id(session, claims["sub"])
-            if user is None or not user.active:
+            if user is None or not user.active or user.deleted_at is not None:
+                raise InvalidCredentialsError("Token is not refreshable")
+            # Defence in depth behind the auth gate: a revoked session (the
+            # generation moved on) never re-mints into a live one.
+            if claims.get(SESSION_GENERATION_CLAIM, 0) != user.session_generation:
                 raise InvalidCredentialsError("Token is not refreshable")
             await record_audit(
                 session,
@@ -295,6 +303,7 @@ class AuthService:
             email=user.email,
             must_change_password=user.must_change_password,
             auth_time=auth_time,
+            session_generation=user.session_generation,
         )
 
     async def bootstrap_admin(
@@ -320,6 +329,14 @@ class AuthService:
         """
         if len(password) < MIN_PASSWORD_LENGTH:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
+
+        async with self._ctx.admin_db.session() as session:
+            if await UserRepository.count(session) > 0:
+                raise SetupAlreadyCompleteError()
+
+        password_hash = await run_argon2(
+            hash_password, password, config=self._ctx.config.admin.auth
+        )
 
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -350,7 +367,7 @@ class AuthService:
                 await session.flush()
 
                 await UserSecretRepository.set_password_hash(
-                    session, user.id, password_hash=hash_password(password), created_by=user.id
+                    session, user.id, password_hash=password_hash, created_by=user.id
                 )
                 await UserPermissionGrantRepository.set_permissions(
                     session,
@@ -384,6 +401,7 @@ class AuthService:
             email=user.email,
             must_change_password=False,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=user.session_generation,
         )
 
     async def change_own_password(
@@ -395,23 +413,91 @@ class AuthService:
         ``must_change_password`` gate: the old token still carries the stale
         claim, so without a re-mint the client would loop. The new token reflects
         the cleared gate and current permissions.
+
+        The ``current_password`` check shares the login lockout state: a wrong
+        guess increments the failed-login count (locking the account at
+        ``admin.auth.failed_login_lockout_threshold``), and while
+        ``locked_until`` holds the change is refused without checking the
+        password. A session token therefore buys no more guesses than the
+        login form allows. Wrong and locked attempts are audited as
+        ``LOGIN_FAILED``; a successful change resets the count.
         """
         if len(payload.new_password) < MIN_PASSWORD_LENGTH:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
 
+        config = self._ctx.config.admin.auth
         user_id = identity.sub
-        async with self._ctx.admin_db.transaction() as session:
+        # Verify after closing the read session, then record the outcome in a
+        # separate write transaction: a failure must commit its count increment,
+        # and holding the read connection open across argon2 or that write
+        # ties up the pool and self-deadlocks under SQLite.
+        async with self._ctx.admin_db.session() as session:
             secret = await UserSecretRepository.get_by_user_id(session, user_id)
             if secret is None or secret.password_hash is None:
                 raise InvalidCredentialsError()
+            locked = secret.locked_until is not None and secret.locked_until > datetime.now(UTC)
+            current_hash = secret.password_hash
 
-            if not verify_password(payload.current_password, secret.password_hash):
-                raise InvalidCredentialsError()
+        if locked:
+            # Same verify cost as a real check, so the refusal is not
+            # timing-distinguishable from a wrong password.
+            await run_argon2(dummy_verify_password, config=config)
+            logger.warning("password_change_refused_account_locked", user_id=user_id)
+            async with self._ctx.admin_db.transaction() as session:
+                await record_audit(
+                    session,
+                    action=AuditAction.LOGIN_FAILED,
+                    target_type=AuditTargetType.SESSION,
+                    target_id=user_id,
+                    actor_type=ActorType.USER,
+                    actor_id=user_id,
+                    reason="password_change_account_locked",
+                    origin=identity.origin.value,
+                )
+            raise AccountLockedError(user_id)
 
-            hashed = hash_password(payload.new_password)
+        password_valid = await run_argon2(
+            verify_password, payload.current_password, current_hash, config=config
+        )
+
+        if not password_valid:
+            async with self._ctx.admin_db.transaction() as session:
+                # The count comes back from the atomic increment, so concurrent
+                # wrong guesses each see a distinct value and the lock trips.
+                failed_count = await UserSecretRepository.record_failed_login(session, user_id)
+                if (failed_count or 0) >= config.failed_login_lockout_threshold:
+                    locked_until = datetime.now(UTC) + timedelta(
+                        seconds=config.failed_login_lockout_seconds
+                    )
+                    await UserSecretRepository.lock_until(
+                        session, user_id, locked_until=locked_until
+                    )
+                    logger.warning("account_locked", user_id=user_id, locked_until=locked_until)
+                else:
+                    logger.warning("password_change_failed", user_id=user_id)
+                await record_audit(
+                    session,
+                    action=AuditAction.LOGIN_FAILED,
+                    target_type=AuditTargetType.SESSION,
+                    target_id=user_id,
+                    actor_type=ActorType.USER,
+                    actor_id=user_id,
+                    reason="password_change_failed",
+                    origin=identity.origin.value,
+                )
+            raise InvalidCredentialsError()
+
+        hashed = await run_argon2(hash_password, payload.new_password, config=config)
+
+        async with self._ctx.admin_db.transaction() as session:
+            await UserSecretRepository.reset_failed_logins(session, user_id)
             await UserSecretRepository.set_password_hash(
                 session, user_id, password_hash=hashed, created_by=user_id
             )
+            # A new password ends every other session; the bundle minted below
+            # is issued after the cutoff, so the caller's own session survives.
+            revoked = await UserRepository.revoke_login_sessions(session, user_id)
+            session_generation = revoked.session_generation
 
             user = await UserRepository.get_by_id(session, user_id)
             if user is not None and user.must_change_password:
@@ -437,6 +523,7 @@ class AuthService:
             email=user.email if user is not None else identity.email,
             must_change_password=False,
             auth_time=int(datetime.now(UTC).timestamp()),
+            session_generation=session_generation,
         )
 
     async def reset_password(self, *, email: str, temporary_password: str) -> str:
@@ -457,18 +544,39 @@ class AuthService:
         if len(temporary_password) < MIN_PASSWORD_LENGTH:
             raise InvalidInputError(PASSWORD_TOO_SHORT_MESSAGE)
 
+        async with self._ctx.admin_db.session() as session:
+            found = await UserRepository.get_by_email(session, email)
+            if found is None:
+                raise UserEmailNotFoundError(email)
+            if found.deleted_at is not None:
+                raise UserDeletedError("reset the password of")
+            found_id = found.id
+
+        password_hash = await run_argon2(
+            hash_password, temporary_password, config=self._ctx.config.admin.auth
+        )
+
         async with self._ctx.admin_db.transaction() as session:
-            user = await UserRepository.get_by_email(session, email)
+            # Locked so a concurrent delete either commits first (and is
+            # refused below) or waits until the reset commits.
+            user = await UserRepository.get_by_id_for_update(session, found_id)
             if user is None:
                 raise UserEmailNotFoundError(email)
+            if user.deleted_at is not None:
+                # Delete is terminal: a reset would hand the retained row a
+                # fresh credential.
+                raise UserDeletedError("reset the password of")
 
             await UserSecretRepository.set_password_hash(
                 session,
                 user.id,
-                password_hash=hash_password(temporary_password),
+                password_hash=password_hash,
                 created_by=user.id,
             )
             await UserSecretRepository.unlock(session, user.id)
+            # A reset is the response to a lost or leaked credential: end every
+            # session issued under the old one.
+            await UserRepository.revoke_login_sessions(session, user.id)
             if not user.must_change_password:
                 await UserRepository.update(session, user.id, must_change_password=True)
 

@@ -116,6 +116,12 @@ func TestBrokerTransportError(t *testing.T) {
 			want: true, wantRetryable: false, wantRec: RecoverUnknown,
 		},
 		{
+			name: "invalid outbound request (upstream_request_invalid) is never retryable", retrySafe: true,
+			res: brokerTransportResult(500, "broker", "",
+				`{"type":"upstream_request_invalid","title":"Upstream transport error (LocalProtocolError)","status":500}`),
+			want: true, wantRetryable: false, wantRec: RecoverUnknown,
+		},
+		{
 			name: "non-JSON broker 5xx defaults to not retryable",
 			res:  brokerTransportResult(502, "broker", "", `Bad Gateway`),
 			want: true, wantRetryable: false, wantRec: RecoverUnknown,
@@ -317,6 +323,7 @@ func TestBrokerTransportRecoveryForParity(t *testing.T) {
 		{501, "runner_scheme_unsupported", RecoverScheme},
 		{502, "upstream_response_too_large", RecoverUnknown},
 		{502, "upstream_transport_error", RecoverUnknown},
+		{500, "upstream_request_invalid", RecoverUnknown},
 		{504, "about:blank", RecoverUnknown},
 		{504, "", RecoverUnknown},
 		{503, "about:blank", RecoverUnknown},

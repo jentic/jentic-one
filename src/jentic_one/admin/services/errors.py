@@ -133,6 +133,14 @@ class UserManagementForbiddenError(AdminServiceError):
         self.user_id = user_id
 
 
+class UserDeletedError(ConflictError):
+    """Raised when an action targets a deleted user: delete is terminal."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(f"Cannot {action} a deleted user")
+        self.action = action
+
+
 class LastActiveAdminError(ConflictError):
     """Raised when an operation would leave the deployment with no active org:admin."""
 
@@ -270,14 +278,6 @@ class ExecutionNotFoundError(NotFoundError):
         self.execution_id = execution_id
 
 
-class ExecutionRetentionElapsedError(NotFoundError):
-    """Raised when an execution record has been removed due to retention policy."""
-
-    def __init__(self, execution_id: str) -> None:
-        super().__init__(f"Execution '{execution_id}' retention period has elapsed")
-        self.execution_id = execution_id
-
-
 class AuditEntryNotFoundError(NotFoundError):
     """Raised when an audit entry does not exist."""
 
@@ -300,3 +300,17 @@ class OAuthClientNotFoundError(NotFoundError):
     def __init__(self, id: str) -> None:
         super().__init__(f"OAuth client '{id}' not found")
         self.id = id
+
+
+class PasswordHasherBusyError(AdminServiceError):
+    """Raised when concurrent argon2 password operations are saturated and queue wait times out."""
+
+    def __init__(self, retry_after_s: int = 1) -> None:
+        super().__init__(
+            "The authentication service is temporarily at capacity; "
+            "retry after the indicated delay."
+        )
+        self.retry_after_s = max(1, int(retry_after_s))
+
+
+Argon2BusyError = PasswordHasherBusyError

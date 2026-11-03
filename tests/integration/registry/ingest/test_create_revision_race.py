@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import update
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
-from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestPipelineError
+from jentic_one.registry.ingest.errors import DuplicateRevisionError, IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.shared.context import Context

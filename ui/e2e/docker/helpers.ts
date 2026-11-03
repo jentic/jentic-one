@@ -436,7 +436,7 @@ export async function createMember(
 	return { id: user.id, email, password, token };
 }
 
-/** PUT /users/{id}/permissions → 200 (bulk replace; read live by /users/me). */
+/** PUT /users/{id}/permissions → 200 (bulk replace; removing a permission ends the user's login sessions). */
 export async function setUserPermissions(
 	request: APIRequestContext,
 	userId: string,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from collections.abc import AsyncGenerator, Iterator
 from typing import Any
 from unittest.mock import patch
@@ -28,6 +29,7 @@ from jentic_one.registry.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import encode_catalog_cursor
+from jentic_one.shared.ttl_cache import AsyncTTLCache
 from jentic_one.shared.web.deps import resolve_identity
 from tests.web.conftest import noop_lifespan
 
@@ -59,12 +61,17 @@ def _spec() -> dict[str, Any]:
     }
 
 
+#: Spec URLs the mock upstream served, in order — lets tests assert fetch counts.
+_SPEC_FETCHES: list[str] = []
+
+
 def _mock_transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url == _MANIFEST_URL:
             body = _manifest()
         elif url.endswith("/openapi.json"):
+            _SPEC_FETCHES.append(url)
             body = _spec()
         else:
             return httpx.Response(404, json={"error": "not found"})
@@ -84,13 +91,18 @@ def _mock_github() -> Iterator[None]:
         kwargs.pop("transport", None)
         return real_client_cls(transport=_mock_transport(), **kwargs)  # type: ignore[arg-type]
 
+    _SPEC_FETCHES.clear()
     with patch("jentic_one.registry.services.catalog.fetch.httpx.AsyncClient", _factory):
         yield
 
 
 @pytest.fixture(autouse=True)
 async def _clean_catalog(web_context: Context) -> AsyncGenerator[None, None]:
-    """Empty the catalog cache around each test for deterministic counts."""
+    """Empty the catalog cache around each test for deterministic counts.
+
+    The preview cache needs no reset: ``web_context`` is function-scoped, so each
+    test gets a fresh ``Context`` and with it an empty preview cache.
+    """
 
     async def _truncate() -> None:
         async with web_context.registry_db.session() as session:
@@ -504,6 +516,80 @@ def test_preview_operations_q_at_max_length_accepted(admin_client: TestClient) -
     r = admin_client.get("/catalog/stripe.com/operations", params={"q": "x" * 500})
     assert r.status_code == 200
     assert r.json()["total"] == 0
+
+
+def test_preview_reuses_upstream_fetch_within_ttl(admin_client: TestClient) -> None:
+    """Paging, filtering, and reloading one entry fetch its upstream spec once (#1440)."""
+    admin_client.post("/catalog:refresh")
+    for params in ({}, {"q": "create"}, {"limit": 1, "offset": 1}, {}):
+        r = admin_client.get("/catalog/stripe.com/operations", params=params)
+        assert r.status_code == 200
+    assert len(_SPEC_FETCHES) == 1
+    # Filtering still runs per request against the cached projection.
+    filtered = admin_client.get("/catalog/stripe.com/operations", params={"q": "create"}).json()
+    assert filtered["total"] == 1
+    assert len(_SPEC_FETCHES) == 1
+
+
+def test_catalog_refresh_invalidates_preview_cache(admin_client: TestClient) -> None:
+    """`POST /catalog:refresh` drops cached previews, so the next preview refetches."""
+    admin_client.post("/catalog:refresh")
+    admin_client.get("/catalog/stripe.com/operations")
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 1
+
+    assert admin_client.post("/catalog:refresh").status_code == 200
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 2
+
+
+def test_preview_refetches_after_ttl_expiry(
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    cfg = web_context.config.catalog
+    ttl = cfg.preview_cache_ttl_seconds
+    # Inject the clock through the cache itself rather than patching a module global.
+    monkeypatch.setattr(
+        web_context,
+        "_catalog_preview_cache",
+        AsyncTTLCache(
+            max_entries=cfg.preview_cache_max_entries, ttl_seconds=ttl, clock=lambda: now[0]
+        ),
+    )
+    admin_client.post("/catalog:refresh")
+
+    admin_client.get("/catalog/stripe.com/operations")
+    now[0] += ttl - 1
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 1
+
+    now[0] += 1
+    r = admin_client.get("/catalog/stripe.com/operations")
+    assert r.status_code == 200
+    assert len(_SPEC_FETCHES) == 2
+
+
+def test_preview_failure_is_remembered_for_failure_ttl(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spec that fails to load is not refetched on every preview within the failure TTL."""
+    monkeypatch.setattr(sys.modules[__name__], "_spec", lambda: ["not", "an", "object"])
+    admin_client.post("/catalog:refresh")
+    first = admin_client.get("/catalog/stripe.com/operations")
+    second = admin_client.get("/catalog/stripe.com/operations")
+    assert first.status_code == second.status_code == 502
+    assert len(_SPEC_FETCHES) == 1
+
+
+def test_preview_cache_disabled_by_zero_ttl(
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_context.config.catalog, "preview_cache_ttl_seconds", 0)
+    admin_client.post("/catalog:refresh")
+    admin_client.get("/catalog/stripe.com/operations")
+    admin_client.get("/catalog/stripe.com/operations")
+    assert len(_SPEC_FETCHES) == 2
 
 
 # ── import ───────────────────────────────────────────────────────────────────

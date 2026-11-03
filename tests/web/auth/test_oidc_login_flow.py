@@ -11,15 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 from base64 import urlsafe_b64encode
 from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import jwt
 import pytest
 import respx
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
@@ -33,14 +35,16 @@ from httpx import Response
 # SDK depends on it): upstream-mock responses stay httpx.Response (the app's
 # own client), while TestClient calls answer httpx2 responses.
 from httpx2 import Response as ClientResponse
-from jwt.algorithms import ECAlgorithm
+from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.repos import UserRepository
+from jentic_one.admin.repos import ExternalIdentityRepository, UserRepository
 from jentic_one.auth.core.idp import (
     AdmissionDecision,
     IdpClaims,
@@ -49,6 +53,8 @@ from jentic_one.auth.core.idp import (
     set_admission_policy,
     set_default_idp_grants,
 )
+from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.app import create_app
 from jentic_one.shared.config import IdpConfig, PlatformClientConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
@@ -61,7 +67,20 @@ pytestmark = pytest.mark.integration
 FAKE_IDP_ISSUER = "https://fake-idp.test"
 FAKE_IDP_TOKEN = f"{FAKE_IDP_ISSUER}/oauth/token"
 FAKE_IDP_USERINFO = f"{FAKE_IDP_ISSUER}/userinfo"
+FAKE_IDP_DISCOVERY = f"{FAKE_IDP_ISSUER}/.well-known/openid-configuration"
+FAKE_IDP_JWKS = f"{FAKE_IDP_ISSUER}/.well-known/jwks.json"
 FAKE_PROVIDER = "fake-google"
+UPSTREAM_CLIENT_ID = "upstream-client"
+
+_UPSTREAM_RSA_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_UPSTREAM_JWK: dict[str, Any] = {
+    **jwt.api_jwk.PyJWK.from_json(RSAAlgorithm.to_jwk(_UPSTREAM_RSA_KEY.public_key()))._jwk_data,
+    "kid": "upstream-rs256-kid",
+    "use": "sig",
+    "alg": "RS256",
+}
+_LAST_UPSTREAM_NONCE: dict[str, str] = {"value": ""}
+_LAST_UPSTREAM_CODE_CHALLENGE: dict[str, str] = {"value": ""}
 
 # The platform OAuth client (e.g. the web app).
 CLIENT_ID = "jentic-web"
@@ -143,12 +162,54 @@ async def _cleanup(oidc_context: Context) -> AsyncGenerator[None, None]:
         await session.execute(delete(User).where(User.auth_provider == FAKE_PROVIDER))
 
 
-def _stub_idp(*, sub: str, email: str, email_verified: bool) -> None:
-    """Install respx mocks for the upstream IdP token + userinfo endpoints."""
-    respx.post(FAKE_IDP_TOKEN).mock(
-        return_value=Response(200, json={"access_token": "upstream-access-token"})
+def _stub_idp(
+    *,
+    sub: str,
+    email: str,
+    email_verified: bool,
+    issuer: str = FAKE_IDP_ISSUER,
+    token_url: str = FAKE_IDP_TOKEN,
+    userinfo_url: str = FAKE_IDP_USERINFO,
+) -> None:
+    """Install respx mocks for the upstream IdP discovery, JWKS, token, and userinfo endpoints."""
+    discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    jwks_url = f"{issuer.rstrip('/')}/.well-known/jwks.json"
+    respx.get(discovery_url).mock(
+        return_value=Response(200, json={"issuer": issuer, "jwks_uri": jwks_url})
     )
-    respx.get(FAKE_IDP_USERINFO).mock(
+    respx.get(jwks_url).mock(return_value=Response(200, json={"keys": [_UPSTREAM_JWK]}))
+
+    def _token_handler(request: Any) -> Response:
+        form = parse_qs(request.content.decode())
+        code_verifier = form.get("code_verifier", [""])[0]
+        expected_challenge = _LAST_UPSTREAM_CODE_CHALLENGE["value"]
+        if expected_challenge:
+            computed = (
+                urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest())
+                .rstrip(b"=")
+                .decode()
+            )
+            assert computed == expected_challenge, "upstream PKCE verifier mismatch"
+        id_token = jwt.encode(
+            {
+                "iss": issuer,
+                "sub": sub,
+                "aud": UPSTREAM_CLIENT_ID,
+                "nonce": _LAST_UPSTREAM_NONCE["value"],
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 300,
+            },
+            _UPSTREAM_RSA_KEY,
+            algorithm="RS256",
+            headers={"kid": "upstream-rs256-kid"},
+        )
+        return Response(
+            200,
+            json={"access_token": "upstream-access-token", "id_token": id_token},
+        )
+
+    respx.post(token_url).mock(side_effect=_token_handler)
+    respx.get(userinfo_url).mock(
         return_value=Response(
             200,
             json={
@@ -168,7 +229,13 @@ class AuthorizeStart:
     code_verifier: str
 
 
-def _begin_authorize(client: TestClient, *, state: str, nonce: str) -> AuthorizeStart:
+def _begin_authorize(
+    client: TestClient,
+    *,
+    state: str,
+    nonce: str,
+    expected_issuer: str = FAKE_IDP_ISSUER,
+) -> AuthorizeStart:
     """Hit /authorize and capture the signed internal state + PKCE verifier."""
     verifier, challenge = _pkce_pair()
     resp = client.get(
@@ -186,8 +253,12 @@ def _begin_authorize(client: TestClient, *, state: str, nonce: str) -> Authorize
     )
     assert resp.status_code == 302, resp.text
     parsed = urlparse(resp.headers["location"])
-    assert f"{parsed.scheme}://{parsed.netloc}" == FAKE_IDP_ISSUER, resp.headers["location"]
-    signed_state = str(parse_qs(parsed.query)["state"][0])
+    assert f"{parsed.scheme}://{parsed.netloc}" == expected_issuer, resp.headers["location"]
+    query = parse_qs(parsed.query)
+    signed_state = str(query["state"][0])
+    _LAST_UPSTREAM_NONCE["value"] = str(query["nonce"][0])
+    assert query.get("code_challenge_method") == ["S256"]
+    _LAST_UPSTREAM_CODE_CHALLENGE["value"] = str(query["code_challenge"][0])
     return AuthorizeStart(signed_state=signed_state, code_verifier=verifier)
 
 
@@ -422,6 +493,69 @@ async def test_new_user_defaults_to_no_grants(
 SHARED_EMAIL = "victim@example.com"
 
 
+@respx.mock
+async def test_shared_provider_different_issuer_does_not_reuse_external_identity(
+    oidc_context: Context, _cleanup: None
+) -> None:
+    """Two OIDC issuers sharing the same provider label must not share external identities."""
+    issuer_a = "https://idp-a.test"
+    issuer_b = "https://idp-b.test"
+    shared_sub = "shared-subject-42"
+
+    oidc_context.config.auth.idp = IdpConfig(
+        enabled=True,
+        provider=FAKE_PROVIDER,
+        issuer=issuer_a,
+        client_id=UPSTREAM_CLIENT_ID,
+        client_secret="upstream-secret",  # type: ignore[arg-type]
+        scopes=["openid", "email", "profile"],
+    )
+    _stub_idp(
+        sub=shared_sub,
+        email="alice@idp-a.test",
+        email_verified=True,
+        issuer=issuer_a,
+        token_url=f"{issuer_a}/oauth/token",
+        userinfo_url=f"{issuer_a}/userinfo",
+    )
+
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client_a:
+        start_a = _begin_authorize(client_a, state="s1", nonce="n1", expected_issuer=issuer_a)
+        code_a = _callback(client_a, signed_state=start_a.signed_state)
+        resp_a = _exchange(client_a, code=code_a, code_verifier=start_a.code_verifier)
+        assert resp_a.status_code == 200, resp_a.text
+        claims_a = _verify_id_token(client_a, resp_a.json()["id_token"], expected_nonce="n1")
+
+    # Switch to a different OIDC issuer while keeping the same provider name ("fake-google").
+    oidc_context.config.auth.idp = IdpConfig(
+        enabled=True,
+        provider=FAKE_PROVIDER,
+        issuer=issuer_b,
+        client_id=UPSTREAM_CLIENT_ID,
+        client_secret="upstream-secret",  # type: ignore[arg-type]
+        scopes=["openid", "email", "profile"],
+    )
+    _stub_idp(
+        sub=shared_sub,
+        email="bob@idp-b.test",
+        email_verified=True,
+        issuer=issuer_b,
+        token_url=f"{issuer_b}/oauth/token",
+        userinfo_url=f"{issuer_b}/userinfo",
+    )
+
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client_b:
+        start_b = _begin_authorize(client_b, state="s2", nonce="n2", expected_issuer=issuer_b)
+        code_b = _callback(client_b, signed_state=start_b.signed_state)
+        resp_b = _exchange(client_b, code=code_b, code_verifier=start_b.code_verifier)
+        assert resp_b.status_code == 200, resp_b.text
+        claims_b = _verify_id_token(client_b, resp_b.json()["id_token"], expected_nonce="n2")
+
+    assert claims_a["sub"] != claims_b["sub"]
+    assert claims_a["email"] == "alice@idp-a.test"
+    assert claims_b["email"] == "bob@idp-b.test"
+
+
 @pytest.fixture()
 async def existing_local_user(oidc_context: Context) -> AsyncGenerator[str, None]:
     """A pre-existing local user whose email an unverified IdP claim will try to match."""
@@ -440,3 +574,260 @@ async def existing_local_user(oidc_context: Context) -> AsyncGenerator[str, None
 
     async with oidc_context.admin_db.transaction() as session:
         await session.execute(delete(User).where(User.id == user_id))
+
+
+@pytest.mark.parametrize("unscoped_issuer", [FAKE_PROVIDER, ""])
+@respx.mock
+async def test_unscoped_external_identity_signs_in_and_pins_to_issuer(
+    oidc_context: Context, _cleanup: None, unscoped_issuer: str
+) -> None:
+    """A link with no real issuer resolves its user once, then answers only to that issuer.
+
+    ``issuer = provider`` is what the issuer backfill writes for a provider
+    without a well-known issuer; ``issuer = ''`` is what a replica that does not
+    set the column writes. The IdP sends ``email_verified=false``, so only the
+    link (never the email match) can resolve the user.
+    """
+    subject = "unscoped-subject-7"
+    email = "unscoped@example.com"
+    async with oidc_context.admin_db.transaction() as session:
+        user = await UserRepository.create(
+            session,
+            email=email,
+            first_name="Ada",
+            last_name="Lovelace",
+            auth_provider=FAKE_PROVIDER,
+            invite_state=InviteState.ACCEPTED,
+            created_by="self",
+        )
+        user_id = user.id
+        session.add(
+            ExternalIdentity(
+                provider=FAKE_PROVIDER,
+                issuer=unscoped_issuer,
+                external_subject=subject,
+                user_id=user_id,
+                email=email,
+                created_by=user_id,
+            )
+        )
+
+    # The consent-page lookup resolves the unscoped link read-only, leaving it unpinned.
+    probe = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=False,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    assert await AuthorizeService(oidc_context).resolve_existing_user_id(probe) == user_id
+    async with oidc_context.admin_db.session() as session:
+        unpinned = await session.execute(
+            select(ExternalIdentity.issuer).where(ExternalIdentity.external_subject == subject)
+        )
+        assert list(unpinned.scalars()) == [unscoped_issuer]
+
+    _stub_idp(sub=subject, email=email, email_verified=False)
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client_a:
+        start = _begin_authorize(client_a, state="s1", nonce="n1")
+        code = _callback(client_a, signed_state=start.signed_state)
+        resp = _exchange(client_a, code=code, code_verifier=start.code_verifier)
+        assert resp.status_code == 200, resp.text
+        claims = _verify_id_token(client_a, resp.json()["id_token"], expected_nonce="n1")
+    assert claims["sub"] == user_id
+
+    async with oidc_context.admin_db.session() as session:
+        links = (
+            await session.execute(
+                select(ExternalIdentity.issuer, ExternalIdentity.user_id).where(
+                    ExternalIdentity.external_subject == subject
+                )
+            )
+        ).all()
+        reasons = (
+            await session.execute(
+                select(AuditEntry.reason).where(
+                    AuditEntry.target_id == user_id, AuditEntry.action == "update"
+                )
+            )
+        ).scalars()
+        assert f"keyed external identity ({FAKE_PROVIDER}) to its issuer" in list(reasons)
+    assert [tuple(row) for row in links] == [(FAKE_IDP_ISSUER, user_id)]
+
+    # Pinned: the same subject from another issuer under the same provider label
+    # no longer resolves to the user (and its unverified email cannot link).
+    issuer_b = "https://idp-b.test"
+    oidc_context.config.auth.idp = IdpConfig(
+        enabled=True,
+        provider=FAKE_PROVIDER,
+        issuer=issuer_b,
+        client_id=UPSTREAM_CLIENT_ID,
+        client_secret="upstream-secret",  # type: ignore[arg-type]
+        scopes=["openid", "email", "profile"],
+    )
+    _stub_idp(
+        sub=subject,
+        email=email,
+        email_verified=False,
+        issuer=issuer_b,
+        token_url=f"{issuer_b}/oauth/token",
+        userinfo_url=f"{issuer_b}/userinfo",
+    )
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client_b:
+        start_b = _begin_authorize(client_b, state="s2", nonce="n2", expected_issuer=issuer_b)
+        refused = client_b.get(
+            "/oauth/callback", params={"code": "fake-idp-code", "state": start_b.signed_state}
+        )
+    assert refused.status_code == 302, refused.text
+    assert urlparse(refused.headers["location"]).path == "/error", refused.headers["location"]
+    async with oidc_context.admin_db.session() as session:
+        after = (
+            await session.execute(
+                select(ExternalIdentity.issuer).where(ExternalIdentity.external_subject == subject)
+            )
+        ).scalars()
+        assert list(after) == [FAKE_IDP_ISSUER]
+
+
+async def _seed_linked_user(ctx: Context, *, email: str, subject: str, issuer: str) -> str:
+    """A local user with one ``FAKE_PROVIDER`` link keyed to ``issuer``; returns the user id."""
+    async with ctx.admin_db.transaction() as session:
+        user = await UserRepository.create(
+            session,
+            email=email,
+            first_name="Ada",
+            last_name="Lovelace",
+            auth_provider=FAKE_PROVIDER,
+            invite_state=InviteState.ACCEPTED,
+            created_by="self",
+        )
+        session.add(
+            ExternalIdentity(
+                provider=FAKE_PROVIDER,
+                issuer=issuer,
+                external_subject=subject,
+                user_id=user.id,
+                email=email,
+                created_by=user.id,
+            )
+        )
+        return user.id
+
+
+async def _issuers_of(ctx: Context, subject: str) -> list[tuple[str, str]]:
+    async with ctx.admin_db.session() as session:
+        rows = await session.execute(
+            select(ExternalIdentity.issuer, ExternalIdentity.user_id)
+            .where(ExternalIdentity.external_subject == subject)
+            .order_by(ExternalIdentity.issuer)
+        )
+        return [(issuer, user_id) for issuer, user_id in rows.all()]
+
+
+@respx.mock
+async def test_unscoped_link_is_not_adopted_once_the_provider_signed_in_through_another_issuer(
+    oidc_context: Context, _cleanup: None
+) -> None:
+    """A provider link keyed to another issuer means the unscoped link may be that issuer's.
+
+    The configured issuer then neither resolves nor pins the unscoped link: an
+    unverified email is refused, and a verified one links the account afresh
+    under the configured issuer, leaving the unscoped link untouched.
+    """
+    subject = "unscoped-subject-8"
+    email = "unscoped-8@example.com"
+    user_id = await _seed_linked_user(oidc_context, email=email, subject=subject, issuer="")
+    await _seed_linked_user(
+        oidc_context,
+        email="earlier-issuer@example.com",
+        subject="earlier-issuer-subject",
+        issuer="https://idp-earlier.test",
+    )
+    probe = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=False,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    assert await AuthorizeService(oidc_context).resolve_existing_user_id(probe) is None
+
+    _stub_idp(sub=subject, email=email, email_verified=False)
+    with TestClient(_build_app(oidc_context), follow_redirects=False) as client:
+        start = _begin_authorize(client, state="s1", nonce="n1")
+        refused = client.get(
+            "/oauth/callback", params={"code": "fake-idp-code", "state": start.signed_state}
+        )
+    assert refused.status_code == 302, refused.text
+    assert urlparse(refused.headers["location"]).path == "/error", refused.headers["location"]
+    assert await _issuers_of(oidc_context, subject) == [("", user_id)]
+
+    verified = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=True,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    assert await AuthorizeService(oidc_context).provision_from_claims(verified) == user_id
+    assert await _issuers_of(oidc_context, subject) == [("", user_id), (FAKE_IDP_ISSUER, user_id)]
+
+
+@pytest.mark.parametrize("winner_issuer", [FAKE_IDP_ISSUER, "https://idp-other.test"])
+async def test_concurrent_first_logins_pin_an_unscoped_link_once(
+    oidc_context: Context,
+    _cleanup: None,
+    monkeypatch: pytest.MonkeyPatch,
+    winner_issuer: str,
+) -> None:
+    """Only the login whose pin lands keys the link; the other resolves it only for that issuer.
+
+    A concurrent login pins the link (to ``winner_issuer``) between this login
+    reading it and pinning it. This login's pin then matches no row and records
+    no audit entry; it resolves the user when the winner pinned the same issuer,
+    and otherwise falls through to the email match, which refuses an unverified
+    email.
+    """
+    subject = "unscoped-subject-9"
+    email = "unscoped-9@example.com"
+    user_id = await _seed_linked_user(
+        oidc_context, email=email, subject=subject, issuer=FAKE_PROVIDER
+    )
+    pin_issuer = ExternalIdentityRepository.pin_issuer
+
+    async def _pinned_concurrently(
+        session: AsyncSession, ext_id: ExternalIdentity, issuer: str
+    ) -> bool:
+        async with oidc_context.admin_db.transaction() as other:
+            row = await ExternalIdentityRepository.get_unscoped(other, FAKE_PROVIDER, subject)
+            assert row is not None
+            assert await pin_issuer(other, row, winner_issuer)
+        return await pin_issuer(session, ext_id, issuer)
+
+    monkeypatch.setattr(ExternalIdentityRepository, "pin_issuer", _pinned_concurrently)
+    claims = IdpClaims(
+        external_subject=subject,
+        email=email,
+        first_name="Ada",
+        last_name="Lovelace",
+        email_verified=False,
+        issuer=FAKE_IDP_ISSUER,
+    )
+    service = AuthorizeService(oidc_context)
+    if winner_issuer == FAKE_IDP_ISSUER:
+        assert await service.provision_from_claims(claims) == user_id
+    else:
+        with pytest.raises(InvalidGrantError, match="not verified"):
+            await service.provision_from_claims(claims)
+    assert await _issuers_of(oidc_context, subject) == [(winner_issuer, user_id)]
+    async with oidc_context.admin_db.session() as session:
+        audited = await session.execute(
+            select(AuditEntry.id).where(
+                AuditEntry.target_id == user_id,
+                AuditEntry.reason == f"keyed external identity ({FAKE_PROVIDER}) to its issuer",
+            )
+        )
+        assert audited.all() == []

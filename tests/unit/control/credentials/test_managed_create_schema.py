@@ -169,6 +169,37 @@ async def test_non_oauth2_types_unaffected() -> None:
         await svc.create(payload, identity=_fake_identity())
 
 
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("field", "bad_url"),
+    [
+        ("token_url", "http://example.com/token"),
+        ("token_url", "HTTP://example.com/token"),
+        ("token_url", "example.com/token"),
+        ("authorize_url", "http://example.com/authorize"),
+        ("authorize_url", "HTTP://example.com/authorize"),
+        ("authorize_url", "example.com/authorize"),
+    ],
+)
+async def test_oauth2_create_requires_https_for_endpoint_urls(field: str, bad_url: str) -> None:
+    """Pins #1779: OAuth2 credential create refuses non-https token_url and authorize_url."""
+    ctx = _make_context()
+    svc = CredentialService(ctx)
+    payload = CredentialCreate(
+        type=CredentialType.OAUTH2,
+        name="test",
+        api=APIReference(vendor="test.com", name="test", version="v1"),
+        provider="static",
+        grant_type="authorization_code",
+        client_id="id",
+        client_secret="secret",  # pragma: allowlist secret
+        token_url=bad_url if field == "token_url" else "https://example.com/token",
+        authorize_url=bad_url if field == "authorize_url" else "https://example.com/authorize",
+    )
+    with pytest.raises(InvalidCredentialInputError, match=rf"^Invalid {field}: must use https$"):
+        await svc.create(payload, identity=_fake_identity())
+
+
 def test_credential_create_request_accepts_no_auth() -> None:
     """The create-request union must accept a `no_auth` body.
 

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
-from datetime import datetime
+from collections.abc import Collection, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload, raiseload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -15,8 +15,11 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import StoredCredentialType
+from jentic_one.shared.pagination import Cursor
 
 # Secret-material child relationships on ``Credential`` (one row per credential).
 _CHILD_RELATIONSHIPS: tuple[str, ...] = (
@@ -43,6 +46,17 @@ _MATERIAL_RELATIONSHIP: Mapping[str, str] = {
     StoredCredentialType.OAUTH2_IMPLICIT: "oauth_token",
     StoredCredentialType.AWS_SIGV4: "sigv4_credential",
 }
+
+# OAuth grants a human connects interactively; they need a live token.
+_INTERACTIVE_OAUTH_TYPES: tuple[str, ...] = (
+    StoredCredentialType.OAUTH2_AUTHORIZATION_CODE.value,
+    StoredCredentialType.OAUTH2_DEVICE_CODE.value,
+)
+
+
+# Upper bound on IDs bound into one IN (...) clause, well under SQLite's and
+# Postgres's host-parameter limits.
+_ID_BATCH_SIZE = 500
 
 
 class CredentialRepository:
@@ -168,7 +182,7 @@ class CredentialRepository:
     async def list_all(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         vendor: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
@@ -177,12 +191,7 @@ class CredentialRepository:
         stmt = select(Credential).order_by(Credential.created_at.desc(), Credential.id.desc())
         if vendor is not None:
             stmt = stmt.where(Credential.api_vendor == vendor)
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (Credential.created_at < cursor_ts)
-                | ((Credential.created_at == cursor_ts) & (Credential.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, Credential.created_at, Credential.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
@@ -218,13 +227,47 @@ class CredentialRepository:
         return credential
 
     @staticmethod
-    async def get_creators_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str | None]:
-        """Batch-resolve credential IDs to their ``created_by`` (missing ids omitted)."""
+    async def get_creators_by_ids(
+        session: AsyncSession,
+        ids: list[str],
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> dict[str, str | None]:
+        """Batch-resolve credential IDs to their ``created_by`` (missing/filtered ids omitted)."""
         if not ids:
             return {}
-        stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
+        creators: dict[str, str | None] = {}
+        for i in range(0, len(ids), _ID_BATCH_SIZE):
+            batch = ids[i : i + _ID_BATCH_SIZE]
+            stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(batch))
+            if filters is not None:
+                for f in filters:
+                    stmt = stmt.where(f)
+            result = await session.execute(stmt)
+            for row in result:
+                creators[row.id] = row.created_by
+        return creators
+
+    @staticmethod
+    async def get_creators_among(
+        session: AsyncSession,
+        actor_ids: Sequence[str],
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> set[str]:
+        """Return the ids in ``actor_ids`` that created a credential matching ``filters``."""
+        if not actor_ids:
+            return set()
+        stmt = (
+            select(Credential.created_by)
+            .where(Credential.created_by.in_(list(actor_ids)))
+            .distinct()
+        )
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
         result = await session.execute(stmt)
-        return {row.id: row.created_by for row in result}
+        return {row for row in result.scalars().all() if row is not None}
 
     @staticmethod
     async def get_registration_display_names(
@@ -254,11 +297,15 @@ class CredentialRepository:
         *,
         created_by: str,
     ) -> Credential | None:
-        """Re-attribute a credential to a different creator (connect-session confirm)."""
+        """Re-attribute a credential (and any child material rows) to a creator."""
         credential = await session.get(Credential, credential_id)
         if credential is None:
             return None
         credential.created_by = created_by
+        for rel in _CHILD_RELATIONSHIPS:
+            child = getattr(credential, rel)
+            if child is not None:
+                child.created_by = created_by
         await session.flush()
         return credential
 
@@ -318,20 +365,55 @@ class CredentialRepository:
         vendor: str,
         name: str | None,
         version: str | None,
+        account_ref_providers: Collection[str],
         exclude_ids: Sequence[str] = (),
+        created_by_in: Sequence[str] | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
     ) -> list[Credential]:
         """Connected, active credentials whose API scope covers the identity.
 
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
-        a ``None`` reference axis matches any value. ``filters`` carries the
+        a ``None`` reference axis matches any value. ``created_by_in``
+        optionally restricts rows to a set of creator IDs (e.g. the target
+        agent's owner and the confirming admin, #1838); ``filters`` carries the
         caller's access scoping.
+
+        An interactive OAuth grant (authorization_code / device_code) counts
+        as connected only while it can mint a token, matching the redacted
+        view's ``connected`` flag: an account reference on one of
+        ``account_ref_providers`` (``ProviderRegistry.account_ref_provider_names``),
+        or a live token row that is unrevoked and either refreshable or
+        unexpired. One whose grant was dropped or revoked needs a reconnect,
+        so it is not offered for reuse, even when ``provider_account_ref``
+        holds an identity-echo display name.
         """
+        now = datetime.now(UTC)
+        live_grant = (
+            select(OAuthToken.id)
+            .where(
+                OAuthToken.credential_id == Credential.id,
+                OAuthToken.revoked_at.is_(None),
+                or_(
+                    OAuthToken.encrypted_refresh_token.is_not(None),
+                    OAuthToken.expires_at.is_(None),
+                    OAuthToken.expires_at > now,
+                ),
+            )
+            .exists()
+        )
         stmt = select(Credential).where(
             Credential.api_vendor == vendor,
             Credential.state == "connected",
             Credential.active.is_(True),
+            or_(
+                Credential.type.not_in(_INTERACTIVE_OAUTH_TYPES),
+                and_(
+                    Credential.provider.in_(sorted(account_ref_providers)),
+                    Credential.provider_account_ref.is_not(None),
+                ),
+                live_grant,
+            ),
         )
         if name is not None:
             stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
@@ -341,12 +423,43 @@ class CredentialRepository:
             )
         if exclude_ids:
             stmt = stmt.where(Credential.id.not_in(list(exclude_ids)))
+        if created_by_in is not None:
+            stmt = stmt.where(Credential.created_by.in_(list(created_by_in)))
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
         stmt = stmt.order_by(Credential.created_at.desc(), Credential.id.desc()).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def any_covering(
+        session: AsyncSession,
+        *,
+        credential_ids: Sequence[str],
+        vendor: str,
+        name: str | None,
+        version: str | None,
+    ) -> bool:
+        """Whether any of ``credential_ids`` has an API scope covering the identity.
+
+        Same coverage as :meth:`list_connected_covering` (a NULL credential
+        axis is a wildcard; a ``None`` reference axis matches any value), but
+        whatever the credential's state.
+        """
+        if not credential_ids:
+            return False
+        stmt = select(Credential.id).where(
+            Credential.id.in_(list(credential_ids)), Credential.api_vendor == vendor
+        )
+        if name is not None:
+            stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
+        if version is not None:
+            stmt = stmt.where(
+                or_(Credential.api_version.is_(None), Credential.api_version == version)
+            )
+        result = await session.execute(stmt.limit(1))
+        return result.first() is not None
 
     @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:

@@ -93,7 +93,94 @@ func releaseTag(version string) string {
 			return ""
 		}
 	}
+	// A Docker tag is [A-Za-z0-9_.-] only, so semver build metadata ("+ci.7")
+	// cannot be one. Refusing here turns such a ref into the caller's own
+	// "not a published release version" message, rather than a reference that
+	// resolves fine and then fails deep in `docker pull` with the daemon's raw
+	// "invalid reference format".
+	if !isDockerTag(v) {
+		return ""
+	}
 	return v
+}
+
+// isDockerTag reports whether s is a legal Docker image tag: up to 128 of
+// [A-Za-z0-9_.-], not opening with a separator.
+func isDockerTag(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	if strings.ContainsAny(s[:1], ".-_") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// SwapImageTag returns ref with its tag replaced by the image tag for version,
+// keeping the registry and repository that ref already names.
+//
+// Refreshing a deployed stack must not re-derive the registry: a stack
+// installed from a mirror, or from a fork's repository, names that one, and
+// resolving the published default instead would move the stack to a different
+// registry — silently on a host that can reach it, and fatally on one that
+// cannot. ResolveAppImage is for a fresh install, which has no reference to
+// preserve; this is for an update, which does.
+//
+// A digest-pinned reference has no tag to move and no way to learn the new
+// digest, so it is refused rather than downgraded to a mutable tag.
+func SwapImageTag(ref, version string) (string, error) {
+	tag := releaseTag(version)
+	if tag == "" {
+		return "", fmt.Errorf("%q is not a published release version", version)
+	}
+	repo, _, digest := SplitImageRef(ref)
+	if digest != "" {
+		return "", fmt.Errorf(
+			"the stack image %s is pinned to a digest, which cannot be moved to %s automatically; "+
+				"reinstall with --image-tag to pin the new digest or tag yourself", ref, tag)
+	}
+	if repo == "" {
+		return "", fmt.Errorf("%q names no image repository", ref)
+	}
+	return repo + ":" + tag, nil
+}
+
+// IsOperatorTagPin reports whether ref carries a tag this tool did not choose
+// itself — not a release version, and not the "latest" fallback it writes for a
+// non-release install.
+//
+// Such a tag is an operator's own `install --image-tag` choice. An update still
+// moves it to the target release, because refusing would leave that stack with
+// no way to update at all, but the caller says so rather than moving it
+// silently.
+func IsOperatorTagPin(ref string) bool {
+	_, tag, digest := SplitImageRef(ref)
+	if digest != "" || tag == "" || tag == "latest" {
+		return false
+	}
+	return releaseTag(tag) == ""
+}
+
+// SplitImageRef splits an image reference into its repository and whichever of
+// a tag or a digest pins it. A ':' inside a registry host ("localhost:5000/app")
+// is not a tag separator, so only a ':' after the last '/' counts.
+func SplitImageRef(ref string) (repo, tag, digest string) {
+	if i := strings.Index(ref, "@"); i >= 0 {
+		return ref[:i], "", ref[i+1:]
+	}
+	slash := strings.LastIndex(ref, "/")
+	if i := strings.LastIndex(ref, ":"); i > slash {
+		return ref[:i], ref[i+1:], ""
+	}
+	return ref, "", ""
 }
 
 // applyRef joins a repo with a bare tag or an @sha256: digest.

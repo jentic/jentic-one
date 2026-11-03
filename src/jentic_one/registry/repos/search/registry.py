@@ -26,7 +26,7 @@ def register_strategy[T: type[SearchStrategy]](cls: T) -> T:
     import); raises ``ValueError`` when the key is already bound to a *different*
     class, so an extension can't silently shadow a built-in strategy. Same
     posture as the other registration seams: ``register_config``
-    (``shared/config.py``), ``register_telemetry_event``
+    (``shared/config/loader.py``), ``register_telemetry_event``
     (``shared/telemetry/events.py``), ``register_target``
     (``migrations/targets.py``), and ``register_pipeline_stage``
     (``registry/ingest/pipeline/stage_registry.py``).

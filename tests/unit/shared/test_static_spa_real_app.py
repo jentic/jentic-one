@@ -58,6 +58,8 @@ def _make_realistic_bundle(tmp_path: Path) -> Path:
     )
     (static_dir / "assets" / "index-abc123.js").write_text("export default 1;", encoding="utf-8")
     (static_dir / "assets" / "index-abc123.css").write_text("body{}", encoding="utf-8")
+    (static_dir / "assets" / "data-abc123.json").write_text('{"k": 1}', encoding="utf-8")
+    (static_dir / "cli-reference.json").write_text('{"commands": []}', encoding="utf-8")
     (static_dir / "favicon.ico").write_text("ico", encoding="utf-8")
     (static_dir / "apple-touch-icon.png").write_text("png", encoding="utf-8")
     return static_dir
@@ -232,6 +234,42 @@ def test_standalone_admin_unknown_non_app_path_404s(ctx: Context, bundle: Path) 
     resp = client.get("/users/does-not-exist-id-zzz/sub/path", headers=JSON)
     assert resp.status_code == 404
     assert "<title>" not in resp.text
+
+
+@pytest.mark.parametrize("factory", ["combined", "standalone"])
+def test_spa_cache_policy_survives_a_credentialed_request(
+    ctx: Context, bundle: Path, factory: str
+) -> None:
+    """Pins #1835: the authenticated-JSON ``private, no-store`` default never
+    replaces the SPA bundle's own cache policy, even when the browser sends a
+    bearer token alongside the navigation."""
+    app = (
+        create_combined_app(ctx, ["admin", "control", "registry"])
+        if factory == "combined"
+        else create_admin_app(ctx)
+    )
+    client = _client(app)
+    bearer = {"Authorization": "Bearer test-token"}
+
+    shell = client.get(f"{SPA_MOUNT_PATH}/", headers={**HTML, **bearer})
+    assert shell.status_code == 200
+    assert shell.headers.get_list("cache-control") == ["no-cache"]
+
+    asset = client.get(f"{SPA_MOUNT_PATH}/assets/index-abc123.js", headers=bearer)
+    assert asset.status_code == 200
+    assert asset.headers.get_list("cache-control") == ["public, max-age=31536000, immutable"]
+
+    # Bundled JSON files are SPA responses too: the authenticated-JSON default
+    # stays off the whole mount, so they keep the bundle's policy.
+    reference = client.get(f"{SPA_MOUNT_PATH}/cli-reference.json", headers=bearer)
+    assert reference.status_code == 200
+    assert reference.headers["content-type"].startswith("application/json")
+    assert reference.headers.get_list("cache-control") == ["no-cache"]
+
+    data = client.get(f"{SPA_MOUNT_PATH}/assets/data-abc123.json", headers=bearer)
+    assert data.status_code == 200
+    assert data.headers["content-type"].startswith("application/json")
+    assert data.headers.get_list("cache-control") == ["public, max-age=31536000, immutable"]
 
 
 # --------------------------------------------------------------------------

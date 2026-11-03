@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
 from jentic_one.shared.web import openapi_examples as ex
@@ -59,6 +59,15 @@ class BasePermissionRuleSchema(BaseModel):
         default=None,
         examples=[[ex.OPERATION_ID]],
         description="OpenAPI operation IDs to match. None matches all operations.",
+    )
+    comment: str | None = Field(
+        default=None,
+        max_length=500,
+        # Also ``_comment``, the name reads return it under, so a rule read
+        # back can be sent as is.
+        validation_alias=AliasChoices("comment", "_comment"),
+        examples=["Lets the agent draft replies, never send them."],
+        description="Why the rule is there, in words. Shown wherever the rule is listed.",
     )
 
     @model_validator(mode="after")
@@ -110,6 +119,14 @@ class PermissionRuleSchema(BasePermissionRuleSchema):
 class PermissionRuleReadSchema(BaseModel):
     """Permission rule response (includes system fields)."""
 
+    id: str | None = Field(
+        default=None,
+        description=(
+            "ID of the rule (`apr_…` on a binding, `prr_…` in a rule set), so a connect-session "
+            "edit can name it in `remove` or `before`."
+        ),
+        examples=[ex.PERMISSION_RULE_ID],
+    )
     effect: Literal["allow", "deny", "require-approval"] = Field(
         description="Whether this rule allows, denies, or holds the matched request for "
         "human approval (`require-approval`).",
@@ -175,6 +192,68 @@ class PermissionRuleListResponse(BaseModel):
 
     data: list[PermissionRuleReadSchema] = Field(
         description="The binding's permission rules, in evaluation order."
+    )
+
+
+class BindingRuleSetSchema(BaseModel):
+    """The shared rule set a binding points at."""
+
+    id: str = Field(description="ID of the rule set (`prs_…`).", examples=[ex.RULE_SET_ID])
+    name: str = Field(description="Name of the rule set.", examples=["Stripe read-only"])
+    curated: bool = Field(
+        description="True for a curated set, which an edit can copy but never change.",
+        examples=[False],
+    )
+    rules: list[PermissionRuleReadSchema] = Field(
+        description="The set's rules, in evaluation order. They apply instead of `data`."
+    )
+
+
+class ScopeOptionSchema(BaseModel):
+    """One scope the credential's vendor offers, which an edit can add or remove."""
+
+    name: str = Field(description="The scope as the vendor names it.", examples=["gmail.send"])
+    classification: Literal["read", "write", "admin"] = Field(
+        description="What the scope lets a holder do.", examples=["write"]
+    )
+    description: str = Field(
+        description="What the scope grants, in words.", examples=["Send email as the user."]
+    )
+
+
+class BindingAccessResponse(PermissionRuleListResponse):
+    """A binding's permission rules plus the rest of what it grants."""
+
+    rule_set: BindingRuleSetSchema | None = Field(
+        default=None,
+        description=(
+            "The shared rule set the binding points at; null when its own rules (`data`) apply. "
+            "While a set is attached, `data` is dormant."
+        ),
+    )
+    granted_scopes: list[str] | None = Field(
+        default=None,
+        description="Scopes the credential's OAuth grant holds; null when it has none.",
+        examples=[["repo", "read:user"]],
+    )
+    suspended: bool = Field(
+        description="True when the binding is suspended and the agent cannot use it.",
+        examples=[False],
+    )
+    scopes_editable: bool = Field(
+        default=False,
+        description=(
+            "True when an edit can change the credential's OAuth scopes (add or remove); "
+            "the approver signs in to the vendor again for the new set."
+        ),
+        examples=[True],
+    )
+    scope_catalog: list[ScopeOptionSchema] | None = Field(
+        default=None,
+        description=(
+            "The scopes the credential's vendor offers; an edit can add only these. Null when "
+            "its client has no catalog, in which case a scope is passed to the vendor as named."
+        ),
     )
 
 

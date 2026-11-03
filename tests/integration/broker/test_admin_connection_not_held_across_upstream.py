@@ -22,13 +22,15 @@ import socket
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI, Request, Response
-from sqlalchemy import delete, event, select
+from sqlalchemy import delete, event, select, update
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Session
 
@@ -55,8 +57,12 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.db.utils import insert_append_only_row
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
-from jentic_one.shared.jobs.handlers import JobHandlerRegistry
-from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
+from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
+from jentic_one.shared.jobs.protocols import (
+    ActorAuthority,
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
+)
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import (
     ActorType,
@@ -550,6 +556,13 @@ class _AllowBoundCredential:
         return QueuedExecutionVerdict(allowed=True, allowed_credential_ids=(_CREDENTIAL_ID,))
 
 
+class _ActiveActor:
+    """The pre-injection actor read, reporting the job's actor active and permitted."""
+
+    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+        return ActorAuthority(active=True, holds_permission=True)
+
+
 @pytest.fixture()
 async def clean_jobs(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     async def _clean() -> None:
@@ -602,6 +615,7 @@ async def test_queued_execution_holds_no_admin_connection(
             executor=PipelineExecutor(registry),
             credential_injector=CredentialService(ctx),
             execution_authorizer=_AllowBoundCredential(),
+            actor_status=_ActiveActor(),
             # The test upstream listens on loopback, which the default policy blocks.
             egress=EgressConfig(allowed_private_subnets=["127.0.0.0/8"]),
         )
@@ -623,3 +637,94 @@ async def test_queued_execution_holds_no_admin_connection(
     assert record is not None and record.status == ExecutionStatus.COMPLETED
     assert record.credential_id == _CREDENTIAL_ID
     assert len(await _access_events(admin_db, trace_id)) == 1
+    async with admin_db.session() as session:
+        completed = list(
+            (
+                await session.execute(
+                    select(Event).where(
+                        Event.trace_id == trace_id,
+                        Event.type == EventType.EXECUTION_COMPLETED,
+                    )
+                )
+            ).scalars()
+        )
+    assert len(completed) == 1
+    assert completed[0].job_id == job_id
+    assert completed[0].execution_id == record.id
+
+
+async def test_queued_execution_completion_failure_never_resends_upstream_or_credential_audit(
+    integration_context: Context,
+    upstream: _Upstream,
+    seeded_credential: str,
+    trace_id: str,
+    clean_jobs: None,
+) -> None:
+    """Pins #1800: when ``_complete_job`` fails after ``ExecutionHandler`` has
+    sent the upstream call, the job is never requeued, and a visibility-timeout
+    reclaim refuses to re-run it — so neither ``credential.accessed`` nor the
+    upstream HTTP request happens a second time."""
+    ctx = integration_context
+    admin_db = ctx.admin_db
+    execution_id = f"exec_{secrets.token_hex(8)}"
+    async with admin_db.transaction() as session:
+        job = Job(
+            kind=JobKind.EXECUTION,
+            status=JobStatus.QUEUED,
+            execution_id=execution_id,
+            created_by=_AGENT,
+            actor_type=ActorType.AGENT.value,
+            payload={
+                "execution_id": execution_id,
+                "upstream_url": f"http://127.0.0.1:{upstream.port}/thing",
+                "method": "GET",
+                "trace_id": trace_id,
+                "api_vendor": _VENDOR,
+                "api_name": _API_NAME,
+                "api_version": _API_VERSION,
+                "operation": {"id": "getThing", "path": "/thing", "method": "GET"},
+            },
+        )
+        session.add(job)
+        await session.flush()
+        job_id = job.id
+
+    class _FailingCompletionWorker(WorkerLoop):
+        async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
+            raise PoolTimeoutError("QueuePool limit reached")
+
+        async def _sleep(self, delay_s: float) -> None:
+            return None
+
+    async with httpx.AsyncClient() as upstream_client:
+        registry = RunnerRegistry()
+        registry.register(["http", "https"], HttpRunner(upstream_client), required=True)
+        handler = ExecutionHandler(
+            executor=PipelineExecutor(registry),
+            credential_injector=CredentialService(ctx),
+            execution_authorizer=_AllowBoundCredential(),
+            actor_status=_ActiveActor(),
+            egress=EgressConfig(allowed_private_subnets=["127.0.0.0/8"]),
+        )
+        handlers = JobHandlerRegistry()
+        handlers.register(JobKind.EXECUTION, handler)
+        failing_worker = _FailingCompletionWorker(admin_db, handlers, worker_config=WorkerConfig())
+        assert await failing_worker._tick() is True
+        assert await failing_worker._tick() is False
+
+        assert len(upstream.seen) == 1
+        assert len(await _access_events(admin_db, trace_id)) == 1
+
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        async with admin_db.transaction() as session:
+            await session.execute(update(Job).where(Job.id == job_id).values(visible_at=past))
+
+        reclaiming_worker = WorkerLoop(admin_db, handlers, worker_config=WorkerConfig())
+        assert await reclaiming_worker._tick() is True
+
+    assert len(upstream.seen) == 1
+    assert len(await _access_events(admin_db, trace_id)) == 1
+    async with admin_db.session() as session:
+        stored = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one()
+    assert stored.status == JobStatus.FAILED
+    assert stored.visible_at is None

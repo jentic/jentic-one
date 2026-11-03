@@ -24,6 +24,7 @@ from jentic.problem_details import ProblemDetailException
 from jentic_one.shared.db.connectivity import redact_sql
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError, DatabaseUnavailableError
 from jentic_one.shared.state.backend import StateBackendCapacityError
+from jentic_one.shared.web.cache_control import PRIVATE_NO_STORE, request_carries_credential
 
 # The cap keeps the log line short.
 _MAX_LOGGED_DB_DETAIL = 200
@@ -86,14 +87,44 @@ def sanitize_validation_errors(errors: Iterable[Any]) -> list[dict[str, Any]]:
     return sanitized
 
 
+#: Adds extension members to a request-validation 422 for the routes it
+#: recognises; returns ``None`` for every other request.
+ValidationEnricher = Callable[
+    [Request, RequestValidationError], Coroutine[Any, Any, dict[str, Any] | None]
+]
+
+_VALIDATION_ENRICHERS: list[ValidationEnricher] = []
+
+
+def register_validation_enricher(enricher: ValidationEnricher) -> None:
+    """Let a surface add members to the 422 its own routes' validation errors produce.
+
+    Idempotent. An enricher must only ever add server data, never echo input.
+    """
+    if enricher not in _VALIDATION_ENRICHERS:
+        _VALIDATION_ENRICHERS.append(enricher)
+
+
 async def request_validation_error_handler(
-    _request: Request, exc: RequestValidationError
+    request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """FastAPI's default 422 body (``{"detail": [...]}``) without echoed input."""
-    return JSONResponse(
-        status_code=422,
-        content={"detail": sanitize_validation_errors(exc.errors())},
-    )
+    """FastAPI's default 422 body (``{"detail": [...]}``) without echoed input.
+
+    Registered enrichers may add members for routes they own; a failing
+    enricher never turns the 422 into a 500.
+    """
+    content: dict[str, Any] = {"detail": sanitize_validation_errors(exc.errors())}
+    for enricher in _VALIDATION_ENRICHERS:
+        try:
+            extra = await enricher(request, exc)
+        except Exception:
+            structlog.get_logger("jentic_one.shared.web.errors").warning(
+                "validation_enricher_failed", exc_info=True
+            )
+            continue
+        if extra:
+            content.update({k: v for k, v in extra.items() if k not in content})
+    return JSONResponse(status_code=422, content=content)
 
 
 def log_database_unavailable(
@@ -177,6 +208,14 @@ def make_service_error_handler(
                         type=type_slug,
                         path=request.url.path,
                     )
+                elif status_code == 503 and hasattr(exc, "retry_after_s"):
+                    logger.warning(
+                        "service_at_capacity",
+                        status=status_code,
+                        type=type_slug,
+                        path=request.url.path,
+                        retry_after_s=exc.retry_after_s,
+                    )
                 elif status_code >= 500:
                     logger.error(
                         "unhandled_service_error",
@@ -222,6 +261,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     ``500``/``default`` response documents. The body is static (``str(exc)`` may
     carry internals, CWE-209); the exception is logged here, and Starlette still
     re-raises it afterwards so the server's own traceback logging is unchanged.
+
+    The handler runs in ``ServerErrorMiddleware``, outside the user middleware
+    stack, so :class:`~jentic_one.shared.web.cache_control.AuthenticatedResponseCacheMiddleware`
+    never sees this response; a credentialed request's 500 is marked
+    ``private, no-store`` here instead (#1835).
     """
     structlog.get_logger("jentic_one.shared.web.errors").error(
         "unhandled_exception", path=request.url.path, exc_info=exc
@@ -233,8 +277,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         title="Internal Server Error",
         instance=request.url.path,
     )
+    headers = (
+        {"Cache-Control": PRIVATE_NO_STORE}
+        if request_carries_credential(request.scope.get("headers", []))
+        else None
+    )
     return JSONResponse(
-        status_code=500, content=problem.detail, media_type="application/problem+json"
+        status_code=500,
+        content=problem.detail,
+        media_type="application/problem+json",
+        headers=headers,
     )
 
 

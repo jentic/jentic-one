@@ -18,8 +18,9 @@ from jentic.problem_details import Forbidden, Unauthorized
 
 from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.core.exceptions import RateLimitExceededError
+from jentic_one.broker.core.errors import RateLimitExceededError
 from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
 from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.shared.auth.api_key_resolver import (
@@ -36,9 +37,11 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.mcp_session import SESSION_ID_HEADER, schedule_mcp_session_emit
+from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
+from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.web.auth import extract_credential
 from jentic_one.shared.web.deps import derive_origin
 
@@ -50,8 +53,15 @@ _rate_limited_total = _meter.create_counter(
     description="Requests rejected with 429 by the per-caller rate limiter.",
 )
 
-_auth_failure_counts: dict[tuple[str, int], int] = {}
-_auth_failure_emitted: set[tuple[str, int]] = set()
+#: Shared-state key namespaces of the per-actor auth-failure counter and its
+#: once-per-window emit claim. Keys are ``<namespace>:<actor>:<minute>``, so
+#: every broker process sharing the state backend counts into one window.
+AUTH_FAILURE_COUNT_NAMESPACE = "broker-authfail"
+AUTH_FAILURE_EMIT_NAMESPACE = "broker-authfail-emit"
+#: Outlives the one-minute window it counts, so a late increment in the window
+#: never lands on an already-expired (and so restarted) counter.
+_AUTH_FAILURE_TTL_S = 120.0
+
 _background_tasks: set[asyncio.Task[None]] = set()
 
 
@@ -59,49 +69,69 @@ def _minute_bucket() -> int:
     return int(time.time()) // 60
 
 
-def _record_auth_failure(actor_sub: str, request: Request) -> None:
-    """Increment the per-actor auth failure counter; emit event if threshold crossed."""
-    bucket = _minute_bucket()
-    key = (actor_sub, bucket)
-    _auth_failure_counts[key] = _auth_failure_counts.get(key, 0) + 1
+async def _record_auth_failure(actor_sub: str, request: Request) -> None:
+    """Count an auth failure for ``actor_sub``; emit an event once the threshold is crossed.
 
+    The counter and the emit claim live on the process's shared-state
+    backend (``Context.state_backend``), keyed per actor per wall-clock
+    minute, so the threshold and the one-event-per-window guarantee hold
+    across every broker process sharing that backend. Best-effort: a backend
+    that refuses or fails the write skips the count (logged); it never turns
+    the caller's 403 into another error.
+    """
     ctx: Context | None = getattr(request.app.state, "ctx", None)
     if ctx is None:
         return
     threshold = ctx.config.security.auth_failure_event_threshold
+    bucket = _minute_bucket()
+    suffix = f"{actor_sub}:{bucket}"
+    store = ctx.state_backend
+    try:
+        count = await store.incr_with_ttl(
+            f"{AUTH_FAILURE_COUNT_NAMESPACE}:{suffix}", ttl_s=_AUTH_FAILURE_TTL_S
+        )
+        if count < threshold:
+            return
+        claimed = await store.set_if_absent(
+            f"{AUTH_FAILURE_EMIT_NAMESPACE}:{suffix}", b"1", ttl_s=_AUTH_FAILURE_TTL_S
+        )
+    except StateBackendCapacityError:
+        # The memory backend already logs its refusals, rate-limited; a
+        # per-failure warning here would let a refused caller flood the log.
+        _logger.debug("broker_auth_failure_count_skipped", actor_sub=actor_sub, reason="full")
+        return
+    except Exception as exc:
+        _logger.warning(
+            "broker_auth_failure_count_skipped", actor_sub=actor_sub, error=type(exc).__name__
+        )
+        return
+    if not claimed:
+        return
 
-    if _auth_failure_counts[key] >= threshold and key not in _auth_failure_emitted:
-        _auth_failure_emitted.add(key)
-        count = _auth_failure_counts[key]
-        actor_type = getattr(getattr(request.state, "identity", None), "actor_type", None)
+    actor_type = getattr(getattr(request.state, "identity", None), "actor_type", None)
 
-        async def _emit() -> None:
-            try:
-                async with ctx.admin_db.transaction() as session:
-                    await emit_event(
-                        session,
-                        type=EventType.UNAUTHORIZED_ACCESS_ATTEMPT,
-                        severity=EventSeverity.WARNING,
-                        summary=(
-                            f"Agent {actor_sub} exceeded authorization failure "
-                            f"threshold ({count} in 60s)"
-                        ),
-                        created_by=actor_sub,
-                        actor_id=actor_sub,
-                        actor_type=actor_type.value if actor_type else None,
-                        requires_action=True,
-                    )
-            except Exception:
-                _logger.warning("emit_auth_failure_event_failed", actor_sub=actor_sub)
+    async def _emit() -> None:
+        try:
+            async with ctx.admin_db.transaction() as session:
+                await emit_event(
+                    session,
+                    type=EventType.UNAUTHORIZED_ACCESS_ATTEMPT,
+                    severity=EventSeverity.WARNING,
+                    summary=(
+                        f"Agent {actor_sub} exceeded authorization failure "
+                        f"threshold ({count} in 60s)"
+                    ),
+                    created_by=actor_sub,
+                    actor_id=actor_sub,
+                    actor_type=actor_type.value if actor_type else None,
+                    requires_action=True,
+                )
+        except Exception:
+            _logger.warning("emit_auth_failure_event_failed", actor_sub=actor_sub)
 
-        task = asyncio.create_task(_emit())
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
-
-    stale_keys = [k for k in _auth_failure_counts if k[1] < bucket - 1]
-    for k in stale_keys:
-        _auth_failure_counts.pop(k, None)
-        _auth_failure_emitted.discard(k)
+    task = asyncio.create_task(_emit())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 async def require_broker_identity(request: Request) -> Identity:
@@ -130,7 +160,7 @@ async def require_broker_identity(request: Request) -> Identity:
     # Broker half of the two-plane ``mcp.session_started`` emit: an MCP session
     # whose only traffic is ``execute`` never touches the control plane, so it
     # must be detected here too (table-backed dedupe keeps it to one event).
-    schedule_mcp_session_emit(
+    await schedule_mcp_session_emit(
         getattr(request.app.state, "ctx", None),
         user_agent=request.headers.get("user-agent"),
         session_id=request.headers.get(SESSION_ID_HEADER),
@@ -154,7 +184,7 @@ async def require_execute_permission(request: Request) -> Identity:
     # ``insufficient_scope`` is the RFC 6750 error code, so the problem type and
     # its detail stay in scope terms even though the check is on a permission.
     if BROKER_EXECUTE_PERMISSION not in resolved.permissions:
-        _record_auth_failure(resolved.sub, request)
+        await _record_auth_failure(resolved.sub, request)
         raise Forbidden(
             detail=f"Insufficient scope: '{BROKER_EXECUTE_PERMISSION}' required",
             instance=request.url.path,
@@ -184,11 +214,18 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
     ``app.state``; when rate limiting is disabled it is ``None`` and this is a
     pure pass-through of ``require_execute_permission``. A deny surfaces directly as a
     ``429`` carrying ``RateLimit-*`` + ``Retry-After`` (we are at the web edge).
+
+    The opt-in ``jentic-auth`` Server-Timing stage is recorded only when every
+    check passes (an explicit start/end pair, not the ``finally``-recording
+    ``stage()``): the Server-Timing middleware emits nothing unless it is
+    recorded, so a rejected caller gets no timing data.
     """
+    timing = stage_start()
     resolved = await require_execute_permission(request)
 
     limiter: RateLimiter | None = getattr(request.app.state, "broker_rate_limiter", None)
     if limiter is None:
+        stage_end(ServerTimingStage.AUTH, timing)
         return resolved
 
     outcome = await limiter.acquire(resolved.sub)
@@ -201,6 +238,7 @@ async def require_execute_within_rate_limit(request: Request) -> Identity:
             type="rate_limit_exceeded",
             headers=headers,
         )
+    stage_end(ServerTimingStage.AUTH, timing)
     return resolved
 
 
@@ -227,6 +265,14 @@ def get_idempotency_store(request: Request) -> SharedStateIdempotencyStore | Non
     ``app.dependency_overrides[get_idempotency_store]``.
     """
     return getattr(request.app.state, "broker_idempotency_store", None)
+
+
+def get_repeated_failure_counter(request: Request) -> RepeatedFailureCounter | None:
+    """Provide the repeated-failure scan gate, or ``None`` when none is wired.
+
+    ``None`` keeps the unconditional repeated-failure scan on every failure.
+    """
+    return getattr(request.app.state, "broker_repeated_failure_counter", None)
 
 
 RequireBrokerIdentity = Annotated[Identity, Depends(require_broker_identity)]

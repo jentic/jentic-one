@@ -11,6 +11,10 @@
  */
 export type PermissionRuleSchema = {
     /**
+     * Why the rule is there, in words. Shown wherever the rule is listed.
+     */
+    comment?: (string | null);
+    /**
      * Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
      */
     effect: PermissionRuleSchema.effect;

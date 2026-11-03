@@ -19,13 +19,17 @@ export type ConnectSessionSummaryResponse = {
      */
     created_at: string;
     /**
-     * ID of the session's credential (pending until the session connects).
+     * ID of the session's credential: pending until a create session connects; an edit session's is the live credential it changes.
      */
     credential_id: string;
     /**
      * Reserved for a failure code; always null on listed sessions.
      */
     error_code?: (string | null);
+    /**
+     * `create` connects a new credential; `edit` changes an existing binding.
+     */
+    intent?: ConnectSessionSummaryResponse.intent;
     /**
      * Free-text reason given when the session was started.
      */
@@ -52,6 +56,13 @@ export type ConnectSessionSummaryResponse = {
     vendor_key: string;
 };
 export namespace ConnectSessionSummaryResponse {
+    /**
+     * `create` connects a new credential; `edit` changes an existing binding.
+     */
+    export enum intent {
+        CREATE = 'create',
+        EDIT = 'edit',
+    }
     /**
      * Current lifecycle state of the session.
      */

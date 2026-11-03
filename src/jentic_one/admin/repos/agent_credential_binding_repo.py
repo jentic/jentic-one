@@ -6,6 +6,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
+from jentic_one.shared.db.locks import lock_credential_bindings
 
 
 class AgentCredentialBindingRepository:
@@ -19,6 +20,7 @@ class AgentCredentialBindingRepository:
         credential_id: str,
         created_by: str,
     ) -> AgentCredentialBinding:
+        await lock_credential_bindings(session, credential_id)
         binding = AgentCredentialBinding(
             agent_id=agent_id, credential_id=credential_id, created_by=created_by
         )

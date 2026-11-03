@@ -87,6 +87,9 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	// theme-7 Phase 1b). NOT fenced: connecting is the agent's own recovery
 	// surface — approval still blocks on a human in the browser.
 	cmdcore.AddGrouped(root, "apis", newConnectCmd(app))
+	// The agent's own access through a binding (`jentic access show`): what a
+	// connect-session edit is relative to. Not fenced — read-only.
+	cmdcore.AddGrouped(root, "apis", newAccessCmd(app))
 	cmdcore.AddGrouped(root, "agent", newSearchCmd(app))
 	cmdcore.AddGrouped(root, "agent", newInspectCmd(app))
 	cmdcore.AddGrouped(root, "agent", newExecuteCmd(app))

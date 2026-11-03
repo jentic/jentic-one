@@ -57,7 +57,7 @@ def _user_response(view: UserView) -> UserResponse:
     )
 
 
-@router.get("/users")
+@router.get("/users", summary="List users")
 async def list_users(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
@@ -96,7 +96,7 @@ async def list_users(
     )
 
 
-@router.post("/users", status_code=201)
+@router.post("/users", summary="Create a user and issue an invite", status_code=201)
 async def create_user(
     body: UserCreateRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
@@ -119,7 +119,7 @@ async def create_user(
     )
 
 
-@router.get("/users/{user_id}", responses=with_responses(not_found()))
+@router.get("/users/{user_id}", summary="Get a user", responses=with_responses(not_found()))
 async def get_user(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
@@ -138,7 +138,10 @@ async def get_user(
 
 @router.patch(
     "/users/{user_id}",
-    responses=with_responses(not_found(), conflict("The email is already in use")),
+    summary="Update a user",
+    responses=with_responses(
+        not_found(), conflict("The email is already in use, or the user has been deleted")
+    ),
 )
 async def update_user(
     user_id: Annotated[
@@ -151,7 +154,8 @@ async def update_user(
     """Update a user's profile fields.
 
     Scoped like `GET /users/{user_id}`: org admins can update any user; anyone
-    else only themselves. Any other user answers 404.
+    else only themselves. Any other user answers 404. A deleted user cannot be
+    edited (409).
     """
     view = await user_svc.update(
         user_id,
@@ -167,6 +171,7 @@ async def update_user(
 
 @router.delete(
     "/users/{user_id}",
+    summary="Delete a user",
     status_code=204,
     responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
 )
@@ -182,7 +187,11 @@ async def delete_user(
     The row is retained — the account is anonymized (tombstone email) and
     deactivated so history and audit references stay resolvable — but the
     action is terminal: there is no re-enable arm. For the reversible kill
-    switch use ``:disable`` / ``:enable`` instead.
+    switch use ``:disable`` / ``:enable`` instead. Deleting a user also cancels
+    their outstanding invites: redeeming one answers 409
+    ``invite_already_redeemed``, the same as an invite replaced by a reissue.
+    Idempotent: deleting an already-deleted user answers 204 and changes
+    nothing.
     """
     await user_svc.delete(user_id, identity=identity)
     return Response(status_code=204)
@@ -190,8 +199,9 @@ async def delete_user(
 
 @router.post(
     "/users/{user_id}:disable",
+    summary="Disable a user",
     status_code=204,
-    responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
+    responses=with_responses(not_found(), conflict(f"{_LAST_ADMIN}, or the user has been deleted")),
 )
 async def disable_user(
     user_id: Annotated[
@@ -200,12 +210,20 @@ async def disable_user(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
-    """Disable a user account."""
+    """Disable a user account.
+
+    A deleted user is already permanently inactive and cannot be disabled (409).
+    """
     await user_svc.disable(user_id, identity=identity)
     return Response(status_code=204)
 
 
-@router.post("/users/{user_id}:enable", status_code=204)
+@router.post(
+    "/users/{user_id}:enable",
+    summary="Enable a user",
+    status_code=204,
+    responses=with_responses(not_found(), conflict("The user has been deleted")),
+)
 async def enable_user(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))
@@ -213,12 +231,22 @@ async def enable_user(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
-    """Enable a user account."""
+    """Enable a disabled user account.
+
+    A deleted user cannot be re-enabled (409). Login sessions issued before the
+    account was disabled stay revoked; the user signs in again.
+    """
     await user_svc.enable(user_id, identity=identity)
     return Response(status_code=204)
 
 
-@router.post("/users/{user_id}:reissue-invite")
+@router.post(
+    "/users/{user_id}:reissue-invite",
+    summary="Reissue a user's invite",
+    responses=with_responses(
+        not_found(), conflict("The user has already redeemed an invite, or has been deleted")
+    ),
+)
 async def reissue_invite(
     user_id: Annotated[
         str, Path(description="ID of the user.", openapi_examples=ex.example(ex.USER_ID))

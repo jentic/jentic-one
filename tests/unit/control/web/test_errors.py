@@ -1,4 +1,4 @@
-"""Unit tests for the control web DB-error handler mapping."""
+"""Unit tests for the control web DB-error handler and the 422 enricher."""
 
 from __future__ import annotations
 
@@ -6,8 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 import structlog.testing
+from fastapi.exceptions import RequestValidationError
 
-from jentic_one.control.web.errors import database_error_handler
+from jentic_one.control.web.errors import (
+    _edit_rules_validation_enricher,
+    database_error_handler,
+)
 from jentic_one.shared.db.errors import (
     DatabaseDataError,
     DatabaseIntegrityError,
@@ -66,3 +70,38 @@ async def test_db_unavailable_error_returns_503() -> None:
     response = await database_error_handler(request, DatabaseUnavailableError(_LEAKY_DETAIL))
     assert response.status_code == 503
     assert "SQL:" not in bytes(response.body).decode()
+
+
+def _rules_error(path: str, body: object) -> tuple[MagicMock, RequestValidationError]:
+    request = _make_request(path)
+    request.base_url = "https://one.example/"
+    exc = RequestValidationError(
+        [{"loc": ("body", "rules", "set"), "msg": "not a list", "type": "list_type"}]
+    )
+    exc.body = body
+    return request, exc
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_edit_points_at_the_access_it_names() -> None:
+    """The edit route's own body names the credential: echoing it says nothing new."""
+    request, exc = _rules_error(
+        "/integrations:edit-connection", {"credential_id": "cred_1", "agent_id": "agnt_1"}
+    )
+    enriched = await _edit_rules_validation_enricher(request, exc)
+    assert enriched is not None
+    directive = enriched["agent_directive"]
+    assert isinstance(directive, dict)
+    assert directive["parameters"]["credential_id"] == "cred_1"
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_amend_tells_the_caller_nothing_about_the_session() -> None:
+    """A 422 is raised before the route checks who is asking.
+
+    Resolving the session an amend names would hand any caller the credential
+    and agent it belongs to, where the well-formed path answers the uniform
+    403. So the amend path enriches nothing.
+    """
+    request, exc = _rules_error("/connect-sessions/cs_someone_else:amend", {"rules": "bad"})
+    assert await _edit_rules_validation_enricher(request, exc) is None

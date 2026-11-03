@@ -23,9 +23,36 @@ class UserPermissionGrantRepository:
         created_by: str,
     ) -> list[UserPermissionGrant]:
         """Replace all grants for a user with the given permission set."""
-        await session.execute(
-            delete(UserPermissionGrant).where(UserPermissionGrant.user_id == user_id)
+        _, grants = await UserPermissionGrantRepository.replace_permissions(
+            session,
+            user_id,
+            permissions=permissions,
+            granted_by=granted_by,
+            created_by=created_by,
         )
+        return grants
+
+    @staticmethod
+    async def replace_permissions(
+        session: AsyncSession,
+        user_id: str,
+        *,
+        permissions: set[str],
+        granted_by: str | None = None,
+        created_by: str,
+    ) -> tuple[set[str], list[UserPermissionGrant]]:
+        """Replace all grants for a user; return the replaced set and the new grants.
+
+        The replaced set is what the delete removed, so it reflects the grants
+        as stored at write time even if another transaction changed them after
+        the caller last read them.
+        """
+        result = await session.execute(
+            delete(UserPermissionGrant)
+            .where(UserPermissionGrant.user_id == user_id)
+            .returning(UserPermissionGrant.permission)
+        )
+        replaced = set(result.scalars().all())
         grants = []
         for perm in sorted(permissions):
             grant = UserPermissionGrant(
@@ -37,7 +64,7 @@ class UserPermissionGrantRepository:
             session.add(grant)
             grants.append(grant)
         await session.flush()
-        return grants
+        return replaced, grants
 
     @staticmethod
     async def get_grants_for_user(session: AsyncSession, user_id: str) -> list[UserPermissionGrant]:

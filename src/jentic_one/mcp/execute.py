@@ -20,10 +20,7 @@ over plaintext to a non-loopback broker).
 from __future__ import annotations
 
 import json
-import math
 import uuid as uuid_mod
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from http import HTTPStatus
 from importlib.metadata import PackageNotFoundError, version
 from ipaddress import ip_address
@@ -40,6 +37,7 @@ from jentic_one.mcp.envelopes import (
     SCHEMA_VERSION,
     ToolError,
 )
+from jentic_one.shared.http.retry_after import parse_retry_after
 from jentic_one.shared.redaction import redact_value
 
 logger = structlog.get_logger(__name__)
@@ -391,8 +389,10 @@ def broker_transport_recovery(status: int, problem_type: str) -> str:
     ``runner_scheme_unsupported`` (RunnerSchemeUnsupportedError, 501) needs a
     different operation. Everything else is unknown, including
     ``upstream_response_too_large`` (UpstreamResponseTooLargeError, 502: the
-    upstream answered, so the call ran) and ``upstream_transport_error``
-    (UpstreamTransportError, 502: the connection failed mid-request).
+    upstream answered, so the call ran), ``upstream_transport_error``
+    (UpstreamTransportError, 502: the connection failed mid-request) and
+    ``upstream_request_invalid`` (500: the broker built a request its HTTP
+    client refused to send, so re-sending the same call will fail the same way).
     """
     if status == 429 or problem_type in _BROKER_TRANSIENT_PROBLEM_TYPES:
         return RECOVER_WAIT
@@ -440,35 +440,21 @@ def retry_safe(method: str, idempotency_key: str | None) -> bool:
     return bool((idempotency_key or "").strip()) or method.upper() in ("GET", "HEAD")
 
 
-def retry_after_seconds(headers: httpx.Headers) -> float | None:
-    """Parse ``Retry-After`` (Go: ``agentops.RetryAfterSeconds``).
+def retry_after_seconds(headers: httpx.Headers) -> int | None:
+    """The broker's ``Retry-After`` in whole seconds.
 
-    Delta-seconds, or an HTTP-date converted to the seconds remaining (floored
-    at zero). ``None`` when absent or unparseable, so no made-up delay is relayed.
+    Parsed by the same :func:`~jentic_one.shared.http.retry_after.parse_retry_after`
+    the broker uses: delay-seconds (a fraction rounds up, a sign or exponent is
+    rejected), or an HTTP-date converted to the seconds remaining (floored at
+    zero). ``None`` when absent or unparseable, so no made-up delay is relayed.
+    The Go CLI's ``agentops.RetryAfterSeconds`` reads delay-seconds with
+    ``strconv.ParseFloat`` and does not round, so the two lanes can differ on a
+    fractional, signed or exponent value.
     """
-    value = headers.get("Retry-After", "").strip()
-    if not value:
-        return None
-    try:
-        seconds = float(value)
-    except ValueError:
-        pass
-    else:
-        if seconds < 0 or not math.isfinite(seconds):
-            return None
-        return int(seconds) if seconds.is_integer() else seconds
-    try:
-        when = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=UTC)
-    return max(0, math.ceil((when - datetime.now(UTC)).total_seconds()))
+    return parse_retry_after(headers.get("Retry-After"))
 
 
-def _broker_transport_actionable(
-    recovery: str, *, retryable: bool, retry_after: float | None
-) -> str:
+def _broker_transport_actionable(recovery: str, *, retryable: bool, retry_after: int | None) -> str:
     """MCP-lane recovery prose for a broker transport failure (Go:
     ``brokerTransportToolHint``)."""
     wait = "Wait briefly" if retry_after is None else f"Wait retry_after_s ({retry_after}s)"
@@ -607,6 +593,8 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
 #: Everything else — ``action_denied`` (a permission rule forbids the op;
 #: connecting a fresh credential must NOT be taught as a way around it),
 #: ``credential_identity_mismatch`` (an operator fixes the credential),
+#: ``credential_binding_suspended`` (only the operator resumes the binding;
+#: a new connect is refused),
 #: ``credential_undecryptable`` (operator re-adds it), and any unknown type —
 #: keeps ``whoami``.
 _PROVISIONING_PROBLEM_TYPES = frozenset(

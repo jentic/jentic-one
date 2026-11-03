@@ -81,11 +81,12 @@ def test_shared_web_identity_does_not_import_surface_orm() -> None:
 @pytest.mark.arch
 def test_scoping_modules_only_import_own_surface_models() -> None:
     """Each surface's scoping module must only reference its own surface's ORM models."""
-    surface_map = {
-        "admin": SRC_ROOT / "admin" / "scoping" / "filters.py",
-        "control": SRC_ROOT / "control" / "scoping" / "filters.py",
-        "registry": SRC_ROOT / "registry" / "scoping" / "filters.py",
-    }
+    scoping_files = [
+        ("admin", SRC_ROOT / "admin" / "scoping" / "filters.py"),
+        ("admin", SRC_ROOT / "admin" / "scoping" / "actor_lookup.py"),
+        ("control", SRC_ROOT / "control" / "scoping" / "filters.py"),
+        ("registry", SRC_ROOT / "registry" / "scoping" / "filters.py"),
+    ]
     all_surface_schema_prefixes = {
         "admin": "jentic_one.admin.core.schema",
         "control": "jentic_one.control.core.schema",
@@ -93,7 +94,7 @@ def test_scoping_modules_only_import_own_surface_models() -> None:
     }
 
     violations: list[str] = []
-    for surface, scoping_file in surface_map.items():
+    for surface, scoping_file in scoping_files:
         if not scoping_file.exists():
             continue
         source = scoping_file.read_text(encoding="utf-8")

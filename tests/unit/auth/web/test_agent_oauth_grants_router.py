@@ -3,9 +3,9 @@
 The "Connected clients" endpoint: response shape (including the per-item
 ``can_revoke`` capability, G10), query forwarding, and the web mapping of the
 service-layer outcomes (owner-or-admin is enforced in
-:class:`OAuthGrantService`, so here it is mocked as its error outcomes: 403
-for a non-owner without admin permission, 404 for an unknown agent, 400 for a
-tampered cursor) plus the unauthenticated 401 arm.
+:class:`OAuthGrantService`, so here it is mocked as its error outcomes: 404
+for an unknown agent or one the caller may not list, 400 for a tampered
+cursor) plus the unauthenticated 401 arm.
 """
 
 from __future__ import annotations
@@ -18,10 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
-from jentic_one.auth.services.errors import (
-    ActorNotFoundError,
-    OAuthGrantAccessDeniedError,
-)
+from jentic_one.auth.services.errors import ActorNotFoundError
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.auth.web.app import get_exception_handlers
 from jentic_one.auth.web.routers import oauth_grants
@@ -127,15 +124,6 @@ def test_list_forwards_filters_and_identity(client: TestClient, mock_grant_svc: 
 def test_list_rejects_unknown_status(client: TestClient) -> None:
     resp = client.get("/agents/agt_1/oauth-grants?status=bogus")
     assert resp.status_code == 422
-
-
-def test_list_maps_access_denied_to_403(client: TestClient, mock_grant_svc: MagicMock) -> None:
-    mock_grant_svc.list_grants_for_agent = AsyncMock(
-        side_effect=OAuthGrantAccessDeniedError("agt_1")
-    )
-    resp = client.get("/agents/agt_1/oauth-grants")
-    assert resp.status_code == 403
-    assert resp.json()["type"] == "oauth_grant_access_denied"
 
 
 def test_list_maps_unknown_agent_to_404(client: TestClient, mock_grant_svc: MagicMock) -> None:

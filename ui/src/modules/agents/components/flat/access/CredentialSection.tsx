@@ -1,7 +1,8 @@
 /**
  * Manage access → Credential: the credential behind this API, as a read view —
  * its name, auth type, when it was bound and updated and who uses it, with
- * Edit credential (or "Shared with you"); the full id, copyable; how a call
+ * Edit credential and, where its scopes can change, Edit scopes (or "Shared
+ * with you"); the full id, copyable; how a call
  * picks it among several; and which of the agent's other API rows share its
  * rules. Editing stacks the shared edit sheet (secrets stay
  * write-only there).
@@ -28,6 +29,8 @@ export interface CredentialSectionProps {
 	/** The viewer may edit it (owner or admin, with `credentials:write`). */
 	canEdit: boolean;
 	onEdit: () => void;
+	/** Opens the scopes editor; absent when this credential's scopes can't change. */
+	onEditScopes?: () => void;
 	/** How many of the agent's bindings serve this API. */
 	accountCount: number;
 	/** The agent's other API rows these rules govern today, as a phrase; null
@@ -42,6 +45,7 @@ export function CredentialSection({
 	sharedWithViewer,
 	canEdit,
 	onEdit,
+	onEditScopes,
 	accountCount,
 	otherApisPhrase,
 }: CredentialSectionProps) {
@@ -82,9 +86,16 @@ export function CredentialSection({
 						<SharedWithYouBadge />
 					) : (
 						canEdit && (
-							<Button size="xs" variant="tonal" onClick={onEdit}>
-								<Pencil className="h-4 w-4" /> Edit credential
-							</Button>
+							<div className="flex shrink-0 items-center gap-1.5">
+								{onEditScopes && (
+									<Button size="xs" variant="tonal" onClick={onEditScopes}>
+										<Pencil className="h-4 w-4" /> Edit scopes
+									</Button>
+								)}
+								<Button size="xs" variant="tonal" onClick={onEdit}>
+									<Pencil className="h-4 w-4" /> Edit credential
+								</Button>
+							</div>
 						)
 					)}
 				</div>

@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError
 
 
 def _info_block(

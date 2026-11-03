@@ -13,6 +13,7 @@ from jentic_one.auth.services.oauth_dcr_service import DcrRegisterResult
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import oauth_client_registration
 from jentic_one.shared.config import AuthConfig, OAuthRateLimitConfig, ServerConfig
+from jentic_one.shared.state.backend import MemoryStateBackend
 
 _BODY = {
     "client_name": "Cursor",
@@ -56,6 +57,7 @@ def _make_client(
     server.mcp.oauth.enabled = oauth_enabled
     mock_ctx.config.server = server
     app.state.ctx = mock_ctx
+    app.state.auth_state_backend = MemoryStateBackend()
     return TestClient(app, client=peer)
 
 

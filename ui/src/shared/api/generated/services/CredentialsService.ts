@@ -4,16 +4,20 @@
 /* eslint-disable */
 import type { ApiKeyCreateRequest } from '../models/ApiKeyCreateRequest';
 import type { ApiKeyUpdateRequest } from '../models/ApiKeyUpdateRequest';
+import type { AuthCodeConnectChallengeResponse } from '../models/AuthCodeConnectChallengeResponse';
 import type { BasicAuthCreateRequest } from '../models/BasicAuthCreateRequest';
 import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
+import type { BindingAccessResponse } from '../models/BindingAccessResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
+import type { DeviceAuthorizationConnectChallengeResponse } from '../models/DeviceAuthorizationConnectChallengeResponse';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
+import type { NoAuthUpdateRequest } from '../models/NoAuthUpdateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
 import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
@@ -199,7 +203,7 @@ export class CredentialsService {
         /**
          * Request payload for the `updateCredential` operation.
          */
-        requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest | Sigv4UpdateRequest),
+        requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest | NoAuthUpdateRequest | Sigv4UpdateRequest),
     }): CancelablePromise<CredentialRedactedResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',
@@ -274,7 +278,12 @@ export class CredentialsService {
     /**
      * List binding permission rules
      * List the ordered PBAC rules for a direct `(agent, credential)` binding.
-     * @returns PermissionRuleListResponse Successful Response
+     *
+     * Also returns the rest of what the binding grants: the shared rule set it
+     * points at (whose rules apply instead of `data`), the credential's granted
+     * OAuth scopes and the ones an edit can add, and whether the binding is
+     * suspended. The bound agent can read its own binding.
+     * @returns BindingAccessResponse Successful Response
      * @throws ApiError
      */
     public static listAgentCredentialPermissions({
@@ -289,7 +298,7 @@ export class CredentialsService {
          * ID of the agent bound to the credential.
          */
         agentId: string,
-    }): CancelablePromise<PermissionRuleListResponse> {
+    }): CancelablePromise<BindingAccessResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
@@ -543,6 +552,11 @@ export class CredentialsService {
      * authorization-code providers return an ``authorize_url`` for popup
      * redirect; device-flow providers return ``user_code`` /
      * ``verification_uri`` for the RFC 8628 human step.
+     *
+     * An ``authorize_url`` response also sets a short-lived ``HttpOnly``
+     * cookie scoped to the OAuth callback path: the callback completes only
+     * in the browser that called this endpoint, so call it from the browser
+     * that opens the ``authorize_url``.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -558,7 +572,7 @@ export class CredentialsService {
          * Request body for initiating a credential connect flow.
          */
         requestBody: ConnectRequestBody,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<(AuthCodeConnectChallengeResponse | DeviceAuthorizationConnectChallengeResponse)> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/credentials/{credential_id}/connect',

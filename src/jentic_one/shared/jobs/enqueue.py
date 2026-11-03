@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.shared.jobs.wakeup import notify_on_commit
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
@@ -31,6 +32,9 @@ async def enqueue_job(
 
     ``status`` defaults to QUEUED. The hold path passes HELD so the worker skips
     the job until the approval surface flips it back to QUEUED.
+
+    A QUEUED job wakes this process's worker loops as soon as the caller's
+    transaction commits, so in-process pickup does not wait for the next poll.
     """
     job: Any = Job(
         kind=kind,
@@ -43,4 +47,6 @@ async def enqueue_job(
     )
     session.add(job)
     await session.flush()
+    if status == JobStatus.QUEUED:
+        notify_on_commit(session)
     return str(job.id)

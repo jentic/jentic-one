@@ -555,7 +555,7 @@ export function usePurgeOrphanBindings(agentId: string | null, orphanCredentialI
 /** Lift a suspended binding (`POST …/credentials/{id}:resume`). */
 export function useResumeAgentCredentialBinding(agentId: string | null) {
 	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
-	return useMutation<CredentialBindingEntity, Error, string>({
+	return useMutation<void, Error, string>({
 		mutationFn: (credentialId: string) => {
 			if (!agentId) {
 				return Promise.reject(new Error('Cannot resume a binding before the agent loads.'));

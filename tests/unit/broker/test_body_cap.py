@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from jentic_one.broker.core.exceptions import PayloadTooLargeError
+from jentic_one.broker.core.errors import PayloadTooLargeError
 from jentic_one.broker.web.routers.execute import _read_capped_body
 
 

@@ -325,7 +325,8 @@ release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGIST
 # Local-only, never run in CI. Targets live in tests/perf/Makefile; these are
 # explicit pass-throughs (no pattern rule, see SERVICE_RULES above), so
 # `make perf-<TAB>` completes and variables pass through (make perf-agent-sql CACHE=cold).
-PERF_TARGETS := build up provision overhead dbcost capacity profile ui load obs report down \
+PERF_TARGETS := build up provision overhead dbcost capacity monitoring profile ui load obs \
+	report down \
 	agent-doctor agent-sql agent-stages agent-cpu agent-resilience agent-compare
 
 # .PHONY is registered per rule here: PERF_TARGETS is defined after the .PHONY

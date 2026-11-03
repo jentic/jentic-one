@@ -2,15 +2,17 @@
 
 The broker (and other surfaces later) need a small set of cross-instance state
 operations: read-mostly caches, a shared token-bucket rate limiter, atomic
-counters for circuit state, and an atomic claim primitive for idempotency.
+counters for circuit state, an atomic claim primitive for idempotency, and a
+one-round-trip windowed counter for the repeated-failure gate.
 
 Rather than a single fat interface that every consumer depends on, the surface
-is split into three **narrow, role-specific** protocols (ISP): a rate limiter
+is split into **narrow, role-specific** protocols (ISP): a rate limiter
 should not see ``set_if_absent`` and a cache should not see the Lua
 ``token_bucket``. The concrete backends (:class:`MemoryStateBackend` here,
-``RedisStateBackend`` in :mod:`jentic_one.shared.state.redis`) implement all
-three roles; the factory builds a single instance per process. Consumers,
-however, type their dependency on the one role they need.
+``RedisStateBackend`` in :mod:`jentic_one.shared.state.redis`, and any backend
+an extension registers) implement every role; the process builds a single
+instance shared by every surface it serves. Consumers, however, type their
+dependency on the roles they need.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from __future__ import annotations
 import heapq
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -171,8 +173,23 @@ class AtomicStore(Protocol):
 
 
 @runtime_checkable
-class SharedStateBackend(KeyValueStore, RateLimitStore, AtomicStore, Protocol):
-    """Convenience union of all three roles.
+class WindowCounterStore(Protocol):
+    """Windowed-counter role: several increments and reads in one atomic step.
+
+    One call (one round trip on Redis) increments every key in *incr_keys* by one
+    — setting ``ttl_s`` only when it creates a counter, like
+    :meth:`AtomicStore.incr_with_ttl` — then reads every key in *read_keys*. It
+    returns the new counts and the read values in the order given.
+    """
+
+    async def incr_and_read(
+        self, incr_keys: Sequence[str], read_keys: Sequence[str], *, ttl_s: float
+    ) -> tuple[list[int], list[bytes | None]]: ...
+
+
+@runtime_checkable
+class SharedStateBackend(KeyValueStore, RateLimitStore, AtomicStore, WindowCounterStore, Protocol):
+    """Convenience union of all the roles.
 
     Used **only** at the composition root, where the factory builds one concrete
     backend that fulfils every role. No consumer should depend on this union —
@@ -248,11 +265,12 @@ def _clamp_retry_after(seconds: float) -> int:
 
 
 class MemoryStateBackend:
-    """In-process implementation of all three state roles.
+    """In-process implementation of every shared-state role.
 
     Backed by plain dicts with monotonic-clock TTL expiry. Scope is
-    per-process, which is fine behind autoscaling for most installs; the Redis
-    backend exists for cross-instance coordination.
+    per-process, which matches the supported one-process-per-surface
+    deployment; cross-process coordination needs a shared backend registered
+    with ``register_state_backend``.
 
     A ``clock`` callable (defaulting to :func:`time.monotonic`) can be injected
     to make TTL and token-bucket refill behaviour deterministic in tests.
@@ -504,9 +522,8 @@ class MemoryStateBackend:
                     "the in-process state backend namespace (or one owner's share "
                     "of it, or the backend as a whole) is full of live entries, so "
                     "new writes to it are refused (callers answer 503) until entries "
-                    "expire. Raise broker.resilience.backend.memory budgets (and the "
-                    "container memory limit with them), shorten the TTL of what it "
-                    "stores, or use the redis backend."
+                    "expire. Raise the state.memory budgets (and the container "
+                    "memory limit with them) or shorten the TTL of what it stores."
                 ),
             )
         return StateBackendCapacityError(
@@ -589,6 +606,20 @@ class MemoryStateBackend:
         # would let a counter silently re-arm or go backwards, so reject it.
         if amount <= 0:
             raise ValueError(f"incr_with_ttl amount must be positive, got {amount}")
+        return self._incr(key, ttl_s=ttl_s, amount=amount)
+
+    async def incr_and_read(
+        self, incr_keys: Sequence[str], read_keys: Sequence[str], *, ttl_s: float
+    ) -> tuple[list[int], list[bytes | None]]:
+        # No await between the steps, so the batch is atomic on the event loop.
+        counts = [self._incr(key, ttl_s=ttl_s, amount=1) for key in incr_keys]
+        reads = [
+            entry.value if (entry := self._live_entry(key)) is not None else None
+            for key in read_keys
+        ]
+        return counts, reads
+
+    def _incr(self, key: str, *, ttl_s: float, amount: int) -> int:
         now = self._clock()
         entry = self._live_entry(key)
         current = int(entry.value) if entry is not None else 0

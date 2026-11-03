@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +11,7 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos.event_repo import EventRepository
 from jentic_one.admin.services.event_stream_service import EventStreamService
-from jentic_one.admin.services.schemas.events import EventView, Heartbeat
+from jentic_one.admin.services.schemas.events import Heartbeat
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 
@@ -94,10 +93,7 @@ async def test_stream_yields_heartbeat_when_idle(web_context: Context) -> None:
     # with no events, the first item must be a heartbeat. A short poll interval
     # keeps the test fast and we stop after the first item.
     svc = EventStreamService(web_context)
-    stream = cast(
-        "AsyncGenerator[EventView | Heartbeat, None]",
-        svc.stream(identity=_ADMIN, poll_interval_seconds=0.01),
-    )
+    stream = svc.stream(identity=_ADMIN, poll_interval_seconds=0.01)
     try:
         first = await stream.__anext__()
     finally:

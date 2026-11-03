@@ -19,6 +19,7 @@ from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
 from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.tools as tools_mod
@@ -29,6 +30,8 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BindingSuspendedError,
+    ConnectOpenError,
     InvalidOAuthAppRegistrationError,
     ManualFlowsDisabledError,
     NoDeclaredSchemeError,
@@ -46,6 +49,11 @@ from jentic_one.control.services.vendors.service import (
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
+)
+from jentic_one.control.web.connect_limits import (
+    MCP_LIMITER_ATTR,
+    ROUTE_LIMITER_ATTR,
+    connect_limiter,
 )
 from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
 from jentic_one.shared.auth.identity import Identity
@@ -522,6 +530,37 @@ async def test_rate_limit_is_retryable_transport_error(
     assert len(_FakeConnectSessionService.calls) == 1
 
 
+async def test_http_and_mcp_connect_share_per_actor_rate_limit_budget() -> None:
+    """HTTP ``POST /integrations:connect`` and MCP ``request_connection`` draw
+    from the same per-actor token bucket on ``app.state``."""
+    app = FastAPI()
+    shared = RateLimiter(
+        MemoryStateBackend(),
+        default_rpm=1,
+        burst=2,
+        namespace="integrations_connect",
+    )
+    setattr(app.state, ROUTE_LIMITER_ATTR, shared)
+
+    route_lim = connect_limiter(app, ROUTE_LIMITER_ATTR)
+    mcp_lim = connect_limiter(app, MCP_LIMITER_ATTR)
+    assert route_lim is mcp_lim
+
+    # Spend 1 of the 2 burst tokens on the HTTP route limiter for agnt_1.
+    route_decision = await route_lim.acquire("agnt_1")
+    assert route_decision.allowed is True
+
+    # Spend the 2nd token via MCP request_connection for the same actor.
+    env = _env(["credentials:connect"], sub="agnt_1", connect_limiter=mcp_lim)
+    first_mcp = await dispatch_tool_call(env, "request_connection", {"vendor": "github"})
+    assert not first_mcp.is_error, first_mcp.content
+
+    # The 3rd attempt (across HTTP + MCP) is rate-limited.
+    second_mcp = await dispatch_tool_call(env, "request_connection", {"vendor": "github"})
+    assert second_mcp.is_error
+    assert _payload(second_mcp)["error_code"] == "TRANSPORT_ERROR"
+
+
 # ── registry-API targets (Go: the api / auth_type arms) ──────────────────────
 
 _STRIPE = {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}
@@ -633,6 +672,7 @@ _TARGET = "stripe-com/stripe-com-api/2024-06-20"
         (SecuritySchemesLookupUnavailableError(), "BROKER_DENIED", None, "registry"),
         (TooManyOpenSessionsError("agent", 10), "BROKER_DENIED", None, "Do not open more"),
         (RecentlyRejectedError(3600), "BROKER_DENIED", None, "Do not ask again"),
+        (BindingSuspendedError("agt_1"), "BROKER_DENIED", None, "ask your operator to resume"),
     ],
 )
 async def test_api_target_errors_map_like_the_go_mount(
@@ -653,3 +693,32 @@ async def test_api_target_errors_map_like_the_go_mount(
         assert payload["details"]["options"] == ["api_key", "oauth2"]
     if isinstance(error, ManualFlowsDisabledError | NoDeclaredSchemeError):
         assert _TARGET in payload["actionable_step"]
+
+
+async def test_an_open_request_is_relayed_not_an_error() -> None:
+    _FakeConnectSessionService.error = ConnectOpenError(
+        "cs_open", "https://auth.example.com/connect/cs_open"
+    )
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "github"}
+    )
+    assert not result.is_error
+    payload = _payload(result)
+    assert payload["session_id"] == "cs_open"
+    assert payload["approval_url"] == "https://auth.example.com/connect/cs_open"
+    assert payload["already_open"] is True
+
+
+async def test_suspended_binding_on_a_vendor_target_tells_the_agent_to_ask_its_operator() -> None:
+    _FakeConnectSessionService.error = BindingSuspendedError("agt_1")
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "github"}
+    )
+    assert result.is_error
+
+    payload = _payload(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["retryable"] is False
+    assert "next_tool" not in payload
+    assert "ask your operator to resume" in payload["actionable_step"]
+    assert "request_connection" not in payload["actionable_step"]

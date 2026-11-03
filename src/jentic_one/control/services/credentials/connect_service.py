@@ -9,9 +9,9 @@ import structlog
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import (
     CredentialRepository,
+    OAuthClientCredentialRepository,
     OAuthTokenRepository,
 )
-from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.schemas.connect import (
@@ -21,9 +21,11 @@ from jentic_one.control.services.credentials.schemas.connect import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.state import (
+    BrowserBindingClaim,
     StateError,
     consume_callback_state,
 )
+from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -32,10 +34,6 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 
 logger = structlog.get_logger()
-
-# Bound agents read for the re-authorize re-check: the permitted agent plus any
-# other is enough to refuse.
-_SOLE_BINDING_PROBE = 2
 
 
 class ConnectFlowError(Exception):
@@ -55,16 +53,17 @@ class ConnectService:
         *,
         identity: Identity,
         redirect_uri: str | None = None,
-        sole_agent_id: str | None = None,
+        browser_binding: BrowserBindingClaim | None = None,
     ) -> ConnectChallenge:
         """Load the caller's credential, resolve provider, initiate connect flow.
 
         A credential the caller cannot see is a 404. Visibility includes owner
         delegation (see the comment on the filter below).
 
-        ``sole_agent_id`` marks a re-authorize that must stay sole-bound; it is
-        only honoured from this keyword, never from ``request.extra``, so an
-        HTTP caller cannot inject it through the request body.
+        ``browser_binding`` names the browser that may finish the flow: its
+        hash rides the signed state and the callback requires the matching
+        cookie. Without it the state is unbound and every callback for it
+        is refused.
         """
         # Read filter on purpose, not ``for_write``: an agent holding
         # ``owner:credentials:read`` may start a connect for its owner's
@@ -86,18 +85,18 @@ class ConnectService:
 
         provider = self._ctx.providers.get(provider_name)
 
-        extra = {k: v for k, v in request.extra.items() if k != "sole_agent_id"}
+        extra = dict(request.extra)
         extra.update(
             credential_id=credential_id,
             actor_id=identity.sub,
             actor_type=str(identity.actor_type),
         )
-        if sole_agent_id is not None:
-            extra["sole_agent_id"] = sole_agent_id
         enriched_request = ConnectRequest(
             scopes=request.scopes,
             extra=extra,
             redirect_uri=redirect_uri,
+            browser_binding_hash=browser_binding.digest if browser_binding else None,
+            browser_host=browser_binding.host if browser_binding else None,
         )
 
         return await provider.begin_connect(self._ctx, api=api, request=enriched_request)
@@ -106,15 +105,22 @@ class ConnectService:
         self,
         raw_state: str,
         callback: ConnectCallback,
+        *,
+        browser_binding: str | None,
     ) -> str:
-        """Verify state, exchange code via provider, persist tokens. Returns credential_id."""
+        """Verify state, exchange code via provider, persist tokens. Returns credential_id.
+
+        ``browser_binding`` is the binding cookie the callback carried.
+        """
         # Shared prologue with ``ConnectSessionService.complete_from_callback``
         # so replay protection lives in exactly one place. ``StateError``
         # covers every failure mode (expired / invalid / missing-actor /
         # nonce already consumed); we surface the taxonomy back to the
         # router via ``ConnectFlowError`` for the standalone path.
         try:
-            state = await consume_callback_state(self._ctx, raw_state)
+            state = await consume_callback_state(
+                self._ctx, raw_state, browser_binding=browser_binding
+            )
         except StateError as exc:
             raise ConnectFlowError(str(exc)) from exc
 
@@ -131,15 +137,31 @@ class ConnectService:
             # theme-8 Phase 4): that actor can no longer own a credential.
             raise ConnectFlowError(f"Unsupported actor_type in state: {state.actor_type}") from exc
         try:
-            if state.sole_agent_id is not None:
-                await self._require_sole_binding(state.credential_id, state.sole_agent_id)
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)
 
             async with self._ctx.control_db.transaction() as session:
+                # Same lock as the broker refresh and a token_url edit, then
+                # re-check the endpoint: a cross-origin edit that committed
+                # while the code was being exchanged has moved the credential
+                # away from the origin this grant was minted at, and storing
+                # it would hand its refresh token to the new origin.
+                await OAuthTokenRepository.acquire_refresh_lock(session, state.credential_id)
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
+                current_token_url = await OAuthClientCredentialRepository.current_token_url(
+                    session, credential
+                )
+                if not minted_at_current_origin(result.token_url, current_token_url):
+                    logger.warning(
+                        "oauth_connect_discarded_token_url_moved",
+                        credential_id=state.credential_id,
+                    )
+                    raise ConnectFlowError(
+                        "the credential's token_url moved to another origin while connecting; "
+                        "reconnect the credential"
+                    )
 
                 existing_token = await OAuthTokenRepository.get_by_credential(
                     session, state.credential_id
@@ -218,25 +240,6 @@ class ConnectService:
             actor_type=actor_type,
         )
         return state.credential_id
-
-    async def _require_sole_binding(self, credential_id: str, sole_agent_id: str) -> None:
-        """Refuse a re-authorize whose credential gained another bound agent meanwhile.
-
-        Checked before the code is exchanged, so the wider grant is never
-        stored. Suspended bindings count: lifting the suspension would hand
-        that agent the wider scopes too.
-        """
-        async with self._ctx.admin_db.session() as admin_session:
-            rows = await PrerequisiteRepository.list_agents_for_credential(
-                admin_session, credential_id=credential_id, limit=_SOLE_BINDING_PROBE
-            )
-        if any(row.agent_id != sole_agent_id for row in rows):
-            logger.warning(
-                "oauth_reauthorize_refused_other_agent_bound",
-                credential_id=credential_id,
-                agent_id=sole_agent_id,
-            )
-            raise ConnectFlowError("re-authorize refused: another agent is bound to the credential")
 
     async def _emit_connect_telemetry(
         self, *, type: str, summary: str, created_by: str, actor_type: ActorType

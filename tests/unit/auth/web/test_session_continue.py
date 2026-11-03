@@ -29,6 +29,7 @@ from pydantic import SecretStr
 
 from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
+from jentic_one.auth.web import deps
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.flow import (
     approval_state_key,
@@ -38,7 +39,7 @@ from jentic_one.auth.web.flow import (
     state_signing_key,
     verify_payload,
 )
-from jentic_one.auth.web.routers import authorize, local_login
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent, local_login
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, LocalLoginConfig, PlatformClientConfig
 from jentic_one.shared.models import ActorType
@@ -73,7 +74,10 @@ def _fake_identity(sub: str = USER_ID, actor_type: ActorType = ActorType.USER) -
 
 def _make_app(ctx: MagicMock, identity: Identity | None = None) -> FastAPI:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.include_router(local_login.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
     app.state.ctx = ctx
@@ -396,7 +400,7 @@ def _authorize_app(ctx: MagicMock) -> tuple[FastAPI, MagicMock]:
     svc = MagicMock()
     svc.get_authorize_redirect_url.return_value = None
     svc.issue_authorization_code = AsyncMock(return_value="authcode-sc-1")
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: svc
     return app, svc
 
 

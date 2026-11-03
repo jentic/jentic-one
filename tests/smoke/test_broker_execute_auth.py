@@ -29,6 +29,7 @@ from tests.smoke.conftest import (
     HarnessApi,
     SmokeAgent,
     _skip_if_no_admin_surface,
+    authed_request,
     broker_call,
     provision_bound_credential,
 )
@@ -146,28 +147,44 @@ def test_oauth2_injection(
     test_agent: SmokeAgent,
     harness_api: HarnessApi,
     upstream_incluster_url: str,
+    upstream_incluster_tls_url: str,
 ) -> None:
-    """An oauth2 client-credentials grant is exchanged at the harness token stub.
+    """An oauth2 client-credentials grant is exchanged at the harness TLS token stub.
 
-    The broker fetches a token from ``{incluster}/oauth/token`` (the harness
-    token stub) and injects it as a bearer; the harness ``/auth/oauth2`` op accepts any
-    ``Bearer`` value. Skips if the broker can't complete the refresh (e.g. the
-    stub unreachable from the broker) — the bearer/api-key/basic tests already
-    cover injection mechanics.
+    Plain ``http://`` token endpoints are rejected at credential creation time
+    (#1779), so the credential points at ``{incluster_tls}/oauth/token`` (the
+    harness TLS listener on port 8443). The broker fetches a token and injects
+    it as a bearer; the harness ``/auth/oauth2`` op accepts any ``Bearer``
+    value. Skips if the broker can't complete the refresh (e.g. the stub
+    unreachable from the broker) — the bearer/api-key/basic tests already cover
+    injection mechanics.
     """
     _skip_if_no_admin_surface()
+    http_body = {
+        "type": "oauth2",
+        "name": f"smoke-oauth2-http-{uuid.uuid4().hex[:8]}",
+        "api": _api_ref(harness_api),
+        "provider": "static",
+        "grant_type": "client_credentials",
+        "token_url": f"{upstream_incluster_url}/oauth/token",
+        "client_id": "smoke-client",
+        "client_secret": f"smoke-secret-{uuid.uuid4().hex[:12]}",
+    }
+    rejected, rejected_st = authed_request(
+        f"{base_url}/credentials",
+        method="POST",
+        token=test_agent.owner_token,
+        body=http_body,
+    )
+    assert rejected_st == 400, f"expected 400 for http token_url, got {rejected_st}: {rejected}"
+
     provision_bound_credential(
         base_url,
         test_agent,
         credential_body={
-            "type": "oauth2",
+            **http_body,
             "name": f"smoke-oauth2-{uuid.uuid4().hex[:8]}",
-            "api": _api_ref(harness_api),
-            "provider": "static",
-            "grant_type": "client_credentials",
-            "token_url": f"{upstream_incluster_url}/oauth/token",
-            "client_id": "smoke-client",
-            "client_secret": f"smoke-secret-{uuid.uuid4().hex[:12]}",
+            "token_url": f"{upstream_incluster_tls_url}/oauth/token",
         },
     )
     raw, status, _ = broker_call(

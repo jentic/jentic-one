@@ -15,7 +15,7 @@ class ExternalIdentity(AuditableMixin, AdminBase):
 
     __tablename__ = "external_identities"
     __table_args__ = (
-        UniqueConstraint("provider", "external_subject", name="uq_ext_id_provider_subject"),
+        UniqueConstraint("issuer", "external_subject", name="uq_ext_id_issuer_subject"),
         Index("ix_ext_id_user_id", "user_id"),
     )
 
@@ -26,6 +26,7 @@ class ExternalIdentity(AuditableMixin, AdminBase):
         server_default=func.generate_ksuid("eid"),
     )
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    issuer: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     external_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str] = mapped_column(
         String(30), ForeignKey("users.id", ondelete="CASCADE"), nullable=False

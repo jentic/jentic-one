@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, func, update
 from sqlalchemy.exc import IntegrityError
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -255,3 +255,35 @@ async def test_owner_fk_enforcement(admin_db: DatabaseSession, test_owner: str) 
                 registered_by=test_owner,
                 created_by="usr_test",
             )
+
+
+async def test_get_with_owner_active_refuses_deleted_owner_even_when_active(
+    admin_db: DatabaseSession, test_owner: str
+) -> None:
+    async with admin_db.session() as session:
+        agent = await AgentRepository.create(
+            session,
+            name="deleted-owner-agent",
+            owner_id=test_owner,
+            registered_by=test_owner,
+            created_by="usr_test",
+        )
+        await session.commit()
+        agent_id = agent.id
+
+    async with admin_db.session() as session:
+        loaded = await AgentRepository.get_with_owner_active(session, agent_id)
+        assert loaded is not None
+        assert loaded[1] is True
+
+    # Mark owner deleted while leaving active=True.
+    async with admin_db.transaction() as session:
+        await session.execute(
+            update(User).where(User.id == test_owner).values(deleted_at=func.now(), active=True)
+        )
+
+    async with admin_db.session() as session:
+        loaded = await AgentRepository.get_with_owner_active(session, agent_id)
+        assert loaded is not None
+        assert loaded[0].id == agent_id
+        assert loaded[1] is False

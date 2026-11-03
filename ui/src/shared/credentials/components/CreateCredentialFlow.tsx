@@ -36,6 +36,7 @@ import {
 	type SelectedApi,
 	type VendorSummary,
 } from '@/shared/credentials/api';
+import { useConnectSession } from '@/shared/credentials/api/vendors-hooks';
 import {
 	CredentialTypeFields,
 	EMPTY_FORM,
@@ -162,6 +163,16 @@ interface CreateCredentialFlowProps {
 	 */
 	approvalSession?: { sessionId: string; pollToken?: string };
 	/**
+	 * When provided, the flow opens on changing the scopes on one binding's
+	 * credential: the person's own change, applied via the vendor sign-in.
+	 */
+	editScopes?: {
+		agentId: string;
+		credentialId: string;
+		credentialName: string;
+		vendorKey: string;
+	};
+	/**
 	 * When set, the vendor connect opens with this agent locked in as the
 	 * binding target (``VendorConnectFlow``'s ``preselectedAgentId`` greys the
 	 * picker out). Used when the flow is opened from one agent's surface.
@@ -249,6 +260,7 @@ export function CreateCredentialFlow({
 	surface = 'sheet',
 	onTouched,
 	approvalSession,
+	editScopes,
 	preselectedAgentId,
 	onVendorConnected,
 	renderPostConnect,
@@ -933,23 +945,38 @@ export function CreateCredentialFlow({
 		return `${selectedApi.label} only offers non-interactive OAuth grants (such as client credentials). Shared apps need an authorization code or device code flow.`;
 	})();
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
-	const title = approvalSession
-		? 'Approve integration'
-		: step === 'pick'
-			? registerSharedApp
-				? 'Register shared OAuth app'
-				: 'Add credential'
-			: step === 'vendor' && selectedVendor
-				? `Connect ${selectedVendor.display_name}`
-				: registerSharedApp
-					? `Register shared OAuth app${titleSuffix}`
-					: `Add credential${titleSuffix}`;
+	// The review the approve flow reads (same query, so no extra request): an
+	// edit session asks to change access, not to connect.
+	const approvalReview = useConnectSession(
+		approvalSession?.sessionId,
+		approvalSession?.pollToken,
+	);
+	const approvingEdit = approvalSession != null && approvalReview.data?.edit != null;
+	const title = editScopes
+		? 'Edit scopes'
+		: approvingEdit
+			? 'Review access change'
+			: approvalSession
+				? 'Approve integration'
+				: step === 'pick'
+					? registerSharedApp
+						? 'Register shared OAuth app'
+						: 'Add credential'
+					: step === 'vendor' && selectedVendor
+						? `Connect ${selectedVendor.display_name}`
+						: registerSharedApp
+							? `Register shared OAuth app${titleSuffix}`
+							: `Add credential${titleSuffix}`;
 	const formStepHint = registerSharedApp
 		? 'Fill in the shared app details'
 		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
-	const subtitle = approvalSession ? (
+	const subtitle = editScopes ? (
+		<span>Add or remove what the credential can do at the vendor.</span>
+	) : approvingEdit ? (
+		<span>An agent is asking to change its access.</span>
+	) : approvalSession ? (
 		<span>An agent is asking to connect on your behalf.</span>
 	) : step === 'vendor' ? (
 		<span>Pick an agent and the access it needs.</span>
@@ -1061,7 +1088,7 @@ export function CreateCredentialFlow({
 	// Approve mode and the vendor step render VendorConnectFlow's own inline
 	// action bar, so the flow's footer stands down for both.
 	const footer =
-		approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
+		editScopes || approvalSession || step === 'vendor' ? undefined : step === 'pick' ? (
 			// Always reachable, not only from no-results: an operator who knows the
 			// API isn't catalogued shouldn't have to search first.
 			<Button
@@ -1154,7 +1181,9 @@ export function CreateCredentialFlow({
 		</div>
 	);
 
-	const body = approvalSession ? (
+	const body = editScopes ? (
+		<VendorConnectFlow mode="edit-scopes" {...editScopes} onBack={onClose} onDone={onClose} />
+	) : approvalSession ? (
 		<VendorConnectFlow
 			mode="approve"
 			sessionId={approvalSession.sessionId}
@@ -1589,7 +1618,7 @@ export function CreateCredentialFlow({
 	);
 
 	/** A connect session is open (created on `VendorConnectFlow` mount). */
-	const connectInPlay = !!approvalSession || step === 'vendor';
+	const connectInPlay = !!editScopes || !!approvalSession || step === 'vendor';
 
 	if (surface === 'inline') {
 		return (
@@ -1620,7 +1649,7 @@ export function CreateCredentialFlow({
 				onClose={onClose}
 				title={title}
 				subtitle={subtitle}
-				size={approvalSession || step !== 'form' ? 'lg' : 'xl'}
+				size={editScopes || approvalSession || step !== 'form' ? 'lg' : 'xl'}
 				footer={footer}
 				dismissOnBackdrop={false}
 			>

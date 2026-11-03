@@ -6,8 +6,10 @@ import hashlib
 import hmac as hmac_mod
 import secrets
 from base64 import urlsafe_b64encode
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ from jentic_one.admin.core.permissions import (
     compute_effective,
 )
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.repos import (
     ActorPermissionGrantRepository,
     AgentRepository,
@@ -37,13 +40,22 @@ from jentic_one.auth.core.idp import (
     get_admission_policy,
     get_default_idp_grants,
 )
-from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
+from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.auth.services.errors import (
+    ConsentAgentNotEligibleError,
+    InvalidGrantError,
+    UserNotAdmittedError,
+)
+from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
+from jentic_one.auth.services.schemas.agents import AgentCreatePayload
 from jentic_one.auth.services.token_service import (
     TokenService,
     resolve_effective_scopes,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -53,6 +65,7 @@ from jentic_one.shared.models import (
     InviteState,
     OAuthClientApprovalStatus,
 )
+from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 
@@ -111,6 +124,78 @@ class PendingAgentRef:
     name: str
 
 
+def candidate_agent_scopes(
+    requested: list[str],
+    allowlist: frozenset[str] | None,
+) -> list[str]:
+    """The scopes an agent-bound grant could carry: requested ∩ client allowlist.
+
+    OIDC passthrough scopes (``openid`` and friends) are stripped first:
+    agent-bound grants carry no OIDC identity, so they must never enter the
+    granted set. Order follows the request.
+
+    This is the half of the grant-scope rule that does not depend on which
+    agent the user picks, so the consent page shows exactly this list per
+    agent option and :func:`effective_agent_scopes` starts from it — one
+    function, so the page can never advertise a scope the grant would drop.
+    """
+    candidates = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
+    if allowlist is None:
+        return candidates
+    return [s for s in candidates if s in allowlist]
+
+
+def effective_agent_scopes(
+    requested: list[str],
+    allowlist: frozenset[str] | None,
+    agent_permissions: frozenset[str],
+) -> list[str]:
+    """The grant-scope intersection: requested ∩ client allowlist ∩ the agent's
+    live permissions.
+
+    Named for what it returns — a set of OAuth2 scopes for the grant row — even
+    though the third operand is read from ``actor_permission_grants``.
+
+    The first two operands come from :func:`candidate_agent_scopes` (which the
+    consent page also calls), so the page and the grant row agree by
+    construction; the agent's live permission set is the ceiling applied on
+    top. Order follows the request.
+    """
+    candidates = candidate_agent_scopes(requested, allowlist)
+    return [s for s in candidates if s in agent_permissions]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentConsentApproval:
+    """Outcome of :meth:`AuthorizeService.approve_agent_consent`.
+
+    Either ``error`` is set (the browser-facing ``/error?error=…`` code; no
+    grant was minted) or ``grant_id`` + ``scopes`` describe the minted grant.
+    """
+
+    grant_id: str | None = None
+    scopes: tuple[str, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentAgentCreateResult:
+    """Outcome of :meth:`AuthorizeService.create_agent_from_consent`.
+
+    - ``reenter_consent`` — re-enter the consent page (an ACTIVE agent was
+      created, an agent already existed, or a parallel submit won the slot);
+    - ``await_approval`` — a PENDING agent was created (``agent_id`` /
+      ``agent_name``); the caller parks the user on the awaiting page;
+    - ``error`` — nothing was created; ``error`` is the browser-facing
+      ``/error?error=…`` code.
+    """
+
+    outcome: Literal["reenter_consent", "await_approval", "error"]
+    error: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
+
+
 class AuthorizeService:
     """Handles AuthCode+PKCE flow: code issuance, exchange, and IdP federation."""
 
@@ -125,18 +210,37 @@ class AuthorizeService:
     def _get_idp_adapter(self) -> IdpAdapter | None:
         return build_idp_adapter(self._auth_config.idp)
 
+    def _effective_idp_issuer(self, claims: IdpClaims) -> str:
+        """Resolve the canonical IdP issuer for external-identity keying."""
+        if claims.issuer:
+            return claims.issuer.rstrip("/")
+        adapter = self._get_idp_adapter()
+        if adapter is not None and adapter.issuer:
+            return adapter.issuer
+        if self._auth_config.idp.issuer:
+            return self._auth_config.idp.issuer.rstrip("/")
+        if self._auth_config.idp.provider == "google":
+            return "https://accounts.google.com"
+        return self._auth_config.idp.provider
+
     def get_authorize_redirect_url(
         self,
         *,
         state: str,
         nonce: str,
         redirect_uri: str,
+        code_challenge: str | None = None,
     ) -> str | None:
         """Get the upstream IdP authorization URL, or None if local-only."""
         adapter = self._get_idp_adapter()
         if adapter is None:
             return None
-        return adapter.authorize_url(state=state, nonce=nonce, redirect_uri=redirect_uri)
+        return adapter.authorize_url(
+            state=state,
+            nonce=nonce,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+        )
 
     async def handle_idp_callback(
         self,
@@ -148,6 +252,8 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> str:
         """Handle IdP callback: exchange upstream code, map identity, issue auth code.
 
@@ -161,6 +267,8 @@ class AuthorizeService:
             code_challenge=code_challenge,
             scopes=scopes,
             nonce=nonce,
+            idp_code_verifier=idp_code_verifier,
+            idp_nonce=idp_nonce,
         )
         return platform_code
 
@@ -174,6 +282,8 @@ class AuthorizeService:
         code_challenge: str,
         scopes: str,
         nonce: str | None,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> tuple[str, str]:
         """Handle IdP callback and return both platform code and user email.
 
@@ -184,7 +294,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
 
@@ -203,6 +318,8 @@ class AuthorizeService:
         *,
         code: str,
         redirect_uri: str,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> tuple[str, str]:
         """Exchange an upstream IdP code and resolve the local user.
 
@@ -213,7 +330,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         claims = adapter.map_claims(userinfo)
         user_id = await self._resolve_or_create_user(claims)
         return user_id, claims.email
@@ -223,6 +345,8 @@ class AuthorizeService:
         *,
         code: str,
         redirect_uri: str,
+        idp_code_verifier: str | None = None,
+        idp_nonce: str | None = None,
     ) -> IdpClaims:
         """Exchange an upstream IdP code and return the claims *without* provisioning.
 
@@ -237,7 +361,12 @@ class AuthorizeService:
         if adapter is None:
             raise InvalidGrantError("No external IdP configured")
 
-        userinfo = await adapter.exchange_code(code, redirect_uri=redirect_uri)
+        userinfo = await adapter.exchange_code(
+            code,
+            redirect_uri=redirect_uri,
+            code_verifier=idp_code_verifier,
+            nonce=idp_nonce,
+        )
         return adapter.map_claims(userinfo)
 
     async def provision_from_claims(self, claims: IdpClaims) -> str:
@@ -254,11 +383,15 @@ class AuthorizeService:
         email match only when the IdP asserts ``email_verified`` (an
         unverified email must not expose another account's agent list).
         """
-        provider = self._auth_config.idp.provider
+        issuer = self._effective_idp_issuer(claims)
         async with self._ctx.admin_db.session() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
+            if ext_id is None:
+                ext_id = await self._adoptable_unscoped_link(
+                    session, self._auth_config.idp.provider, issuer, claims.external_subject
+                )
             if ext_id is not None:
                 return ext_id.user_id
             if claims.email_verified:
@@ -366,6 +499,191 @@ class AuthorizeService:
         async with self._ctx.admin_db.session() as session:
             agent = await AgentRepository.get_by_id(session, agent_id)
         return None if agent is None else agent.status
+
+    async def approve_agent_consent(
+        self,
+        *,
+        user_id: str,
+        client_id: str,
+        client_name: str,
+        allowed_scopes: list[str] | None,
+        agent_id: str | None,
+        scope: str,
+    ) -> AgentConsentApproval:
+        """Validate the agent picked on the consent page and mint its grant.
+
+        The browser's selection is never trusted: the agent must be one of
+        the consenting user's own ACTIVE agents (the picker's own predicate),
+        and the requested ∩ allowlist ∩ agent-permissions scope intersection
+        is recomputed here. The grant row (+ audit + ``oauth_grant.created``)
+        is minted through :class:`OAuthGrantService`. Every failure returns an
+        ``error`` code and mints nothing.
+        """
+        grant_service = OAuthGrantService(self._ctx)
+        if not agent_id:
+            _logger.warning("oauth_consent_agent_missing", client_id=client_id)
+            return AgentConsentApproval(error="invalid_agent_selection")
+
+        options = await self.list_consentable_agents(user_id)
+        selected = next((o for o in options if o.id == agent_id), None)
+        if selected is None:
+            # Not the user's own active agent — covers unknown ids, other users'
+            # agents, and pending/disabled/archived agents in one predicate.
+            _logger.warning("oauth_consent_agent_invalid", client_id=client_id)
+            return AgentConsentApproval(error="invalid_agent_selection")
+
+        requested = [s.strip() for s in scope.split() if s.strip()]
+        allowlist = frozenset(allowed_scopes) if allowed_scopes is not None else None
+        effective = effective_agent_scopes(requested, allowlist, selected.permissions)
+        if not effective:
+            _logger.warning(
+                "oauth_consent_no_grantable_scopes", client_id=client_id, agent_id=agent_id
+            )
+            return AgentConsentApproval(error="no_grantable_scopes")
+
+        try:
+            grant_id = await grant_service.create_grant(
+                user_id=user_id,
+                oauth_client_id=client_id,
+                agent_id=selected.id,
+                scopes=effective,
+                client_name=client_name,
+            )
+        except ConsentAgentNotEligibleError:
+            # The mint-time lock + re-check refused: the agent was transferred,
+            # archived, or disabled between the picker validation above and the
+            # grant write. Same user-facing posture as a failed picker
+            # validation — the human error page, never a code redirect or a 500.
+            _logger.warning(
+                "oauth_consent_agent_invalid_at_mint", client_id=client_id, agent_id=agent_id
+            )
+            return AgentConsentApproval(error="invalid_agent_selection")
+        return AgentConsentApproval(grant_id=grant_id, scopes=tuple(effective))
+
+    async def create_agent_from_consent(
+        self,
+        *,
+        claims: IdpClaims | None,
+        local_user_id: str | None,
+        user_email: str,
+        origin: Origin,
+        agent_name: str,
+        client_id: str,
+        claim_create_slot: Callable[[], Awaitable[bool]],
+    ) -> ConsentAgentCreateResult:
+        """Create the consenting user's first agent from the consent page.
+
+        The caller has already verified + burned the signed create blob,
+        re-validated the consent handle and the client approval+active gate,
+        and validated ``agent_name``. This runs the workflow:
+
+        1. resolve the user — a local-login handle names it; an IdP handle is
+           resolved read-only and, when deferred provisioning left no row,
+           provisioned here (an affirmative user action, unlike rendering);
+        2. re-check the zero-agents predicate — an agent appearing in between
+           creates nothing;
+        3. claim the per-subject create slot (``claim_create_slot``) — exactly
+           one of N parallel submits proceeds;
+        4. decide the arm with the same effective-permission math as POST
+           /agents' ``agents:write`` gate — ACTIVE when the user holds it,
+           otherwise PENDING (the POST /register posture);
+        5. create the agent through :class:`AgentService` (owner = the
+           consenting user, default agent permissions, same audit + event).
+
+        ``claim_create_slot`` is injected rather than reached from
+        ``self._ctx`` because the atomic marker it sets lives in the app's
+        shared auth-state backend (``app.state.auth_state_backend``), which
+        ``Context`` does not expose; see
+        :func:`jentic_one.auth.web.consent_state.claim_agent_create_slot` for
+        the only production implementation. Keeping it a parameter also lets
+        the workflow be exercised without a web layer.
+        """
+        agent_service = AgentService(self._ctx)
+        if local_user_id:
+            user_id = local_user_id
+        else:
+            resolved = await self.resolve_existing_user_id(claims) if claims else None
+            if resolved is None:
+                if claims is None:
+                    # The handle's subject key guarantees claims exist on this
+                    # arm; belt and braces for a malformed handle.
+                    _logger.warning("oauth_consent_missing_claims", client_id=client_id)
+                    return ConsentAgentCreateResult(outcome="error", error="invalid_consent")
+                # Deferred provisioning: same admission policy + audit as the
+                # consent approve arm — never at render.
+                try:
+                    resolved = await self.provision_from_claims(claims)
+                except UserNotAdmittedError:
+                    _logger.warning("oauth_user_not_admitted", client_id=client_id)
+                    return ConsentAgentCreateResult(outcome="error", error="access_denied")
+                except InvalidGrantError:
+                    _logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
+                    return ConsentAgentCreateResult(outcome="error", error="server_error")
+            user_id = resolved
+
+        # Idempotency/race re-check: if an agent appeared between the form render
+        # and this submit (another tab, an admin, a parallel submit), create
+        # nothing — just re-enter consent. The predicate is ownership of ANY
+        # agent row, in any status, matching the render arm: a user whose agents
+        # were disabled or archived by an admin is not first-run, and this
+        # submit must not mint them a fresh ACTIVE agent past that action.
+        if await self.owner_has_any_agents(user_id):
+            _logger.info(
+                "oauth_consent_agent_create_skipped_existing", client_id=client_id, user_id=user_id
+            )
+            return ConsentAgentCreateResult(outcome="reenter_consent")
+
+        # The plain read above cannot see a parallel submit that has not
+        # committed yet — the atomic per-subject slot claim can (security
+        # review): exactly one of N concurrent submits proceeds to create.
+        if not await claim_create_slot():
+            _logger.info(
+                "oauth_consent_agent_create_lost_race", client_id=client_id, user_id=user_id
+            )
+            return ConsentAgentCreateResult(outcome="reenter_consent")
+
+        # The hybrid arm split (security review): decided HERE, after the
+        # subject is provisioned, with the same effective-permission math as
+        # POST /agents' agents:write gate — this public mid-flow door must
+        # not out-privilege the SPA's.
+        can_create_active = await self.user_can_create_active_agent(user_id)
+        create_status = ActorStatus.ACTIVE if can_create_active else ActorStatus.PENDING
+        # Owner is ALWAYS the consenting user resolved from the server-side
+        # handle — the form carries no owner input. permissions=None applies the
+        # platform's DEFAULT_AGENT_PERMISSIONS on the ACTIVE arm, exactly like the
+        # SPA path (the PENDING arm defers scopes to approve(), exactly like
+        # /register); the service records the same REGISTER audit +
+        # agent.created event either way.
+        identity = Identity(
+            sub=user_id,
+            email=user_email,
+            actor_type=ActorType.USER,
+            origin=origin,
+        )
+        try:
+            view = await agent_service.create(
+                AgentCreatePayload(name=agent_name, description=None, permissions=None),
+                owner_id=user_id,
+                identity=identity,
+                status=create_status,
+            )
+        except DatabaseIntegrityError:
+            # The owner FK refused (user row vanished mid-flow) — the shared
+            # browser-facing error, never a raw 500.
+            _logger.warning("oauth_consent_agent_create_failed", client_id=client_id)
+            return ConsentAgentCreateResult(outcome="error", error="server_error")
+        _logger.info(
+            "oauth_consent_agent_created",
+            client_id=client_id,
+            agent_id=view.id,
+            user_id=user_id,
+            status=create_status.value,
+        )
+        if can_create_active:
+            return ConsentAgentCreateResult(outcome="reenter_consent")
+        return ConsentAgentCreateResult(
+            outcome="await_approval", agent_id=view.id, agent_name=view.name
+        )
 
     async def issue_authorization_code(
         self,
@@ -683,17 +1001,46 @@ class AuthorizeService:
 
         Handles the race condition where concurrent callbacks for the same
         external_subject both pass the initial lookup — the UniqueConstraint
-        on (provider, external_subject) rejects the second insert, which is
+        on (issuer, external_subject) rejects the second insert, which is
         caught and retried as a lookup.
         """
         provider = self._auth_config.idp.provider
+        issuer = self._effective_idp_issuer(claims)
 
         async with self._ctx.admin_db.transaction() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id
+            # A link with no real issuer is pinned to the issuer that adopts it,
+            # so no other issuer can resolve it afterwards.
+            unscoped = await self._adoptable_unscoped_link(
+                session, provider, issuer, claims.external_subject
+            )
+            if unscoped is not None:
+                before_issuer = unscoped.issuer
+                if await ExternalIdentityRepository.pin_issuer(session, unscoped, issuer):
+                    await record_audit(
+                        session,
+                        action=AuditAction.UPDATE,
+                        target_type=AuditTargetType.USER,
+                        target_id=unscoped.user_id,
+                        actor_type=ActorType.USER,
+                        actor_id=unscoped.user_id,
+                        before={"external_identity_issuer": before_issuer},
+                        after={"external_identity_issuer": issuer},
+                        reason=f"keyed external identity ({provider}) to its issuer",
+                        origin=None,
+                    )
+                    return unscoped.user_id
+                # A concurrent first login pinned it first: it resolves only if
+                # that login pinned it to this issuer.
+                ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                    session, issuer, claims.external_subject
+                )
+                if ext_id is not None:
+                    return ext_id.user_id
 
         try:
             async with self._ctx.admin_db.transaction() as session:
@@ -707,6 +1054,7 @@ class AuthorizeService:
                     await ExternalIdentityRepository.create(
                         session,
                         provider=provider,
+                        issuer=issuer,
                         external_subject=claims.external_subject,
                         user_id=existing_user.id,
                         email=claims.email,
@@ -751,6 +1099,7 @@ class AuthorizeService:
                 await ExternalIdentityRepository.create(
                     session,
                     provider=provider,
+                    issuer=issuer,
                     external_subject=claims.external_subject,
                     user_id=new_user.id,
                     email=claims.email,
@@ -790,12 +1139,40 @@ class AuthorizeService:
             pass
 
         async with self._ctx.admin_db.transaction() as session:
-            ext_id = await ExternalIdentityRepository.get_by_provider_subject(
-                session, provider, claims.external_subject
+            ext_id = await ExternalIdentityRepository.get_by_issuer_subject(
+                session, issuer, claims.external_subject
             )
             if ext_id is not None:
                 return ext_id.user_id
             raise InvalidGrantError("concurrent identity creation failed")
+
+    @staticmethod
+    async def _adoptable_unscoped_link(
+        session: AsyncSession, provider: str, issuer: str, external_subject: str
+    ) -> ExternalIdentity | None:
+        """The link with no real issuer that ``issuer`` may resolve for ``external_subject``.
+
+        Such a link (``issuer`` empty or equal to ``provider``) was written
+        before links were keyed by issuer, under whichever issuer the provider
+        was configured with then; the configured issuer adopts it on first
+        sign-in. A link of the provider keyed to a different real issuer shows
+        the provider has signed in through another issuer since links were
+        keyed, so the unscoped link may belong to that issuer, and the same
+        subject at another issuer can be a different person: it is not
+        adopted, and its user can still sign in through a verified-email match.
+        """
+        link = await ExternalIdentityRepository.get_unscoped(session, provider, external_subject)
+        if link is None:
+            return None
+        if await ExternalIdentityRepository.has_link_under_other_issuer(session, provider, issuer):
+            _logger.warning(
+                "external_identity_unscoped_link_not_adopted",
+                provider=provider,
+                issuer=issuer,
+                external_identity_id=link.id,
+            )
+            return None
+        return link
 
     async def _audit_admission_rejected(self, claims: IdpClaims, provider: str) -> None:
         """Record a rejected external-IdP login in its own committed transaction.

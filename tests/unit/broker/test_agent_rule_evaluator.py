@@ -36,7 +36,10 @@ def _mock_db(rows: list[tuple[object, ...]]) -> tuple[MagicMock, AsyncMock]:
     mock_result = MagicMock()
     mock_result.all.return_value = rows
     mock_session.execute = AsyncMock(return_value=mock_result)
-    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
+    mock_db.read_session = MagicMock(return_value=_AsyncCtx(mock_session))
+    mock_db.session = MagicMock(
+        side_effect=AssertionError("expected read_session(), not session()")
+    )
     return mock_db, mock_session
 
 

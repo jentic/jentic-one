@@ -10,7 +10,7 @@ import (
 )
 
 // The typed output structs below mirror the relevant subset of AppConfig
-// (src/jentic_one/shared/config.py). Using structs (rather than maps) keeps the
+// (src/jentic_one/shared/config/app.py). Using structs (rather than maps) keeps the
 // generated YAML field order deterministic and readable.
 
 type dbEntry struct {
@@ -86,7 +86,7 @@ type adminOut struct {
 	Invite adminInviteOut `yaml:"invite"`
 }
 
-// encryptionEntryOut mirrors EncryptionKey (config.py): key material comes
+// encryptionEntryOut mirrors EncryptionKey (shared/config/encryption.py): key material comes
 // from exactly one of the three sources. All three must round-trip through
 // ReuseSecrets — dropping an unrecognised source field would silently re-key
 // a reinstall. Material carries omitempty so a carried-over material_env/

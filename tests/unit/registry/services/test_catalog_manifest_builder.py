@@ -403,51 +403,67 @@ def test_preview_op_security_overrides_doc_security() -> None:
     proj = mb.project_preview(_preview_doc())
     get_op = next(op for op in proj.operations if op.method == "GET")
     post_op = next(op for op in proj.operations if op.method == "POST")
-    assert get_op.security == ["globalKey"]
-    assert post_op.security == ["oauth"]
+    assert get_op.security == ("globalKey",)
+    assert post_op.security == ("oauth",)
 
 
 def test_preview_security_schemes_slimmed() -> None:
     proj = mb.project_preview(_preview_doc())
     assert proj.security_schemes["globalKey"]["type"] == "apiKey"
     assert proj.security_schemes["globalKey"]["name"] == "X-Key"
-    assert proj.security_schemes["oauth"]["flows"] == ["authorizationCode"]
+    assert proj.security_schemes["oauth"]["flows"] == ("authorizationCode",)
+
+
+def _filtered(*, tag: str | None = None, q: str | None = None) -> list[mb.PreviewOperation]:
+    ops = mb.project_preview(_preview_doc()).operations
+    return mb.filter_preview_operations(ops, tag=tag, q=q)
 
 
 def test_preview_tag_filter() -> None:
-    proj = mb.project_preview(_preview_doc(), tag="THINGS")
-    assert len(proj.operations) == 2
-    proj_none = mb.project_preview(_preview_doc(), tag="missing")
-    assert proj_none.operations == []
+    assert len(_filtered(tag="THINGS")) == 2
+    assert _filtered(tag="missing") == []
 
 
 def test_preview_q_filter_matches_summary_path_method_opid() -> None:
     # operationId match (case-insensitive).
-    by_opid = mb.project_preview(_preview_doc(), q="listthings")
-    assert [op.method for op in by_opid.operations] == ["GET"]
+    assert [op.method for op in _filtered(q="listthings")] == ["GET"]
     # path match.
-    by_path = mb.project_preview(_preview_doc(), q="/things")
-    assert len(by_path.operations) == 2
+    assert len(_filtered(q="/things")) == 2
     # summary match.
-    by_summary = mb.project_preview(_preview_doc(), q="create")
-    assert [op.method for op in by_summary.operations] == ["POST"]
+    assert [op.method for op in _filtered(q="create")] == ["POST"]
     # method match.
-    by_method = mb.project_preview(_preview_doc(), q="post")
-    assert [op.method for op in by_method.operations] == ["POST"]
+    assert [op.method for op in _filtered(q="post")] == ["POST"]
 
 
 def test_preview_q_no_match_is_empty() -> None:
-    assert mb.project_preview(_preview_doc(), q="nope-zzz").operations == []
+    assert _filtered(q="nope-zzz") == []
 
 
 def test_preview_q_and_tag_combine() -> None:
     # tag matches both ops, q narrows to the POST.
-    proj = mb.project_preview(_preview_doc(), tag="things", q="create")
-    assert [op.method for op in proj.operations] == ["POST"]
+    assert [op.method for op in _filtered(tag="things", q="create")] == ["POST"]
 
 
 def test_preview_blank_q_is_noop() -> None:
-    assert len(mb.project_preview(_preview_doc(), q="   ").operations) == 2
+    assert len(_filtered(q="   ")) == 2
+
+
+def test_preview_filter_returns_new_sequence_without_filters() -> None:
+    ops = mb.project_preview(_preview_doc()).operations
+    filtered = mb.filter_preview_operations(ops)
+    assert list(filtered) == list(ops)
+    assert isinstance(filtered, list)
+
+
+def test_preview_projection_is_deeply_immutable() -> None:
+    proj = mb.project_preview(_preview_doc())
+    assert isinstance(proj.operations, tuple)
+    op = proj.operations[0]
+    assert isinstance(op.parameters, tuple)
+    assert isinstance(op.security, tuple)
+    assert isinstance(op.tags, tuple)
+    with pytest.raises(TypeError):
+        proj.security_schemes["globalKey"]["type"] = "http"  # type: ignore[index]
 
 
 def test_preview_q_survives_non_string_summary_and_operation_id() -> None:
@@ -461,14 +477,15 @@ def test_preview_q_survives_non_string_summary_and_operation_id() -> None:
             }
         }
     }
+    ops = mb.project_preview(doc).operations
     # No crash, and the projected values are normalised to str/None.
-    all_ops = mb.parse_preview_operations(doc, q="widget")
+    all_ops = mb.filter_preview_operations(ops, q="widget")
     assert {op.method for op in all_ops} == {"GET", "POST"}
     get_op = next(op for op in all_ops if op.method == "GET")
     assert get_op.summary == ""
     assert get_op.operation_id is None
     # The well-formed POST still matches on its real fields.
-    by_opid = mb.parse_preview_operations(doc, q="createwidget")
+    by_opid = mb.filter_preview_operations(ops, q="createwidget")
     assert [op.method for op in by_opid] == ["POST"]
 
 
@@ -482,7 +499,7 @@ def test_preview_unresolvable_ref_param_dropped() -> None:
     doc = {"paths": {"/x": {"get": {"parameters": [{"$ref": "#/nope/missing"}]}}}}
     proj = mb.project_preview(doc)
     [op] = proj.operations
-    assert op.parameters == []
+    assert op.parameters == ()
 
 
 # ── catalog_api_name (#1020) ─────────────────────────────────────────────────

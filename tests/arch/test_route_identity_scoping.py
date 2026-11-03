@@ -96,6 +96,9 @@ _ALLOWLIST: dict[str, str] = {
     "auth/registration.delete_registration_endpoint": "always 403: client deletion unsupported",
     # --- control ---
     "control/credentials.list_providers": "static credential-provider metadata, no rows",
+    "control/integrations.integrations_connect_options": (
+        "an API's declared schemes and the org's connect source for it, no caller-owned rows"
+    ),
     "control/mcp.report_mcp_config_registration": (
         "fire-and-forget telemetry report attributed to identity.sub; reads nothing per-caller"
     ),

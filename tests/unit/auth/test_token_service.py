@@ -112,10 +112,13 @@ def _with_owner(agent_row: MagicMock, *, owner_active: bool = True) -> tuple[Mag
     return agent_row, owner_active
 
 
-def _make_user_row(*, active: bool = True) -> MagicMock:
+def _make_user_row(*, active: bool = True, deleted_at: datetime | None = None) -> MagicMock:
     row = MagicMock()
     row.id = "usr_test123"
     row.active = active
+    # Set explicitly: a bare MagicMock attribute is not None, so the
+    # deleted-user check would (correctly) fail closed on it.
+    row.deleted_at = deleted_at
     return row
 
 
@@ -681,6 +684,48 @@ async def test_refresh_deactivated_user_rejected(
     svc = TokenService(ctx)
     with pytest.raises(InvalidGrantError, match="not active"):
         await svc.refresh("rt_deactivateduser")
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_resolve_deleted_user_token_is_inactive_even_if_row_reads_active(
+    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    at_row = _make_access_token_row(actor_id="usr_x", actor_type="user")
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_repo.get_by_id = AsyncMock(
+        return_value=_make_user_row(active=True, deleted_at=datetime.now(UTC))
+    )
+
+    svc = TokenService(ctx)
+    resolved = await svc.resolve_access_token("at_deleteduser")
+
+    assert resolved is not None
+    assert resolved.active is False
+
+
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_deleted_user_rejected_even_if_row_reads_active(
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_user_repo: MagicMock
+) -> None:
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row()
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.create = AsyncMock()
+    mock_at_repo.create = AsyncMock()
+    mock_user_repo.get_by_id = AsyncMock(
+        return_value=_make_user_row(active=True, deleted_at=datetime.now(UTC))
+    )
+
+    svc = TokenService(ctx)
+    with pytest.raises(InvalidGrantError, match="not active"):
+        await svc.refresh("rt_deleteduser")
+
+    mock_at_repo.create.assert_not_called()
+    mock_rt_repo.create.assert_not_called()
 
 
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")

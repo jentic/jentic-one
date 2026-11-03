@@ -26,6 +26,7 @@ _logger = structlog.get_logger(__name__)
 _OPEN_PREFIX = "cb:open:"
 _TOTAL_PREFIX = "cb:total:"
 _FAIL_PREFIX = "cb:fail:"
+_REPORT_PREFIX = "cb:report:"
 _OPEN_VALUE = b"1"
 
 
@@ -87,6 +88,27 @@ class CircuitBreaker:
                 state=CircuitState.OPEN, allowed=False, retry_after_s=self._cooldown_s
             )
         return CircuitDecision(state=CircuitState.CLOSED, allowed=True, retry_after_s=0)
+
+    async def claim_open_report(self, host: str) -> bool:
+        """Whether this caller reports ``host``'s open circuit; ``True`` once per cooldown.
+
+        A ``set_if_absent`` claim with the cooldown as its TTL, so of every
+        refusal an open circuit causes, on every process sharing the store,
+        one per cooldown reports it. The claim only gates telemetry, so a
+        claim the store refuses (its ``cb`` namespace is full) or fails
+        reports nothing and is logged; the caller's 503 is never replaced by
+        the store's error.
+        """
+        try:
+            return await self._store.set_if_absent(
+                f"{_REPORT_PREFIX}{host}", _OPEN_VALUE, ttl_s=self._cooldown_s
+            )
+        except StateBackendCapacityError:
+            _logger.debug("circuit_breaker_report_skipped", host=host, reason="store_full")
+            return False
+        except Exception as exc:
+            _logger.warning("circuit_breaker_report_skipped", host=host, error=type(exc).__name__)
+            return False
 
     async def record(self, host: str, *, ok: bool) -> None:
         """Record a call outcome; trip the latch if the window crosses threshold.

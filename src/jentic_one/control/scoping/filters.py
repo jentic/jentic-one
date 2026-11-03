@@ -64,8 +64,8 @@ def register_access_filter_provider(provider: AccessFilterProvider) -> None:
 
     Call at import time from a registering package (see the enterprise
     ``register()``). The clause a provider returns is OR-merged into the caller's
-    owner-scoped read filter. Any table the clause references must be readable by
-    the control DB role (i.e. live in the ``control`` schema).
+    owner-scoped read filter. Any table the clause references may live in any
+    schema the control DB role has ``SELECT`` on (deployments must grant it).
     """
     if provider not in _ACCESS_FILTER_PROVIDERS:
         _ACCESS_FILTER_PROVIDERS.append(provider)

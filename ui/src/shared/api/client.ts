@@ -6,8 +6,10 @@
  *
  *   - Bearer-JWT auth: a TOKEN resolver reads the live token from the token
  *     store so every generated service call carries `Authorization: Bearer`.
- *   - No cookies: jentic-one is stateless JWT, so credentials are omitted
- *     (the generator defaults to `credentials: 'include'`).
+ *   - No auth cookies: jentic-one is stateless JWT. Requests stay
+ *     `same-origin` (never `include`), so the browser still stores the
+ *     short-lived cookie the OAuth connect routes set to bind the vendor
+ *     callback to this browser.
  *
  * Import generated services/models from `@/shared/api` (the facade), not from
  * `./generated` directly, so this configuration is always applied first.
@@ -20,9 +22,11 @@ import { getToken } from '@/shared/api/token-store';
 // This ensures relative routing works in dev/test/MSW.
 OpenAPI.BASE = '';
 
-// Stateless Bearer-JWT — never send cookies.
+// Stateless Bearer-JWT: no auth cookies. Same-origin (fetch's default) so the
+// connect-binding cookie set by POST /credentials/{id}/connect and
+// :confirm is stored; `omit` would make every OAuth connect fail.
 OpenAPI.WITH_CREDENTIALS = false;
-OpenAPI.CREDENTIALS = 'omit';
+OpenAPI.CREDENTIALS = 'same-origin';
 // Resolve the bearer token per-request so it always reflects the current
 // session (login/logout/refresh). Returning '' for the logged-out state makes
 // the generator omit the Authorization header entirely.

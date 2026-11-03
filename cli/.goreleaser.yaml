@@ -126,10 +126,10 @@ homebrew_casks:
     # Remove the macOS quarantine attribute so the freshly-downloaded binaries run.
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jenticctl"]
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jentic"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/jenticctl"]
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/jentic"]
           end
 
 # Winget (Windows). Publishes the manifest set for the `jentic` zip archives

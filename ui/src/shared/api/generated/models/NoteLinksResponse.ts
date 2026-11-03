@@ -1,0 +1,12 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * Hypermedia links for a note resource.
+ */
+export type NoteLinksResponse = {
+    resource?: (string | null);
+    self: string;
+};
+

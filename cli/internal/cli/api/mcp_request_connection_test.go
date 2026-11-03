@@ -581,6 +581,10 @@ func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
 		},
 		{http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap"}`, ux.CodeBrokerDenied, "", "Do not open more"},
 		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "", "Do not ask again"},
+		{
+			http.StatusConflict, `{"type":"connect_session_binding_suspended","detail":"suspended"}`,
+			ux.CodeBrokerDenied, "", "ask your operator to resume it",
+		},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			cp := &connectControlPlane{status: tc.status, body: tc.body, headers: map[string]string{"Retry-After": "3600"}}
@@ -607,5 +611,31 @@ func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
 				t.Errorf("actionable_step %q must contain %q", step, tc.wantStep)
 			}
 		})
+	}
+}
+
+func TestMCPRequestConnection_OpenSessionIsRelayedNotAnError(t *testing.T) {
+	cp := &connectControlPlane{
+		status: http.StatusConflict,
+		body: `{"type":"connect_open","status":409,"detail":"already open",
+			"session_id":"cs_open","approval_url":"https://one.example/connect/cs_open"}`,
+	}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", `{"vendor":"github"}`))
+	if err != nil {
+		t.Fatalf("handleRequestConnection: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("an open request must not be an error: %s", toolResultText(res))
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["session_id"] != "cs_open" || payload["already_open"] != true {
+		t.Errorf("payload = %v, want the open session flagged already_open", payload)
+	}
+	if payload["approval_url"] != "https://one.example/connect/cs_open" {
+		t.Errorf("approval_url = %v", payload["approval_url"])
 	}
 }

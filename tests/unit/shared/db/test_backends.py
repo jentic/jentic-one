@@ -8,9 +8,11 @@ from pathlib import Path
 import asyncpg
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from jentic_one.shared.config import (
+    POOL_PRE_PING_IDLE_S,
     POOL_RECYCLE_S,
     TCP_KEEPALIVE_COUNT,
     TCP_KEEPALIVE_IDLE_S,
@@ -20,15 +22,18 @@ from jentic_one.shared.config import (
 from jentic_one.shared.db.backends import (
     PostgresBackend,
     SqliteBackend,
+    configure_idle_gated_pre_ping,
     configure_sqlite_pragmas,
     get_backend,
 )
 from jentic_one.shared.db.backends.postgres import (
     KeepaliveConnection,
     TcpKeepalive,
+    _is_driver_closed,
     apply_tcp_keepalive,
     keepalive_connection_class,
 )
+from jentic_one.shared.db.session import DatabaseSession
 
 
 def test_get_backend_returns_postgres_by_default() -> None:
@@ -227,3 +232,220 @@ async def test_sqlite_connect_hook_sets_wal_and_busy_timeout(tmp_path: Path) -> 
         assert foreign_keys == 1
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_idle_gated_pre_ping_skips_active_checkouts_and_pings_after_idle() -> None:
+    """Checkouts within ``idle_s`` skip ``do_ping``; checkouts at/after ``idle_s`` ping (#1935)."""
+    assert POOL_PRE_PING_IDLE_S == 1.0
+    now = 100.0
+    pings = 0
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", pool_pre_ping=True)
+    raw_do_ping = engine.sync_engine.dialect.do_ping
+
+    def _counting_do_ping(dbapi_connection: DBAPIConnection) -> bool:
+        nonlocal pings
+        pings += 1
+        return bool(raw_do_ping(dbapi_connection))
+
+    engine.sync_engine.dialect.do_ping = _counting_do_ping  # type: ignore[method-assign]
+    configure_idle_gated_pre_ping(engine, idle_s=1.0, clock=lambda: now)
+    try:
+        # First checkout creates the connection (fresh -> no pre-ping); checkin at t=100.0.
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 0
+
+        # Active checkout 200ms later (< 1.0s) skips the ping; checkin resets to t=100.2.
+        now = 100.2
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 0
+
+        # 700ms after the second checkin (t=100.9) is still < 1.0s since last checkin.
+        now = 100.9
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 0
+
+        # 1.0s after the third checkin (t=101.9) reaches the idle threshold -> pings.
+        now = 101.9
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 1
+
+        # Immediate checkout 50ms later skips the ping again.
+        now = 101.95
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("idle_s", [0.0, -1.0, float("inf"), float("-inf"), float("nan")])
+async def test_idle_gated_pre_ping_non_positive_or_non_finite_leaves_do_ping_untouched(
+    idle_s: float,
+) -> None:
+    """``idle_s <= 0`` or non-finite leaves SQLAlchemy's per-checkout pre-ping untouched."""
+    pings = 0
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", pool_pre_ping=True)
+    raw_do_ping = engine.sync_engine.dialect.do_ping
+
+    def _counting_do_ping(dbapi_connection: DBAPIConnection) -> bool:
+        nonlocal pings
+        pings += 1
+        return bool(raw_do_ping(dbapi_connection))
+
+    engine.sync_engine.dialect.do_ping = _counting_do_ping  # type: ignore[method-assign]
+    configure_idle_gated_pre_ping(engine, idle_s=idle_s)
+    assert engine.sync_engine.dialect.do_ping is _counting_do_ping
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 0
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 1
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        assert pings == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_idle_gated_pre_ping_noop_when_pool_pre_ping_disabled() -> None:
+    """When ``pool_pre_ping=False``, ``configure_idle_gated_pre_ping`` is a no-op."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", pool_pre_ping=False)
+    before = engine.sync_engine.dialect.do_ping
+    configure_idle_gated_pre_ping(engine, idle_s=1.0)
+    try:
+        assert engine.sync_engine.dialect.do_ping == before
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_idle_gated_pre_ping_replaces_closed_driver_within_idle_window() -> None:
+    """A driver reporting ``is_closed()`` within ``idle_s`` fails pre-ping and reconnects."""
+    now = 100.0
+    pings = 0
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", pool_pre_ping=True)
+    raw_do_ping = engine.sync_engine.dialect.do_ping
+
+    def _counting_do_ping(dbapi_connection: DBAPIConnection) -> bool:
+        nonlocal pings
+        pings += 1
+        return bool(raw_do_ping(dbapi_connection))
+
+    engine.sync_engine.dialect.do_ping = _counting_do_ping  # type: ignore[method-assign]
+    configure_idle_gated_pre_ping(engine, idle_s=10.0, clock=lambda: now)
+    try:
+        async with engine.connect() as conn:
+            raw_first = await conn.get_raw_connection()
+            first_dbapi = raw_first.dbapi_connection
+            first_driver = raw_first.driver_connection
+            assert first_driver is not None
+            first_driver.is_closed = lambda: True
+            await conn.execute(text("SELECT 1"))
+
+        # Check out within the 10s window: _do_ping_if_idle sees is_closed() == True
+        # and returns False without calling raw_do_ping, so the pool reconnects.
+        now = 100.1
+        async with engine.connect() as conn:
+            raw_second = await conn.get_raw_connection()
+            second_dbapi = raw_second.dbapi_connection
+            await conn.execute(text("SELECT 1"))
+
+        assert pings == 0
+        assert second_dbapi is not first_dbapi
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_idle_gated_pre_ping_handles_non_weakrefable_slotted_adapter() -> None:
+    """Slotted DBAPI wrappers with ``driver_connection=None`` do not raise ``TypeError``."""
+
+    class _SlottedAdapter:
+        __slots__ = ("driver_connection",)
+
+        def __init__(self) -> None:
+            self.driver_connection = None
+
+    now = 50.0
+    pings = 0
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", pool_pre_ping=True)
+
+    def _counting_do_ping(dbapi_connection: DBAPIConnection) -> bool:
+        nonlocal pings
+        del dbapi_connection
+        pings += 1
+        return True
+
+    engine.sync_engine.dialect.do_ping = _counting_do_ping  # type: ignore[method-assign]
+    configure_idle_gated_pre_ping(engine, idle_s=1.0, clock=lambda: now)
+    try:
+        adapter = _SlottedAdapter()
+        sync_pool = engine.sync_engine.pool
+        sync_pool.dispatch.checkin(adapter, None)
+        now = 50.2
+        assert engine.sync_engine.dialect.do_ping(adapter) is True  # type: ignore[arg-type]
+        assert pings == 0
+
+        # Popped on ping/checkout, so a second ping without checkin runs raw_do_ping.
+        assert engine.sync_engine.dialect.do_ping(adapter) is True  # type: ignore[arg-type]
+        assert pings == 1
+
+        # close and close_detached also clear any recorded checkin timestamp.
+        sync_pool.dispatch.checkin(adapter, None)
+        sync_pool.dispatch.close(adapter, None)
+        assert engine.sync_engine.dialect.do_ping(adapter) is True  # type: ignore[arg-type]
+        assert pings == 2
+
+        sync_pool.dispatch.checkin(adapter, None)
+        sync_pool.dispatch.close_detached(adapter)
+        assert engine.sync_engine.dialect.do_ping(adapter) is True  # type: ignore[arg-type]
+        assert pings == 3
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_database_session_connect_wires_idle_gated_pre_ping_for_postgres() -> None:
+    """``DatabaseSession.connect`` installs the idle-gated hook when ``pool_pre_ping`` is on."""
+    gated_db = DatabaseSession(
+        DatabaseConfig(name="reg", pool_pre_ping=True, pool_pre_ping_idle_s=2.5)
+    )
+    ungated_db = DatabaseSession(
+        DatabaseConfig(name="reg", pool_pre_ping=True, pool_pre_ping_idle_s=0)
+    )
+    await gated_db.connect()
+    await ungated_db.connect()
+    try:
+        assert "do_ping" in gated_db.engine.sync_engine.dialect.__dict__
+        assert "do_ping" not in ungated_db.engine.sync_engine.dialect.__dict__
+    finally:
+        await gated_db.close()
+        await ungated_db.close()
+
+
+def test_is_driver_closed_checks_driver_connection() -> None:
+    """A driver connection reporting ``is_closed() == True`` is flagged closed."""
+
+    class _Driver:
+        def __init__(self, closed: bool) -> None:
+            self._closed = closed
+
+        def is_closed(self) -> bool:
+            return self._closed
+
+    class _Adapter:
+        def __init__(self, driver: _Driver | None) -> None:
+            self.driver_connection = driver
+
+    assert _is_driver_closed(_Adapter(_Driver(closed=True))) is True
+    assert _is_driver_closed(_Adapter(_Driver(closed=False))) is False
+    assert _is_driver_closed(_Adapter(None)) is False

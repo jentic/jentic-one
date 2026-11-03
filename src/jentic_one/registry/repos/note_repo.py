@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
 from enum import Enum, auto
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.registry.core.schema.notes import Note
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.db.utils import utcnow
+from jentic_one.shared.pagination import Cursor
 
 
 class _Unset(Enum):
@@ -82,8 +83,7 @@ class NoteRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         api_ids: list[uuid.UUID] | None = None,
         operation_id: str | None = None,
         execution_id: str | None = None,
@@ -99,13 +99,7 @@ class NoteRepository:
             .limit(limit)
         )
 
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                or_(
-                    Note.created_at < cursor_created_at,
-                    and_(Note.created_at == cursor_created_at, Note.id < cursor_id),
-                )
-            )
+        stmt = apply_desc_keyset(stmt, Note.created_at, Note.id, cursor)
         if api_ids is not None:
             stmt = stmt.where(Note.resource_api_id.in_(api_ids))
         if operation_id is not None:

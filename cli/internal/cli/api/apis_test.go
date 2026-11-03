@@ -80,6 +80,36 @@ func TestApisShowRendersDetailAndOps(t *testing.T) {
 	}
 }
 
+// TestApisShowSendsMixedCaseRefVerbatim pins #1958: the CLI keeps its strict
+// three-part split and sends the segments as typed. The server owns the
+// vendor/name slug rule, so a mixed-case ref reaches it unchanged and the
+// output shows the canonical identity the server answers with.
+func TestApisShowSendsMixedCaseRefVerbatim(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/operations") {
+			_, _ = w.Write([]byte(`{"data":[],"has_more":false}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"api":{"vendor":"stripe-com","name":"api","version":"1"},
+			"display_name":"Stripe","current_revision_id":"r1","revision_count":1,"operation_count":0}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	if err := app.apisShow(activeCtx(srv.URL), &apisShowOptions{}, "Stripe.com/API/1"); err != nil {
+		t.Fatalf("apisShow: %v", err)
+	}
+	if len(paths) == 0 || paths[0] != "/apis/Stripe.com/API/1" {
+		t.Fatalf("server saw paths %v, want first /apis/Stripe.com/API/1", paths)
+	}
+	if got := app.Out.(*bytes.Buffer).String(); !strings.Contains(got, "stripe-com/api/1") {
+		t.Errorf("show output missing canonical identity\n---\n%s", got)
+	}
+}
+
 func TestApisRevisionsRenders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[

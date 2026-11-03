@@ -34,6 +34,10 @@ in order of preference:
    - Set `auth.canonical_base_url` in `jentic-one.yaml` to the public app URL,
      and the `credentials.providers.direct_oauth2.redirect_uri` to
      `<that URL>/credentials/oauth/callback`.
+   - Serve the UI from that same host. A connect only completes in the
+     browser that started it (a short-lived cookie, scoped to the callback
+     path, is set when you click Connect or approve an agent's request), so
+     the callback must land on the host that browser is using.
    - Agents register with **exactly** that URL (`jentic register --url
      https://jentic.example.com --broker-url https://broker.jentic.example.com`).
      The token audience is an exact string match: URL drift = `invalid_grant`.

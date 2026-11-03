@@ -137,6 +137,7 @@ generate-config: ## Regenerate the backend config struct from the vendored confi
 	cp ../config/config-schema.json internal/cli/ctl/assets/config-schema.json
 	@echo "Generating the backend config struct..."
 	$(GO_JSONSCHEMA) -p generated -o internal/cli/ctl/generated/config.go internal/cli/ctl/assets/config-schema.json
+	go run ./tools/configgen internal/cli/ctl/assets/config-schema.json internal/cli/ctl/generated/config.go
 	@echo "Config code generation complete."
 
 check-ctl-gen: generate-config ## CI drift gate: fail if the generated config struct is stale vs. the schema

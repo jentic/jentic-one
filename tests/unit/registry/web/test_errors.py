@@ -20,6 +20,7 @@ from jentic_one.registry.services.errors import HostChangeRequiresOperatorError
 from jentic_one.registry.web.app import get_exception_handlers
 from jentic_one.registry.web.errors import service_error_handler
 from jentic_one.shared.db.errors import DatabaseConsistencyError, DatabaseUnavailableError
+from jentic_one.shared.discovery.errors import TooManyCandidatesError
 
 
 def _make_request(path: str = "/apis/acme.com/widget/v1/revisions/x/promote") -> MagicMock:
@@ -92,6 +93,27 @@ async def test_host_change_requires_operator_maps_to_403() -> None:
     assert response.status_code == 403
     body: dict[str, object] = json.loads(bytes(response.body))
     assert body["type"] == "host_change_requires_operator"
-    detail = str(body["detail"])
-    assert "new.example.com" in detail
-    assert "credentials:write" in detail
+    # Pinned whole: the detail names the origins and states the rule, and carries
+    # nothing about who has bound the API's credentials. Matched against the
+    # template rather than by substring — the message interpolates host names, so
+    # a bare ``"bound" not in detail`` would also trip on a host such as
+    # ``outbound.example.com``.
+    assert str(body["detail"]) == (
+        "Revision 'rev-1' changes the API's server origins from [old.example.com] "
+        "to [new.example.com]; making it current requires 'org:admin'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_too_many_candidates_is_a_registry_500() -> None:
+    """The registry keeps its own status for the shared discovery error.
+
+    The broker renders the same ``TooManyCandidatesError`` as 503
+    ``too_many_candidates`` (pinned in ``tests/unit/broker/test_problem_json.py``);
+    the registry answers its own lookup, so an overloaded index is its 500.
+    """
+    response = await service_error_handler(_make_request("/inspect"), TooManyCandidatesError())
+
+    assert response.status_code == 500
+    body = json.loads(bytes(response.body))
+    assert body["type"] == "url_index_overloaded"

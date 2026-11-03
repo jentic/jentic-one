@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.events import EventView, Heartbeat
-from jentic_one.admin.web.deps import get_event_stream_service
+from jentic_one.admin.web.deps import get_event_stream_service, get_stream_recheck_seconds
 from jentic_one.admin.web.routers.events import (
     _event_response,
     router,
@@ -152,6 +152,7 @@ def stream_client(mock_stream_service: AsyncMock) -> TestClient:
 
     app.dependency_overrides[resolve_identity] = _fake_identity
     app.dependency_overrides[get_event_stream_service] = lambda: mock_stream_service
+    app.dependency_overrides[get_stream_recheck_seconds] = lambda: 5.0
 
     return TestClient(app, raise_server_exceptions=False)
 

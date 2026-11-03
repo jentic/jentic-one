@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.serialization import (
     NoEncryption,
     PrivateFormat,
 )
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
@@ -41,7 +41,15 @@ async def clean_grants(integration_context: Context) -> AsyncGenerator[None, Non
     Token/code/grant/scope-grant/external-identity tables are cleared wholesale
     (tests own them per-run); users/agents/clients only where seeded through
     :mod:`tests.integration.auth.seeds` (``created_by == SEED_MARKER``).
+
+    Agents are removed by OWNER as well as by ``created_by``: an agent a
+    flow-under-test creates is stamped with its owner's id, not the marker, and
+    ``agents.owner_id`` is ``ondelete="RESTRICT"``. Without the owner-scoped
+    delete, one agent left behind by an aborted test (a crash, ``-x``, Ctrl-C)
+    would make this fixture's own setup fail the FK for every later test in the
+    suite until someone cleaned the database by hand.
     """
+    seeded_users = select(User.id).where(User.created_by == SEED_MARKER)
 
     async def _truncate() -> None:
         async with integration_context.admin_db.session() as session:
@@ -52,7 +60,11 @@ async def clean_grants(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(ExternalIdentity))
             await session.execute(delete(OAuthClient).where(OAuthClient.created_by == SEED_MARKER))
-            await session.execute(delete(Agent).where(Agent.created_by == SEED_MARKER))
+            await session.execute(
+                delete(Agent).where(
+                    (Agent.created_by == SEED_MARKER) | Agent.owner_id.in_(seeded_users)
+                )
+            )
             await session.execute(
                 delete(UserPermissionGrant).where(UserPermissionGrant.created_by == SEED_MARKER)
             )

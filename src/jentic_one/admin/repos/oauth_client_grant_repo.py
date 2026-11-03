@@ -5,14 +5,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models.actors import ActorStatus
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class OAuthClientGrantRepository:
@@ -40,8 +42,19 @@ class OAuthClientGrantRepository:
         return grant
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, grant_id: str) -> OAuthClientGrant | None:
-        return await session.get(OAuthClientGrant, grant_id)
+    async def get_by_id(
+        session: AsyncSession,
+        grant_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> OAuthClientGrant | None:
+        if filters is None:
+            return await session.get(OAuthClientGrant, grant_id)
+        stmt = select(OAuthClientGrant).where(OAuthClientGrant.id == grant_id)
+        for f in filters:
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def list_active_for_pair(
@@ -117,8 +130,7 @@ class OAuthClientGrantRepository:
         user_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
-        cursor_created_at: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[OAuthClientGrant]:
         """List grant rows for the grant listing surfaces, newest first.
@@ -143,16 +155,7 @@ class OAuthClientGrantRepository:
             stmt = stmt.where(OAuthClientGrant.user_id == user_id)
         if status is not None:
             stmt = stmt.where(OAuthClientGrant.status == status)
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                or_(
-                    OAuthClientGrant.created_at < cursor_created_at,
-                    and_(
-                        OAuthClientGrant.created_at == cursor_created_at,
-                        OAuthClientGrant.id < cursor_id,
-                    ),
-                )
-            )
+        stmt = apply_desc_keyset(stmt, OAuthClientGrant.created_at, OAuthClientGrant.id, cursor)
         for f in filters or ():
             stmt = stmt.where(f)
         result = await session.execute(stmt)
@@ -178,7 +181,7 @@ class OAuthClientGrantRepository:
             .group_by(OAuthClientGrant.oauth_client_id)
         )
         result = await session.execute(stmt)
-        return dict(result.all())  # type: ignore[arg-type]
+        return {row[0]: row[1] for row in result.all()}
 
     @staticmethod
     async def count_active_for_client(session: AsyncSession, oauth_client_id: str) -> int:

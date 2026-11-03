@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-from jentic_one.registry.ingest.exc import HostOwnedByOtherVendorIngestError
+from jentic_one.registry.ingest.errors import HostOwnedByOtherVendorIngestError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.repos import (
@@ -63,8 +63,8 @@ class FinalizeStage(BasePipelineStage):
         )
 
         # A revision held by the server-host change guard stays a draft: the API
-        # keeps serving its current revision until an operator promotes it (the
-        # promote runs the ownership check below).
+        # keeps serving its current revision until an organisation admin promotes
+        # it (the promote runs the ownership check below).
         if ctx.specification.origin is not None and ctx.get("held_host_change") is None:
             # An origin-bearing import goes live right here, so it is held to the
             # same one-vendor-per-host rule as promotion (RevisionService.promote).

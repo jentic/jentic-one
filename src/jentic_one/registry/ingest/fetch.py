@@ -4,15 +4,22 @@ import hashlib
 import json
 import math
 from typing import Annotated, Any, Literal
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import yaml
 from pydantic import BaseModel, Field
 
 from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
-from jentic_one.registry.ingest.exc import IngestStageError
+from jentic_one.registry.ingest.errors import IngestStageError, RetryableFetchError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
+from jentic_one.shared.bounded_read import (
+    ResponseTooLargeError,
+    UndecodableBodyError,
+    decode_body,
+    follow_redirects,
+    read_capped_body,
+)
 from jentic_one.shared.config import IngestConfig
 from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
@@ -46,7 +53,7 @@ class InlineSource(BaseModel):
     #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
     #: confirmed overlay. Set only by the scope-checked enqueue path.
     supersede_active: bool = False
-    #: Operator approval for a server-host change (``credentials:write``): lets a
+    #: Approval for a server-host change (``org:admin``): lets a
     #: catalog re-import that changes the API's server hosts become current even
     #: when the API has bound credentials. Server-set only, by the scope-checked
     #: ``CatalogService.import_entry``; no client ingest schema exposes it.
@@ -77,7 +84,7 @@ class UrlSource(BaseModel):
     #: confirmed overlay (the current revision is then overlay-origin, so the stage must
     #: archive every active revision). Set only by the scope-checked enqueue path.
     supersede_active: bool = False
-    #: Operator approval for a server-host change (``credentials:write``): lets a
+    #: Approval for a server-host change (``org:admin``): lets a
     #: catalog re-import that changes the API's server hosts become current even
     #: when the API has bound credentials. Server-set only, by the scope-checked
     #: ``CatalogService.import_entry``; no client ingest schema exposes it.
@@ -331,12 +338,35 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
 _DEFAULT_INGEST_CONFIG = IngestConfig()
 
 
+#: Upstream statuses that signal a temporary condition: request timeout, too
+#: early, and rate limiting. Every 5xx is treated the same way.
+_TRANSIENT_CLIENT_STATUSES = frozenset({408, 425, 429})
+
+#: 5xx codes that describe a permanent property of the server rather than a
+#: passing condition, so re-fetching the same URL gets the same answer. Retrying
+#: them only spends the whole backoff ladder before dead-lettering.
+_PERMANENT_SERVER_STATUSES = frozenset({501, 505, 510})
+
+
+def _is_transient_status(status_code: int) -> bool:
+    """True when a later fetch of the same URL may get a different answer."""
+    if status_code in _PERMANENT_SERVER_STATUSES:
+        return False
+    return status_code >= 500 or status_code in _TRANSIENT_CLIENT_STATUSES
+
+
 async def load_specification(
     source: UrlSource | InlineSource,
     *,
     config: IngestConfig | None = None,
 ) -> IngestSpecification:
-    """Load and parse a spec from a URL or inline content into an IngestSpecification."""
+    """Load and parse a spec from a URL or inline content into an IngestSpecification.
+
+    Raises :class:`RetryableFetchError` when reaching a URL fails for a reason a
+    later attempt may not repeat, and :class:`IngestStageError` for every other
+    failure (a refused URL, an unusable response, unparseable content, or an
+    unresolvable API identity).
+    """
     cfg = config or _DEFAULT_INGEST_CONFIG
     max_bytes = cfg.max_spec_bytes
     size_limit_label = f"{max_bytes / (1024 * 1024):.1f} MB"
@@ -366,43 +396,40 @@ async def load_specification(
                 follow_redirects=False,
                 transport=build_pinned_transport(cfg.egress),
             ) as client:
-                resp = await client.get(validated_url)
-                for _ in range(cfg.max_redirects):
-                    if resp.status_code < 300 or resp.status_code >= 400:
-                        break
-                    location = resp.headers.get("location")
-                    if not location:
-                        break
-                    # Resolve relative Location headers against the current URL.
-                    next_url = urljoin(validated_url, location)
-                    try:
-                        validated_url = await validate_upstream_url_async(next_url, cfg.egress)
-                    except ValueError as exc:
-                        raise IngestStageError(f"unsafe URL rejected: {exc}") from exc
-                    resp = await client.get(validated_url)
-                else:
-                    if 300 <= resp.status_code < 400:
-                        raise IngestStageError("too many redirects")
+                # Relative servers resolve against where the document was
+                # retrieved, so keep the URL the redirect chain ended on.
+                resp, validated_url = await follow_redirects(
+                    client,
+                    validated_url,
+                    headers=None,
+                    egress=cfg.egress,
+                    max_redirects=cfg.max_redirects,
+                    on_unsafe=lambda exc: IngestStageError(f"unsafe URL rejected: {exc}"),
+                    on_too_many=lambda: IngestStageError("too many redirects"),
+                )
+                try:
+                    if resp.status_code < 200 or resp.status_code >= 300:
+                        message = f"non-success status {resp.status_code} fetching {source.url}"
+                        if _is_transient_status(resp.status_code):
+                            raise RetryableFetchError(message)
+                        raise IngestStageError(message)
+                    body = await read_capped_body(resp, max_bytes)
+                finally:
+                    await resp.aclose()
         except IngestStageError:
             raise
-        except httpx.HTTPError as exc:
+        except ResponseTooLargeError as exc:
+            raise IngestStageError(f"response exceeds {size_limit_label} size limit") from exc
+        except UndecodableBodyError as exc:
             raise IngestStageError(f"failed to fetch URL: {exc}") from exc
-
-        if resp.status_code < 200 or resp.status_code >= 300:
-            raise IngestStageError(f"non-success status {resp.status_code} fetching {source.url}")
-
-        content_length = resp.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-            raise IngestStageError(f"response exceeds {size_limit_label} size limit")
-
-        if len(resp.content) > max_bytes:
-            raise IngestStageError(f"response exceeds {size_limit_label} size limit")
+        except httpx.HTTPError as exc:
+            raise RetryableFetchError(f"failed to fetch URL: {exc}") from exc
 
         url_path = urlparse(source.url).path
         url_filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else None
 
-        content = parse_spec_content(resp.text, filename=url_filename)
-        sha = hashlib.sha256(resp.content).hexdigest()
+        content = parse_spec_content(decode_body(resp, body), filename=url_filename)
+        sha = hashlib.sha256(body).hexdigest()
         source_type = ApiRevisionSourceType.URL
         source_url = source.url
         retrieval_url = validated_url

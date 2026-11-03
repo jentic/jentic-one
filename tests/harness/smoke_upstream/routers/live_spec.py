@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter
 
@@ -24,6 +25,12 @@ router = APIRouter(tags=["live-spec"])
 PUBLIC_URL_ENV: Final = "SMOKE_UPSTREAM_PUBLIC_URL"
 #: Default base URL when ``SMOKE_UPSTREAM_PUBLIC_URL`` is unset (local run).
 DEFAULT_PUBLIC_URL: Final = "http://localhost:8084"
+#: Env var that overrides the advertised ``https://`` base URL of the OAuth2 token stub.
+TLS_PUBLIC_URL_ENV: Final = "SMOKE_UPSTREAM_TLS_PUBLIC_URL"
+#: Default TLS listen port when deriving the token stub URL from ``_server_url()``.
+DEFAULT_TLS_PORT: Final = 8443
+#: Default ``tokenUrl`` base when ``SMOKE_UPSTREAM_TLS_PUBLIC_URL`` is unset.
+DEFAULT_TLS_PUBLIC_URL: Final = f"https://localhost:{DEFAULT_TLS_PORT}"
 #: Path the live spec is served at (the agent ingests this URL).
 LIVE_SPEC_PATH: Final = "/specs/live.json"
 #: Path of the OAuth2 client-credentials token stub.
@@ -48,6 +55,22 @@ def _server_url() -> str:
     return os.environ.get(PUBLIC_URL_ENV, DEFAULT_PUBLIC_URL).rstrip("/")
 
 
+def _token_server_url() -> str:
+    """The advertised HTTPS base URL for the OAuth2 token stub (#1779).
+
+    OAuth2 ``token_url`` endpoints require ``https://``, so the token stub is
+    advertised on the harness's TLS listener (``SMOKE_UPSTREAM_TLS_PUBLIC_URL``,
+    or ``_server_url()`` rewritten to ``https://<host>:<tls_port>``).
+    """
+    explicit = os.environ.get(TLS_PUBLIC_URL_ENV, "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    parsed = urlsplit(_server_url())
+    host = parsed.hostname or "localhost"
+    tls_port = int(os.environ.get("TLS_PORT", str(DEFAULT_TLS_PORT)))
+    return f"https://{host}:{tls_port}"
+
+
 def _security_schemes() -> dict[str, Any]:
     return {
         "bearerAuth": {"type": "http", "scheme": "bearer"},
@@ -58,7 +81,7 @@ def _security_schemes() -> dict[str, Any]:
             "type": "oauth2",
             "flows": {
                 "clientCredentials": {
-                    "tokenUrl": f"{_server_url()}{OAUTH_TOKEN_PATH}",
+                    "tokenUrl": f"{_token_server_url()}{OAUTH_TOKEN_PATH}",
                     "scopes": {},
                 }
             },

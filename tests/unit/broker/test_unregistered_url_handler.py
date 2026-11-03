@@ -47,7 +47,7 @@ from fastapi.responses import StreamingResponse
 from jentic.problem_details import ProblemDetailException
 
 import jentic_one.broker.web.routers.execute as execute_mod
-from jentic_one.broker.core.exceptions import OperationNotFoundError
+from jentic_one.broker.core.problem import discovery_error_problem
 from jentic_one.broker.web.routers.execute import _handle, _handle_unregistered_url
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
@@ -57,6 +57,7 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
@@ -464,7 +465,7 @@ async def test_route_no_handler_raises_operation_not_found() -> None:
     """Unregistered URL, no handler → today's 404, same type and detail."""
     with pytest.raises(OperationNotFoundError) as exc_info:
         await _run_handle(_asgi_request(_MissResolver(), None))
-    assert exc_info.value.type == "operation_not_found"
+    assert discovery_error_problem(exc_info.value)["type"] == "operation_not_found"
 
 
 @pytest.mark.asyncio
@@ -474,7 +475,7 @@ async def test_route_raising_handler_falls_through_to_404() -> None:
     raises today's ``operation_not_found``, not a 500."""
     with pytest.raises(OperationNotFoundError) as exc_info:
         await _run_handle(_asgi_request(_MissResolver(), _RaisingHandler()))
-    assert exc_info.value.type == "operation_not_found"
+    assert discovery_error_problem(exc_info.value)["type"] == "operation_not_found"
 
 
 @pytest.mark.asyncio
@@ -486,9 +487,9 @@ async def test_route_pinned_revision_miss_never_invokes_handler() -> None:
     request = _asgi_request(
         _PinnedMissResolver(),
         spy,
-        headers=[(b"jentic-revision", b"acme:payments:v1=rev_abc123")],
+        headers=[(b"jentic-revision", b"acme:payments:v1=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c")],
     )
     with pytest.raises(OperationNotFoundError) as exc_info:
         await _run_handle(request)
-    assert exc_info.value.type == "operation_not_found"
+    assert discovery_error_problem(exc_info.value)["type"] == "operation_not_found"
     assert spy.calls == []

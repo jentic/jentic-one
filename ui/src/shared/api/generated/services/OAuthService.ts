@@ -84,7 +84,7 @@ export class OAuthService {
         });
     }
     /**
-     * Error Page
+     * Get a browser authorization error
      * Minimal error endpoint for browser-facing authorization failures.
      * @returns string Successful Response
      * @throws ApiError
@@ -115,7 +115,10 @@ export class OAuthService {
      * Revoke OAuth grant
      * Revoke a consent→agent grant — one of the three revocation kill radii.
      *
-     * Allowed for the grant's owner (the consenting user) or an admin. Marks
+     * Allowed for the grant's owner (the consenting user) or an admin. A grant
+     * the caller cannot see answers 404, the same as one that does not exist;
+     * a caller who can see it but may not revoke it (the bound agent, or the
+     * agent's owner when someone else consented) gets 403. Marks
      * the grant ``revoked`` and revokes every outstanding access/refresh token
      * minted under it in the same transaction; the live resolvers also re-check
      * grant status on every verdict (belt + braces). The client's next token
@@ -236,16 +239,17 @@ export class OAuthService {
     }
     /**
      * Create the consenting user's first agent inline (consent page)
-     * Create the consenting user's first agent from the zero-agents consent page (P4).
+     * Create the consenting user's first agent from the zero-agents consent page.
      *
      * The form is rendered only when the consenting user owns zero agents in
-     * any status (the G12(b) first-run dead-end). This submit verifies the signed
-     * single-use ``agent-create`` blob (bound to the consent handle AND the
-     * authenticated subject — no ambient credential is honored, so a cross-site
-     * form cannot drive it: it would need both the unguessable handle and a
-     * blob minted for that very handle), re-validates the handle and the D7
-     * client gate, provisions the user row if deferred provisioning left none
-     * (an affirmative user action, unlike rendering), re-checks the zero-agents
+     * any status — otherwise consent is a first-run dead end. This submit
+     * verifies the signed single-use ``agent-create`` blob (bound to the consent
+     * handle AND the authenticated subject — no ambient credential is honored,
+     * so a cross-site form cannot drive it: it would need both the unguessable
+     * handle and a blob minted for that very handle), re-validates the handle
+     * and the client approval+active gate, provisions the user row if deferred
+     * provisioning left none (an affirmative user action, unlike rendering),
+     * re-checks the zero-agents
      * predicate (an agent appearing in between skips creation — idempotent),
      * creates the agent through the same ``AgentService.create`` path as the
      * SPA (owner = the consenting user, default agent scopes, same audit +
@@ -257,16 +261,15 @@ export class OAuthService {
      * client → ``access_denied``; an invalid agent name → the form re-rendered
      * with the error inline and a fresh blob.
      *
-     * Creation posture (security review — the hybrid): the arm is decided
-     * server-side AFTER the subject is resolved/provisioned, against the same
-     * effective-permission math as POST /agents' ``agents:write`` gate. A
-     * permissioned user gets the original behaviour (ACTIVE + 303 re-entry); an
-     * unpermissioned one gets a PENDING agent (the POST /register posture) and
-     * the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
+     * Creation posture: the arm is decided server-side AFTER the subject is
+     * resolved/provisioned, against the same effective-permission math as POST
+     * /agents' ``agents:write`` gate. A permissioned user gets ACTIVE + a 303
+     * re-entry; an unpermissioned one gets a PENDING agent (the POST /register
+     * posture) and the awaiting-approval page. A per-subject ``set_if_absent`` slot claim
      * makes N parallel submits (N distinct blobs from N renders) create exactly
      * one agent — losers re-enter consent, which renders the picker or the
      * awaiting page as appropriate.
-     * @returns any Successful Response
+     * @returns string The re-rendered consent page, as HTML for the browser that posted the form. This endpoint serves a page rather than an API body: a failure redirects (302) to `/error` instead of returning a problem document.
      * @throws ApiError
      */
     public static consentAgentCreate({
@@ -276,7 +279,7 @@ export class OAuthService {
          * Request payload for the `consentAgentCreate` operation.
          */
         formData: Body_consentAgentCreate,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<string> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/consent/agent',
@@ -292,7 +295,7 @@ export class OAuthService {
     }
     /**
      * Poll pending-agent approval status (consent awaiting page)
-     * Minimal tri-state poll for the pending-agent awaiting page (P4 hybrid).
+     * Minimal tri-state poll for the pending-agent awaiting page.
      *
      * Anonymous but keyed by the signed ``agent-status`` blob — never a bare
      * agent id, so the endpoint cannot be used to enumerate or probe agents:
@@ -306,8 +309,8 @@ export class OAuthService {
      * page treats a 400 as terminal ("retry the connection") because the blob
      * shares the consent handle's lifetime — a retry re-enters the flow, which
      * re-parks on a fresh awaiting page while the agent stays pending. Shares
-     * the approval-status poll's own per-IP rate bucket (same cadence, same
-     * caller shape).
+     * the approval-status poll's own per-client-network rate bucket (same
+     * cadence, same caller shape).
      * @returns ConsentAgentStatusResponse Successful Response
      * @throws ApiError
      */
@@ -334,7 +337,7 @@ export class OAuthService {
         });
     }
     /**
-     * Introspect Endpoint
+     * Introspect an OAuth token
      * Introspect a token (RFC 7662).
      *
      * Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
@@ -374,7 +377,7 @@ export class OAuthService {
         });
     }
     /**
-     * Revoke Endpoint
+     * Revoke an OAuth token
      * Revoke a token (RFC 7009). Always returns 200 for valid requests.
      *
      * Two client-authentication arms, negotiated on the request content type by
@@ -392,8 +395,9 @@ export class OAuthService {
      * die, so reconnecting requires fresh consent (deliberately beyond the
      * RFC 7009 §2.1 SHOULD; one revocation semantics platform-wide). This arm
      * is gated by `server.mcp.oauth.enabled` (plain 404 when off), capped at
-     * 64 KiB declared body length, and per-IP rate limited; its errors speak
-     * the RFC 6749 §5.2 dialect (RFC 7009 §2.2.1), not Problem Details.
+     * 64 KiB declared body length, and rate limited per client network
+     * (IPv4 address or IPv6 /64); its errors speak the RFC 6749 §5.2 dialect
+     * (RFC 7009 §2.2.1), not Problem Details.
      * - **JSON** (any other content type — the pre-G11 contract, byte-identical
      * including 422 shapes): requires a platform bearer identity; revokes the
      * caller's own token (access → that token, refresh → its family). Used by
@@ -403,7 +407,7 @@ export class OAuthService {
      * resolver immediately, but the broker's `CachedTokenValidator` (30 s TTL)
      * may honour an already-cached verdict for up to 30 s — the same residual as
      * the UI `:revoke` kill switch and the G10 transfer sweep.
-     * @returns any Successful Response
+     * @returns any The token is revoked, or there was nothing to revoke. The response body is **empty** (RFC 7009 §2.2) — there is nothing to parse, and success is indistinguishable from a no-op on both arms, deliberately: neither tells the caller whether the token existed. Both arms answer this same empty `200` — the form-encoded RFC 7009 arm and the bearer-authenticated JSON arm.
      * @throws ApiError
      */
     public static revokeEndpoint({
@@ -432,14 +436,14 @@ export class OAuthService {
                 404: `Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (\`server.mcp.oauth.enabled=false\`), so the RFC 7009 arm answers the framework's plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.`,
                 413: `Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).`,
                 422: `Unprocessable Entity`,
-                429: `Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
+                429: `Form-encoded (RFC 7009) requests only: per-client-network rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
         });
     }
     /**
-     * Token Endpoint
+     * Exchange a grant for OAuth tokens
      * Exchange a refresh token, JWT assertion, or authorization code for tokens.
      *
      * Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
@@ -477,7 +481,8 @@ export class OAuthService {
             mediaType: 'application/json',
             errors: {
                 400: `RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): \`{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}\`. \`invalid_request\` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as \`invalid_grant\` with \`error_description: "consent grant has been revoked"\` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (\`Authorization\` header, RFC 6749 §2.3.1) gets the same \`invalid_client\` dialect body with status 401 and a \`WWW-Authenticate: Basic\` challenge, per §5.2.`,
-                429: `Per-client+IP rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
+                401: `Client authentication failed after the client attempted HTTP Basic (RFC 6749 §2.3.1): the same \`invalid_client\` dialect body as the 400 arm, plus a \`WWW-Authenticate: Basic\` challenge. A client that did not attempt Basic gets \`invalid_client\` as a 400 instead, so branch on the body's \`error\` member rather than on the status code.`,
+                429: `Per-client_id + client-network rate limit exceeded (\`Retry-After\` header set; RFC 6749 §5.2 dialect body, \`error=slow_down\` per RFC 8628 §3.5).`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

@@ -274,7 +274,9 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		expect(opacity('create')).toBeGreaterThan(0);
 		expect(pane('create')).toHaveAttribute('inert');
 		expect(within(sheet).getAllByRole('tabpanel')).toHaveLength(1);
-		expect(offsetX('create')).toBeGreaterThan(0);
+		// Toward the earlier tab: the old pane leaves to the right. The entering
+		// pane can be a frame ahead of the leaving one, so wait for the departure.
+		await waitFor(() => expect(offsetX('create')).toBeGreaterThan(0));
 
 		await waitFor(() => expect(pane('create')).not.toBeVisible());
 		expect(offsetX('create')).toBe(18);
@@ -286,7 +288,7 @@ describe('Agents page — the New agent panel over a fleet', () => {
 			expect(offsetX('create')).toBeGreaterThan(0);
 			expect(offsetX('create')).toBeLessThan(18);
 		});
-		expect(offsetX('register')).toBeLessThan(0);
+		await waitFor(() => expect(offsetX('register')).toBeLessThan(0));
 		await waitFor(() => expect(pane('register')).not.toBeVisible());
 		await waitFor(() => expect(within(sheet).getByLabelText('Name')).toHaveFocus());
 	});

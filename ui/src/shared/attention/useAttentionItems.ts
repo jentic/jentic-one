@@ -48,8 +48,8 @@ import {
 import { usePendingAgentsCount } from '@/shared/hooks/usePendingAgentsCount';
 import { useAllCredentials, useOpenConnectRequests } from '@/shared/credentials/api';
 import {
+	describeConnectAsks,
 	groupConnectRequestsByAgent,
-	summariseConnectTargets,
 	useCanApproveConnectRequests,
 } from '@/shared/credentials/lib/connectRequests';
 import {
@@ -208,7 +208,11 @@ export function useAttentionItems(): AttentionState {
 		// blocked either way, and the row's link opens its longest-waiting ask.
 		const connectCredentialIds = new Set<string>();
 		for (const group of connectGroups) {
-			for (const session of group.sessions) connectCredentialIds.add(session.credential_id);
+			// An edit session's credential is a live one: only a create session's
+			// pending credential is covered by the request.
+			for (const session of group.sessions) {
+				if (session.intent !== 'edit') connectCredentialIds.add(session.credential_id);
+			}
 			if (!canApproveConnectRequests) continue;
 			const oldest = group.sessions[0];
 			const name = actors.resolve(group.agentId) ?? group.agentId;
@@ -216,7 +220,7 @@ export function useAttentionItems(): AttentionState {
 				key: `connect_request:${group.agentId}`,
 				kind: 'connect_request',
 				urgency: 2,
-				title: `${name} is waiting for you to connect ${summariseConnectTargets(group.sessions)}`,
+				title: `${name} is waiting for you to ${describeConnectAsks(group.sessions)}`,
 				detail:
 					group.sessions.length > 1
 						? `${group.sessions.length} requests`

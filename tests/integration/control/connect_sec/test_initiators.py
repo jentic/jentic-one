@@ -19,6 +19,7 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
+    ConnectOpenError,
     InvalidPollTokenError,
 )
 from jentic_one.shared.auth.identity import Identity
@@ -38,6 +39,7 @@ from tests.integration.control.connect_sec.support import (
     digest,
     import_spec,
     key_variant,
+    revision,
     session_row,
     svc,
 )
@@ -113,10 +115,10 @@ async def test_agent_asking_after_its_owner_gets_its_own_session(env: Context) -
     assert (row.initiator_actor_id, row.requested_permission_rules) == (OWNER_ID, _USER_RULES)
     # The agent's ask is announced on the rail; the owner's own session is not.
     assert await _created_events(env) == {asked.session_id}
-    # Asking again still folds into the session the agent started.
-    again = await connect(env)
-    assert again.session_id == asked.session_id
-    assert again.poll_token != asked.poll_token
+    # Asking again points at the session the agent started, to amend.
+    with pytest.raises(ConnectOpenError) as again:
+        await connect(env)
+    assert again.value.session_id == asked.session_id
 
 
 async def test_user_asking_after_their_agent_gets_their_own_session(env: Context) -> None:
@@ -174,7 +176,11 @@ async def test_an_agent_never_confirms_a_session_its_owner_started(env: Context)
         await service.confirm_variant(
             owner_started.session_id,
             poll_token=owner_started.poll_token,
-            variant=key_variant("sk_cross_" + "B" * 24, reviewed),
+            variant=key_variant(
+                "sk_cross_" + "B" * 24,
+                reviewed,
+                await revision(env, owner_started.session_id),
+            ),
             identity=AGENT,
         )
     with pytest.raises(ConfirmationForbiddenError):

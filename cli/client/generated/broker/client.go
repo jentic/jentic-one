@@ -182,7 +182,8 @@ type AgentDirective struct {
 // Examples: modify_headers
 type AgentDirectiveStrategy string
 
-// AsyncQueuedResponse Returned as the `202` body on async executions. The Broker
+// AsyncQueuedResponse Handle returned when the Broker queues an upstream call for async
+// execution — the `202` body on an async execution. The Broker
 // does not expose a polling surface of its own; `_links.self`
 // is an absolute URL into the platform's control plane, where
 // the queued work surfaces as a `kind: execution` job. Poll
@@ -192,7 +193,8 @@ type AgentDirectiveStrategy string
 //
 // Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123","status":"queued"}
 type AsyncQueuedResponse struct {
-	// UnderscoreLinks HAL-style link relations for the queued job. `self` always
+	// UnderscoreLinks HAL-style link relations pointing into the control-plane job
+	// record for the queued job. `self` always
 	// points at the control-plane job record; the broker does
 	// not expose its own polling surface.
 	//
@@ -227,6 +229,12 @@ type AsyncQueuedResponseStatus string
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
 type BrokerProblem struct {
 	// AgentDirective Machine-actionable recovery instruction embedded in a Broker
 	// problem body. The fixed `strategy` vocabulary lets an agent
@@ -238,6 +246,14 @@ type BrokerProblem struct {
 	//
 	// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
 	AgentDirective *AgentDirective `json:"agent_directive,omitempty"`
+
+	// AllowedMethods The HTTP methods the upstream URL is registered for, on a
+	// `method_not_allowed` 405. Mirrored in the `Allow` response
+	// header.
+	//
+	//
+	// Examples: ["GET","PUT"]
+	AllowedMethods *[]string `json:"allowed_methods,omitempty"`
 
 	// Candidates The caller's own credentials that matched ambiguously
 	// (`ambiguous_credential_binding`, `ambiguous_credential`) or
@@ -252,7 +268,12 @@ type BrokerProblem struct {
 	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
 	Code *string `json:"code,omitempty"`
 
-	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+	// Detail Occurrence-specific explanation, safe to show a human.
+	// Carries no secret material and never echoes the submitted
+	// request values.
+	//
+	//
+	// Examples: No credential binding for this API
 	Detail string `json:"detail"`
 
 	// ErrorOrigin Who generated the error response: `broker` (the Broker
@@ -287,7 +308,14 @@ type BrokerProblem struct {
 		Pointer *string `json:"pointer,omitempty"`
 	} `json:"errors,omitempty"`
 
-	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+	// Instance The request path that failed — the `/{upstream_url}` path
+	// component only. The query string is deliberately omitted
+	// because an upstream URL's query can carry secrets. Absent on
+	// errors raised with no request context (rate-limit and
+	// load-shed refusals).
+	//
+	//
+	// Examples: /api.example.com/v1/users
 	Instance *string `json:"instance,omitempty"`
 
 	// IntentId Correlation id for a `credential_not_provisioned` denial,
@@ -298,14 +326,42 @@ type BrokerProblem struct {
 	// Examples: intent_3f2a9c0d1b8e4f6a9d7c5b3e1a0f2d4c
 	IntentId *string `json:"intent_id,omitempty"`
 
-	// Status The HTTP status code for this occurrence of the problem.
-	Status *int32 `json:"status,omitempty"`
+	// MaxResponseBytes The response-size cap the upstream body exceeded, on an
+	// `upstream_response_too_large` 502.
+	//
+	//
+	// Examples: 10485760
+	MaxResponseBytes *int `json:"max_response_bytes,omitempty"`
 
-	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-	Title *string `json:"title,omitempty"`
+	// Status HTTP status code of this response, repeated in the body.
+	// Broker-raised, so it is never a mirrored upstream status —
+	// those arrive with the upstream's own body and a
+	// `Jentic-Upstream-Status` header.
+	//
+	//
+	// Examples: 403
+	Status int `json:"status"`
 
-	// Type A URI reference identifying the problem type. When set to "about:blank", the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-	Type *string `json:"type,omitempty"`
+	// Title Short summary of the problem type. On Broker-originated
+	// errors it repeats `detail` verbatim, so a caller that reads
+	// either member gets the same message.
+	//
+	//
+	// Examples: No credential binding for this API
+	Title string `json:"title"`
+
+	// Type Problem type — a stable, machine-readable token naming the
+	// failure (`no_credential_binding`, `idempotency_conflict`,
+	// `upstream_timeout`, …), not a dereferenceable URI. Key
+	// recovery on this rather than on the bare status. Errors with
+	// no specific type (an overridden framework `404`/`405`, an
+	// unhandled failure) carry `about:blank`; a request-validation
+	// failure carries `about:blank#validation` with the field
+	// details in `errors[]`.
+	//
+	//
+	// Examples: no_credential_binding
+	Type string `json:"type"`
 }
 
 // BrokerProblemErrorOrigin Who generated the error response: `broker` (the Broker
@@ -348,11 +404,12 @@ type CredentialCandidate struct {
 	Name string `json:"name"`
 }
 
-// HealthResponse Body returned by `GET /health` while the Broker process is
+// HealthResponse Service health probe response — the body returned by `GET /health`
+// while the Broker process is
 // serving requests. Intentionally minimal — clients treat `200` +
 // `status: ok` as the green signal; the body is informational.
 //
-// Examples: {"status":"ok","surface":"broker","version":"0.43.0"}
+// Examples: {"status":"ok","surface":"broker","version":"0.44.0"}
 type HealthResponse struct {
 	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
 	//
@@ -377,7 +434,7 @@ type HealthResponse struct {
 	// in this spec). Absent on the `not_entitled` body.
 	//
 	//
-	// Examples: 0.43.0
+	// Examples: 0.44.0
 	Version *string `json:"version,omitempty"`
 }
 
@@ -389,7 +446,8 @@ type HealthResponse struct {
 // Examples: ok
 type HealthResponseStatus string
 
-// HeldExecutionAcceptedResponse Returned as the `202` body when the call matches a permission rule
+// HeldExecutionAcceptedResponse Handle returned when a permission rule holds the call for human
+// approval — the `202` body when the call matches a permission rule
 // with `effect: require-approval`. The call has not run: it waits
 // until a reviewer (the agent's owner or an `org:admin`) approves or
 // denies it on `review_url`, or it expires. Follow `_links.self`
@@ -419,8 +477,13 @@ type HeldExecutionAcceptedResponse struct {
 		Withdraw string `json:"withdraw"`
 	} `json:"_links"`
 
-	// AgentDirective What the calling agent should do next.
-	AgentDirective string `json:"agent_directive"`
+	// AgentDirective What the calling agent should do next, in the same
+	// `AgentDirective` shape a problem body carries — so one branch on
+	// `agent_directive.strategy` covers both the error path and this
+	// one. Always `prompt_human` here: the call cannot proceed without
+	// a reviewer, and `human_readable_instruction` is the message to
+	// relay.
+	AgentDirective AgentDirective `json:"agent_directive"`
 
 	// ExpiresAt When the call expires undecided and fails.
 	ExpiresAt time.Time `json:"expires_at"`
@@ -442,7 +505,8 @@ type HeldExecutionAcceptedResponse struct {
 // HeldExecutionAcceptedResponseStatus Always `held`.
 type HeldExecutionAcceptedResponseStatus string
 
-// ReadinessResponse Body returned by `GET /ready`. `status: ready` (HTTP `200`) means the
+// ReadinessResponse Saturation-aware readiness probe response — the body returned by
+// `GET /ready`. `status: ready` (HTTP `200`) means the
 // instance is below the saturation threshold; `status: unready` (HTTP
 // `503`) means in-flight load is at/near the admission cap and the load
 // balancer should drain this instance. `saturation` is the current
@@ -493,10 +557,10 @@ type JenticCredentialId = string
 // JenticCredentialName Examples: Stripe prod key
 type JenticCredentialName = string
 
-// JenticRevision Examples: ["stripe:payments:2023-10-16=rev_01HMY1Q0AB"], ["stripe:payments:2023-10-16=rev_01HMY1Q0AB","shopify:admin:2024-01=rev_01HMY7B3QN"]
+// JenticRevision Examples: ["stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"], ["stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c","shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d"]
 type JenticRevision = []string
 
-// Prefer Examples: wait=30, respond-async
+// Prefer Examples: respond-async
 type Prefer = string
 
 // UpstreamUrl The URL of the upstream service to execute the request to.
@@ -511,6 +575,12 @@ type UpstreamUrl = string
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type BadRequest = BrokerProblem
 
@@ -520,6 +590,12 @@ type BadRequest = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Conflict = BrokerProblem
@@ -531,6 +607,12 @@ type Conflict = BrokerProblem
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type CredentialNotProvisioned = BrokerProblem
 
@@ -540,6 +622,12 @@ type CredentialNotProvisioned = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Default = BrokerProblem
@@ -556,8 +644,30 @@ type ExecuteAsync struct {
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Forbidden = BrokerProblem
+
+// MethodNotAllowed RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type MethodNotAllowed = BrokerProblem
 
 // NotFound RFC 9457 Problem Details body for every Broker error. Extends the
 // shared Jentic `ProblemDetails` schema with the Broker's
@@ -565,6 +675,12 @@ type Forbidden = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type NotFound = BrokerProblem
@@ -576,6 +692,12 @@ type NotFound = BrokerProblem
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type PayloadTooLarge = BrokerProblem
 
@@ -585,6 +707,12 @@ type PayloadTooLarge = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type ServerError = BrokerProblem
@@ -596,6 +724,12 @@ type ServerError = BrokerProblem
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type ServiceUnavailable = BrokerProblem
 
@@ -605,6 +739,12 @@ type ServiceUnavailable = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type TooManyRequests = BrokerProblem
@@ -616,6 +756,12 @@ type TooManyRequests = BrokerProblem
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Unauthorized = BrokerProblem
 
@@ -626,34 +772,49 @@ type Unauthorized = BrokerProblem
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
 //
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type ValidationError = BrokerProblem
 
 // ExecuteDeleteParams defines parameters for ExecuteDelete.
 type ExecuteDeleteParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -663,9 +824,14 @@ type ExecuteDeleteParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -693,29 +859,38 @@ type ExecuteDeleteParams struct {
 
 // ExecuteGetParams defines parameters for ExecuteGet.
 type ExecuteGetParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -725,9 +900,14 @@ type ExecuteGetParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -755,29 +935,38 @@ type ExecuteGetParams struct {
 
 // ExecuteHeadParams defines parameters for ExecuteHead.
 type ExecuteHeadParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -787,9 +976,14 @@ type ExecuteHeadParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -817,29 +1011,38 @@ type ExecuteHeadParams struct {
 
 // ExecuteOptionsParams defines parameters for ExecuteOptions.
 type ExecuteOptionsParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -849,9 +1052,14 @@ type ExecuteOptionsParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -879,29 +1087,38 @@ type ExecuteOptionsParams struct {
 
 // ExecutePatchParams defines parameters for ExecutePatch.
 type ExecutePatchParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -911,9 +1128,14 @@ type ExecutePatchParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -941,29 +1163,38 @@ type ExecutePatchParams struct {
 
 // ExecutePostParams defines parameters for ExecutePost.
 type ExecutePostParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -973,9 +1204,14 @@ type ExecutePostParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -1003,29 +1239,38 @@ type ExecutePostParams struct {
 
 // ExecutePutParams defines parameters for ExecutePut.
 type ExecutePutParams struct {
-	// Prefer RFC 7240 processing preference. `wait={seconds}` — maximum time
-	// to wait for a synchronous response before falling back to async.
-	// `respond-async` — always queue and return `202` immediately.
+	// Prefer RFC 7240 processing preference. `respond-async` queues the call and
+	// returns `202` immediately instead of waiting for the upstream; it is
+	// the only token the Broker acts on. The preference it applied is
+	// echoed in `Preference-Applied`.
 	Prefer *Prefer `json:"Prefer,omitempty"`
 
 	// IdempotencyKey Optional caller-supplied key to make this request idempotent.
 	// If present, the broker dedupes against the key for 24 hours
 	// and replays the original response on retry. UUIDv4 recommended.
-	// See the `Idempotency` section above for full semantics.
+	// See **Idempotency** in the API overview for full semantics.
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 
 	// JenticRevision Pin upstream-API resolution to a specific `ApiRevision`
 	// instead of the API's `current_revision_id`. Multi-valued —
 	// repeat the header (or comma-separate) once per API you
-	// want to pin. Each value is `vendor:name:version=rev_…`.
+	// want to pin. Each value is `vendor:name:version=<revision_id>`:
+	// `vendor`, `name` and `version` are the API's `api` reference,
+	// and `<revision_id>` is the revision's `revision_id` exactly as
+	// the control plane returns it (`GET
+	// /apis/{vendor}/{name}/{version}/revisions`, the revision get,
+	// an import job's result, or `jentic apis revisions`). The
+	// equivalent `rev_<revision_id without hyphens>` label is
+	// accepted too.
 	//
 	// Use cases:
 	//
 	// - Test a `draft` revision against existing credentials
 	//   before promoting it.
 	// - Reproduce a historical execution against an `archived`
-	//   spec for diagnostic purposes (refused by default;
-	//   archived revisions are not pinnable from the hot path).
+	//   spec for diagnostic purposes (refused: archived revisions
+	//   are deliberately not pinnable from the hot path — resurrect
+	//   them by re-promoting instead).
 	//
 	// The Broker forwards the pin into the control-plane
 	// `POST /lookup/operation` call so URL → `operation_id`
@@ -1035,9 +1280,14 @@ type ExecutePutParams struct {
 	//
 	// Pinning a `draft` revision the caller doesn't have
 	// access to returns `403`. Pinning an unknown or
-	// `archived` revision returns `422`. The chosen revisions
+	// `archived` revision returns `422`. Pinning the same API
+	// to two different revisions in one header returns
+	// `422 invalid_revision_pin`; repeating the same revision
+	// (in either form) is allowed. The chosen revisions
 	// are recorded on the resulting `ExecutionRecord`
-	// (`pinned_revisions` field on the control plane).
+	// (`pinned_revisions` field on the control plane), so audit
+	// can answer "did this execution use a pinned revision?"
+	// without parsing headers.
 	JenticRevision *JenticRevision `json:"Jentic-Revision,omitempty"`
 
 	// JenticCredentialName Disambiguate credential resolution by the credential's
@@ -1279,7 +1529,9 @@ type ClientInterface interface {
 	// Forward a `GET` to the upstream service. No request body. Typically
 	// used for resource reads and listings; the upstream response is
 	// returned verbatim on `200`, or queued and surfaced via `202` when
-	// the wait window is exceeded or `Prefer: respond-async` is set.
+	// `Prefer: respond-async` is set (or a `require-approval` rule holds
+	// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+	// **Reading the response** in the API overview.
 	//
 	// Corresponds with GET /{upstream_url} (the `ExecuteGet` operationId).
 	ExecuteGet(ctx context.Context, upstreamUrl UpstreamUrl, params *ExecuteGetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1318,7 +1570,9 @@ type ClientInterface interface {
 	// Forward a `POST` to the upstream service. Request body is forwarded
 	// verbatim — the Broker does not inspect or transform it. The upstream
 	// response is returned on `200`, or queued and surfaced via `202` when
-	// the wait window is exceeded or `Prefer: respond-async` is set.
+	// `Prefer: respond-async` is set (or a `require-approval` rule holds
+	// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+	// **Reading the response** in the API overview.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1407,7 +1661,9 @@ func (c *Client) ExecuteDeleteWithBody(ctx context.Context, upstreamUrl Upstream
 // Forward a `GET` to the upstream service. No request body. Typically
 // used for resource reads and listings; the upstream response is
 // returned verbatim on `200`, or queued and surfaced via `202` when
-// the wait window is exceeded or `Prefer: respond-async` is set.
+// `Prefer: respond-async` is set (or a `require-approval` rule holds
+// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+// **Reading the response** in the API overview.
 //
 // Corresponds with GET /{upstream_url} (the `ExecuteGet` operationId).
 func (c *Client) ExecuteGet(ctx context.Context, upstreamUrl UpstreamUrl, params *ExecuteGetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1486,7 +1742,9 @@ func (c *Client) ExecutePatchWithBody(ctx context.Context, upstreamUrl UpstreamU
 // Forward a `POST` to the upstream service. Request body is forwarded
 // verbatim — the Broker does not inspect or transform it. The upstream
 // response is returned on `200`, or queued and surfaced via `202` when
-// the wait window is exceeded or `Prefer: respond-async` is set.
+// `Prefer: respond-async` is set (or a `require-approval` rule holds
+// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+// **Reading the response** in the API overview.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2325,7 +2583,9 @@ type ClientWithResponsesInterface interface {
 	// Forward a `GET` to the upstream service. No request body. Typically
 	// used for resource reads and listings; the upstream response is
 	// returned verbatim on `200`, or queued and surfaced via `202` when
-	// the wait window is exceeded or `Prefer: respond-async` is set.
+	// `Prefer: respond-async` is set (or a `require-approval` rule holds
+	// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+	// **Reading the response** in the API overview.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -2370,7 +2630,9 @@ type ClientWithResponsesInterface interface {
 	// Forward a `POST` to the upstream service. Request body is forwarded
 	// verbatim — the Broker does not inspect or transform it. The upstream
 	// response is returned on `200`, or queued and surfaced via `202` when
-	// the wait window is exceeded or `Prefer: respond-async` is set.
+	// `Prefer: respond-async` is set (or a `require-approval` rule holds
+	// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+	// **Reading the response** in the API overview.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2390,14 +2652,30 @@ type ClientWithResponsesInterface interface {
 
 // GetHealthHTTPResp429Headers the declared response headers of an HTTP 429 response for GetHealth
 type GetHealthHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// GetHealthHTTPResp500Headers the declared response headers of an HTTP 500 response for GetHealth
+type GetHealthHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // GetHealthHTTPResp503Headers the declared response headers of an HTTP 503 response for GetHealth
 type GetHealthHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// GetHealthHTTPRespDefaultHeaders the declared response headers of an HTTP default response for GetHealth
+type GetHealthHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type GetHealthHTTPResp struct {
@@ -2415,8 +2693,12 @@ type GetHealthHTTPResp struct {
 	ApplicationproblemJSONDefault *Default
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *GetHealthHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *GetHealthHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *GetHealthHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *GetHealthHTTPRespDefaultHeaders
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2473,6 +2755,18 @@ func (r GetHealthHTTPResp) ContentType() string {
 	return ""
 }
 
+// GetReadyHTTPResp500Headers the declared response headers of an HTTP 500 response for GetReady
+type GetReadyHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// GetReadyHTTPRespDefaultHeaders the declared response headers of an HTTP default response for GetReady
+type GetReadyHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
 type GetReadyHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2484,6 +2778,10 @@ type GetReadyHTTPResp struct {
 	JSON503 *ReadinessResponse
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Default
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *GetReadyHTTPResp500Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *GetReadyHTTPRespDefaultHeaders
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2545,31 +2843,103 @@ type ExecuteDeleteHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecuteDeleteHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecuteDelete
 type ExecuteDeleteHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecuteDeleteHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecuteDelete
+type ExecuteDeleteHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecuteDelete
+type ExecuteDeleteHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecuteDelete
+type ExecuteDeleteHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecuteDelete
+type ExecuteDeleteHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteDelete
+type ExecuteDeleteHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecuteDelete
+type ExecuteDeleteHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecuteDelete
+type ExecuteDeleteHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecuteDelete
+type ExecuteDeleteHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteDeleteHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecuteDelete
+type ExecuteDeleteHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteDeleteHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteDelete
 type ExecuteDeleteHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecuteDeleteHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecuteDelete
+type ExecuteDeleteHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteDeleteHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecuteDelete
 type ExecuteDeleteHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecuteDeleteHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecuteDelete
+type ExecuteDeleteHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecuteDeleteHTTPResp struct {
@@ -2585,6 +2955,8 @@ type ExecuteDeleteHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2605,10 +2977,32 @@ type ExecuteDeleteHTTPResp struct {
 	Headers200 *ExecuteDeleteHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteDeleteHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecuteDeleteHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecuteDeleteHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecuteDeleteHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecuteDeleteHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteDeleteHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecuteDeleteHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecuteDeleteHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecuteDeleteHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecuteDeleteHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteDeleteHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecuteDeleteHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecuteDeleteHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecuteDeleteHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -2634,6 +3028,11 @@ func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteDeleteHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -2715,31 +3114,103 @@ type ExecuteGetHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecuteGetHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecuteGet
 type ExecuteGetHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecuteGetHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecuteGet
+type ExecuteGetHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecuteGet
+type ExecuteGetHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecuteGet
+type ExecuteGetHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecuteGet
+type ExecuteGetHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteGet
+type ExecuteGetHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecuteGet
+type ExecuteGetHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecuteGet
+type ExecuteGetHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecuteGet
+type ExecuteGetHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteGetHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecuteGet
+type ExecuteGetHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteGetHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteGet
 type ExecuteGetHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecuteGetHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecuteGet
+type ExecuteGetHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteGetHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecuteGet
 type ExecuteGetHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecuteGetHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecuteGet
+type ExecuteGetHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecuteGetHTTPResp struct {
@@ -2755,6 +3226,8 @@ type ExecuteGetHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2775,10 +3248,32 @@ type ExecuteGetHTTPResp struct {
 	Headers200 *ExecuteGetHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteGetHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecuteGetHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecuteGetHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecuteGetHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecuteGetHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteGetHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecuteGetHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecuteGetHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecuteGetHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecuteGetHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteGetHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecuteGetHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecuteGetHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecuteGetHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -2804,6 +3299,11 @@ func (r ExecuteGetHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteGetHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteGetHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -2885,31 +3385,103 @@ type ExecuteHeadHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecuteHeadHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecuteHead
 type ExecuteHeadHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecuteHeadHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecuteHead
+type ExecuteHeadHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecuteHead
+type ExecuteHeadHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecuteHead
+type ExecuteHeadHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecuteHead
+type ExecuteHeadHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteHead
+type ExecuteHeadHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecuteHead
+type ExecuteHeadHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecuteHead
+type ExecuteHeadHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecuteHead
+type ExecuteHeadHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteHeadHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecuteHead
+type ExecuteHeadHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteHeadHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteHead
 type ExecuteHeadHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecuteHeadHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecuteHead
+type ExecuteHeadHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteHeadHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecuteHead
 type ExecuteHeadHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecuteHeadHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecuteHead
+type ExecuteHeadHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecuteHeadHTTPResp struct {
@@ -2925,6 +3497,8 @@ type ExecuteHeadHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -2945,10 +3519,32 @@ type ExecuteHeadHTTPResp struct {
 	Headers200 *ExecuteHeadHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteHeadHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecuteHeadHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecuteHeadHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecuteHeadHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecuteHeadHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteHeadHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecuteHeadHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecuteHeadHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecuteHeadHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecuteHeadHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteHeadHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecuteHeadHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecuteHeadHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecuteHeadHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -2974,6 +3570,11 @@ func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteHeadHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3055,31 +3656,103 @@ type ExecuteOptionsHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecuteOptionsHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecuteOptions
 type ExecuteOptionsHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecuteOptionsHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecuteOptions
+type ExecuteOptionsHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecuteOptions
+type ExecuteOptionsHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecuteOptions
+type ExecuteOptionsHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecuteOptions
+type ExecuteOptionsHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecuteOptions
+type ExecuteOptionsHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecuteOptions
+type ExecuteOptionsHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecuteOptions
+type ExecuteOptionsHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecuteOptions
+type ExecuteOptionsHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecuteOptionsHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecuteOptions
+type ExecuteOptionsHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteOptionsHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecuteOptions
 type ExecuteOptionsHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecuteOptionsHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecuteOptions
+type ExecuteOptionsHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecuteOptionsHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecuteOptions
 type ExecuteOptionsHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecuteOptionsHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecuteOptions
+type ExecuteOptionsHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecuteOptionsHTTPResp struct {
@@ -3095,6 +3768,8 @@ type ExecuteOptionsHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3115,10 +3790,32 @@ type ExecuteOptionsHTTPResp struct {
 	Headers200 *ExecuteOptionsHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecuteOptionsHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecuteOptionsHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecuteOptionsHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecuteOptionsHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecuteOptionsHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecuteOptionsHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecuteOptionsHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecuteOptionsHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecuteOptionsHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecuteOptionsHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecuteOptionsHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecuteOptionsHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecuteOptionsHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecuteOptionsHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -3144,6 +3841,11 @@ func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecuteOptionsHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3225,31 +3927,103 @@ type ExecutePatchHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecutePatchHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecutePatch
 type ExecutePatchHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecutePatchHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecutePatch
+type ExecutePatchHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecutePatch
+type ExecutePatchHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecutePatch
+type ExecutePatchHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecutePatch
+type ExecutePatchHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePatch
+type ExecutePatchHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecutePatch
+type ExecutePatchHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecutePatch
+type ExecutePatchHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecutePatch
+type ExecutePatchHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePatchHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecutePatch
+type ExecutePatchHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecutePatchHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePatch
 type ExecutePatchHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecutePatchHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecutePatch
+type ExecutePatchHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecutePatchHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecutePatch
 type ExecutePatchHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecutePatchHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecutePatch
+type ExecutePatchHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecutePatchHTTPResp struct {
@@ -3265,6 +4039,8 @@ type ExecutePatchHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3285,10 +4061,32 @@ type ExecutePatchHTTPResp struct {
 	Headers200 *ExecutePatchHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePatchHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecutePatchHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecutePatchHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecutePatchHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecutePatchHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePatchHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecutePatchHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecutePatchHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecutePatchHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecutePatchHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePatchHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecutePatchHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecutePatchHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecutePatchHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -3314,6 +4112,11 @@ func (r ExecutePatchHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePatchHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePatchHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3395,31 +4198,103 @@ type ExecutePostHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecutePostHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecutePost
 type ExecutePostHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecutePostHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecutePost
+type ExecutePostHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecutePost
+type ExecutePostHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecutePost
+type ExecutePostHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecutePost
+type ExecutePostHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePost
+type ExecutePostHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecutePost
+type ExecutePostHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecutePost
+type ExecutePostHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecutePost
+type ExecutePostHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePostHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecutePost
+type ExecutePostHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecutePostHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePost
 type ExecutePostHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecutePostHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecutePost
+type ExecutePostHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecutePostHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecutePost
 type ExecutePostHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecutePostHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecutePost
+type ExecutePostHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecutePostHTTPResp struct {
@@ -3435,6 +4310,8 @@ type ExecutePostHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3455,10 +4332,32 @@ type ExecutePostHTTPResp struct {
 	Headers200 *ExecutePostHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePostHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecutePostHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecutePostHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecutePostHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecutePostHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePostHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecutePostHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecutePostHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecutePostHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecutePostHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePostHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecutePostHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecutePostHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecutePostHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -3484,6 +4383,11 @@ func (r ExecutePostHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePostHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePostHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3565,31 +4469,103 @@ type ExecutePutHTTPResp200Headers struct {
 	JenticOperation      *string
 	JenticUpstreamStatus *int
 	PreferenceApplied    *string
+	ServerTiming         *string
 	Traceparent          *string
 	Tracestate           *string
 }
 
 // ExecutePutHTTPResp202Headers the declared response headers of an HTTP 202 response for ExecutePut
 type ExecutePutHTTPResp202Headers struct {
-	IdempotentReplayed *string
-	JenticApiVendor    *string
-	JenticExecutionId  *string
-	JenticOperation    *string
-	PreferenceApplied  *string
-	Traceparent        *string
-	Tracestate         *string
+	JenticApiVendor   *string
+	JenticExecutionId *string
+	JenticOperation   *string
+	PreferenceApplied *string
+	ServerTiming      *string
+	Traceparent       *string
+	Tracestate        *string
+}
+
+// ExecutePutHTTPResp400Headers the declared response headers of an HTTP 400 response for ExecutePut
+type ExecutePutHTTPResp400Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp401Headers the declared response headers of an HTTP 401 response for ExecutePut
+type ExecutePutHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp403Headers the declared response headers of an HTTP 403 response for ExecutePut
+type ExecutePutHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp404Headers the declared response headers of an HTTP 404 response for ExecutePut
+type ExecutePutHTTPResp404Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp405Headers the declared response headers of an HTTP 405 response for ExecutePut
+type ExecutePutHTTPResp405Headers struct {
+	Allow                *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp409Headers the declared response headers of an HTTP 409 response for ExecutePut
+type ExecutePutHTTPResp409Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp413Headers the declared response headers of an HTTP 413 response for ExecutePut
+type ExecutePutHTTPResp413Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp422Headers the declared response headers of an HTTP 422 response for ExecutePut
+type ExecutePutHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// ExecutePutHTTPResp424Headers the declared response headers of an HTTP 424 response for ExecutePut
+type ExecutePutHTTPResp424Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecutePutHTTPResp429Headers the declared response headers of an HTTP 429 response for ExecutePut
 type ExecutePutHTTPResp429Headers struct {
-	RateLimitLimit     *int
-	RateLimitRemaining *int
-	RetryAfter         *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RateLimitLimit       *int
+	RateLimitRemaining   *int
+	RetryAfter           *string
+}
+
+// ExecutePutHTTPResp500Headers the declared response headers of an HTTP 500 response for ExecutePut
+type ExecutePutHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 // ExecutePutHTTPResp503Headers the declared response headers of an HTTP 503 response for ExecutePut
 type ExecutePutHTTPResp503Headers struct {
-	RetryAfter *string
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// ExecutePutHTTPRespDefaultHeaders the declared response headers of an HTTP default response for ExecutePut
+type ExecutePutHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
 }
 
 type ExecutePutHTTPResp struct {
@@ -3605,6 +4581,8 @@ type ExecutePutHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON405 the response for an HTTP 405 `application/problem+json` response
+	ApplicationproblemJSON405 *MethodNotAllowed
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -3625,10 +4603,32 @@ type ExecutePutHTTPResp struct {
 	Headers200 *ExecutePutHTTPResp200Headers
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *ExecutePutHTTPResp202Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ExecutePutHTTPResp400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ExecutePutHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ExecutePutHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ExecutePutHTTPResp404Headers
+	// Headers405 the parsed response headers for an HTTP 405 response
+	Headers405 *ExecutePutHTTPResp405Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExecutePutHTTPResp409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ExecutePutHTTPResp413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ExecutePutHTTPResp422Headers
+	// Headers424 the parsed response headers for an HTTP 424 response
+	Headers424 *ExecutePutHTTPResp424Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ExecutePutHTTPResp429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ExecutePutHTTPResp500Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *ExecutePutHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *ExecutePutHTTPRespDefaultHeaders
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -3654,6 +4654,11 @@ func (r ExecutePutHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ExecutePutHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON405 returns the response for an HTTP 405 `application/problem+json` response
+func (r ExecutePutHTTPResp) GetApplicationproblemJSON405() *MethodNotAllowed {
+	return r.ApplicationproblemJSON405
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -3788,7 +4793,9 @@ func (c *ClientWithResponses) ExecuteDeleteWithBodyWithResponse(ctx context.Cont
 // Forward a `GET` to the upstream service. No request body. Typically
 // used for resource reads and listings; the upstream response is
 // returned verbatim on `200`, or queued and surfaced via `202` when
-// the wait window is exceeded or `Prefer: respond-async` is set.
+// `Prefer: respond-async` is set (or a `require-approval` rule holds
+// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+// **Reading the response** in the API overview.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -3857,7 +4864,9 @@ func (c *ClientWithResponses) ExecutePatchWithBodyWithResponse(ctx context.Conte
 // Forward a `POST` to the upstream service. Request body is forwarded
 // verbatim — the Broker does not inspect or transform it. The upstream
 // response is returned on `200`, or queued and surfaced via `202` when
-// the wait window is exceeded or `Prefer: respond-async` is set.
+// `Prefer: respond-async` is set (or a `require-approval` rule holds
+// the call). A non-2xx is attributed by `Jentic-Error-Origin` — see
+// **Reading the response** in the API overview.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3940,6 +4949,20 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 	switch {
 	case rsp.StatusCode == 429:
 		var headers GetHealthHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -3962,8 +4985,39 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers GetHealthHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers GetHealthHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -3972,6 +5026,23 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers GetHealthHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -4019,6 +5090,43 @@ func ParseGetReadyHTTPResp(rsp *http.Response) (*GetReadyHTTPResp, error) {
 		}
 		response.ApplicationproblemJSONDefault = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 500:
+		var headers GetReadyHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
+	case true:
+		var headers GetReadyHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -4072,6 +5180,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4190,6 +5305,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4207,13 +5329,6 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecuteDeleteHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4242,6 +5357,13 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4257,8 +5379,182 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecuteDeleteHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecuteDeleteHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecuteDeleteHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecuteDeleteHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteDeleteHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecuteDeleteHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecuteDeleteHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecuteDeleteHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecuteDeleteHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteDeleteHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -4281,8 +5577,39 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecuteDeleteHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecuteDeleteHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4291,6 +5618,23 @@ func ParseExecuteDeleteHTTPResp(rsp *http.Response) (*ExecuteDeleteHTTPResp, err
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecuteDeleteHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -4344,6 +5688,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4462,6 +5813,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4479,13 +5837,6 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecuteGetHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4514,6 +5865,13 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4529,8 +5887,182 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecuteGetHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecuteGetHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecuteGetHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecuteGetHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteGetHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecuteGetHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecuteGetHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecuteGetHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecuteGetHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteGetHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -4553,8 +6085,39 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecuteGetHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecuteGetHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4563,6 +6126,23 @@ func ParseExecuteGetHTTPResp(rsp *http.Response) (*ExecuteGetHTTPResp, error) {
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecuteGetHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -4616,6 +6196,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -4734,6 +6321,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4751,13 +6345,6 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecuteHeadHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4786,6 +6373,13 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4801,8 +6395,182 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecuteHeadHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecuteHeadHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecuteHeadHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecuteHeadHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteHeadHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecuteHeadHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecuteHeadHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecuteHeadHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecuteHeadHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteHeadHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -4825,8 +6593,39 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecuteHeadHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecuteHeadHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -4835,6 +6634,23 @@ func ParseExecuteHeadHTTPResp(rsp *http.Response) (*ExecuteHeadHTTPResp, error) 
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecuteHeadHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -4888,6 +6704,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5006,6 +6829,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5023,13 +6853,6 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecuteOptionsHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5058,6 +6881,13 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5073,8 +6903,182 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecuteOptionsHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecuteOptionsHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecuteOptionsHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecuteOptionsHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecuteOptionsHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecuteOptionsHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecuteOptionsHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecuteOptionsHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecuteOptionsHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecuteOptionsHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5097,8 +7101,39 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecuteOptionsHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecuteOptionsHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5107,6 +7142,23 @@ func ParseExecuteOptionsHTTPResp(rsp *http.Response) (*ExecuteOptionsHTTPResp, e
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecuteOptionsHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -5160,6 +7212,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5278,6 +7337,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5295,13 +7361,6 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecutePatchHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5330,6 +7389,13 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5345,8 +7411,182 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecutePatchHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecutePatchHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecutePatchHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecutePatchHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePatchHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecutePatchHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecutePatchHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecutePatchHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecutePatchHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePatchHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5369,8 +7609,39 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecutePatchHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecutePatchHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5379,6 +7650,23 @@ func ParseExecutePatchHTTPResp(rsp *http.Response) (*ExecutePatchHTTPResp, error
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecutePatchHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -5432,6 +7720,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5550,6 +7845,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5567,13 +7869,6 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecutePostHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5602,6 +7897,13 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5617,8 +7919,182 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecutePostHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecutePostHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecutePostHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecutePostHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePostHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecutePostHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecutePostHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecutePostHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecutePostHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePostHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5641,8 +8117,39 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecutePostHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecutePostHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5651,6 +8158,23 @@ func ParseExecutePostHTTPResp(rsp *http.Response) (*ExecutePostHTTPResp, error) 
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecutePostHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil
@@ -5704,6 +8228,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest MethodNotAllowed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON405 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Conflict
@@ -5822,6 +8353,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5839,13 +8377,6 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 		response.Headers200 = &headers
 	case rsp.StatusCode == 202:
 		var headers ExecutePutHTTPResp202Headers
-		if values := rsp.Header.Values("Idempotent-Replayed"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "Idempotent-Replayed", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.IdempotentReplayed = &value
-		}
 		if values := rsp.Header.Values("Jentic-Api-Vendor"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Api-Vendor", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5874,6 +8405,13 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			}
 			headers.PreferenceApplied = &value
 		}
+		if values := rsp.Header.Values("Server-Timing"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Server-Timing", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ServerTiming = &value
+		}
 		if values := rsp.Header.Values("traceparent"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "traceparent", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5889,8 +8427,182 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			headers.Tracestate = &value
 		}
 		response.Headers202 = &headers
+	case rsp.StatusCode == 400:
+		var headers ExecutePutHTTPResp400Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ExecutePutHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ExecutePutHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ExecutePutHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 405:
+		var headers ExecutePutHTTPResp405Headers
+		if values := rsp.Header.Values("Allow"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Allow", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Allow = &value
+		}
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers405 = &headers
+	case rsp.StatusCode == 409:
+		var headers ExecutePutHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers ExecutePutHTTPResp413Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ExecutePutHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 424:
+		var headers ExecutePutHTTPResp424Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers424 = &headers
 	case rsp.StatusCode == 429:
 		var headers ExecutePutHTTPResp429Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("RateLimit-Limit"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "RateLimit-Limit", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -5913,8 +8625,39 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers ExecutePutHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers ExecutePutHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -5923,6 +8666,23 @@ func ParseExecutePutHTTPResp(rsp *http.Response) (*ExecutePutHTTPResp, error) {
 			headers.RetryAfter = &value
 		}
 		response.Headers503 = &headers
+	case true:
+		var headers ExecutePutHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
 	}
 
 	return response, nil

@@ -18,9 +18,10 @@ import structlog
 from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
-from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.core.server_timing import ServerTimingStage, stage
 from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import (
     BrokerExecutionPipeline,
@@ -36,12 +37,20 @@ from jentic_one.shared.events import (
     emit_event,
     valid_trace_id_or_none,
 )
-from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
+from jentic_one.shared.events.repeated_failure import (
+    RepeatedFailureCounter,
+    maybe_emit_repeated_failure,
+)
 from jentic_one.shared.executions import record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
-from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
+from jentic_one.shared.models.events import (
+    EventSeverity,
+    EventTag,
+    EventType,
+    thirdparty_auth_error_tag,
+)
 from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.tracing import jentic_tracestate, pack_jentic_tracestate
 
@@ -59,32 +68,39 @@ _execution_duration = _meter.create_histogram(
     description="Duration of broker executions in milliseconds",
 )
 
-_circuit_event_last_emitted: dict[str, datetime] = {}
 
-#: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
-#: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
-#: distinct, lower-precision tag so the funnel can separate them downstream).
-_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
-    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
-    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
-}
+async def emit_circuit_open_event(
+    session: Any, ctx_req: ExecuteRequestContext, *, actor_id: str, actor_type: str
+) -> None:
+    """Emit the ``upstream.circuit_open`` event for a circuit fast-fail.
 
+    Shared by the buffered and streaming paths so either one raises the same
+    operator-facing event. The buffered path emits it in the request's own
+    transaction; the streaming path, whose error response must not wait on the
+    admin database, emits it off the request before and independently of the
+    execution record (see ``_emit_streaming_circuit_event`` in the router).
 
-def _should_emit_circuit_event(host: str, cooldown_s: int = 15) -> bool:
-    """Return True if no circuit-open event was emitted for this host within the cooldown."""
-    now = datetime.now(UTC)
-    last = _circuit_event_last_emitted.get(host)
-    if last is not None and (now - last).total_seconds() < cooldown_s:
-        return False
-    _circuit_event_last_emitted[host] = now
-    stale = [
-        h
-        for h, ts in _circuit_event_last_emitted.items()
-        if (now - ts).total_seconds() > cooldown_s
-    ]
-    for h in stale:
-        _circuit_event_last_emitted.pop(h, None)
-    return True
+    The rate limit is the breaker's own per-host claim
+    (``CircuitOpenError.report``), checked by the caller: of every refusal an
+    open circuit causes, across every process sharing the state backend, one
+    per cooldown reports it — so an emit that does not happen is the only
+    operator notice for that whole cooldown. A failed emit is logged, never
+    raised — the caller's 503 is not replaced by an event-write error.
+    """
+    host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
+    try:
+        await emit_event(
+            session,
+            type=EventType.UPSTREAM_CIRCUIT_OPEN,
+            severity=EventSeverity.WARNING,
+            summary=f"Circuit breaker opened for upstream {host}",
+            created_by=actor_id,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            data={"host": host},
+        )
+    except Exception:
+        logger.warning("emit_circuit_event_failed", host=host)
 
 
 def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
@@ -131,15 +147,18 @@ async def run_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
+    emit_lifecycle: bool = True,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
-    ``admin_db`` is the admin ``DatabaseSession``. The record and its lifecycle
-    events are written in one ``admin_db.transaction()`` opened only after the
-    upstream call returns or raises, so no admin connection (and, on SQLite, no
-    write lock) is held while the upstream is awaited.
+    ``admin_db`` is the admin ``DatabaseSession``. The record (and, when
+    ``emit_lifecycle`` is true, its lifecycle events) is written in one
+    ``admin_db.transaction()`` opened only after the upstream call returns or
+    raises, so no admin connection (and, on SQLite, no write lock) is held while
+    the upstream is awaited.
 
     On a transport-level failure the broker's pipeline raises a ``BrokerError``;
     we commit a FAILED record before re-raising so the central handler can map
@@ -153,6 +172,12 @@ async def run_execution(
 
     ``has_idempotency_key`` tells the retry gate the caller sent an
     ``Idempotency-Key``; ``headers`` never carries it (it is broker-consumed).
+
+    ``emit_lifecycle`` controls whether ``run_execution`` emits the
+    ``execution.completed`` / ``execution.failed`` event in the record
+    transaction. The sync router leaves it ``True``; ``PipelineExecutor`` sets
+    it ``False`` because ``ExecutionHandler`` writes the lifecycle event (with
+    ``job_id``) and runs repeated-failure detection for queued jobs.
     """
     execution_id = execution_id or mint_execution_id()
     started_at = datetime.now(UTC)
@@ -174,7 +199,6 @@ async def run_execution(
         body=body,
         timeout_s=timeout,
         signing=signing,
-        has_idempotency_key=has_idempotency_key,
     )
     exec_context = ExecutionContext(
         execution_id=execution_id,
@@ -198,12 +222,13 @@ async def run_execution(
             span.set_attribute("operation_id", operation_id or "")
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
-            with jentic_tracestate(tracestate_member):
+            with jentic_tracestate(tracestate_member), stage(ServerTimingStage.UPSTREAM):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
         # Committed before the re-raise that maps the BrokerError to HTTP.
-        async with admin_db.transaction() as session:
+        # ``jentic-persist`` is timed here too, so a failed call reports it.
+        async with stage(ServerTimingStage.PERSIST), admin_db.transaction() as session:
             await _persist(
                 ctx_req,
                 session=session,
@@ -217,36 +242,27 @@ async def run_execution(
                 actor_type=actor_type,
                 origin=origin,
             )
-            await _emit_execution_lifecycle(
-                session,
-                execution_id=execution_id,
-                status=ExecutionStatus.FAILED,
-                error_msg=exc.detail[:128],
-                trace_id=ctx_req.trace_id,
-                actor_id=actor_id,
-                actor_type=actor_type,
-                toolkit_id=ctx_req.toolkit_id,
-                credential_id=ctx_req.credential_id,
-                operation=ctx_req.operation,
-                security_config=security_config,
-                origin=origin,
-            )
-            if isinstance(exc, CircuitOpenError):
-                host = urlparse(ctx_req.upstream_url).netloc or "<unknown>"
-                if _should_emit_circuit_event(host):
-                    try:
-                        await emit_event(
-                            session,
-                            type=EventType.UPSTREAM_CIRCUIT_OPEN,
-                            severity=EventSeverity.WARNING,
-                            summary=f"Circuit breaker opened for upstream {host}",
-                            created_by=actor_id,
-                            actor_id=actor_id,
-                            actor_type=actor_type,
-                            data={"host": host},
-                        )
-                    except Exception:
-                        logger.warning("emit_circuit_event_failed", host=host)
+            if emit_lifecycle:
+                await _emit_execution_lifecycle(
+                    session,
+                    execution_id=execution_id,
+                    status=ExecutionStatus.FAILED,
+                    error_msg=exc.detail[:128],
+                    trace_id=ctx_req.trace_id,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    credential_id=ctx_req.credential_id,
+                    operation=ctx_req.operation,
+                    security_config=security_config,
+                    repeated_failure_counter=repeated_failure_counter,
+                    origin=origin,
+                )
+            # The breaker marks one refusal per host per open period as the one
+            # that reports it, across every process sharing the state backend.
+            if isinstance(exc, CircuitOpenError) and exc.report:
+                await emit_circuit_open_event(
+                    session, ctx_req, actor_id=actor_id, actor_type=actor_type
+                )
         raise
 
     result = outcome.result
@@ -266,7 +282,7 @@ async def run_execution(
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     _execution_duration.record(result.duration_ms, {"operation": operation_id or ""})
 
-    async with admin_db.transaction() as session:
+    async with stage(ServerTimingStage.PERSIST), admin_db.transaction() as session:
         await _persist(
             ctx_req,
             session=session,
@@ -281,35 +297,36 @@ async def run_execution(
             origin=origin,
         )
 
-        # Third-party auth failure: the upstream rejected the auth the user
-        # configured (401/403). Only when a credential path was attempted
-        # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
-        # status so 401 (credential rejection) stays distinct from 403
-        # (permission/business). We fold this into the EXECUTION_FAILED event as a
-        # tag rather than emit a separate ``auth_failure``: the flat telemetry
-        # payload carries no per-request correlation id, so two events sharing a
-        # timestamp are indistinguishable from two concurrent requests downstream —
-        # a separate event would permanently skew the funnel (see #446 review).
-        thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(result.status_code)
-        error_tags: set[EventTag] | None = (
-            {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
-        )
+        if emit_lifecycle:
+            # Third-party auth failure: the upstream rejected the auth the user
+            # configured (401/403). Only when a credential path was attempted
+            # (api_vendor set) — a vendorless call has no auth to reject. Tagged by
+            # status so 401 (credential rejection) stays distinct from 403
+            # (permission/business). We fold this into the EXECUTION_FAILED event as a
+            # tag rather than emit a separate ``auth_failure``: the flat telemetry
+            # payload carries no per-request correlation id, so two events sharing a
+            # timestamp are indistinguishable from two concurrent requests downstream —
+            # a separate event would permanently skew the funnel (see #446 review).
+            thirdparty_tag = thirdparty_auth_error_tag(result.status_code, ctx_req.api_vendor)
+            error_tags: set[EventTag] | None = (
+                {thirdparty_tag} if thirdparty_tag is not None else None
+            )
 
-        await _emit_execution_lifecycle(
-            session,
-            execution_id=execution_id,
-            status=status,
-            error_msg=error_msg,
-            trace_id=ctx_req.trace_id,
-            actor_id=actor_id,
-            actor_type=actor_type,
-            toolkit_id=ctx_req.toolkit_id,
-            credential_id=ctx_req.credential_id,
-            operation=ctx_req.operation,
-            security_config=security_config,
-            error_tags=error_tags,
-            origin=origin,
-        )
+            await _emit_execution_lifecycle(
+                session,
+                execution_id=execution_id,
+                status=status,
+                error_msg=error_msg,
+                trace_id=ctx_req.trace_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                credential_id=ctx_req.credential_id,
+                operation=ctx_req.operation,
+                security_config=security_config,
+                repeated_failure_counter=repeated_failure_counter,
+                error_tags=error_tags,
+                origin=origin,
+            )
 
     return outcome
 
@@ -328,16 +345,31 @@ async def persist_streaming_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
+    cancelled: bool = False,
 ) -> None:
     """Persist an execution record for a streaming-path execution.
 
-    Called from the background task after the streaming response body completes
-    (or terminates with an error). Shares metrics instrumentation with the
-    buffered path for observability parity.
+    Called once per streaming execution, on every outcome: after the response
+    body ends (completed, failed mid-body, client disconnect), or when the call
+    ends before any response exists — the stream failed to open or was
+    cancelled first, and ``http_status`` is ``None``. Shares metrics
+    instrumentation with the buffered path for observability parity: every
+    execution counts on ``broker.executions.total``, and only one with an
+    upstream response adds a ``broker.execution.duration_ms`` sample (a
+    pre-header failure timed no upstream round trip, so a sample would pull the
+    latency distribution toward the broker's own fast-fail).
+
+    ``cancelled`` marks a call the server abandoned (the shutdown drain, an
+    outer cancel) rather than one that failed: the record is still FAILED —
+    ``ExecutionStatus`` has no neutral member, and a non-idempotent call may
+    already have reached the upstream — but it raises no action-required event
+    and feeds no repeated-failure detection.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
-    _execution_duration.record(duration_ms, {"operation": operation_id or ""})
+    if http_status is not None:
+        _execution_duration.record(duration_ms, {"operation": operation_id or ""})
 
     logger.info(
         "execution_recorded",
@@ -375,10 +407,8 @@ async def persist_streaming_execution(
     # credential path attempted (api_vendor set) means the auth the user configured
     # was rejected upstream. Folded into EXECUTION_FAILED as a tag, not a separate
     # ``auth_failure`` event, to keep the correlation-id-free funnel un-skewed.
-    thirdparty_tag = _THIRDPARTY_AUTH_TAGS.get(http_status) if http_status is not None else None
-    error_tags: set[EventTag] | None = (
-        {thirdparty_tag} if thirdparty_tag is not None and ctx_req.api_vendor else None
-    )
+    thirdparty_tag = thirdparty_auth_error_tag(http_status, ctx_req.api_vendor)
+    error_tags: set[EventTag] | None = {thirdparty_tag} if thirdparty_tag is not None else None
 
     await _emit_execution_lifecycle(
         session,
@@ -388,12 +418,13 @@ async def persist_streaming_execution(
         trace_id=ctx_req.trace_id,
         actor_id=actor_id,
         actor_type=actor_type,
-        toolkit_id=ctx_req.toolkit_id,
         credential_id=ctx_req.credential_id,
         operation=ctx_req.operation,
         security_config=security_config,
+        repeated_failure_counter=repeated_failure_counter,
         error_tags=error_tags,
         origin=origin,
+        cancelled=cancelled,
     )
 
 
@@ -443,18 +474,26 @@ async def _emit_execution_lifecycle(
     trace_id: str | None,
     actor_id: str,
     actor_type: str,
-    toolkit_id: str | None = None,
     credential_id: str | None = None,
     operation: OperationInfo | None = None,
     security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
     error_tags: set[EventTag] | None = None,
     origin: str | None = None,
+    cancelled: bool = False,
 ) -> None:
     """Emit EXECUTION_COMPLETED/EXECUTION_FAILED events for the sync and streaming paths.
 
     On the FAILED branch this also drives ``execution.repeated_failure`` detection
     when ``security_config`` is supplied (the sync + streaming router paths pass it;
     the async-worker path detects repeated failures in its own handler).
+
+    ``cancelled`` says the FAILED record describes a call the server abandoned —
+    its shutdown drain, an outer cancel — not an upstream or broker failure. The
+    event is still emitted, so the record has its lifecycle entry, but without
+    ``requires_action`` and without feeding repeated-failure detection: a rolling
+    restart with N streams in flight would otherwise put N items in the operator's
+    action inbox and count N failures against actors that did nothing wrong.
 
     ``error_tags`` (FAILED branch only) rides along on the EXECUTION_FAILED event —
     e.g. an upstream 401/403 tags the failure with its third-party ``ErrorSource``
@@ -493,7 +532,7 @@ async def _emit_execution_lifecycle(
                 type=EventType.EXECUTION_FAILED,
                 severity=EventSeverity.ERROR,
                 summary=f"Execution failed: {sanitized}",
-                requires_action=True,
+                requires_action=not cancelled,
                 execution_id=execution_id,
                 trace_id=event_trace_id,
                 created_by=actor_id,
@@ -504,14 +543,14 @@ async def _emit_execution_lifecycle(
     except Exception:
         logger.warning("emit_execution_event_failed", execution_id=execution_id)
 
-    if status == ExecutionStatus.FAILED and security_config is not None:
+    if status == ExecutionStatus.FAILED and security_config is not None and not cancelled:
         await maybe_emit_repeated_failure(
             session,
             actor_id=actor_id,
             actor_type=actor_type,
-            toolkit_id=toolkit_id,
             credential_id=credential_id,
             operation=operation,
             trace_id=event_trace_id,
             config=security_config,
+            failure_counter=repeated_failure_counter,
         )

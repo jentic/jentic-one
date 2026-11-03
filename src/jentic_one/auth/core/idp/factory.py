@@ -21,13 +21,26 @@ _ADAPTERS: dict[str, type[OidcAdapter]] = {
 }
 
 
+#: The adapter last built, reused while the deployment's IdP config object is
+#: unchanged so its discovery document and JWKS cache live across logins.
+_last_adapter: OidcAdapter | None = None
+
+
 def build_idp_adapter(config: IdpConfig) -> IdpAdapter | None:
     """Build the IdP adapter for *config*, or ``None`` if IdP login is disabled.
 
     Selects a provider-specific adapter by ``config.provider`` (falling back to
-    the generic :class:`OidcAdapter` for standard OIDC providers).
+    the generic :class:`OidcAdapter` for standard OIDC providers). Repeated
+    calls with the same config object return the same adapter; replacing the
+    config builds a fresh one.
     """
+    global _last_adapter
     if not config.enabled:
         return None
     adapter_cls = _ADAPTERS.get(config.provider, OidcAdapter)
-    return adapter_cls(config)
+    cached = _last_adapter
+    if cached is not None and cached.config is config and type(cached) is adapter_cls:
+        return cached
+    adapter = adapter_cls(config)
+    _last_adapter = adapter
+    return adapter

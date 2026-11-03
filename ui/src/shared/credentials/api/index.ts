@@ -530,6 +530,7 @@ export {
 export {
 	connectRequestsKey,
 	useAgentsForPicker,
+	useBindingAccess,
 	useConfirmConnectSession,
 	useConnectSession,
 	useOpenConnectRequests,

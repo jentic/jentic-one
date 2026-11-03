@@ -103,6 +103,13 @@ class EventType:
     # the event row deep-links to its approval page. ``created_by`` is the
     # agent, so its owner sees the row under owner-scoped event reads.
     CONNECT_SESSION_CREATED = "connect_session.created"
+    # An agent opened an edit session asking its owner to change one of its
+    # credential bindings (rules, rule set, suspension). Informational like
+    # ``CONNECT_SESSION_CREATED``: the open session is the live signal.
+    CONNECT_SESSION_EDIT_REQUESTED = "connect_session.edit_requested"
+    # The initiator amended an open session's ask (a new revision). The
+    # reviewer re-reads the combined diff before approving.
+    CONNECT_SESSION_AMENDED = "connect_session.amended"
 
     # --- Local-MCP transport events (issue #1177) -------------------------
     # Emitted once per MCP session UUID on the first authenticated request
@@ -195,6 +202,8 @@ class EventType:
             PBAC_DENIED,
             CREDENTIAL_BINDING_UNSERVED,
             CONNECT_SESSION_CREATED,
+            CONNECT_SESSION_EDIT_REQUESTED,
+            CONNECT_SESSION_AMENDED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
             OAUTH_CLIENT_REGISTERED,
@@ -232,6 +241,28 @@ class ErrorSource(StrEnum):
     # See docs/plans/issue-446-product-telemetry.md items 14/18 (deferral note).
     UPSTREAM_CATALOG = "upstream_catalog"
     UPSTREAM_IMPORTED = "upstream_imported"
+
+
+#: Upstream auth-rejection status → third-party ``auth_failure`` tag. 401 is an
+#: RFC-tight authentication rejection; 403 mixes auth + authorization (kept as a
+#: distinct, lower-precision tag so the funnel can separate them downstream).
+_THIRDPARTY_AUTH_TAGS: dict[int, ErrorSource] = {
+    401: ErrorSource.AUTH_THIRDPARTY_UNAUTHORIZED,
+    403: ErrorSource.AUTH_THIRDPARTY_FORBIDDEN,
+}
+
+
+def thirdparty_auth_error_tag(
+    http_status: int | None, api_vendor: str | None
+) -> ErrorSource | None:
+    """Return the third-party auth ``ErrorSource`` tag for an upstream 401/403.
+
+    Returns ``None`` when ``api_vendor`` is unset (a vendorless call has no
+    credential path to reject) or ``http_status`` is not 401/403.
+    """
+    if http_status is None or not api_vendor:
+        return None
+    return _THIRDPARTY_AUTH_TAGS.get(http_status)
 
 
 class SpecSource(StrEnum):
@@ -444,6 +475,8 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_EXPIRED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_CREATED: frozenset({EventSeverity.INFO}),
+    EventType.CONNECT_SESSION_EDIT_REQUESTED: frozenset({EventSeverity.INFO}),
+    EventType.CONNECT_SESSION_AMENDED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
     EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),

@@ -29,7 +29,6 @@ import pytest
 import structlog
 from alembic import command
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
@@ -45,13 +44,17 @@ from jentic_one.control.repos.service_account_migration_repo import (
 from jentic_one.control.services.service_account_migration import (
     ServiceAccountMigrationService,
 )
-from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
 from tests.harness.postgres import alembic_config_for
-from tests.integration.service_account_schema import restore_pre_sa_drop_admin
+from tests.integration.service_account_schema import (
+    PreDropApiKeyResolver as _PreDropApiKeyResolver,
+)
+from tests.integration.service_account_schema import (
+    restore_pre_sa_drop_admin,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -224,28 +227,6 @@ async def _seed_sa(
             )
         await session.commit()
     return sa_id
-
-
-class _PreDropApiKeyResolver(ApiKeyResolver):
-    """The head resolver, reading grants from the pre-drop schema this module runs on.
-
-    The retirement service runs before ``e2f3a4b5c6d7``, where grants still
-    live in ``actor_scope_grants.scope``; the head resolver reads the renamed
-    ``actor_permission_grants.permission``. Only the grant read is swapped, so
-    the key-resolution logic under test is the shipped one.
-    """
-
-    async def _load_permissions(
-        self, session: AsyncSession, actor_id: str, actor_type: ActorType
-    ) -> list[str]:
-        result = await session.execute(
-            text(
-                "SELECT scope FROM actor_scope_grants"
-                " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-            ),
-            {"actor_id": actor_id, "actor_type": actor_type.value},
-        )
-        return [row.scope for row in result.all()]
 
 
 async def _rows(admin_db: DatabaseSession, query: str, params: dict[str, object]) -> list[Any]:

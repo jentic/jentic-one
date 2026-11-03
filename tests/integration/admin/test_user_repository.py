@@ -9,7 +9,7 @@ from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository
-from jentic_one.admin.services.errors import UserNotFoundError
+from jentic_one.admin.services.errors import UserDeletedError, UserNotFoundError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import InviteState
 
@@ -140,6 +140,62 @@ async def test_disable_and_enable(admin_db: DatabaseSession, clean_users: None) 
         enabled = await UserRepository.enable(session, user_id)
         await session.commit()
         assert enabled.active is True
+
+
+@pytest.mark.parametrize("operation", ["enable", "disable", "update"])
+async def test_writes_refuse_a_deleted_row(
+    admin_db: DatabaseSession, clean_users: None, operation: str
+) -> None:
+    """``enable``, ``disable`` and ``update`` only write a row without ``deleted_at``."""
+    async with admin_db.session() as session:
+        user = await UserRepository.create(
+            session,
+            email="tomb@example.com",
+            first_name="Tomb",
+            last_name="Stone",
+            created_by="usr_test",
+        )
+        await session.commit()
+        user_id = user.id
+
+    async with admin_db.session() as session:
+        assert await UserRepository.mark_deleted(session, user_id, email=f"deleted-{user_id}@local")
+        await session.commit()
+
+    async with admin_db.session() as session:
+        with pytest.raises(UserDeletedError, match=f"Cannot {operation} a deleted user"):
+            if operation == "enable":
+                await UserRepository.enable(session, user_id)
+            elif operation == "disable":
+                await UserRepository.disable(session, user_id)
+            else:
+                await UserRepository.update(session, user_id, email="tomb@example.com")
+        await session.commit()
+
+    async with admin_db.session() as session:
+        row = await UserRepository.get_by_id(session, user_id)
+    assert row is not None
+    assert row.active is False
+    assert row.email == f"deleted-{user_id}@local"
+
+
+async def test_get_by_id_for_update_reads_the_row(
+    admin_db: DatabaseSession, clean_users: None
+) -> None:
+    async with admin_db.transaction() as session:
+        user = await UserRepository.create(
+            session,
+            email="locked@example.com",
+            first_name="Lock",
+            last_name="Ed",
+            created_by="usr_test",
+        )
+        user_id = user.id
+
+    async with admin_db.transaction() as session:
+        locked = await UserRepository.get_by_id_for_update(session, user_id)
+        assert locked is not None and locked.email == "locked@example.com"
+        assert await UserRepository.get_by_id_for_update(session, "usr_absent") is None
 
 
 async def test_list_all_with_limit(admin_db: DatabaseSession, clean_users: None) -> None:
