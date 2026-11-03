@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
+import {
+	checkA11y,
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	within,
+} from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import {
@@ -79,10 +86,10 @@ function seedEdit(edit: ReviewEdit) {
 function renderApprove(sessionId: string) {
 	const onBack = vi.fn();
 	const onDone = vi.fn();
-	renderWithProviders(
+	const { container } = renderWithProviders(
 		<VendorConnectFlow mode="approve" sessionId={sessionId} onBack={onBack} onDone={onDone} />,
 	);
-	return { onBack, onDone };
+	return { onBack, onDone, container };
 }
 
 beforeEach(() => {
@@ -278,6 +285,59 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 			confirmed_scopes: ['gmail.readonly', 'gmail.send'],
 		});
 	});
+
+	it('names the amend as well as the rebase when both the ask and the access moved', async () => {
+		// Let the access drift win the headline and the reviewer is pointed at
+		// a rebase whose own revision is then the only change on the page,
+		// attributed to them, with the agent's amend named nowhere.
+		// A reason-only ask, so the page carries no rule-diff badges: the audit
+		// below is of this flow's own markup (the live region, the reach
+		// section), not of the shared badge palette.
+		const unchanged = {
+			target: 'binding' as const,
+			rules: [READ, DENY],
+			scopes: ['gmail.readonly'],
+			suspended: false,
+		};
+		const seeded = seedEdit(editBlock({ result: unchanged, widens_access: false }));
+		const { container } = renderApprove(seeded.session_id);
+		await screen.findByRole('region', { name: 'Rule changes' });
+		seeded.stale = true;
+		seeded.edit = editBlock({
+			result: unchanged,
+			widens_access: false,
+			revision: { id: 'csr_2', number: 2 },
+		});
+		seeded.revisions = [
+			{
+				id: 'csr_1',
+				number: 1,
+				created_by: 'agnt_1',
+				created_at: '2026-10-19T10:00:00Z',
+				proposal: { reason: 'Needs to send' },
+				result: { rules: [READ, DENY], scopes: ['gmail.readonly'] },
+			},
+			{
+				id: 'csr_2',
+				number: 2,
+				created_by: 'agnt_1',
+				created_at: '2026-10-19T10:05:00Z',
+				proposal: { reason: 'Also the drafts' },
+				result: { rules: [READ, DENY], scopes: ['gmail.readonly'] },
+			},
+		];
+		await waitFor(
+			() =>
+				expect(
+					screen.getByText('This request changed while you were reviewing it.'),
+				).toBeInTheDocument(),
+			{ timeout: 15_000 },
+		);
+		await waitFor(() => expect(screen.getByText(/Revision 2:/)).toBeInTheDocument(), {
+			timeout: 15_000,
+		});
+		await checkA11y(container);
+	}, 30_000);
 
 	it('names the agents a shared rule-set rewrite reaches, with no scope change', async () => {
 		const seeded = seedEdit(

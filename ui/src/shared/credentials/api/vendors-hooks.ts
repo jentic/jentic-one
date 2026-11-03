@@ -340,8 +340,20 @@ export function invalidateEditSurfaces(
 	edit: {
 		binding: { agent_id: string; credential_id: string };
 		other_bound_agents: { agent_id: string }[];
+		other_bound_agents_truncated?: boolean;
 	},
 ): Promise<unknown> {
+	// The named agents are a capped list, so past the cap naming them one by
+	// one leaves the rest serving access the change has already altered. When
+	// the review says there are more, drop the agent slices wholesale.
+	if (edit.other_bound_agents_truncated) {
+		return Promise.all([
+			client.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot }),
+			client.invalidateQueries({
+				queryKey: credentialKeys.agents(edit.binding.credential_id),
+			}),
+		]);
+	}
 	return Promise.all([
 		invalidateBindingSurfaces(client, edit.binding.credential_id, [
 			edit.binding.agent_id,

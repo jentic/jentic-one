@@ -1680,6 +1680,15 @@ function EditApproveFlow({
 		[history, shown.revision.number],
 	);
 	const latestChange = history.find((c) => c.revision.id === latest.revision.id);
+	// Everything that happened since the revision on screen, so a rebase is
+	// never the only change named for a reviewer who also has an amend to read.
+	const since = useMemo(
+		() =>
+			history
+				.filter((c) => c.revision.number > shown.revision.number)
+				.sort((a, b) => a.revision.number - b.revision.number),
+		[history, shown.revision.number],
+	);
 	// A new revision the review poll found: read the history again to describe it.
 	const refetchedFor = useRef<string | null>(null);
 	useEffect(() => {
@@ -1969,7 +1978,12 @@ function EditApproveFlow({
 
 			{(changed || staleApprove || session.stale) && (
 				<RequestChangedBanner
-					change={changed ? latestChange : undefined}
+					// Remounted when which thing happened changes, so a reader
+					// is told again rather than the live region mutating under
+					// them unannounced.
+					key={changed ? 'changed' : 'stale'}
+					changes={changed ? since : undefined}
+					changed={changed}
 					agentId={byAgent ? shown.binding.agent_id : undefined}
 					afterApprove={staleApprove}
 					stale={session.stale === true}
@@ -2106,20 +2120,22 @@ function EditApproveFlow({
 			)}
 
 			{otherAgents.length > 0 && (
-				<p className="text-muted-foreground text-xs">
-					The changes also reach{' '}
-					{otherAgents.length === 1
-						? '1 other agent'
-						: `${otherAgents.length} other agents`}
-					, bound to this credential or to a rule set this change rewrites:{' '}
-					{otherAgents.map((agent, i) => (
-						<span key={agent.agent_id}>
-							{i > 0 && ', '}
-							<ActorLabel actorId={agent.agent_id} />
-						</span>
-					))}
-					.
-				</p>
+				<section aria-label="Agents this change reaches" className="text-xs">
+					<p className="text-muted-foreground">
+						The changes also reach{' '}
+						{otherAgents.length === 1
+							? '1 other agent'
+							: `${otherAgents.length} other agents`}
+						, bound to this credential or to a rule set this change rewrites:{' '}
+						{otherAgents.map((agent, i) => (
+							<span key={agent.agent_id}>
+								{i > 0 && ', '}
+								<ActorLabel actorId={agent.agent_id} />
+							</span>
+						))}
+						.
+					</p>
+				</section>
 			)}
 
 			{shown.current.suspended && (
@@ -2728,7 +2744,8 @@ function capitalise(text: string): string {
  * what they did and why. Also shown when Approve was refused for it.
  */
 function RequestChangedBanner({
-	change,
+	changes,
+	changed = false,
 	agentId,
 	afterApprove,
 	stale = false,
@@ -2737,8 +2754,14 @@ function RequestChangedBanner({
 	onReview,
 	onHistory,
 }: {
-	/** The new current revision; absent until it is read. */
-	change?: RevisionChange;
+	/**
+	 * Every revision since the one under review, oldest first: a rebase that
+	 * lands over an amend must not be the only change the reviewer is shown,
+	 * or the ask they are acknowledging reads as their own.
+	 */
+	changes?: RevisionChange[];
+	/** The request itself moved, which outranks the access moving under it. */
+	changed?: boolean;
 	agentId?: string;
 	afterApprove: boolean;
 	/** The access moved since the request was opened, so the diff is behind it. */
@@ -2749,7 +2772,9 @@ function RequestChangedBanner({
 	onReview?: () => void;
 	onHistory: () => void;
 }) {
-	const reason = change ? revisionReason(change.revision) : null;
+	// Newest last, so the reviewer reads them in the order they happened.
+	const named = changes ?? [];
+	const reason = named.length === 1 ? revisionReason(named[0].revision) : null;
 	return (
 		<div
 			role="alert"
@@ -2759,9 +2784,9 @@ function RequestChangedBanner({
 				<p className="font-medium">
 					{afterApprove
 						? 'Not approved: this request changed while you were reviewing it.'
-						: stale
-							? 'The access this request was opened against has changed since.'
-							: 'This request changed while you were reviewing it.'}
+						: changed
+							? 'This request changed while you were reviewing it.'
+							: 'The access this request was opened against has changed since.'}
 				</p>
 				{stale && (
 					<p className="text-xs">
@@ -2771,23 +2796,23 @@ function RequestChangedBanner({
 							: ' Whoever approves it can bring it up to date first.'}
 					</p>
 				)}
-				{change && (
-					<p className="text-xs">
-						Revision {change.revision.number}:{' '}
-						{change.revision.created_by === null ? (
+				{named.map((entry) => (
+					<p className="text-xs" key={entry.revision.id}>
+						Revision {entry.revision.number}:{' '}
+						{entry.revision.created_by === null ? (
 							'the request was rebased onto the access as it is now'
 						) : (
 							<>
 								<RevisionAuthor
-									createdBy={change.revision.created_by}
+									createdBy={entry.revision.created_by}
 									agentId={agentId}
 								/>{' '}
-								{revisionSummary(change)}
+								{revisionSummary(entry)}
 							</>
 						)}
-						, {timeAgo(change.revision.created_at)} ago.
+						, {timeAgo(entry.revision.created_at)} ago.
 					</p>
-				)}
+				))}
 				{reason && <p className="text-foreground-sub text-[11px] italic">“{reason}”</p>}
 			</div>
 			<div className="flex shrink-0 gap-2">
