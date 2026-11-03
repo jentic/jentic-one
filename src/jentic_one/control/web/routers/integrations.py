@@ -694,6 +694,7 @@ async def list_connect_session_revisions(
     response_model=ConfirmSessionResponse,
     responses=with_responses(
         not_found(),
+        too_many_requests("Rate limit"),
         conflict(
             "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, "
             "the review is stale, or the agent's binding for the API is suspended"
@@ -858,7 +859,12 @@ def _to_variant(
     summary="Amend an open connect session's request",
     response_model=AmendSessionResponse,
     responses=with_responses(
-        conflict("The session is closed, or holds every revision it may"),
+        not_found(),
+        conflict(
+            "The session is closed (`session_closed`), holds every revision it may "
+            "(`too_many_revisions`), moved since it was read (`revision_changed`), or the "
+            "agent already has an open request for this target (`connect_open`)"
+        ),
         too_many_requests("Rate limit"),
     ),
 )
@@ -1003,7 +1009,11 @@ async def poll_connect_session_status(
     summary="Resolve an open edit against the binding as it is now",
     response_model=AmendSessionResponse,
     responses=with_responses(
-        conflict("The session is closed, or holds every revision it may"),
+        not_found(),
+        conflict(
+            "The session is closed (`session_closed`), or holds every revision it may, so it "
+            "cannot be brought up to date (`too_many_revisions`)"
+        ),
         too_many_requests("Rate limit"),
     ),
 )

@@ -267,6 +267,38 @@ async def test_the_edit_tools_apply_the_routes_bounds() -> None:
         assert _payload(result)["error_code"] == "MISSING_ARGUMENT", arguments
 
 
+async def test_a_refused_amend_costs_the_actor_nothing() -> None:
+    """Every bound applies before the bucket is spent, on both edit tools.
+
+    A call refused for its shape must not cost the actor the quota it needs
+    to send the right one: `request_access_change` validates first, and its
+    sibling has the same loop to close.
+    """
+    env = _env()
+    limiter = env.connect_limiter
+    assert limiter is not None
+    spent: list[str] = []
+
+    async def record(actor: str) -> Any:
+        spent.append(actor)
+        return await RateLimiter.acquire(limiter, actor)
+
+    cases: list[dict[str, Any]] = [
+        {"session_id": "cs_1", "requested_scopes": [f"s{i}" for i in range(101)]},
+        {
+            "session_id": "cs_1",
+            "requested_permission_rules": [{"effect": "allow", "path": "/x", "methods": 5}],
+        },
+    ]
+    with patch.object(limiter, "acquire", new=record):
+        for arguments in cases:
+            result = await dispatch_tool_call(env, "amend_request", arguments)
+            assert result.is_error, arguments
+            assert _payload(result)["error_code"] == "MISSING_ARGUMENT", arguments
+    assert spent == []
+    assert _FakeService.amends == []
+
+
 async def test_the_edit_tools_spend_the_shared_connect_bucket() -> None:
     """An actor cannot double its rate by splitting calls across HTTP and MCP."""
     env = _env()

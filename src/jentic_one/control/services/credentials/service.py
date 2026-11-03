@@ -853,6 +853,12 @@ class CredentialService:
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.transaction() as session:
+            # The same lock a connect session's confirm takes: this write is a
+            # delete and re-insert too, so without it a confirm's locked read
+            # of these rows is overwritten after it passed.
+            await AgentPermissionRuleRepository.acquire_binding_lock(
+                session, agent_id, credential_id
+            )
             result = await AgentPermissionRuleRepository.replace_user_rules(
                 session, agent_id, credential_id, rules, created_by=identity.sub
             )
@@ -876,6 +882,9 @@ class CredentialService:
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.transaction() as session:
+            await AgentPermissionRuleRepository.acquire_binding_lock(
+                session, agent_id, credential_id
+            )
             result = await AgentPermissionRuleRepository.patch_rules(
                 session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
             )
@@ -1233,6 +1242,9 @@ class CredentialService:
                 raise RuleSetNotFoundError(rule_set_id)
             if not self._may_mutate_rule_set(rule_set, identity):
                 raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
+            # The lock a confirm writing this set takes: one list, every
+            # binding pointing at the set, replaced by a delete and re-insert.
+            await PermissionRuleSetRepository.acquire_rules_lock(session, rule_set_id)
             result = await PermissionRuleSetRepository.replace_user_rules(
                 session, rule_set_id, rules, created_by=identity.sub
             )

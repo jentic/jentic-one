@@ -2374,24 +2374,28 @@ async def handle_amend_request(env: CallEnv, arguments: dict[str, Any]) -> mcp_t
     if not fields:
         raise invalid_params("an amend must change something")
     request = _edit_request(args)
-    require_permissions(env.identity, ["credentials:connect", "credentials:write"])
-    await _spend_connect_bucket(env, "amend_request")
     requested_scopes = args.get("requested_scopes")
     if requested_scopes is not None and len(requested_scopes) > _REQUEST_CONNECTION_SCOPES_MAX:
         raise invalid_params(
             f"requested_scopes must list at most {_REQUEST_CONNECTION_SCOPES_MAX} scopes, "
             f"got {len(requested_scopes)}"
         )
+    # Every bound applied before the bucket is spent, as the edit tool's own
+    # coercion is: a call refused for its shape must not cost the actor the
+    # quota it would have needed to send the right one.
+    requested_rules = (
+        _edit_rule_list(args["requested_permission_rules"], "requested_permission_rules")
+        if "requested_permission_rules" in fields
+        else None
+    )
+    require_permissions(env.identity, ["credentials:connect", "credentials:write"])
+    await _spend_connect_bucket(env, "amend_request")
     amend = SessionAmend(
         fields=frozenset(fields),
         rules=request if "rules" in fields else None,
         resume=request.resume,
         reason=request.reason,
-        requested_permission_rules=(
-            _edit_rule_list(args["requested_permission_rules"], "requested_permission_rules")
-            if "requested_permission_rules" in fields
-            else None
-        ),
+        requested_permission_rules=requested_rules,
         requested_scopes=list(args["requested_scopes"]) if "requested_scopes" in fields else None,
         scopes=request if "scopes" in fields else None,
     )

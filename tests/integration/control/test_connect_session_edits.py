@@ -1057,9 +1057,10 @@ async def test_a_full_revision_chain_grows_no_further_however_it_is_touched(
     assert capped.value.limit == 2
     with pytest.raises(TooManyRevisionsError):
         await svc.rebase_session(created.session_id, poll_token=None, identity=_OWNER)
-    # The confirm's own rebase keeps the head it has: the ask is stale and its
-    # approver has to ask again, which is what the cap is for.
-    with pytest.raises(BaselineChangedError) as stale:
+    # And the confirm says the same thing, rather than pointing its approver
+    # at a rebase that refuses: following the binding costs a revision too,
+    # so at the cap the request has to be asked again.
+    with pytest.raises(TooManyRevisionsError):
         await svc.confirm_edit(
             created.session_id,
             poll_token=None,
@@ -1068,7 +1069,6 @@ async def test_a_full_revision_chain_grows_no_further_however_it_is_touched(
             permission_rules=[_SEND],
             resume=False,
         )
-    assert stale.value.current_revision_id == second.revision_id
 
     async with ctx.control_db.session() as session:
         revisions = await ConnectSessionRevisionRepository.list_for_session(
@@ -1302,6 +1302,37 @@ async def test_a_reach_wider_than_the_cap_says_so(
                 text("DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_cse_many_%'")
             )
             await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_cse_many_%'"))
+
+
+async def test_an_amend_one_short_of_the_cap_with_a_moved_binding_writes_nothing(
+    integration_context: Context, binding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused amend has to leave the chain as it found it.
+
+    An amend onto a moved binding writes two revisions: the rebase, then its
+    own. Asked for room for one, the rebase lands and the amend is then
+    refused, so the refusal reports that nothing was written while a revision
+    had been.
+    """
+    monkeypatch.setattr(connect_session_service, "_MAX_SESSION_REVISIONS", 2)
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    # One short of the cap, and the binding moves under the open edit.
+    await CredentialService(ctx).replace_agent_permissions(
+        binding, _AGENT, [_READ | {"path": "/v2/"}], identity=_OWNER
+    )
+    with pytest.raises(TooManyRevisionsError):
+        await svc.amend_session(
+            created.session_id,
+            identity=_AGENT_IDENTITY,
+            amend=SessionAmend(fields=frozenset({"reason"}), reason="one more"),
+        )
+    async with ctx.control_db.session() as session:
+        revisions = await ConnectSessionRevisionRepository.list_for_session(
+            session, created.session_id
+        )
+    assert [r.number for r in revisions] == [1]
 
 
 async def test_a_shared_set_write_locks_the_set_the_bindings_share(

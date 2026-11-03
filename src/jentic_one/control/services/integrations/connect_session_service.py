@@ -1943,10 +1943,13 @@ class ConnectSessionService:
         )
         if row.state not in open_states:
             raise _session_closed(row)
-        # Before the rebase a read of this session would do, so a refused
-        # amend has written nothing at all: resolving onto a moved binding
-        # appends a revision of its own.
-        await self._require_revision_room(row)
+        # Before the rebase, and with room for it: resolving onto a moved
+        # binding appends a revision of its own, so an amend that has to
+        # rebase needs two. Asked for one, the rebase would land and the amend
+        # be refused, which is a refusal that has written something.
+        await self._require_revision_room(
+            row, needed=2 if row.intent == INTENT_EDIT and await self._edit_is_stale(row) else 1
+        )
         row = await self._refresh_edit(row)
         current = await self._current_revision(row)
         if current is None:
@@ -2472,6 +2475,11 @@ class ConnectSessionService:
             )
             raise EditBindingNotFoundError(row.credential_id)
         if not baseline_matches(row.baseline, live):
+            # Following the binding costs a revision, so at the cap say that,
+            # rather than pointing the approver at a rebase that will refuse:
+            # the request cannot be brought up to date and has to be asked
+            # again.
+            await self._require_revision_room(row)
             rebased = await self._rebase_edit(row, live)
             async with self._ctx.control_db.session() as session:
                 revision = await ConnectSessionRevisionRepository.get_by_id(
@@ -3178,11 +3186,17 @@ class ConnectSessionService:
         return live is not None and not baseline_matches(row.baseline, live)
 
     async def _require_revision_room(
-        self, row: ConnectSession, *, current: ConnectSessionRevision | None = None
+        self, row: ConnectSession, *, current: ConnectSessionRevision | None = None, needed: int = 1
     ) -> None:
-        """Refuse when the session already holds every revision it may."""
+        """Refuse unless the session can still hold ``needed`` more revisions.
+
+        An amend that has to resolve onto a moved binding first writes two:
+        the rebase, then its own. Asked for one, the rebase lands and the
+        amend is then refused, so the refusal would be reporting that nothing
+        was written while a revision had been.
+        """
         head = current if current is not None else await self._current_revision(row)
-        if head is not None and head.number >= _MAX_SESSION_REVISIONS:
+        if head is not None and head.number + needed > _MAX_SESSION_REVISIONS:
             raise TooManyRevisionsError(row.id, _MAX_SESSION_REVISIONS)
 
     async def rebase_session(

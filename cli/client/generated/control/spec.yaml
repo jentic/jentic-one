@@ -18889,13 +18889,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           content:
             application/problem+json:
               example: *id265
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The session is closed, or holds every revision it may
+          description: The session is closed (`session_closed`), holds every revision it may (`too_many_revisions`), moved since it was read (`revision_changed`), or the agent already has an open request for this target (`connect_open`)
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -19060,6 +19062,13 @@ paths:
           description: Session not awaiting confirmation, its OAuth app, scheme or hosts changed, the review is stale, or the agent's binding for the API is suspended
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          content:
+            application/problem+json:
+              example: *id307
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Rate limit
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
@@ -19105,13 +19114,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           content:
             application/problem+json:
               example: *id265
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The session is closed, or holds every revision it may
+          description: The session is closed (`session_closed`), or holds every revision it may, so it cannot be brought up to date (`too_many_revisions`)
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':

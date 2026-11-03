@@ -32318,6 +32318,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "409": {
             "content": {
               "application/problem+json": {
@@ -32333,7 +32336,7 @@
                 }
               }
             },
-            "description": "The session is closed, or holds every revision it may"
+            "description": "The session is closed (`session_closed`), holds every revision it may (`too_many_revisions`), moved since it was read (`revision_changed`), or the agent already has an open request for this target (`connect_open`)"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -32550,6 +32553,23 @@
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Rate limit"
+          },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
           },
@@ -32610,6 +32630,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "409": {
             "content": {
               "application/problem+json": {
@@ -32625,7 +32648,7 @@
                 }
               }
             },
-            "description": "The session is closed, or holds every revision it may"
+            "description": "The session is closed (`session_closed`), or holds every revision it may, so it cannot be brought up to date (`too_many_revisions`)"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"

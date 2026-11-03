@@ -47,6 +47,26 @@ def test_a_mutating_connect_route_enforces_the_connect_rate_limit(handler_name: 
     )
 
 
+@pytest.mark.parametrize("handler_name", _MUTATING_ROUTES)
+def test_a_mutating_connect_route_declares_its_429(handler_name: str) -> None:
+    """Spending the bucket is half of it: the limit has to be on the wire.
+
+    A 429 the spec does not declare reaches no generated client, so nothing
+    honours the ``Retry-After`` these routes return and a caller retries into
+    the same refusal. Pinned beside the spend, so one cannot be added without
+    the other.
+    """
+    route = next(
+        (r for r in integrations.router.routes if getattr(r, "name", None) == handler_name),
+        None,
+    )
+    assert route is not None, f"{handler_name} is no longer a route on the integrations router"
+    assert 429 in getattr(route, "responses", {}), (
+        f"{handler_name} spends the connect bucket but declares no 429, so no generated "
+        "client can honour the Retry-After it returns"
+    )
+
+
 @pytest.mark.parametrize("handler_name", _MUTATING_TOOLS)
 def test_a_mutating_connect_tool_enforces_the_connect_rate_limit(handler_name: str) -> None:
     handler = getattr(tools, handler_name, None)
