@@ -10,7 +10,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
 import { ROUTE_PATHS } from '@/shared/app/routes';
-import { usePendingApprovals } from '@/shared/approvals';
 import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState, ConfirmDialog } from '@/shared/ui';
 import {
 	isCancellableJob,
@@ -43,15 +42,11 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 		isAdmin && job != null && status != null && isCancellableJob(status, job.kind);
 	const span = job ? formatSpan(job.created_at, job.updated_at) : null;
 	const navigate = useNavigate();
-	// A held execution settles through its review, never by cancelling the job:
-	// the button opens the call's review pop-up when the waiting list names it
-	// (the hold and its job share the execution id), else the rail's Inbox.
+	// A held execution settles through its review, never by cancelling the job,
+	// so the button opens the rail's Inbox, where the call waits. It can't open
+	// the call itself: a hold's row carries no job id, and its execution id is
+	// empty until the call runs, so nothing here names the hold.
 	const heldExecution = status === 'held' && job?.kind === 'execution';
-	const pending = usePendingApprovals({ enabled: heldExecution });
-	const held =
-		heldExecution && job?.execution_id
-			? pending.data?.approvals.find((call) => call.execution_id === job.execution_id)
-			: undefined;
 	// A held call's execution record is written only once it runs.
 	const hasExecutionRecord = status !== 'held';
 
@@ -87,13 +82,9 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 				<Button
 					variant="primary"
 					size="sm"
-					onClick={() =>
-						navigate(
-							held ? ROUTE_PATHS.approval(held.id) : ROUTE_PATHS.approvalsInbox(),
-						)
-					}
+					onClick={() => navigate(ROUTE_PATHS.approvalsInbox())}
 				>
-					{held ? 'Review' : 'Open inbox'}
+					Open inbox
 				</Button>
 			)}
 			{query.isLoading ? (

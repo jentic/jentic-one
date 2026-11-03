@@ -15,12 +15,13 @@ import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/ap
 import { publicDocsRoutes } from '@/modules/docs/routes';
 
 /**
- * An unknown in-app path goes to the shell home with its query kept, so a
- * link whose path is stale (`?inbox=1`, `?review=`) still opens what it meant to.
+ * Sends `/app` and any unknown in-app path straight to Agents, the home page,
+ * with the query kept, so a link whose path is stale (`?inbox=1`, `?review=`)
+ * still opens what it meant to. One hop: it never stops at `/` on the way.
  */
 function HomeRedirect() {
 	const { search } = useLocation();
-	return <Navigate to={{ pathname: '/', search }} replace />;
+	return <Navigate to={{ pathname: ROUTES.agents, search }} replace />;
 }
 
 /**
@@ -126,8 +127,13 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 		{
 			element: <AuthGuard />,
 			children: [
+				// `/app` has no page of its own: the fleet is home, so it redirects
+				// to Agents (old `/app` bookmarks included). The redirect sits
+				// outside the shell, so nothing in the shell (the rail, the review
+				// host) acts on the query at `/` before the redirect lands.
+				{ index: true, element: <HomeRedirect /> },
 				{
-					// Basename index: the authenticated app shell home (`/app`).
+					// The authenticated app shell, around every real page.
 					path: '/',
 					element: <Layout />,
 					// `moduleRoutes` is the append-only route registry; it is
@@ -135,19 +141,12 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 					// `[...moduleRoutes, ...extraRoutes]` at this single point
 					// without editing the registry. Order is load-bearing —
 					// placeholders stay last so a real module route wins.
-					children: [
-						// `/app` has no page of its own: the fleet is home, so the
-						// index lands on Agents (old `/app` bookmarks included).
-						{ index: true, element: <Navigate to={ROUTES.agents} replace /> },
-						...moduleRoutes,
-						...extraRoutes,
-						...placeholderRoutes,
-					],
+					children: [...moduleRoutes, ...extraRoutes, ...placeholderRoutes],
 				},
 			],
 		},
-		// Unknown in-app path → the shell home. (A bare host hit at `/`, before
-		// the basename, is redirected to `/app/` by the backend.)
+		// Unknown in-app path → Agents, query kept. (A bare host hit at `/`,
+		// before the basename, is redirected to `/app/` by the backend.)
 		{ path: '*', element: <HomeRedirect /> },
 	];
 }
