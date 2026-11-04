@@ -39,6 +39,7 @@ from tests.integration.control.connect_sec.support import (
     SIBLING_AGENT_ID,
     bind,
     checks,
+    client,
     connect,
     digest,
     existing_credential,
@@ -155,6 +156,23 @@ async def test_the_session_reads_as_an_edit_while_it_awaits_the_vendor(env: Cont
     assert review.edit.current["rules"] == []
     assert review.edit.current["granted_scopes"] == ["read"]
     assert review.state == "polling"
+    # And the ask was converted with the session: the revision it now points
+    # at is edit-shaped, recorded as the approver's decision to bind this
+    # credential rather than connect a new one.
+    assert review.edit.result["target"] == "binding"
+    assert review.edit.result["suspended"] is False
+    assert sorted(review.edit.result["scopes"]) == ["read", "write"]
+
+    # Over the wire, which is where the shape is enforced: a create-shaped
+    # revision under the edit intent is two fields short of the response
+    # model, so the read 500s for the whole window the session waits.
+    async with client(env, OWNER) as owner:
+        resp = await owner.get(f"/connect-sessions/{created.session_id}")
+    assert resp.status_code == 200, resp.text
+    edit = resp.json()["edit"]
+    assert edit["result"]["target"] == "binding"
+    assert edit["result"]["suspended"] is False
+    assert edit["revision"]["number"] == 2
 
 
 async def test_a_failed_consent_never_binds_or_widens(env: Context) -> None:

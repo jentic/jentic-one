@@ -1598,3 +1598,34 @@ async def test_an_apply_asking_scopes_of_a_credential_that_has_none_spends_no_qu
             )
             is None
         )
+
+
+async def test_a_review_withholds_the_name_of_a_credential_the_reader_cannot_read(
+    integration_context: Context, binding: str
+) -> None:
+    """Reading the request is not a claim on the credential it is about.
+
+    An admin may bind one person's credential to another's agent. The agent's
+    approver then reads this session while `GET /credentials/{id}/agents`
+    refuses them the same credential, so handing them its name here tells
+    them something no other route will.
+    """
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_created_by(session, binding, created_by="usr_cse_else")
+
+    review = await svc.get_review_data(created.session_id, poll_token=None, identity=_OWNER)
+    assert review.edit is not None
+    assert review.edit.credential_name is None
+    # Nothing else names it either, and the vendor the request is for stays:
+    # the approver is being asked about that API.
+    assert "cse credential" not in review.vendor_display_name
+    assert review.api_vendor == "test-vendor"
+    # The creator still sees it.
+    creator = Identity(
+        sub="usr_cse_else", email="else@test.local", permissions=["credentials:read", "org:admin"]
+    )
+    theirs = await svc.get_review_data(created.session_id, poll_token=None, identity=creator)
+    assert theirs.edit is not None and theirs.edit.credential_name == "cse credential"

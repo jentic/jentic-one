@@ -3473,10 +3473,16 @@ class ConnectSessionService:
         if revision is None:
             raise SessionNotFoundError(row.id)
         others, more_others = await self._affected_agents(row, row.baseline, credential, identity)
+        # The name is the credential's, not the session's: a caller who may
+        # read the request is not thereby allowed the name of a credential
+        # every other route refuses them. An admin may bind one person's
+        # credential to another's agent, and the agent's approver then reads
+        # this session without being able to read the credential at all.
+        named = await self._readable_credential_name(row.credential_id, credential, identity)
         review = EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
-            credential_name=credential.name if credential is not None else None,
+            credential_name=named,
             revision_id=revision.id,
             revision_number=revision.number,
             current=dict(row.baseline),
@@ -3497,7 +3503,7 @@ class ConnectSessionService:
             session_id=row.id,
             state=row.state,
             vendor_key=row.vendor,
-            vendor_display_name=(credential.name if credential is not None else None) or row.vendor,
+            vendor_display_name=edit.credential_name or row.vendor,
             resolved_flow=row.resolved_flow,
             reason=row.reason,
             requested_by_actor_id=row.initiator_actor_id,
@@ -4006,6 +4012,22 @@ class ConnectSessionService:
             return await CredentialRepository.get_creators_by_ids(
                 session, sorted(credential_ids), filters=filters
             )
+
+    async def _readable_credential_name(
+        self, credential_id: str, credential: Credential | None, identity: Identity
+    ) -> str | None:
+        """The credential's name, or ``None`` when the caller may not read it.
+
+        The same gate ``GET /credentials/{id}/agents`` applies before naming
+        what is bound to a credential: see the credential, or be told nothing
+        about it. A caller refused here can still read, amend and reject the
+        request — it is the credential they have no claim on, and the confirm
+        already refuses them for the same reason.
+        """
+        if credential is None:
+            return None
+        readable = await self._readable_credential_creators({credential_id}, identity)
+        return credential.name if credential_id in readable else None
 
     async def _other_bound_agents(
         self,
@@ -4950,13 +4972,46 @@ class ConnectSessionService:
         # callback, so the binding-to-be is snapshot here: no rules and no
         # rule set yet, with the chosen credential's grant as it stands.
         baseline = await self._binding_snapshot(agent_id, credential.id, None)
+        # And the ask is converted with it. The revision this session was
+        # opened with is a create ask (``{rules, scopes}``), which the edit
+        # review cannot read: changing what the session is without converting
+        # what it says left a document two fields short of the shape every
+        # reader now expects. Resolved against the baseline, so the shape is
+        # right by construction rather than by hand.
+        edit_result, _ = resolve_edit(
+            baseline,
+            EditRequest(
+                set_rules=[rule_to_write(r) for r in variant.checks.permission_rules],
+                set_scopes=scopes,
+                reason=row.reason,
+            ),
+            actor=identity.sub,
+        )
         async with self._ctx.control_db.transaction() as session:
+            # Appended, not rewritten: the create ask was really made, and the
+            # decision to bind this credential instead is a new one, recorded
+            # as the approver's.
+            edit_revision = await ConnectSessionRevisionRepository.append(
+                session,
+                session_id=row.id,
+                proposal={
+                    "rules": {"set": change["rules"]},
+                    "scopes": {"set": scopes},
+                    "resume": False,
+                    "reason": row.reason,
+                    "existing_credential_id": credential.id,
+                },
+                result=edit_result,
+                digest=revision_digest(baseline=baseline, result=edit_result, reason=row.reason),
+                created_by=identity.sub,
+            )
+            change["revision_id"] = edit_revision.id
             won = await ConnectSessionRepository.transition_state(
                 session,
                 row.id,
                 to_state="polling",
                 from_states=(row.state,),
-                revision_id=variant.checks.revision_id,
+                revision_id=edit_revision.id,
                 intent=INTENT_EDIT,
                 baseline=baseline,
                 credential_id=credential.id,
