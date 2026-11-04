@@ -63,8 +63,6 @@ project_id` in the UI. `jentic-one` has **none of these endpoints** —
    managed connections (the create schema does not branch on `provider`). For
    Pipedream those are effectively placeholders; the form shows a note.
 
-See the filed backend issue for (1) and (2): jentic/jentic-one#388.
-
 ## Guided add-credential flow (API picker + security schemes)
 
 The create sheet is a **two-step wizard** that mirrors `jentic-mini`'s
@@ -82,7 +80,7 @@ API's OpenAPI `components.securitySchemes` collects the secret.
 | Picker UI           | `components/ApiPicker.tsx`                                 | Debounced search; "In your workspace" (local) + "From the Jentic public catalog" sections; emits `SelectedApi`; "Enter manually" escape hatch                                                                                                                                                                                                    |
 | Auth type cards     | `components/AuthTypeCards.tsx`                             | Radio cards (icon + title + description, webapp-style) for the credential type — single "Detected" card in spec mode, all four in manual mode                                                                                                                                                                                                    |
 | Server variables    | `components/ServerVariablesSection.tsx`                    | One input/dropdown per OpenAPI **server variable** (e.g. Atlassian `{your-domain}`); enum vars → `<Select>`, free-form → text; required vars gate submit                                                                                                                                                                                         |
-| Scope picker        | `components/ScopePicker.tsx` + `components/ScopeGroup.tsx` | Ported `ScopeSelector`/`ScopeGroup`: scopes grouped by resource into collapsible groups with tri-state select-all, per-group + global select/deselect, search, a `selected/total` count, and "Recommended" badges. Recommended scopes are auto-selected once when the spec loads (dialog tracks manual interaction so it never overrides intent) |
+| Scope picker        | `shared/ui/ScopePicker.tsx` + `shared/ui/ScopeGroup.tsx`   | Ported `ScopeSelector`/`ScopeGroup`: scopes grouped by resource into collapsible groups with tri-state select-all, per-group + global select/deselect, search, a `selected/total` count, and "Recommended" badges. Recommended scopes are auto-selected once when the spec loads (dialog tracks manual interaction so it never overrides intent) |
 | Wizard              | `components/CreateCredentialFlow.tsx`                      | Drawer (`surface="dialog"` for a host in the browser's top layer) with step 1 = picker, step 2 = form; auto-types from the picked scheme; pre-fills apiKey `field_name`/`location`, seeds server-variable defaults, and auto-selects recommended OAuth2 scopes from the spec; skeletons the auth section until the spec resolves                 |
 
 ### Submit path

@@ -20,7 +20,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-A3CACC.svg" alt="License: Apache 2.0"></a>
   <a href="https://www.opensourcealternatives.to"><img src="https://www.opensourcealternatives.to/badge-osa.svg" alt="Listed on Open Source Alternatives"></a>
   <img src="https://img.shields.io/badge/Python-3.12-68BAEC.svg?logo=python&logoColor=white" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Go-1.26-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Go-1.25-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.25">
   <img src="https://img.shields.io/badge/PostgreSQL-16-A3CACC.svg?logo=postgresql&logoColor=white" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/SQLite-3-A3CACC.svg?logo=sqlite&logoColor=white" alt="SQLite">
   <br>
@@ -114,7 +114,7 @@ docker compose exec app python -m jentic_one create-admin --email you@example.co
 
 `quickstart.env` turns on anonymous product telemetry
 (`JENTIC__TELEMETRY__ENABLED=true`). To opt out, set it to `false` in the
-file. [what is sent](docs/reference/config.md#telemetry)).
+file ([what is sent](docs/reference/config.md#telemetry)).
 
 Something failed? [Troubleshooting](docs/operations/troubleshooting.md)
 indexes recoveries by symptom.

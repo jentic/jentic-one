@@ -47,8 +47,10 @@ enforced at boot:
   surface set needs. Each surface implies its own DB, widened by
   `SURFACE_DB_DEPS` in `__main__.py`: `broker` needs all three (resolve
   against registry, credentials from control, audit into admin); `auth`
-  needs admin + control; standalone `control`/`registry` need admin (their
-  local auth verifier resolves API keys and permissions there); and a
+  needs admin + control; standalone `control` needs admin (its local auth
+  verifier resolves API keys and permissions there); standalone `registry`
+  needs admin for the same reason plus control (`/governed-hosts` derives the
+  caller's credential scopes from control's credentials table); and a
   control shape with MCP enabled needs registry (the `/mcp` search tools
   call registry services in-process). Touching a DB outside the gate raises
   immediately, so a mis-deployed process fails at boot.

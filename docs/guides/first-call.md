@@ -122,8 +122,9 @@ for control-plane mutations, so your call appears in Executions, not Audit).
 - **Have a coding agent do this for you.** The
   [agent runbooks](../agent/README.md) cover install through the
   discover → access → execute loop as directly executable steps.
-- **Full CLI reference.** Every `jenticctl` and `jentic` command:
-  [`cli/README.md`](../../cli/README.md).
+- **CLI.** Install, onboarding, and the command groups:
+  [`cli/README.md`](../../cli/README.md); the per-flag reference for every
+  `jentic` and `jenticctl` command is in the app at `/app/docs` (Reference → CLI).
 - **In-app API reference.** A running deployment serves its own interactive
   API reference at `/docs`, generated from code.
 - **Endpoint & permission reference.** Every HTTP route and the permission it requires:

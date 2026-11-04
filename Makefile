@@ -178,7 +178,7 @@ stop-fixtures: ## Stop Docker database fixtures
 destroy-fixtures: ## Remove Docker database fixtures and volumes
 	docker compose -f docker/local-setup/docker-compose.yaml down -v
 
-start-app: ## Start combined app (all surfaces)
+start-app: ## Start combined app (registry, admin, control, auth) on :8000; the broker is start-broker
 	uv run python -m jentic_one
 
 start-registry: ## Start registry surface standalone

@@ -86,8 +86,9 @@ Everything from here down is for code contributions.
    make start-app
    ```
 
-   For the full dev loop (backend + UI watch), use `make dev` — see
-   [docs/development/local-setup.md](docs/development/local-setup.md).
+   `make start-app` expects the database fixtures to be running. `make dev`
+   starts them, applies migrations, builds the UI if it is missing, then starts
+   the app — see [docs/development/local-setup.md](docs/development/local-setup.md).
 
 See [deploy/README.md](deploy/README.md) for the build architecture and
 common build tasks, and [docs/development/](docs/development/README.md) for
