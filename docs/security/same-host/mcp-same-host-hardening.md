@@ -25,7 +25,9 @@ Two things to keep straight before choosing a recipe:
   shape: a command to spawn.
 
 Pick the lowest rung that matches the sensitivity of the credentials your
-instance holds (the general tier ladder is in [security.md](../README.md)).
+instance holds — the [deployment tiers](../README.md#deployment-tiers) and the
+[same-host options](threat-model.md#your-options) say which postures fit which
+credentials.
 
 ## Recipe 1 — isolate the instance
 
@@ -53,8 +55,9 @@ and let the agent runtime spawn it through an argv-pinned `sudo` line. `sudo`
 inherits stdin/stdout, so the JSON-RPC pipe survives the user switch; the
 desktop side is left holding only a disposable spawn line, while the process
 and the context's key/token files live under the service user, unreadable by
-the desktop user. macOS/Linux only; this is a manual recipe today — a later
-release automates it as an optional `jentic setup` isolation step.
+the desktop user. macOS/Linux only. An interactive `jentic setup` offers to
+do this for each MCP entry it writes (consent-gated; a failure keeps the
+working entry); the steps below are the same setup done by hand.
 
 1. **Create one service user per agent identity/runtime** (`_jentic-claude`,
    `_jentic-cursor`, …) — *not* a shared catch-all user, which would
@@ -253,9 +256,9 @@ the daemon's unix socket is the boundary. It has its own page,
 
 ## Choosing a rung
 
-| Setup | Recommendation |
-|---|---|
-| Instance on another host / VPC | Recipe 1 (remote) already covers the instance files; add 2, 3 or 4 if the agent's own key must move off the desktop uid |
-| Same host, Docker available | Recipe 1 (containerized instance) + Recipe 3 for convenience — but Recipe 3's key boundary yields to Docker-daemon access (see its residual risk); pick Recipe 2 or 4 where key exfiltration is the concern |
-| Same host, no Docker (macOS/Linux) | Recipe 1 (different OS user) + Recipe 2, or Recipe 4 for a spawn-free entry with the same uid boundary |
-| Trying it out, low-value credentials | Plain stdio entry — the supported default |
+Recipe 1 deals with the instance's files; recipes 2–4 move the agent's own
+signing key off the desktop uid. Where key exfiltration by a shell-capable
+agent is the concern, prefer Recipe 2 or 4 — Recipe 3's key boundary yields to
+anyone with Docker-daemon access. Plain stdio stays fine for trying it out with
+low-value credentials. For how these fit the wider postures, see the
+[same-host options](threat-model.md#your-options).

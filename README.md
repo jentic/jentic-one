@@ -204,7 +204,7 @@ to make anyway — and you can see every one of them, and cut that one agent off
 without touching the key. One boundary to know before you rely on that: the broker
 protects credentials from agents running as **other** OS users or on other machines —
 an agent running as the *same* OS user as its own credential-holding CLI state can
-read that state; the [same-host hardening guide](docs/security/same-host/README.md)
+read that state; the [same-host threat model](docs/security/same-host/threat-model.md)
 covers when and how to split them.
 
 ## Documentation

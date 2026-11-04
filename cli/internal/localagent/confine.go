@@ -24,7 +24,7 @@ import (
 // dependencies outside ~ are untouched, so it can't fail to start on an OS/agent
 // update) and scoped to the one thing the sandbox uniquely does — the per-entry
 // distinction inside ~ that DAC cannot express. See
-// docs/security/same-host/sandbox-confinement-design.md for the full rationale.
+// docs/security/same-host/isolation-design.md for the full rationale.
 //
 // Confinement is REQUIRED, not best-effort: when the platform mechanism is
 // unavailable the caller must error closed (refuse the launch) rather than fall
@@ -66,7 +66,7 @@ func AgentUserPrereqs() []Prereq {
 		return []Prereq{lookPathPrereq(
 			"sandbox-exec", "sandbox-exec",
 			"sandbox-exec is not available on this macOS",
-			"sandbox-exec ships with macOS; see docs/security/same-host/local-agent-isolation.md",
+			"sandbox-exec ships with macOS; see docs/security/same-host/isolation-design.md",
 		)}
 	case "linux":
 		return []Prereq{

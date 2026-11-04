@@ -7,10 +7,11 @@ strongest same-host rung: the daemon — and the context keys it signs with —
 run under a dedicated service user, agent runtimes hold **no key material at
 all**, and the OS itself decides who may act as the context.
 
-This page is the daemon's security model. For the general ladder and the
-stdio-based recipes (sudo shim, container entry), see
-[mcp-same-host-hardening.md](mcp-same-host-hardening.md); ready-made systemd
-and launchd templates live in
+This page is the daemon's security model. For the stdio-based recipes (sudo
+shim, container entry), see
+[mcp-same-host-hardening.md](mcp-same-host-hardening.md); for where this fits
+among the same-host options, see the [threat model](threat-model.md#your-options).
+Ready-made systemd and launchd templates live in
 [`deploy/mcp-daemon/`](../../../deploy/mcp-daemon/README.md).
 
 ## The shape
@@ -106,8 +107,8 @@ matching credential posture:
 - `unix:///path/mcp.sock` — **no credential exists**; the daemon
   authenticates the relay by its uid. A stray `--bearer-file` or
   `$JENTIC_MCP_BEARER` here is refused: it would be pointless key material.
-- `http://<loopback>` — plaintext is loopback-only (same SEC-1 posture as
-  the broker check); a bearer is forwarded if supplied.
+- `http://<loopback>` — plaintext is loopback-only (the same rule the
+  CLI applies to broker URLs); a bearer is forwarded if supplied.
 - `https://…` — for a remote daemon: the caller supplies a **short-lived**
   bearer via `$JENTIC_MCP_BEARER` or `--bearer-file` (mode `0600`), the
   relay attaches it to each request and **never persists it** anywhere.

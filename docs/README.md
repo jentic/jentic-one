@@ -65,7 +65,9 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 ## Secure
 
 - [Deploying Jentic One securely](security/README.md) — threat model and the deployment-tier ladder
-- [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
+- [Same-host threat model](security/same-host/threat-model.md) — what an agent sharing a machine with the instance can do, and which option closes what
+- [Local-agent isolation design](security/same-host/isolation-design.md) — how `jentic run` confines an agent, and its residual risks
+- [Hardening same-host MCP setups](security/same-host/mcp-same-host-hardening.md) — recipes for MCP runtimes that spawn `jentic mcp` next to the instance
 - Agent runbook: [harden](agent/harden.md) — posture checks as executable steps
 
 ## Understand

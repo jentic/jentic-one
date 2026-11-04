@@ -7,7 +7,8 @@ your SSH keys, browser session, cloud credentials, or the Jentic One credential
 store.
 
 It covers the flow and day-to-day usage with examples. For the security design
-and rationale, see [`docs/security/same-host/`](../security/same-host/README.md);
+and its residual risks, see the
+[isolation design](../security/same-host/isolation-design.md);
 for the generated per-flag reference, open `/app/docs` on your deployment
 (Reference → CLI).
 
@@ -52,7 +53,7 @@ The result, from the agent's point of view:
 | System trees (`/etc`, `/usr`, `/var`, `/`) | ❌ not grantable | Hard-banned |
 
 Two honest limits (details in the
-[security docs](../security/same-host/local-agent-isolation.md)): the boundary
+[isolation design](../security/same-host/isolation-design.md#residual-risks)): the boundary
 protects **you from the agent** — it does not partition the agent from itself
 (anything seeded into the agent's home is readable by it), and it does **not**
 restrict network egress.
@@ -278,7 +279,7 @@ boundary.
 
 `cursor` here is the **headless `cursor-agent` CLI** — the Cursor GUI cannot run
 under a separate Unix account (see
-[GUI IDEs](../security/same-host/local-agent-isolation.md#gui-ides-cursor--vs-code)
+[GUI IDEs](../security/same-host/isolation-design.md#gui-ides-cursor--vs-code)
 for the Remote-SSH pattern). `generic` is a skill-only target for
 `jentic skill`; `jentic run generic` is refused with a pointer.
 
@@ -309,9 +310,9 @@ revocable virtual key, so nothing sensitive comes to rest in the agent account.
 
 ## Where state lives
 
-Everything jentic-owned is XDG on both sides (localagent keeps nothing in
-`~/.jentic` — records written there by older releases are adopted into the XDG
-file on the next `jentic run`/`jentic reset` write, or by `jentic migrate`):
+Everything jentic-owned is XDG on both sides. An account record in the legacy
+`~/.jentic/config.yaml` is still read as a fallback and moved into the XDG file
+on the next `jentic run`/`jentic reset` write (or by `jentic migrate`):
 
 | Location | Owner | Holds |
 | -------- | ----- | ----- |
@@ -346,8 +347,24 @@ The **agent's home is preserved by default** — re-owned to you so the agent's
 work survives — with its jentic identity and any seeded agent/provider config
 (`~/.claude`, `~/.aws`, `~/.codex`, …) cleared from it, so no credential
 material outlives the account. Deleting the home takes a separate, explicit
-confirmation. To remove a single context or identity instead of everything, use
+confirmation: after the main `reset`, type `delete home` (anything else keeps
+it). Non-interactively, `--force` skips the prompts and `--delete-home` opts
+into deletion; without a terminal and without `--force`, reset refuses. To
+remove a single context or identity instead of everything, use
 `jentic context delete` / `jentic identity delete`.
+
+The survey reads both the recorded grants and the ACLs actually on disk, so a
+grant that drifted from the record is still shown and removed. A reset with no
+agent account and no identity state is a no-op. Reset deliberately leaves:
+
+- the skill files `setup` wrote into your agent runtimes (`jentic skill remove`);
+- your home's own permissions (setup never changes them; reset only drops the
+  agent's named-user ACLs);
+- other local preferences (telemetry consent, theme).
+
+It does not revoke tokens server-side — deleting the local key and tokens
+already ends this machine's access; revoke the agent in `/app/agents` if you
+also want it gone from the instance.
 
 ## Troubleshooting
 
@@ -359,7 +376,7 @@ confirmation. To remove a single context or identity instead of everything, use
 | "Running the agent as YOU" warning | Same-user fallback: no isolated account recorded | Expected if you declined isolation; `jentic setup` to isolate. |
 | Grant prompt reappears for a directory you granted before | The ACL drifted (e.g. the directory was recreated by a build) | Re-grant; `jentic run <agent> --list-grants` shows the recorded inventory. |
 | Agent can't see a file *next to* its workspace | Working as designed — only granted subtrees are visible | Grant the sibling directory too, or a common parent. |
-| `test -w` fails / editor save fails inside a granted dir on macOS | A grant made by an older build used a narrower ACE set | Re-granting (or re-running setup) re-applies the full ACE set. |
+| `test -w` fails / editor save fails inside a granted dir on macOS | The directory's ACE lacks the delete/rename bits (e.g. it was set by hand with the `write` shorthand) | Re-grant with `jentic run <agent> --grant <dir>`; it applies the full ACE set. |
 | Noisy per-file errors during reset / account creation on macOS | SIP/TCC-protected home-template files (`Library/Mail`, …) that even root can't touch | Harmless; the steps are best-effort by design and continue. |
 | Agent's `jentic` says it has no identity | No active context at launch time, or env-var mode (`JENTIC_BASE_URL`/`JENTIC_BEARER_TOKEN`) | Activate a context (`jentic context use …`) and relaunch — the export happens at every launch. |
 
@@ -378,9 +395,12 @@ confirmation. To remove a single context or identity instead of everything, use
   runtime's native layout (`skill init` / `list` / `update` / `remove`), so the
   launched agent knows how to drive the CLI. `jentic setup` runs it for you.
   See [Skill commands: output and freshness](#skill-commands-output-and-freshness).
-- **`jentic doctor`** — read-only self-check, including whether the agent would
-  run as the same uid as you, and whether any installed skill is older than
+- **`jentic doctor`** — read-only agent-side self-check: identity, token,
+  control-plane reachability, and whether any installed skill is older than
   the copy bundled in this CLI.
+- **`jenticctl doctor`** — includes a *Local agent* section: the confinement
+  prerequisites (the same probe `jentic run` uses) and a warning if the
+  recorded agent account resolves to your own uid.
 - **`jenticctl wizard`** — the installer-side onboarding; its agent-isolation
   step is the same setup flow described here.
 
@@ -442,8 +462,8 @@ until the next `skill init` or `skill update`.
 
 ## Further reading
 
-- [Security design index](../security/same-host/README.md) — the problem
-  analysis, the full isolation design, the filesystem access model, and the
-  confinement layer, including the residual risks and the mechanisms' exact
-  commands.
+- [Same-host threat model](../security/same-host/threat-model.md) — the attack
+  paths `jentic run` closes and the other same-host options.
+- [Isolation design](../security/same-host/isolation-design.md) — the account,
+  ACL and confinement layers, what each blocks, and the residual risks.
 

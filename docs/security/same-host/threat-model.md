@@ -1,70 +1,83 @@
-# The same-host threat model
-
-> **Status:** the canonical problem statement. This captures the *problem* —
-> the state before any isolation work — and the attack-path codes (AP-1…AP-4)
-> the design docs cite. The shipped design that responds to it lives in the
-> sibling docs (see the [directory README](README.md)), and the menu of other
-> mitigations is indexed there too.
-
-## The problem in one sentence
+# Same-host setups: the threat model and your options
 
 Jentic One's promise — *the agent never sees the credential* — is a
-**network-path** guarantee, but the one-line install lands most users with the
-agent and Jentic One running as the **same OS user on the same machine**, where
-that guarantee does not hold.
+**network-path** guarantee: the Broker injects the secret into the outbound
+request and the agent only ever sees the response. A one-line local install
+puts the agent and Jentic One on the **same machine, as the same OS user**,
+and there that guarantee does not hold.
 
 In that posture the boundary is defeated not by breaking the Broker but by going
 around it. Everything the boundary depends on — the AES-256 encryption key, the
-`jwt_secret`, the agent's Ed25519 key, its bearer tokens — lives in `0600` files
-under `~/.jentic` owned by the same user the agent runs as, and `0600` does not
-stop the owning user.
+`jwt_secret`, the agent's Ed25519 key, its bearer tokens — lives in `0600`
+files owned by the same user the agent runs as, and `0600` does not stop the
+owning user.
 
-## The attack paths (same-user, "Tier T0")
+This page is the canonical statement of the problem. Other pages cite its
+attack-path codes (AP-1…AP-4).
+
+## The attack paths (same user, tier T0)
 
 | # | Path | Impact |
 |---|------|--------|
-| **AP-1** | Agent reads `~/.jentic/*.yaml` (keyset + `jwt_secret`) and the credential DB, decrypts offline | Total, silent compromise — no Broker call, no audit entry |
+| **AP-1** | Agent reads the instance config (keyset + `jwt_secret`) and the credential DB, decrypts offline | Total, silent compromise — no Broker call, no audit entry |
 | **AP-2** | Agent forges an `org:admin` JWT, self-provisions a fully-scoped agent, drives the Broker | Full credential *use* (calls look authorised) |
 | **AP-3** | Agent drives the operator's authenticated browser session on loopback | Full operator capability — survives even a perfect key/DB isolation |
-| **AP-4** | Agent's own token/key exfiltrated and reused off-host | Off-host impersonation |
+| **AP-4** | Agent's own token or signing key is copied and reused from elsewhere | Impersonation of that agent, within its scopes, from wherever the instance is reachable |
 
-AP-1/AP-2 share one root cause: the key and operator secret live in a file the
-agent's own user can read — no API-layer control fixes a file read. AP-3 is the
-hard one: it rides the *human's* legitimate session, so scope caps on agents
-don't touch it, and the server can't tell "operator clicked" from "agent drove
-the operator's tab."
+AP-1 and AP-2 share one root cause: the key and the operator secret live in a
+file the agent's own user can read, and no API-layer control fixes a file read.
+AP-3 rides the *human's* legitimate session, so scope caps on agents don't touch
+it, and the server cannot tell "operator clicked" from "agent drove the
+operator's tab". AP-4 is different in kind: the agent is *meant* to hold its own
+credentials, so no OS boundary can keep them from it.
 
-## The fix: isolate the agent
+## Isolate the agent, not just the instance
 
-There are two structurally different moves, and they are **not** equally powerful:
+There are two structurally different moves, and they are not equally strong:
 
-- **Isolate the *agent*** (own OS user or container) — the agent can't reach
-  `~/.jentic`, the DB, *or* the operator's browser profile. Closes AP-1
-  through AP-3 outright; AP-4 (the agent's *own* token reused off-host) is
-  neutralized not by the uid boundary but by the token contract — short-lived
-  opaque tokens, redeemable only at this loopback-bound instance, are
-  worthless off the network (see the
-  [residual risks](local-agent-isolation.md#what-this-model-does-not-protect--residual-risks)). This is the
-  real fix.
-- **Isolate *Jentic One*** (own user / separate host) — closes AP-1/AP-2, but the
-  operator's browser still runs next to the agent, so **AP-3 stays open** (a
-  WebAuthn step-up on dangerous mutations could close that, but no such step-up
-  exists in the product today — pair with operator-browser hygiene instead).
+- **Isolate the *agent*** (its own OS user, or a container). The agent cannot
+  reach the instance's files, the DB, *or* the operator's browser profile. This
+  closes **AP-1, AP-2 and AP-3**.
+- **Isolate *Jentic One*** (its own OS user, a container, or another host).
+  This closes **AP-1 and AP-2** only — the operator's browser still runs next to
+  the agent, so **AP-3 stays open**. Pair it with operator-browser hygiene (a
+  separate browser profile for the Jentic One UI, signed out when not in use).
 
-So **agent isolation ⊃ Jentic-One isolation.** The classic "put it on a VPC"
-advice is the weaker of the two: necessary for teams, but on a single dev machine
-it leaves the browser gap. The only reason to prefer it is that it needs nothing
-of the agent client — and the hard constraint here is that **we do not own the
-agent client**, so any agent-side ask must be near-zero-effort.
+So agent isolation is strictly stronger on a single machine. Moving the
+instance to a separate host or private network is still the recommended posture
+for real credentials, because it also removes the instance from the machine an
+agent can compromise — but on its own it leaves the browser path to whatever
+else the operator does on that laptop.
 
-The rest of this analysis is defense-in-depth. Part of it is shipped: the
-encryption keyset can be injected via environment rather than a file, agent
-tokens are short-lived, least-privilege, and subset-bound in scope. The rest is
-possible future hardening that does **not** exist in the product today: DPoP,
-a WebAuthn step-up, a same-host posture banner, a reveal-never arch test. All
-worth doing; none closes a structural gap on its own.
+**AP-4 is not closed by any uid boundary** — an isolated agent still reads its
+own key and tokens, because it has to. What bounds it is the token contract and
+reachability:
 
-The concrete design that responds to this analysis —
-[`local-agent-isolation.md`](local-agent-isolation.md) and
-[`filesystem-access-model.md`](filesystem-access-model.md) — lives alongside this
-file; the [directory README](README.md) indexes every option.
+- Access tokens are opaque, stored server-side only as a hash, and expire after
+  `auth.access_ttl_seconds` (default one hour); every token and agent is
+  revocable in `/app/agents`.
+- A token carries only the agent's own scopes, so a stolen one buys nothing the
+  agent could not already do — and every use is attributed to that agent.
+- A token or signing key is only redeemable where the instance is reachable.
+  `jenticctl install` binds the instance to `127.0.0.1` by default, so material
+  carried off the machine is useless unless you expose the instance. If you bind
+  it to another interface, AP-4 widens to everything that can reach it.
+
+## Your options
+
+The options differ in strength and can be combined. Pick by how the agent runs
+and what the credentials are worth; the
+[deployment tiers](../README.md#deployment-tiers) put them on one ladder.
+
+| Option | Closes | Where |
+| ------ | ------ | ----- |
+| **Separate host / private network** — the instance never shares a machine with any agent | AP-1, AP-2 by construction; pair with browser hygiene for AP-3. The recommended posture for real credentials | [Tiers T3–T4](../README.md#deployment-tiers) |
+| **Isolate the agent — `jentic run`** — the CLI launches a coding agent as its own unprivileged Unix user, confined per session | AP-1, AP-2, AP-3 on this machine; AP-4 bounded as above | Usage: [local-agent guide](../../guides/local-agent.md). Design: [isolation-design.md](isolation-design.md) |
+| **Isolate the instance** — run Jentic One under a different OS user, in a container, or rootless | AP-1, AP-2 only — **AP-3 stays open** | [Tier T2](../README.md#deployment-tiers) |
+| **MCP-spawned agents** — a runtime (Claude Desktop, Cursor, …) spawns `jentic mcp` as the desktop user | The same problem through a different seam. Four recipes, from isolating the instance to a socket-activated daemon that holds the keys | [mcp-same-host-hardening.md](mcp-same-host-hardening.md), [mcp-daemon.md](mcp-daemon.md) |
+| **Generic sandboxing** — the agent's built-in sandbox, OS primitives, containers, microVMs | Defense in depth of varying strength; not a substitute for the rows above | [Sandboxing the agent](../README.md#sandboxing-the-agent-axis-a) |
+
+Independently of the option you choose, keep the encryption key out of the
+config file (`material_file` / `material_env`, see the
+[concrete controls](../README.md#concrete-controls)) and keep agent tokens
+least-privilege.

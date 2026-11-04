@@ -1,3 +1,3 @@
 # Moved
 
-This page now lives at [filesystem-access-model.md](../same-host/filesystem-access-model.md).
+The filesystem-access model now lives at [isolation-design.md](../same-host/isolation-design.md#the-layers).

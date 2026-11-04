@@ -93,7 +93,7 @@ exposure vector in past audits.
   `jentic run <agent>` launches it confined (macOS `sandbox-exec` / Linux
   `bwrap`), with the credential store outside the agent's reach. See the
   [local agent guide](../guides/local-agent.md) and
-  [sandbox design](../security/same-host/README.md).
+  [isolation design](../security/same-host/isolation-design.md).
 - The agent holds a token, never an upstream API credential. If an agent is
   compromised, it can only make the calls it was already allowed to make —
   and every one is in the audit log.

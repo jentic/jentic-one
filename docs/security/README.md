@@ -18,21 +18,30 @@ of isolation for your use case.
 
 ## Threat model
 
-The Broker's core guarantee is that a secret is injected into the outbound
-request inside the data plane and is **never returned to the caller and never
-seen by the agent**. That guarantee holds on the network.
+The Broker injects a secret into the outbound request inside the data plane;
+it is **never returned to the caller and never seen by the agent**. That
+guarantee holds on the network.
 
 It does **not** hold on the host when the agent runs on the **same machine and
 as the same OS user** as Jentic One — the default when you run a local install
 next to a coding agent (e.g. Claude Code, Cursor). A same-user process can read
-the credential database and the encryption key directly off disk or out of
-memory, regardless of the API-level controls. This is the single most important
-thing to understand before you point Jentic One at real credentials.
+the credential database and the encryption key directly off disk, regardless of
+the API-level controls. This is the single most important thing to understand
+before you point Jentic One at real credentials.
 
-The same-host case is worked through in detail —
-the [attack paths](same-host/threat-model.md) (AP-1…AP-4) and the
-[menu of mitigations](same-host/README.md), including the CLI's shipped
-`jentic run` isolation.
+### Same-host setups — which page do I need?
+
+- **What exactly can a same-host agent do, and which mitigation closes what?**
+  [Same-host threat model](same-host/threat-model.md) — the attack paths
+  (AP-1…AP-4) and the options table.
+- **I want to run Claude Code / Codex / Cursor / Hermes isolated on my machine.**
+  [Run coding agents in isolation](../guides/local-agent.md) — `jentic setup`,
+  `jentic run`, `jentic reset`.
+- **How does `jentic run` isolation work, and what does it not protect?**
+  [Isolation design](same-host/isolation-design.md).
+- **My MCP runtime spawns `jentic mcp` on the same host as the instance.**
+  [Hardening same-host MCP setups](same-host/mcp-same-host-hardening.md) and
+  [the isolated MCP daemon](same-host/mcp-daemon.md).
 
 ## Two independent decisions
 
@@ -92,8 +101,8 @@ you store.
 | Tier | Who it's for | Posture | Residual risk |
 |---|---|---|---|
 | **T0 — Local, same user** | Trying it out | Jentic One + agent run as your user on your laptop | A compromised or prompt-injected agent can read the key/DB. **Do not store real high-value credentials.** |
-| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: the CLI's own **`jentic run`** (a dedicated Unix user + per-session confinement; see [same-host/](same-host/README.md)), or the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches — defense-in-depth, not a hard wall. Containerising the agent is the strongest local sandboxing option. |
-| **T2 — Separate users on one host** | Serious local use | Jentic One runs under a **dedicated non-root user** (or rootless container) so its key/DB aren't readable by the agent's user; the agent runs in a container with default-deny egress and reaches Jentic One over loopback/HTTP | Shared kernel; and isolating the instance closes AP-1/AP-2 only — the operator's browser still runs next to the agent, so the operator-browser path (AP-3) stays open (see [same-host/](same-host/README.md)) |
+| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: the CLI's own **`jentic run`** (a dedicated Unix user + per-session confinement; see the [local-agent guide](../guides/local-agent.md)), or the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | `jentic run` confines the filesystem view but not network egress, and shares the kernel ([residual risks](same-host/isolation-design.md#residual-risks)). Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches — defense-in-depth, not a hard wall. Containerising the agent is the strongest local sandboxing option. |
+| **T2 — Separate users on one host** | Serious local use | Jentic One runs under a **dedicated non-root user** (or rootless container) so its key/DB aren't readable by the agent's user; the agent runs in a container with default-deny egress and reaches Jentic One over loopback/HTTP | Shared kernel; and isolating the instance closes AP-1/AP-2 only — the operator's browser still runs next to the agent, so the operator-browser path (AP-3) stays open (see the [same-host threat model](same-host/threat-model.md)) |
 | **T3 — Separate host / private network** *(recommended for real use)* | Teams / production | Jentic One + database on a **separate host/VM in a private network**, reachable only over that private network (VPN / private DNS / authenticated reverse proxy). Provisioned agents/services run inside the network; operators use the CLI over the VPN. The agent never shares a machine with the key store | Standard cloud hardening applies |
 | **T4 — Strong isolation** | Untrusted agents / high-value creds | Agent in a **microVM** (e.g. Firecracker) or **gVisor** sandbox; Jentic One in a private subnet with restrictive security groups and default-deny egress; clients reach it only over private networking | Highest ops cost, smallest attack surface |
 
@@ -193,7 +202,7 @@ strongest:
 - **First-party: `jentic run`** — the CLI launches a coding agent as its
   **own unprivileged Unix user**, confined per session (`sandbox-exec` /
   `bwrap`) with on-demand directory grants. Design:
-  [same-host/](same-host/README.md); operator guide:
+  [isolation-design.md](same-host/isolation-design.md); operator guide:
   [`guides/local-agent.md`](../guides/local-agent.md).
 - **Built-in agent sandboxes** — Claude Code
   ([sandboxing](https://code.claude.com/docs/en/sandboxing),
