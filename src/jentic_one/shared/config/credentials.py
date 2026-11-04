@@ -13,22 +13,31 @@ from jentic_one.shared.url import validate_redirect_uri
 
 
 class DirectOAuth2ProviderConfig(BaseModel):
-    """Configuration for a direct OAuth2 provider (full settings land in M5)."""
+    """Configuration for a direct OAuth2 provider."""
 
     kind: Literal["direct_oauth2"] = "direct_oauth2"
-    # Explicit OAuth callback URL registered with the IdP. When unset (the
-    # default), the connect flow derives it per request as
-    # ``{server.public_base_url or request origin}/credentials/oauth/callback``,
-    # so a deployment on any port works without pinning this. Set it only to
-    # override that — e.g. behind a reverse proxy whose public origin the app
-    # can't see, and only if it differs from ``server.public_base_url``.
-    redirect_uri: str | None = None
-    default_scopes: list[str] = Field(default_factory=list)
-    # How long before an access token's true expiry the broker refreshes it.
-    # Applied once, at comparison time; stored ``expires_at`` is never skewed.
-    expiry_skew_seconds: int = 60
-    # Extra query params appended to every authorize URL.
-    #
+    redirect_uri: str | None = Field(
+        default=None,
+        description=(
+            "OAuth callback URL registered with the IdP. Unset, it is derived per "
+            "request as ``{server.public_base_url or request origin}"
+            "/credentials/oauth/callback``; set it only when the public origin "
+            "differs from ``server.public_base_url`` (e.g. a proxy the app cannot "
+            "see). Matched byte-for-byte by the IdP."
+        ),
+    )
+    default_scopes: list[str] = Field(
+        default_factory=list,
+        description="Scopes requested on the authorize URL when a connect request names none.",
+    )
+    expiry_skew_seconds: int = Field(
+        default=60,
+        description=(
+            "How many seconds before an access token's real expiry the broker "
+            "refreshes it. Applied at comparison time; the stored expiry is never "
+            "shifted."
+        ),
+    )
     # Defaults force the consent screen and ask Google to issue a refresh
     # token: without `prompt=consent` an IdP that already has user consent
     # silently redirects back with a code (so re-connect looks like a
@@ -39,16 +48,20 @@ class DirectOAuth2ProviderConfig(BaseModel):
     # `prompt=consent` is OIDC-standard (RFC 8252 / OIDC Core 3.1.2.1) and
     # recognised by Google, Microsoft, Okta, Auth0, GitHub, etc. Providers
     # that don't understand a param generally ignore it.
-    # `access_type=offline` is Google-specific; other IdPs ignore it. To
-    # request a refresh token from Microsoft / Okta / Auth0, add the
-    # `offline_access` scope to `default_scopes` instead.
+    # `access_type=offline` is Google-specific; other IdPs ignore it.
     #
-    # NOTE: Keys here can override the OAuth2-spec params built by the provider
-    # (`response_type`, `client_id`, `redirect_uri`, `state`, `scope`). The
-    # connect flow will break if you do this.
     # Kept open as an escape hatch for unusual IdPs.
     authorize_extra_params: dict[str, str] = Field(
-        default_factory=lambda: {"prompt": "consent", "access_type": "offline"}
+        default_factory=lambda: {"prompt": "consent", "access_type": "offline"},
+        description=(
+            "Extra query parameters appended to every authorize URL. The defaults "
+            "force the consent screen and ask Google for a refresh token; for "
+            "Microsoft, Okta or Auth0 add the ``offline_access`` scope to "
+            "``default_scopes`` instead. Keys that collide with the OAuth2 "
+            "parameters the provider builds (``response_type``, ``client_id``, "
+            "``redirect_uri``, ``state``, ``scope``) override them and break the "
+            "connect flow."
+        ),
     )
 
     @field_validator("redirect_uri")
@@ -60,17 +73,28 @@ class DirectOAuth2ProviderConfig(BaseModel):
 
 
 class PipedreamProviderConfig(BaseModel):
-    """Configuration for a Pipedream-hosted OAuth provider (full settings land in M6)."""
+    """Configuration for a Pipedream-hosted OAuth provider."""
 
     kind: Literal["pipedream"] = "pipedream"
-    project_id: str
-    environment: Literal["production", "development"] = "production"
-    client_id: str
-    client_secret: SecretStr
-    connect_base_url: str = "https://api.pipedream.com/v1"
-    # How long before an access token's true expiry the broker refreshes it.
-    # Applied once, at comparison time; stored ``expires_at`` is never skewed.
-    expiry_skew_seconds: int = 60
+    project_id: str = Field(description="Pipedream project id.")
+    environment: Literal["production", "development"] = Field(
+        default="production",
+        description="Pipedream project environment the connections live in.",
+    )
+    client_id: str = Field(description="Pipedream OAuth client id.")
+    client_secret: SecretStr = Field(description="Pipedream OAuth client secret.")
+    connect_base_url: str = Field(
+        default="https://api.pipedream.com/v1",
+        description="Base URL of the Pipedream Connect API.",
+    )
+    expiry_skew_seconds: int = Field(
+        default=60,
+        description=(
+            "How many seconds before an access token's real expiry the broker "
+            "refreshes it. Applied at comparison time; the stored expiry is never "
+            "shifted."
+        ),
+    )
 
 
 ProviderConfig = Annotated[
@@ -82,8 +106,22 @@ ProviderConfig = Annotated[
 class ConnectConfig(BaseModel):
     """Configuration for the OAuth connect flow."""
 
-    state_secret: SecretStr = SecretStr("")
-    state_ttl_seconds: int = 600
+    state_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Key that signs the OAuth connect ``state`` parameter. Required in "
+            "production (empty or placeholder values are rejected at startup); in "
+            "development an ephemeral per-process value is generated when empty."
+        ),
+    )
+    state_ttl_seconds: int = Field(
+        default=600,
+        description=(
+            "Seconds a signed connect ``state`` (and its browser-binding cookie) "
+            "stays valid, i.e. how long a user has to finish the provider's consent "
+            "screen."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_or_generate_secret_in_dev(self) -> ConnectConfig:
@@ -97,7 +135,15 @@ class CredentialsConfig(BaseModel):
     """Credentials subsystem configuration."""
 
     encryption: EncryptionConfig = Field(default_factory=EncryptionConfig)
-    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+    providers: dict[str, ProviderConfig] = Field(
+        default_factory=dict,
+        description=(
+            "Credential providers keyed by provider id, which credentials name in "
+            "their ``provider`` field; ``kind`` selects the provider type. The "
+            "built-in ``static`` and ``device_authorization`` providers are always "
+            "present, and the connect flow uses the ``direct_oauth2`` entry."
+        ),
+    )
     connect: ConnectConfig = Field(default_factory=ConnectConfig)
 
 
@@ -120,9 +166,13 @@ class VendorDeviceAuthorizationFlowConfig(BaseModel):
     """
 
     kind: Literal["device_authorization"] = "device_authorization"
-    client_id: str
-    authorization_endpoint: str
-    token_endpoint: str
+    client_id: str = Field(
+        description="Platform-shipped OAuth application id (public client, no secret).",
+    )
+    authorization_endpoint: str = Field(
+        description="The vendor's device authorization endpoint URL.",
+    )
+    token_endpoint: str = Field(description="The vendor's token endpoint URL.")
 
 
 class VendorAuthorizationCodeFlowConfig(BaseModel):
@@ -135,10 +185,12 @@ class VendorAuthorizationCodeFlowConfig(BaseModel):
     """
 
     kind: Literal["authorization_code"] = "authorization_code"
-    client_id: str
-    client_secret: SecretStr
-    authorize_url: str
-    token_url: str
+    client_id: str = Field(description="Platform-shipped OAuth application id.")
+    client_secret: SecretStr = Field(
+        description="OAuth application secret used to exchange the code at the token endpoint.",
+    )
+    authorize_url: str = Field(description="The vendor's authorization endpoint URL.")
+    token_url: str = Field(description="The vendor's token endpoint URL.")
 
 
 VendorFlowConfig = Annotated[
@@ -155,10 +207,19 @@ class VendorScopeConfig(BaseModel):
     human-facing copy displayed on the review page.
     """
 
-    name: str
-    classification: Literal["read", "write", "admin"] = "read"
-    default: bool = False
-    description: str = ""
+    name: str = Field(description="Scope string as the vendor expects it on the authorize request.")
+    classification: Literal["read", "write", "admin"] = Field(
+        default="read",
+        description="Risk class shown on the review page: write and admin scopes carry a warning.",
+    )
+    default: bool = Field(
+        default=False,
+        description="Pre-select this scope on the review page.",
+    )
+    description: str = Field(
+        default="",
+        description="Human-facing explanation of the scope, shown on the review page.",
+    )
 
 
 class VendorIdentityProbeConfig(BaseModel):
@@ -171,10 +232,25 @@ class VendorIdentityProbeConfig(BaseModel):
     `connected_as` and returned to the caller.
     """
 
-    endpoint: str
-    method: Literal["GET", "POST"] = "GET"
-    identity_field: str
-    display_template: str
+    endpoint: str = Field(
+        description="URL called with the new access token to identify the connected account.",
+    )
+    method: Literal["GET", "POST"] = Field(
+        default="GET",
+        description="HTTP method of the identity probe.",
+    )
+    identity_field: str = Field(
+        description=(
+            "Dotted JSON path of the identity value in the probe response (e.g. ``login``)."
+        ),
+    )
+    display_template: str = Field(
+        description=(
+            "Python ``str.format`` template for the ``connected_as`` label; it can "
+            "reference top-level response fields and ``{value}`` (the extracted "
+            "identity value)."
+        ),
+    )
 
 
 class VendorAuthConfig(BaseModel):
@@ -183,19 +259,39 @@ class VendorAuthConfig(BaseModel):
     Keyed in `VendorRegistryConfig.entries` by a short slug (e.g. "github").
     """
 
-    # Catalog api_id for this vendor's API (e.g. ``github.com/api.github.com``).
     # Decomposed at credential-create time via ``canonical_credential_scope``
-    # exactly like a normal catalog import — same api_vendor / api_name /
+    # exactly like a normal catalog import, so the same api_vendor / api_name /
     # catalog_api_id fields land on the credential row.
-    vendor: str
-    display_name: str
-    flows: list[VendorFlowConfig]
-    scopes: list[VendorScopeConfig] = Field(default_factory=list)
+    vendor: str = Field(
+        description=(
+            "Catalog API id of the vendor's API, in ``<domain>/<name>`` form (e.g. "
+            "``github.com/api.github.com``); credentials created through this "
+            "entry are scoped to it."
+        ),
+    )
+    display_name: str = Field(description="Vendor name shown in the connect picker.")
+    flows: list[VendorFlowConfig] = Field(
+        description=(
+            "OAuth flows the vendor supports, selected by ``kind``. The first entry "
+            "is used when the caller expresses no preference."
+        ),
+    )
+    scopes: list[VendorScopeConfig] = Field(
+        default_factory=list,
+        description="The vendor's scope catalog offered on the review page.",
+    )
     # Optional: platform-shipped vendors always define one; admin-registered
     # OAuth apps that don't have a matching config entry connect without one
     # (the credential is still valid — the ``connected_as`` UX label is just
     # absent). Callers must guard on ``None``.
-    identity_probe: VendorIdentityProbeConfig | None = None
+    identity_probe: VendorIdentityProbeConfig | None = Field(
+        default=None,
+        description=(
+            "Request that labels the connected account (``connected_as``) after a "
+            "successful connect. Unset, the credential is still valid but carries "
+            "no label."
+        ),
+    )
 
     @field_validator("vendor")
     @classmethod
@@ -219,7 +315,13 @@ class VendorAuthConfig(BaseModel):
 class VendorRegistryConfig(BaseModel):
     """Top-level vendor auth registry."""
 
-    entries: dict[str, VendorAuthConfig] = Field(default_factory=dict)
+    entries: dict[str, VendorAuthConfig] = Field(
+        default_factory=dict,
+        description=(
+            "Verified vendors offered by the agent-driven connect flow, keyed by a "
+            "short slug (e.g. ``github``)."
+        ),
+    )
 
 
 class ControlConnectConfig(BaseModel):

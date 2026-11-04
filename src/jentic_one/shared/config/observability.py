@@ -10,11 +10,33 @@ from pydantic import BaseModel, Field
 class LoggingConfig(BaseModel):
     """File logging sink (in addition to stdout)."""
 
-    file_enabled: bool = False
-    file_dir: str = ".jentic/logs"
-    file_name: str = "app.log"
-    file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
-    file_backup_count: int = 5
+    file_enabled: bool = Field(
+        default=False,
+        description=(
+            "Also write logs to a size-rotated file. The file is always JSON lines, "
+            "whatever ``runtime.debug`` selects for stdout."
+        ),
+    )
+    file_dir: str = Field(
+        default=".jentic/logs",
+        description=(
+            "Directory for the log file (relative paths resolve against the working "
+            "directory); created at startup if missing."
+        ),
+    )
+    file_name: str = Field(default="app.log", description="Log file name inside ``file_dir``.")
+    file_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        description=(
+            "Size in bytes at which the log file is rotated (default 10 MiB); 0 never rotates."
+        ),
+    )
+    file_backup_count: int = Field(
+        default=5,
+        description=(
+            "Number of rotated log files kept beside the active one; older ones are deleted."
+        ),
+    )
     http_wire_trace: bool = Field(
         default=False,
         description=(
@@ -30,8 +52,19 @@ class LoggingConfig(BaseModel):
 class MetricsConfig(BaseModel):
     """Metrics exporter configuration."""
 
-    exporter: Literal["otlp", "prometheus", "none"] = "otlp"
-    export_interval_seconds: int = 15
+    exporter: Literal["otlp", "prometheus", "none"] = Field(
+        default="otlp",
+        description=(
+            "Where metrics go: ``otlp`` pushes to the OTLP endpoint named by the "
+            "standard ``OTEL_EXPORTER_OTLP_*`` environment variables, "
+            "``prometheus`` serves a scrape endpoint at ``/metrics``, and ``none`` "
+            "records nothing."
+        ),
+    )
+    export_interval_seconds: int = Field(
+        default=15,
+        description="Seconds between OTLP metric pushes. Ignored unless ``exporter`` is ``otlp``.",
+    )
 
 
 class TracingConfig(BaseModel):
