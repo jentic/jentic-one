@@ -28,7 +28,7 @@
 ## What it is
 
 <p align="center">
-  <img src="docs/assets/how-it-works.gif" alt="Any agent calls Jentic One, which applies default-deny policies, injects credentials at execution time, and logs every call on your own instance, before reaching any public or private API. One call is allowed and returns 201; a second is denied by rule and never leaves the layer." width="100%">
+  <img src="docs/assets/how-it-works.svg" alt="An agent sends POST /v1/invoices to Jentic One, which checks the permission, injects the stored credential and forwards the call to the Stripe API; the API returns 201 and the call is logged. The agent then sends POST /v1/refunds; the permission check denies it by rule, the request never leaves Jentic One, and the denial is logged. The agent never sees the API key." width="100%">
 </p>
 
 Giving an agent API access normally means giving it an API key. Jentic One removes that step:
@@ -127,7 +127,7 @@ Next: [make your first brokered call](docs/guides/first-call.md).
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="Two peer units above one database. App is the control plane, containing the Registry, Control, Admin and Auth surfaces, and is where the operator configures the instance. Broker is the data plane: a stateless credential-injecting HTTP proxy, and the only surface that touches a secret. Both sit above PostgreSQL or SQLite with registry, control and admin schemas." width="100%">
+  <img src="docs/assets/architecture.svg" alt="Two units over one database. The operator uses App, the control plane, with the Registry, Control, Admin and Auth surfaces: register APIs, store credentials, approve agents. The agent calls the Broker, the data plane, which checks permissions, injects the credential and forwards the call to public or private APIs. Both sit above one PostgreSQL or SQLite database with registry, control and admin schemas." width="100%">
 </p>
 
 Jentic One runs as two units over one database. **App** (the control plane) is where you register
