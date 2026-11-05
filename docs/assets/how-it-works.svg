@@ -1,103 +1,204 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 400" width="880" height="400" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" width="960" height="430" role="img" aria-labelledby="t d">
   <title id="t">How Jentic One brokers an agent's API calls</title>
   <desc id="d">An agent sends POST /v1/invoices to Jentic One. Jentic One checks the agent's permission (allowed), injects the stored credential, forwards the call to the Stripe API, which returns 201, and records the call. The agent then sends POST /v1/refunds; the permission check denies it by rule, the request never leaves Jentic One, and the denial is recorded. The agent never sees the API key.</desc>
+  <defs>
+    <radialGradient id="glowbg" cx="50%" cy="38%" r="45%">
+      <stop offset="0" stop-color="#A3CACC" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#A3CACC" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1.2" cy="1.2" r="1.2" fill="#305256" fill-opacity=".45"/>
+    </pattern>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <filter id="spark" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="stage"><rect x="1" y="49" width="958" height="262"/></clipPath>
+    <linearGradient id="fadeR" x1="0" x2="1">
+      <stop offset="0" stop-color="#162629" stop-opacity="0"/><stop offset=".55" stop-color="#162629" stop-opacity=".2"/><stop offset="1" stop-color="#162629" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
   <style>
-    .bg{fill:#0d181b}
-    .frame{fill:none;stroke:#26393e;stroke-width:1.5}
-    .box{fill:#111f23;stroke:#2c4247;stroke-width:1.5}
-    .brk{fill:#111f23;stroke:#f5a524;stroke-width:1.5}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
-    .h{font-size:15px;fill:#f2f6f6;font-weight:600}
-    .s{font-size:12px;fill:#8aa0a3}
-    .k{font-size:12px;fill:#f5a524;letter-spacing:.08em}
-    .row{font-size:13px;fill:#c9d4d6}
-    .log{font-size:13px}
-    .ok{fill:#5edeb9}.no{fill:#f2707a}.key{fill:#f5a524}.dim{fill:#8aa0a3}
-    .wire{stroke:#2c4247;stroke-width:2;fill:none}
-    .pill{rx:10;ry:10}
+    .mono{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+    .head{font-family:Sora,"Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif;font-weight:600}
+    .ttl{font-size:17px;fill:#FFFFFF}
+    .sub{font-family:"Nunito Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13.5px;fill:#A9BEC0}
+    .step{font-size:13.5px;fill:#E4EAEB}
+    .lbl{font-size:12px;fill:#FDBD79;letter-spacing:.12em}
+    .card{fill:#193238;stroke:#305256;stroke-width:1.5}
+    .core{fill:#0E1A1D;stroke:#A3CACC;stroke-opacity:.55;stroke-width:1.5}
+    .ok{fill:#5EDEB9}.no{fill:#EDADAF}.key{fill:#FDBD79}.dim{fill:#8CA4A6}.ink{fill:#E4EAEB}.teal{fill:#A3CACC}
+    .flow{stroke:#A3CACC;stroke-opacity:.45;stroke-width:2;stroke-dasharray:3 9;fill:none;animation:flow 1.2s linear infinite}
+    @keyframes flow{to{stroke-dashoffset:-24}}
+    .stream{animation:stream 24s linear infinite}
+    @keyframes stream{from{transform:translateY(0)}to{transform:translateY(-264px)}}
+    .breathe{animation:breathe 4s ease-in-out infinite}
+    @keyframes breathe{0%,100%{opacity:.55}50%{opacity:1}}
     .a{animation-duration:10s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;opacity:0}
-    /* request A: POST /v1/invoices */
-    .lblA{animation-name:lblA}   @keyframes lblA{0%,2%{opacity:0}4%,12%{opacity:1}15%,100%{opacity:0}}
-    .dotA1{animation-name:dotA1} @keyframes dotA1{0%,2%{opacity:0;transform:translateX(0)}3%{opacity:1}11%{opacity:1;transform:translateX(142px)}12%,100%{opacity:0;transform:translateX(142px)}}
-    .okA{animation-name:okA}     @keyframes okA{0%,11%{opacity:0}13%,44%{opacity:1}47%,100%{opacity:0}}
+    .lblA{animation-name:lblA}   @keyframes lblA{0%,12%{opacity:1}15%,96%{opacity:0}99%,100%{opacity:1}}
+    .dotA1{animation-name:dotA1} @keyframes dotA1{0%{opacity:1;transform:translateX(20px)}11%{opacity:1;transform:translateX(130px)}12%,100%{opacity:0;transform:translateX(130px)}}
+    .ring1{animation-name:ring1;transform-box:fill-box;transform-origin:center} @keyframes ring1{0%,11%{opacity:0;transform:scale(.4)}12%{opacity:.9;transform:scale(.6)}17%,100%{opacity:0;transform:scale(1.6)}}
+    .okA{animation-name:okA}     @keyframes okA{0%,12%{opacity:0}14%,44%{opacity:1}47%,100%{opacity:0}}
     .keyA{animation-name:keyA}   @keyframes keyA{0%,16%{opacity:0}18%,44%{opacity:1}47%,100%{opacity:0}}
-    .dotA2{animation-name:dotA2} @keyframes dotA2{0%,19%{opacity:0;transform:translateX(0)}20%{opacity:1}28%{opacity:1;transform:translateX(98px)}29%,100%{opacity:0;transform:translateX(98px)}}
-    .apiA{animation-name:apiA}   @keyframes apiA{0%,28%{opacity:0}30%,36%{opacity:1}40%,100%{opacity:0}}
-    .gotA{animation-name:gotA}   @keyframes gotA{0%,34%{opacity:0}36%,44%{opacity:1}47%,100%{opacity:0}}
-    .logA{animation-name:logA}   @keyframes logA{0%,40%{opacity:0}43%,95%{opacity:1}99%,100%{opacity:0}}
-    .recA{animation-name:recA}   @keyframes recA{0%,40%{opacity:0}42%,44%{opacity:1}47%,100%{opacity:0}}
-    /* request B: POST /v1/refunds */
-    .lblB{animation-name:lblB}   @keyframes lblB{0%,50%{opacity:0}52%,61%{opacity:1}64%,100%{opacity:0}}
-    .dotB{animation-name:dotB}   @keyframes dotB{0%,50%{opacity:0;transform:translateX(0)}51%{opacity:1}59%{opacity:1;transform:translateX(142px)}60%,100%{opacity:0;transform:translateX(142px)}}
-    .noB{animation-name:noB}     @keyframes noB{0%,59%{opacity:0}61%,93%{opacity:1}96%,100%{opacity:0}}
-    .flashB{animation-name:flashB} @keyframes flashB{0%,59%{opacity:0}61%{opacity:1}68%,100%{opacity:0}}
-    .stopB{animation-name:stopB} @keyframes stopB{0%,60%{opacity:0}63%,93%{opacity:1}96%,100%{opacity:0}}
+    .dotA2{animation-name:dotA2} @keyframes dotA2{0%,19%{opacity:0;transform:translateX(0)}20%{opacity:1}28%{opacity:1;transform:translateX(130px)}29%,100%{opacity:0;transform:translateX(130px)}}
+    .apiA{animation-name:apiA}   @keyframes apiA{0%,28%{opacity:0}30%,37%{opacity:1}41%,100%{opacity:0}}
+    .ret2{animation-name:ret2} @keyframes ret2{0%,29%{opacity:0;transform:translateX(0)}30%{opacity:1}33%{opacity:1;transform:translateX(-130px)}34%,100%{opacity:0;transform:translateX(-130px)}}
+    .ret1{animation-name:ret1} @keyframes ret1{0%,33%{opacity:0;transform:translateX(0)}34%{opacity:1}37%{opacity:1;transform:translateX(-130px)}38%,100%{opacity:0;transform:translateX(-130px)}}
+    .gotA{animation-name:gotA}   @keyframes gotA{0%,37%{opacity:0}39%,46%{opacity:1}47%,100%{opacity:0}}
+    .recA{animation-name:recA}   @keyframes recA{0%,33%{opacity:0}35%,44%{opacity:1}47%,100%{opacity:0}}
+    .logA{animation-name:logA}   @keyframes logA{0%,35%{opacity:0}37%,95%{opacity:1}98%,100%{opacity:0}}
+    .logS{animation-name:logS}   @keyframes logS{0%,60%{transform:translateY(0)}63%,95%{transform:translateY(-24px)}98%,100%{transform:translateY(0)}}
+    .outR{animation-name:outR} @keyframes outR{0%,59%{opacity:.7}61%,95%{opacity:0}98%,100%{opacity:.7}}
+    .lblB{animation-name:lblB}   @keyframes lblB{0%,50%{opacity:0}52%,62%{opacity:1}66%,100%{opacity:0}}
+    .dotB{animation-name:dotB}   @keyframes dotB{0%,51%{opacity:0;transform:translateX(0)}52%{opacity:1}59%{opacity:1;transform:translateX(120px)}60%,100%{opacity:0;transform:translateX(116px)}}
+    .hitB{animation-name:hitB;transform-box:fill-box;transform-origin:center} @keyframes hitB{0%,59%{opacity:0;transform:scale(.3)}60%{opacity:1;transform:scale(.5)}67%,100%{opacity:0;transform:scale(1.5)}}
+    .flashB{animation-name:flashB} @keyframes flashB{0%,59%{opacity:0}60%{opacity:1}70%,100%{opacity:0}}
+    .noB{animation-name:noB}     @keyframes noB{0%,59%{opacity:0}60%,93%{opacity:1}96%,100%{opacity:0}}
+    .stopB{animation-name:stopB} @keyframes stopB{0%,61.5%{opacity:0}62.5%,93%{opacity:1}96%,100%{opacity:0}}
+    .wireR{animation-name:wireR} @keyframes wireR{0%,61%{opacity:1}63%,93%{opacity:.12}96%,100%{opacity:1}}
+    .gotB{animation-name:gotB} @keyframes gotB{0%,69%{opacity:0}71%,91%{opacity:1}94%,100%{opacity:0}}
+    .retB{animation-name:retB} @keyframes retB{0%,65%{opacity:0;transform:translateX(0)}66%{opacity:1}70%{opacity:1;transform:translateX(-130px)}71%,100%{opacity:0;transform:translateX(-130px)}}
+    .skipB{animation-name:skipB} @keyframes skipB{0%,61%{opacity:0}63%,93%{opacity:.9}96%,100%{opacity:0}}
     .recB{animation-name:recB}   @keyframes recB{0%,63%{opacity:0}65%,93%{opacity:1}96%,100%{opacity:0}}
-    .logB{animation-name:logB}   @keyframes logB{0%,64%{opacity:0}67%,95%{opacity:1}99%,100%{opacity:0}}
+    .logB{animation-name:logB}   @keyframes logB{0%,63%{opacity:0}65%,95%{opacity:1}98%,100%{opacity:0}}
     @media (prefers-reduced-motion: reduce){
-      .a{animation:none}
-      .logA,.logB,.noB,.stopB,.recB{opacity:1}
+      .a,.flow,.stream,.breathe{animation:none}
+      .logA,.logB,.noB,.stopB,.recB,.skipB,.gotB{opacity:1}
+      .wireR{opacity:.12}
+      .streamwrap{display:none}
+      .logS{opacity:1;transform:translateY(-24px)}
+      .outR{opacity:0 !important}
     }
   </style>
 
-  <rect class="bg" x="0" y="0" width="880" height="400" rx="14"/>
-  <rect class="frame" x="1" y="1" width="878" height="398" rx="14"/>
-  <text class="mono k" x="28" y="36">HOW IT WORKS</text>
-  <text class="mono s" x="148" y="36">every call checked · every key stays on your side</text>
-  <line x1="1" y1="54" x2="879" y2="54" stroke="#26393e" stroke-width="1.5"/>
+  <!-- card -->
+  <rect x="0" y="0" width="960" height="430" rx="16" fill="#162629"/>
+  <rect x="1" y="49" width="958" height="262" fill="url(#dots)"/>
+  <rect x="0" y="0" width="960" height="430" rx="16" fill="url(#glowbg)"/>
 
-  <!-- agent -->
-  <rect class="box" x="28" y="96" width="170" height="130" rx="10"/>
-  <text class="mono h" x="48" y="128">your agent</text>
-  <text class="mono s" x="48" y="152">Claude Code, Cursor,</text>
-  <text class="mono s" x="48" y="170">Codex, your own…</text>
-  <text class="mono s" x="48" y="206">holds no API keys</text>
-  <rect class="a gotA" x="28" y="96" width="170" height="130" rx="10" fill="none" stroke="#5edeb9" stroke-width="3"/>
-  <rect class="a gotA" x="40" y="190" width="150" height="24" fill="#111f23"/>
-  <text class="a gotA mono ok" x="48" y="206" font-size="12">got 201 ✓</text>
+  <!-- faint live log stream behind the stage -->
+  <g class="streamwrap" clip-path="url(#stage)" opacity=".02">
+    <g class="stream mono" font-size="11" fill="#A3CACC" style="white-space:pre">
+      <text x="24" y="70">14:31:02  agent_billing   GET  /v1/charges          stripe     200 completed   421ms</text>
+      <text x="24" y="92">14:31:05  agent_support   GET  /v2/tickets/881      zendesk    200 completed   188ms</text>
+      <text x="24" y="114">14:31:09  agent_growth    POST /crm/v3/objects/notes hubspot   denied by rule</text>
+      <text x="24" y="136">14:31:14  agent_ops       GET  /zones                cloudflare 200 completed   213ms</text>
+      <text x="24" y="158">14:31:18  agent_support   POST /chat.postMessage     slack      200 completed   264ms</text>
+      <text x="24" y="180">14:31:23  agent_billing   POST /v1/refunds           stripe     denied by rule</text>
+      <text x="24" y="202">14:31:27  agent_growth    GET  /repos/acme/web       github     200 completed   167ms</text>
+      <text x="24" y="224">14:31:31  agent_ops       POST /2010-04-01/Messages  twilio     201 completed   512ms</text>
+      <text x="24" y="246">14:31:36  agent_support   DELETE /v2/users/44        zendesk    denied by rule</text>
+      <text x="24" y="268">14:31:40  agent_billing   GET  /v1/invoices          stripe     200 completed   392ms</text>
+      <text x="24" y="290">14:31:44  agent_growth    GET  /api/projects/events  posthog    200 completed   301ms</text>
+      <text x="24" y="312">14:31:49  agent_ops       GET  /zones                cloudflare 200 completed   209ms</text>
+      <text x="24" y="334">14:31:02  agent_billing   GET  /v1/charges          stripe     200 completed   421ms</text>
+      <text x="24" y="356">14:31:05  agent_support   GET  /v2/tickets/881      zendesk    200 completed   188ms</text>
+      <text x="24" y="378">14:31:09  agent_growth    POST /crm/v3/objects/notes hubspot   denied by rule</text>
+      <text x="24" y="400">14:31:14  agent_ops       GET  /zones                cloudflare 200 completed   213ms</text>
+      <text x="24" y="422">14:31:18  agent_support   POST /chat.postMessage     slack      200 completed   264ms</text>
+      <text x="24" y="444">14:31:23  agent_billing   POST /v1/refunds           stripe     denied by rule</text>
+      <text x="24" y="466">14:31:27  agent_growth    GET  /repos/acme/web       github     200 completed   167ms</text>
+      <text x="24" y="488">14:31:31  agent_ops       POST /2010-04-01/Messages  twilio     201 completed   512ms</text>
+      <text x="24" y="510">14:31:36  agent_support   DELETE /v2/users/44        zendesk    denied by rule</text>
+      <text x="24" y="532">14:31:40  agent_billing   GET  /v1/invoices          stripe     200 completed   392ms</text>
+      <text x="24" y="554">14:31:44  agent_growth    GET  /api/projects/events  posthog    200 completed   301ms</text>
+      <text x="24" y="576">14:31:49  agent_ops       GET  /zones                cloudflare 200 completed   209ms</text>
+    </g>
+  </g>
 
-  <!-- Jentic One -->
-  <rect class="brk" x="340" y="76" width="270" height="170" rx="10"/>
-  <text class="mono h" x="360" y="106">Jentic One</text>
-  <text class="mono s" x="360" y="124">on your infrastructure</text>
-  <text class="mono row" x="360" y="160">1  check permission</text>
-  <text class="mono row" x="360" y="190">2  inject credential</text>
-  <text class="mono row" x="360" y="220">3  record the call</text>
-  <rect class="a flashB" x="340" y="76" width="270" height="170" rx="10" fill="none" stroke="#f2707a" stroke-width="3"/>
-
-  <!-- API -->
-  <rect class="box" x="708" y="96" width="144" height="130" rx="10"/>
-  <text class="mono h" x="728" y="128">Stripe API</text>
-  <text class="mono s" x="728" y="152">or any public /</text>
-  <text class="mono s" x="728" y="170">private API</text>
-  <rect class="a apiA" x="708" y="96" width="144" height="130" rx="10" fill="none" stroke="#5edeb9" stroke-width="3"/>
-  <text class="a apiA mono ok" x="728" y="206" font-size="13">201 Created</text>
+  <!-- header -->
+  <circle cx="26" cy="25" r="5" fill="#EDADAF"/><circle cx="44" cy="25" r="5" fill="#FDBD79"/><circle cx="62" cy="25" r="5" fill="#5EDEB9"/>
+  <text class="mono" x="84" y="29" font-size="12" fill="#E4EAEB">jentic one · execution layer</text>
+  <line x1="0" y1="48.5" x2="960" y2="48.5" stroke="#305256"/>
 
   <!-- wires -->
-  <line class="wire" x1="198" y1="161" x2="340" y2="161"/>
-  <line class="wire" x1="610" y1="161" x2="708" y2="161"/>
+  <line x1="200" y1="180" x2="330" y2="180" stroke="#305256" stroke-width="2"/>
+  <line class="a wireR" style="opacity:1" x1="630" y1="180" x2="760" y2="180" stroke="#305256" stroke-width="2"/>
+  <line class="flow" x1="200" y1="180" x2="330" y2="180"/>
+  <g class="a wireR" style="opacity:1"><line class="flow" x1="630" y1="180" x2="760" y2="180"/></g>
+
+  <!-- agent -->
+  <rect class="card" x="20" y="110" width="180" height="140" rx="12"/>
+  <rect x="38" y="128" width="30" height="24" rx="5" fill="#0E1A1D" stroke="#305256"/>
+  <text class="mono teal" x="44" y="145" font-size="11">&gt;_</text>
+  <text class="head ttl" x="78" y="146">your agent</text>
+  <text class="mono sub" x="38" y="178">Claude Code · Cursor</text>
+  <text class="mono sub" x="38" y="195">Codex · your own</text>
+  <text class="mono sub" x="38" y="214">holds no API keys</text>
+  <rect class="a gotA" x="20" y="110" width="180" height="140" rx="12" fill="none" stroke="#5EDEB9" stroke-width="2.5"/>
+  <text class="a gotA mono ok" x="38" y="234" font-size="12.5">✓ got 201 Created</text>
+  <rect class="a gotB" x="20" y="110" width="180" height="140" rx="12" fill="none" stroke="#EDADAF" stroke-width="2.5"/>
+  <text class="a gotB mono no" x="38" y="234" font-size="12.5">✕ 403 denied</text>
+  <circle class="a retB" cx="330" cy="180" r="5" fill="#EDADAF" filter="url(#spark)"/>
+
+  <!-- Jentic One (core) -->
+  <rect class="breathe" x="330" y="86" width="300" height="188" rx="16" fill="#A3CACC" fill-opacity=".22" filter="url(#soft)"/>
+  <rect class="core" x="330" y="86" width="300" height="188" rx="16"/>
+  <path d="M352 110 l11 -5 l11 5 v8 c0 7 -5 12 -11 14 c-6 -2 -11 -7 -11 -14 z" fill="none" stroke="#A3CACC" stroke-width="1.6"/>
+  <text class="head ttl" x="384" y="122" font-size="18">Jentic One</text>
+  <text class="mono sub" x="352" y="148">Broker · on your infrastructure</text>
+  <line x1="352" y1="160" x2="608" y2="160" stroke="#305256"/>
+  <circle cx="361" cy="182" r="9" fill="none" stroke="#305256"/><text class="mono dim" x="361" y="186" font-size="10.5" text-anchor="middle">1</text>
+  <text class="mono step" x="380" y="186">check permission</text>
+  <circle cx="361" cy="212" r="9" fill="none" stroke="#305256"/><text class="mono dim" x="361" y="216" font-size="10.5" text-anchor="middle">2</text>
+  <text class="mono step" x="380" y="216">inject credential</text>
+  <circle cx="361" cy="242" r="9" fill="none" stroke="#305256"/><text class="mono dim" x="361" y="246" font-size="10.5" text-anchor="middle">3</text>
+  <text class="mono step" x="380" y="246">forward + record</text>
+  <rect class="a flashB" x="330" y="86" width="300" height="188" rx="16" fill="none" stroke="#EDADAF" stroke-width="3"/>
+
+  <!-- API -->
+  <rect class="card" x="760" y="110" width="180" height="140" rx="12"/>
+  <rect x="778" y="128" width="30" height="24" rx="5" fill="#0E1A1D" stroke="#305256"/>
+  <text class="mono teal" x="783" y="145" font-size="11">{ }</text>
+  <text class="head ttl" x="818" y="146">Stripe API</text>
+  <text class="mono sub" x="778" y="178">or any public or</text>
+  <text class="mono sub" x="778" y="195">private API</text>
+  <rect class="a apiA" x="760" y="110" width="180" height="140" rx="12" fill="none" stroke="#5EDEB9" stroke-width="2.5"/>
+  <text class="a apiA mono ok" x="778" y="231" font-size="12.5">201 Created</text>
 
   <!-- request A -->
-  <text class="a lblA mono row" x="269" y="146" text-anchor="middle" font-size="12">POST /v1/invoices</text>
-  <circle class="a dotA1" cx="198" cy="161" r="6" fill="#c9d4d6"/>
-  <g class="a okA"><text class="mono ok" x="596" y="160" font-size="12" text-anchor="end">allowed ✓</text></g>
-  <text class="a keyA mono key" x="596" y="190" font-size="12" text-anchor="end">key added</text>
-  <circle class="a dotA2" cx="610" cy="161" r="6" fill="#f5a524"/>
-  <text class="a recA mono ok" x="596" y="220" font-size="12" text-anchor="end">logged</text>
+  <text class="a lblA mono ink" x="263" y="157" font-size="11.5" text-anchor="middle">POST /v1/invoices</text>
+  <circle class="a dotA1" cx="200" cy="180" r="5.5" fill="#E4EAEB" filter="url(#spark)"/>
+  <circle class="a ring1" cx="330" cy="180" r="18" fill="none" stroke="#A3CACC" stroke-width="2"/>
+  <text class="a okA mono ok" x="612" y="186" font-size="12.5" text-anchor="end">allowed ✓</text>
+  <text class="a keyA mono key" x="612" y="216" font-size="12.5" text-anchor="end">key added</text>
+  <g class="a dotA2">
+    <circle cx="630" cy="180" r="5.5" fill="#FDBD79" filter="url(#spark)"/>
+    <g transform="translate(619 150) scale(1.45)" fill="none" stroke="#FDBD79" stroke-width="1.5"><circle cx="4" cy="6" r="3.6"/><path d="M7.6 6 h7 M12 6 v3.5 M14.6 6 v2.5"/></g>
+  </g>
+  <circle class="a ret2" cx="760" cy="180" r="5" fill="#5EDEB9" filter="url(#spark)"/>
+  <circle class="a ret1" cx="330" cy="180" r="5" fill="#5EDEB9" filter="url(#spark)"/>
+  <text class="a recA mono ok" x="612" y="246" font-size="12.5" text-anchor="end">recorded ✓</text>
 
   <!-- request B -->
-  <text class="a lblB mono row" x="269" y="146" text-anchor="middle" font-size="12">POST /v1/refunds</text>
-  <circle class="a dotB" cx="198" cy="161" r="6" fill="#c9d4d6"/>
-  <text class="a noB mono no" x="596" y="160" font-size="12" text-anchor="end">denied ✕</text>
+  <text class="a lblB mono ink" x="263" y="157" font-size="11.5" text-anchor="middle">POST /v1/refunds</text>
+  <circle class="a dotB" cx="200" cy="180" r="5.5" fill="#E4EAEB" filter="url(#spark)"/>
+  <circle class="a hitB" cx="318" cy="180" r="10" fill="none" stroke="#EDADAF" stroke-width="2.5"/>
+  <text class="a noB mono no" x="612" y="186" font-size="12.5" text-anchor="end">denied ✕</text>
   <g class="a stopB">
-    <text class="mono no" x="659" y="146" font-size="12" text-anchor="middle">never sent</text>
-    <line x1="610" y1="161" x2="708" y2="161" stroke="#f2707a" stroke-width="2" stroke-dasharray="4 5"/>
+    <rect x="760" y="110" width="180" height="140" rx="12" fill="#162629" fill-opacity=".6"/>
+    <line x1="630" y1="180" x2="660" y2="180" stroke="#EDADAF" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M668 172 l14 14 M682 172 l-14 14" stroke="#EDADAF" stroke-width="2.5" stroke-linecap="round"/>
+    <text class="mono no" x="695" y="160" font-size="12" text-anchor="middle">never sent</text>
+    <line x1="379" y1="241" x2="437" y2="241" stroke="#EDADAF" stroke-width="1.6"/>
   </g>
-  <text class="a recB mono ok" x="596" y="220" font-size="12" text-anchor="end">logged</text>
+  <text class="a skipB mono teal" x="612" y="216" font-size="12.5" text-anchor="end">skipped</text>
+  <text class="a recB mono ok" x="612" y="246" font-size="12.5" text-anchor="end">recorded ✓</text>
 
   <!-- execution log -->
-  <line x1="28" y1="282" x2="852" y2="282" stroke="#26393e" stroke-width="1.5"/>
-  <text class="mono k" x="28" y="306">EXECUTION LOG</text>
-  <text class="a logA mono log" x="28" y="336"><tspan class="ok">✓</tspan><tspan class="dim" dx="10">agent_billing</tspan><tspan fill="#c9d4d6" dx="12">POST /v1/invoices</tspan><tspan class="dim" dx="12">→ stripe</tspan><tspan class="ok" dx="12">201</tspan><tspan class="dim" dx="12">842 ms</tspan></text>
-  <text class="a logB mono log" x="28" y="364"><tspan class="no">✕</tspan><tspan class="dim" dx="10">agent_billing</tspan><tspan fill="#c9d4d6" dx="12">POST /v1/refunds</tspan><tspan class="no" dx="13">denied by rule</tspan><tspan class="dim" dx="12">· never left Jentic One</tspan></text>
+  <path d="M0 311 H960 V414 a16 16 0 0 1 -16 16 H16 a16 16 0 0 1 -16 -16 Z" fill="#122125"/>
+  <line x1="0" y1="311.5" x2="960" y2="311.5" stroke="#305256"/>
+  <text class="mono lbl" x="28" y="336">EXECUTION LOG</text>
+  <clipPath id="logc"><rect x="0" y="346" width="960" height="70"/></clipPath>
+  <g clip-path="url(#logc)">
+    <g class="a logS mono" font-size="13" style="opacity:1">
+      <text class="a outR" x="28" y="364" fill="#A3CACC" style="opacity:.7"><tspan>✓</tspan><tspan x="46">14:31:52</tspan><tspan x="128">agent_ops</tspan><tspan x="262">GET /zones</tspan><tspan x="446">cloudflare →</tspan><tspan x="554">200 completed</tspan><tspan x="688">213ms</tspan></text>
+      <text x="28" y="388" fill="#A3CACC" opacity=".85"><tspan>✓</tspan><tspan x="46">14:31:58</tspan><tspan x="128">agent_support</tspan><tspan x="262">GET /v2/tickets/881</tspan><tspan x="446">zendesk →</tspan><tspan x="554">200 completed</tspan><tspan x="688">188ms</tspan></text>
+      <text x="28" y="412" class="a logA"><tspan class="ok">✓</tspan><tspan x="46" class="dim">14:32:07</tspan><tspan x="128" class="teal">agent_billing</tspan><tspan x="262" class="ink">POST /v1/invoices</tspan><tspan x="446" class="dim">stripe →</tspan><tspan x="554" class="ok">201 completed</tspan><tspan x="688" class="dim">842ms</tspan></text>
+      <text x="28" y="436" class="a logB"><tspan class="no">✕</tspan><tspan x="46" class="dim">14:32:11</tspan><tspan x="128" class="teal">agent_billing</tspan><tspan x="262" class="ink">POST /v1/refunds</tspan><tspan x="446" class="dim">stripe ✕</tspan><tspan x="554" class="no">denied by rule</tspan><tspan x="688" class="dim">never left Jentic One</tspan></text>
+    </g>
+  </g>
 </svg>

@@ -1,68 +1,127 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 430" width="880" height="430" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-labelledby="t d">
   <title id="t">Jentic One architecture</title>
-  <desc id="d">Two units over one database. The operator uses App, the control plane, which contains the Registry, Control, Admin and Auth surfaces and is where APIs are registered, credentials stored and agents approved. The agent calls the Broker, the data plane, which checks permissions, injects the credential and forwards the call to upstream APIs. Both App and the Broker sit above one PostgreSQL or SQLite database with registry, control and admin schemas.</desc>
-  <style>
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
-    .h{font-size:16px;fill:#f2f6f6;font-weight:600}
-    .s{font-size:12px;fill:#8aa0a3}
-    .t{font-size:13px;fill:#c9d4d6}
-    .k{font-size:12px;fill:#f5a524;letter-spacing:.08em}
-    .amb{font-size:12px;fill:#f5a524}
-    .box{fill:#111f23;stroke:#2c4247;stroke-width:1.5}
-    .chip{fill:#0d181b;stroke:#2c4247;stroke-width:1.2}
-    .brk{fill:#111f23;stroke:#f5a524;stroke-width:1.5}
-    .wire{stroke:#4a6166;stroke-width:1.5;fill:none}
-    .hot{stroke:#f5a524;stroke-width:2;fill:none}
-  </style>
+  <desc id="d">Two units over one database. The operator uses App, the control plane, which contains the Registry, Control, Admin and Auth surfaces: register APIs, store credentials, approve agents. The agent calls the Broker, the data plane, which checks permissions, injects the credential and forwards the call to public or private APIs. Both sit above one PostgreSQL or SQLite database with registry, control and admin schemas.</desc>
   <defs>
-    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#4a6166"/></marker>
-    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#f5a524"/></marker>
+    <radialGradient id="glowbg" cx="66%" cy="42%" r="42%">
+      <stop offset="0" stop-color="#A3CACC" stop-opacity=".10"/>
+      <stop offset="1" stop-color="#FDBD79" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowapp" cx="26%" cy="42%" r="36%">
+      <stop offset="0" stop-color="#A3CACC" stop-opacity=".10"/>
+      <stop offset="1" stop-color="#A3CACC" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1.2" cy="1.2" r="1.2" fill="#305256" fill-opacity=".45"/>
+    </pattern>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="9"/></filter>
+    <marker id="aT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#689296"/></marker>
+    <marker id="aO" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#FDBD79"/></marker>
   </defs>
+  <style>
+    .mono{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+    .head{font-family:Sora,"Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif;font-weight:600}
+    .ttl{font-size:18px;fill:#FFFFFF}
+    .sub{font-family:"Nunito Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14.5px;fill:#B3C6C8}
+    .edge{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
+    .ink{font-size:12.5px;fill:#E4EAEB}
+    .card{fill:#193238;stroke:#305256;stroke-width:1.5}
+    .chip{fill:#0E1A1D;stroke:#305256;stroke-width:1.2}
+    .flowO{stroke:#FDBD79;stroke-width:2;stroke-dasharray:3 8;fill:none;animation:flow 1.1s linear infinite}
+    .flowT{stroke:#689296;stroke-width:1.6;stroke-dasharray:3 8;fill:none;animation:flow 1.6s linear infinite}
+    @keyframes flow{to{stroke-dashoffset:-22}}
+    @media (prefers-reduced-motion: reduce){.flowO,.flowT{animation:none}}
+  </style>
 
-  <rect x="0" y="0" width="880" height="430" rx="14" fill="#0d181b"/>
-  <rect x="1" y="1" width="878" height="428" rx="14" fill="none" stroke="#26393e" stroke-width="1.5"/>
-  <text class="mono k" x="28" y="36">ARCHITECTURE</text>
-  <text class="mono s" x="148" y="36">two units · one database · your infrastructure</text>
-  <line x1="1" y1="54" x2="879" y2="54" stroke="#26393e" stroke-width="1.5"/>
+  <rect x="0" y="0" width="960" height="420" rx="16" fill="#162629"/>
+  <rect x="1" y="49" width="958" height="370" fill="url(#dots)"/>
+  <rect x="0" y="0" width="960" height="420" rx="16" fill="url(#glowbg)"/>
+  <rect x="0" y="0" width="960" height="420" rx="16" fill="url(#glowapp)"/>
 
+  <!-- header -->
+  <circle cx="26" cy="25" r="5" fill="#EDADAF"/><circle cx="44" cy="25" r="5" fill="#FDBD79"/><circle cx="62" cy="25" r="5" fill="#5EDEB9"/>
+  <text class="mono" x="84" y="29" font-size="12" fill="#E4EAEB">jentic one · architecture</text>
+  <g class="mono" font-size="13.5" fill="#D2DCDD">
+    <line x1="514" y1="25" x2="534" y2="25" stroke="#FDBD79" stroke-width="2"/><text x="541" y="30">agent traffic</text>
+    <line x1="680" y1="25" x2="700" y2="25" stroke="#FDBD79" stroke-opacity=".75" stroke-width="1.5" stroke-dasharray="4 4"/><text x="707" y="30">agent setup</text>
+    <line x1="842" y1="25" x2="862" y2="25" stroke="#8CA4A6" stroke-opacity=".7" stroke-width="1.6" stroke-dasharray="2 4"/><text x="869" y="30">storage</text>
+  </g>
+  <line x1="0" y1="48.5" x2="960" y2="48.5" stroke="#305256"/>
+
+  <g transform="translate(0 14)">
   <!-- actors -->
-  <text class="mono t" x="40" y="88">you, the operator</text>
-  <line class="wire" x1="110" y1="96" x2="110" y2="118" marker-end="url(#ar)"/>
-  <text class="mono amb" x="470" y="88">your agent</text>
-  <line class="hot" x1="508" y1="96" x2="508" y2="118" marker-end="url(#aa)"/>
+  <g transform="translate(62 62)">
+    <rect x="-12" y="-8" width="178" height="36" rx="10" fill="#193238" stroke="#305256"/>
+    <circle cx="9" cy="6" r="5" fill="none" stroke="#A3CACC" stroke-width="1.5"/>
+    <path d="M0 22 c1 -6 5 -9 9 -9 s8 3 9 9" fill="none" stroke="#A3CACC" stroke-width="1.5"/>
+    <text class="mono ink" x="28" y="17">you, the operator</text>
+  </g>
+  <line x1="110" y1="92" x2="110" y2="127" stroke="#689296" stroke-width="1.8" marker-end="url(#aT)"/>
+  <text class="edge" x="120" y="114" fill="#A3CACC">UI · admin API</text>
+
+  <g transform="translate(524 62)">
+    <rect x="-12" y="-8" width="138" height="36" rx="10" fill="#193238" stroke="#FDBD79" stroke-opacity=".7"/>
+    <rect x="0" y="1" width="24" height="19" rx="4" fill="#0E1A1D" stroke="#FDBD79" stroke-width="1.3"/>
+    <text class="mono" x="4" y="15" font-size="10" fill="#FDBD79">&gt;_</text>
+    <text class="mono" x="34" y="16" font-size="12.5" fill="#FDBD79">your agent</text>
+  </g>
+  <line x1="560" y1="92" x2="560" y2="127" stroke="#FDBD79" stroke-width="2" marker-end="url(#aO)"/>
+  <text class="edge" x="570" y="114" fill="#FDBD79">API calls</text>
+  <path d="M512 73 H426 Q410 73 410 89 V127" fill="none" stroke="#FDBD79" stroke-opacity=".75" stroke-width="1.5" stroke-dasharray="4 5" marker-end="url(#aO)"/>
+  <text class="edge" x="400" y="106" fill="#FDBD79" text-anchor="end">register and</text>
+  <text class="edge" x="400" y="122" fill="#FDBD79" text-anchor="end">request access</text>
 
   <!-- App -->
-  <rect class="box" x="28" y="122" width="400" height="160" rx="10"/>
-  <text class="mono h" x="48" y="152">App</text>
-  <text class="mono s" x="92" y="152">control plane</text>
-  <rect class="chip" x="48" y="168" width="84" height="32" rx="6"/><text class="mono t" x="90" y="189" text-anchor="middle">Registry</text>
-  <rect class="chip" x="142" y="168" width="84" height="32" rx="6"/><text class="mono t" x="184" y="189" text-anchor="middle">Control</text>
-  <rect class="chip" x="236" y="168" width="84" height="32" rx="6"/><text class="mono t" x="278" y="189" text-anchor="middle">Admin</text>
-  <rect class="chip" x="330" y="168" width="78" height="32" rx="6"/><text class="mono t" x="369" y="189" text-anchor="middle">Auth</text>
-  <text class="mono s" x="48" y="230">register APIs · store credentials</text>
-  <text class="mono s" x="48" y="250">approve agents · UI and admin APIs</text>
+  <rect class="card" x="40" y="132" width="430" height="150" rx="14"/>
+  <text class="head ttl" x="62" y="166">App</text>
+  <text class="mono sub" x="104" y="166">control plane</text>
+  <g class="mono" font-size="12.5">
+    <rect class="chip" x="62" y="184" width="104" height="34" rx="8"/><circle cx="78" cy="201" r="4" fill="#68BAEC"/><text x="89" y="205" fill="#E4EAEB">Registry</text>
+    <rect class="chip" x="176" y="184" width="96" height="34" rx="8"/><circle cx="192" cy="201" r="4" fill="#5EDEB9"/><text x="203" y="205" fill="#E4EAEB">Control</text>
+    <rect class="chip" x="282" y="184" width="82" height="34" rx="8"/><circle cx="298" cy="201" r="4" fill="#F1E38B"/><text x="309" y="205" fill="#E4EAEB">Admin</text>
+    <rect class="chip" x="374" y="184" width="72" height="34" rx="8"/><circle cx="390" cy="201" r="4" fill="#A3CACC"/><text x="401" y="205" fill="#E4EAEB">Auth</text>
+  </g>
+  <text class="mono sub" x="62" y="246">register APIs · store credentials</text>
+  <text class="mono sub" x="62" y="266">approve agents · review every call</text>
 
   <!-- Broker -->
-  <rect class="brk" x="458" y="122" width="230" height="160" rx="10"/>
-  <text class="mono h" x="478" y="152">Broker</text>
-  <text class="mono s" x="544" y="152">data plane</text>
-  <text class="mono t" x="478" y="190">1 check permission</text>
-  <text class="mono t" x="478" y="214">2 inject credential</text>
-  <text class="mono t" x="478" y="238">3 forward + record</text>
+  <rect x="500" y="132" width="240" height="150" rx="14" fill="#A3CACC" fill-opacity=".2" filter="url(#soft)"/>
+  <rect x="500" y="132" width="240" height="150" rx="14" fill="#0E1A1D" stroke="#FDBD79" stroke-width="1.6"/>
+  <text class="head ttl" x="522" y="166">Broker</text>
+  <text class="mono sub" x="590" y="166">data plane</text>
+  <line x1="522" y1="178" x2="718" y2="178" stroke="#305256"/>
+  <g class="mono" font-size="12.5" fill="#E4EAEB">
+    <text x="522" y="200"><tspan fill="#FDBD79">1</tspan>  check permission</text>
+    <text x="522" y="222"><tspan fill="#FDBD79">2</tspan>  inject credential</text>
+    <text x="522" y="244"><tspan fill="#FDBD79">3</tspan>  forward + record</text>
+  </g>
+  <text class="mono sub" x="522" y="268">the agent never sees the key</text>
 
   <!-- upstream -->
-  <line class="hot" x1="688" y1="202" x2="722" y2="202" marker-end="url(#aa)"/>
-  <rect class="box" x="726" y="152" width="126" height="100" rx="10"/>
-  <text class="mono h" x="742" y="184">APIs</text>
-  <text class="mono s" x="742" y="208">public or</text>
-  <text class="mono s" x="742" y="226">private</text>
+  <line x1="740" y1="207" x2="796" y2="207" stroke="#FDBD79" stroke-width="2" marker-end="url(#aO)"/>
+  <text class="edge" x="768" y="196" fill="#FDBD79" text-anchor="middle">+ key</text>
+  <line x1="796" y1="222" x2="744" y2="222" stroke="#FDBD79" stroke-opacity=".85" stroke-width="2" marker-end="url(#aO)"/>
+  <rect class="card" x="800" y="132" width="120" height="150" rx="14"/>
+  <rect x="816" y="150" width="30" height="22" rx="5" fill="#0E1A1D" stroke="#305256"/>
+  <text class="mono" x="821" y="165" font-size="11" fill="#A3CACC">{ }</text>
+  <text class="head ttl" x="856" y="166" font-size="16">APIs</text>
+  <text class="mono sub" x="816" y="200">public or</text>
+  <text class="mono sub" x="816" y="220">private</text>
+  <text class="mono sub" x="816" y="246" font-size="13">e.g. Stripe,</text>
+  <text class="mono sub" x="816" y="264" font-size="13">GitHub, yours</text>
 
   <!-- database -->
-  <line class="wire" x1="228" y1="282" x2="228" y2="316"/>
-  <line class="wire" x1="573" y1="282" x2="573" y2="316"/>
-  <rect class="box" x="28" y="316" width="660" height="52" rx="10"/>
-  <text class="mono h" x="48" y="348" font-size="15">PostgreSQL or SQLite</text>
-  <text class="mono s" x="668" y="347" text-anchor="end">registry · control · admin</text>
+  <text class="edge" x="266" y="308" fill="#A3CACC" font-size="12.5">writes rules + credentials</text>
+  <line x1="255" y1="282" x2="255" y2="322" stroke="#A3CACC" stroke-opacity=".6" stroke-width="2" stroke-dasharray="2 4"/>
+  <text class="edge" x="636" y="308" fill="#A3CACC" font-size="12.5">reads them · records calls</text>
+  <line x1="625" y1="282" x2="625" y2="322" stroke="#A3CACC" stroke-opacity=".6" stroke-width="2" stroke-dasharray="2 4"/>
+  <rect class="card" x="40" y="322" width="880" height="62" rx="14"/>
+  <g transform="translate(62 338)" fill="none" stroke="#A3CACC" stroke-width="1.5">
+    <ellipse cx="11" cy="5" rx="11" ry="4"/><path d="M0 5 v20 c0 2.2 4.9 4 11 4 s11 -1.8 11 -4 v-20"/><path d="M0 15 c0 2.2 4.9 4 11 4 s11 -1.8 11 -4"/>
+  </g>
+  <text class="head ttl" x="98" y="359" font-size="16">PostgreSQL or SQLite</text>
+  <g class="mono" font-size="12" text-anchor="end">
+    <text x="896" y="358" fill="#8CA4A6" font-size="13.5"><tspan fill="#68BAEC">registry</tspan>  ·  <tspan fill="#5EDEB9">control</tspan>  ·  <tspan fill="#F1E38B">admin</tspan></text>
+  </g>
 
-  <text class="mono s" x="28" y="404">Run both on one host, or put the Broker in the network that can reach your APIs.</text>
+  </g>
 </svg>
