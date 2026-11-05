@@ -40,7 +40,7 @@ jentic register
 
 On a local install, confirm the prompted `http://127.0.0.1:8000`; the broker
 URL is seeded automatically. A remote install needs `--url` and `--broker-url`
-([CLI README](../../cli/README.md#usage)). `register` generates a keypair,
+([CLI README](../../cli/README.md#local-vs-remote-installs)). `register` generates a keypair,
 files a dynamic client registration, then **waits for an operator to approve
 the agent** — approve it in the UI at `/app`. Re-running is idempotent.
 
@@ -124,8 +124,9 @@ for control-plane mutations, so your call appears in Executions, not Audit).
   [agent runbooks](../agent/README.md) cover install through the
   discover → access → execute loop as directly executable steps.
 - **CLI.** Install, onboarding, and the command groups:
-  [`cli/README.md`](../../cli/README.md); the per-flag reference for every
-  `jentic` and `jenticctl` command is in the app at `/app/docs` (Reference → CLI).
+  [`cli/README.md`](../../cli/README.md); every `jentic` and `jenticctl`
+  command, flag, and example is in the generated
+  [CLI reference](../reference/cli.md) (also served in the app at `/app/docs`).
 - **In-app API reference.** A running deployment serves its own interactive
   API reference at `/docs`, generated from code.
 - **Endpoint & permission reference.** Every HTTP route and the permission it requires:

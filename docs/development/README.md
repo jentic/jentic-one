@@ -10,6 +10,7 @@ running one in production is [operations](../operations/README.md).
 | Run the Python tests, regenerate generated artifacts | [Testing](testing.md) |
 | Add a surface, credential provider, or other extension | [Extending Jentic One](extending-jentic-one.md) |
 | Understand contexts and how configuration loads | [Context and configuration](context-and-config.md) |
+| Build or change the `jentic` / `jenticctl` CLIs | [Developing the CLI](cli.md) |
 | Cut a release | [Releasing](releasing.md) |
 | Judge whether an issue fits the product | [Product scope](product-scope.md) — the rubric the issue-intake harness scores against |
 | Publish to AWS Marketplace (seller side) | [AWS Marketplace publishing](marketplace-publishing.md) |

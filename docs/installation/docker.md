@@ -358,7 +358,7 @@ Three worked compose examples as an alternative to the two `docker run`s:
 ## 7. Connect the CLIs
 
 - **Admin host:** install `jenticctl` from the release archive
-  ([download + verify](../../cli/README.md#4-manual-download--verify)).
+  ([download + verify](cli.md#manual-download)).
 - **Every host using the instance:** install `jentic` the same way, then
   register — an operator approves each agent in the UI:
 
