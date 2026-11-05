@@ -297,6 +297,26 @@ def _section_lines(
     return lines
 
 
+def undocumented_keys(schema: dict[str, Any] | None = None) -> list[str]:
+    """Dotted keys whose reference row would render with an empty description.
+
+    Descriptions come only from ``Field(description=...)`` (or a model's own
+    docstring for a model-typed field); ``#`` comments above a field never reach
+    the schema. ``tests/arch/test_config_reference_conformance.py`` fails on any
+    key returned here that is not on its explicit allowlist.
+    """
+    if schema is None:
+        schema = build_config_schema()
+    defs = schema.get("$defs", {})
+    top_required = set(schema.get("required", []))
+    missing: list[str] = []
+    for name, node in schema.get("properties", {}).items():
+        rows: dict[str, _Row] = {}
+        _walk([name], node, defs, name in top_required, rows)
+        missing.extend(key for key, row in rows.items() if not row.description.strip())
+    return missing
+
+
 def build_markdown(schema: dict[str, Any] | None = None) -> str:
     """Render the full configuration reference document."""
     if schema is None:

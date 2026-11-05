@@ -19,8 +19,15 @@ _logger = structlog.get_logger(__name__)
 class SigningKeyConfig(BaseModel):
     """A single ES256 signing key for ID token issuance."""
 
-    kid: str
-    private_key_pem: SecretStr
+    kid: str = Field(
+        description=(
+            "Key id published in the JWKS and stamped in the ``kid`` header of ID "
+            "tokens signed with this key (``[a-zA-Z0-9_-]+``)."
+        ),
+    )
+    private_key_pem: SecretStr = Field(
+        description="PEM-encoded EC P-256 private key used for ES256 signing.",
+    )
 
     @field_validator("kid")
     @classmethod
@@ -113,8 +120,14 @@ class PlatformClientConfig(BaseModel):
     deployment-time constants, not admin-managed dynamic registrations.
     """
 
-    client_id: str
-    redirect_uris: list[str] = Field(min_length=1)
+    client_id: str = Field(description="OAuth client id the first-party client presents.")
+    redirect_uris: list[str] = Field(
+        min_length=1,
+        description=(
+            "Allowed absolute redirect URIs (exact match). ``https`` is required "
+            "except for ``localhost`` / ``127.0.0.1``, where ``http`` is accepted."
+        ),
+    )
 
     @field_validator("redirect_uris", mode="after")
     @classmethod
@@ -363,24 +376,76 @@ class LocalLoginConfig(BaseModel):
 class AuthConfig(BaseModel):
     """Platform-actors OAuth surface configuration."""
 
-    # Expected shape: scheme://host[:port] with NO path. Unvalidated — a
-    # path-bearing value (e.g. https://host/jentic) silently breaks the fixed
-    # RFC 8414/9728 well-known routes: path-insertion metadata URLs derived
-    # from a path-bearing issuer are not served (root and /mcp docs alike).
-    canonical_base_url: str = ""
-    access_ttl_seconds: int = 3600
-    refresh_ttl_seconds: int = 604800
-    rat_ttl_seconds: int = 900
-    # TTL for the agent-ownership claim token minted at /register (see
-    # auth/core/claim.py). Only meaningful when a claim-token minter is installed;
-    # OSS default mints no token so this is inert.
-    claim_ttl_seconds: int = 900
-    assertion_max_ttl_seconds: int = 300
-    auth_code_ttl_seconds: int = 300
-    id_signing: list[SigningKeyConfig] = Field(default_factory=list)
+    # Unvalidated: path-insertion metadata URLs derived from a path-bearing
+    # issuer are not served (root and /mcp docs alike).
+    canonical_base_url: str = Field(
+        default="",
+        description=(
+            "Public origin of the auth surface (``scheme://host[:port]``, no path), "
+            "used for the OIDC issuer, the JWT-Bearer assertion audience and the "
+            "SPA login callback. Unset falls back to ``server.public_base_url``, "
+            "then the request or bind origin. A value with a path breaks the "
+            "OAuth well-known discovery routes."
+        ),
+    )
+    access_ttl_seconds: int = Field(
+        default=3600,
+        description="Lifetime (seconds) of an OAuth access token issued by the auth surface.",
+    )
+    refresh_ttl_seconds: int = Field(
+        default=604800,
+        description=(
+            "Lifetime (seconds, default 7 days) of an OAuth refresh token; each "
+            "refresh rotates it and the new token gets a fresh lifetime."
+        ),
+    )
+    rat_ttl_seconds: int = Field(
+        default=900,
+        description=(
+            "Lifetime (seconds) of the registration access token returned when an "
+            "agent registers, which the agent uses to check its registration status."
+        ),
+    )
+    # See auth/core/claim.py.
+    claim_ttl_seconds: int = Field(
+        default=900,
+        description=(
+            "Lifetime (seconds) of the agent-ownership claim token minted at agent "
+            "registration. Has no effect unless a claim-token minter is installed; "
+            "the default build mints none."
+        ),
+    )
+    assertion_max_ttl_seconds: int = Field(
+        default=300,
+        description=(
+            "Furthest in the future (seconds) a JWT-Bearer client assertion's "
+            "``exp`` may be; assertions expiring later are rejected."
+        ),
+    )
+    auth_code_ttl_seconds: int = Field(
+        default=300,
+        description=(
+            "Lifetime (seconds) of an OAuth authorization code before it must be exchanged."
+        ),
+    )
+    id_signing: list[SigningKeyConfig] = Field(
+        default_factory=list,
+        description=(
+            "ES256 keys for signing OIDC ID tokens. The first entry signs; every "
+            "entry is published in the JWKS, so append the next key and later move "
+            "it first to rotate. The local-dev key is rejected in production."
+        ),
+    )
     idp: IdpConfig = Field(default_factory=IdpConfig)
     local_login: LocalLoginConfig = Field(default_factory=LocalLoginConfig)
-    platform_clients: list[PlatformClientConfig] = Field(default_factory=list)
+    platform_clients: list[PlatformClientConfig] = Field(
+        default_factory=list,
+        description=(
+            "Static first-party OAuth clients that authenticate with PKCE only (no "
+            "secret). When ``auth.canonical_base_url`` is set, the operator SPA "
+            "(``jentic-one-spa``) is added automatically if not listed."
+        ),
+    )
     oauth_rate_limit: OAuthRateLimitConfig = Field(default_factory=OAuthRateLimitConfig)
 
     def model_post_init(self, __context: object) -> None:
