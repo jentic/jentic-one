@@ -9,9 +9,9 @@
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
-  <a href="docs/guides/first-call.md">First brokered call</a> ·
-  <a href="https://github.com/jentic/jentic-public-apis">API Directory</a> ·
+  <a href="docs/README.md">Docs</a> ·
   <a href="docs/security/README.md">Security</a> ·
+  <a href="https://github.com/jentic/jentic-public-apis">API Directory</a> ·
   <a href="https://github.com/jentic/jentic-one/discussions">Discussions</a>
 </p>
 
@@ -19,55 +19,53 @@
   <a href="https://github.com/jentic/jentic-one/actions/workflows/ci.yml"><img src="https://github.com/jentic/jentic-one/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-A3CACC.svg" alt="License: Apache 2.0"></a>
   <a href="https://www.opensourcealternatives.to"><img src="https://www.opensourcealternatives.to/badge-osa.svg" alt="Listed on Open Source Alternatives"></a>
-  <img src="https://img.shields.io/badge/Python-3.12-68BAEC.svg?logo=python&logoColor=white" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Go-1.25-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.25">
-  <img src="https://img.shields.io/badge/PostgreSQL-16-A3CACC.svg?logo=postgresql&logoColor=white" alt="PostgreSQL">
-  <img src="https://img.shields.io/badge/SQLite-3-A3CACC.svg?logo=sqlite&logoColor=white" alt="SQLite">
-  <br>
-  <img src="https://img.shields.io/badge/lint-ruff-FDBD79.svg?logo=ruff&logoColor=black" alt="Linted with Ruff">
-  <img src="https://img.shields.io/badge/types-mypy_strict-F1E38B.svg" alt="mypy strict">
-  <a href="https://www.conventionalcommits.org/"><img src="https://img.shields.io/badge/commits-conventional-EDADAF.svg?logo=conventionalcommits&logoColor=white" alt="Conventional Commits"></a>
- </p>
-
-> [!NOTE]
-> **Public Beta.** Schemas and CLI commands can change between 0.x releases. Pin a version if
-> you need stability. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-> [open issues](https://github.com/jentic/jentic-one/issues).
-
-## What Jentic One is
-
-<p align="center">
-  <img src="docs/assets/how-it-works.gif" alt="Any agent calls Jentic One, which applies default-deny policies, injects credentials at execution time, and logs every call on your own instance, before reaching any public or private API. One call is allowed and returns 201; a second is denied by rule and never leaves the layer." width="100%">
 </p>
 
-Giving an agent API access normally means giving it an API key. Jentic One removes that step.
-Register the APIs an agent may use, store the credentials once, and the agent makes its calls through the Broker. The Broker checks the agent's permissions, attaches the credential at execution time, and writes an execution record. Your agent never sees your keys.
+> [!NOTE]
+> **Public beta.** Schemas and CLI commands can change between 0.x releases — pin a version if
+> you need stability.
 
-Agents integrate through the `jentic` CLI, a generated skill, the local `jentic mcp` server,
-or plain HTTP. Every path terminates at the credential-injecting Broker: the MCP server runs beside the
-agent as a thin client and holds no upstream credentials — those never leave your Broker.
+## What it is
 
-**Who it's for:** developers running a coding agent locally (Claude Code,
-Codex, Cursor, Cline, or one you built) that needs real API access; small
-teams running agents in a private network or VPC; anyone who needs to pass a
-security review before an agent touches production credentials.
+<p align="center">
+  <img src="docs/assets/how-it-works.svg" alt="An agent sends POST /v1/invoices to Jentic One, which checks the permission, injects the stored credential and forwards the call to the Stripe API; the API returns 201 and the call is logged. The agent then sends POST /v1/refunds; the permission check denies it by rule, the request never leaves Jentic One, the agent gets a 403, and the denial is logged. The agent never sees the API key." width="100%">
+</p>
+
+Giving an agent API access normally means giving it an API key. Jentic One removes that step:
+you store each credential once, on your own infrastructure, and the agent calls APIs through the
+**Broker**. The Broker checks what the agent is allowed to do, attaches the credential, and records
+the call. **The agent never sees your keys** — and you can cut off one agent without rotating anything.
+
+Agents connect through the `jentic` CLI, a generated skill, an MCP server, or plain HTTP.
+
+**Who it's for:** developers giving a coding agent (Claude Code, Codex, Cursor, Cline, …) real API
+access; teams running agents inside a private network; anyone who has to pass a security review
+before an agent touches production credentials.
 
 ## Quickstart
 
-**The open-source build is the real thing, not a trial** — the same code,
-broker, and security model as every other install shape. Every path below
-runs on Linux and macOS; on Windows, follow the
-[Windows guide](docs/installation/windows.md) (WSL2 + native `jentic.exe`).
+The open-source build is the real product — same code and security model as every other install.
+Linux and macOS; on Windows use the [Windows guide](docs/installation/windows.md).
 
 ### Self-hosted (Docker)
 
-One image (`ghcr.io/jentic/jentic-one-app`) runs both the control plane and the
-broker. The quickstart shape below keeps everything in SQLite files on one
-volume and runs with development-mode secrets — don't point it at a real
-credential. The one secret it does keep is the credential-encryption key,
-generated into `quickstart.env` below: back that file up with the volume, since
-without the key stored credentials are unreadable
-([backup & restore](docs/operations/backup-restore.md)):
+Run the control plane and broker as one stack, on SQLite. This is a trial setup — don't point it at a
+real credential. **Back up `.env`**: it holds the key that encrypts stored credentials.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
+docker compose up -d
+docker compose exec app python -m jentic_one create-admin --email you@example.com
+```
+
+Then sign in at <http://127.0.0.1:8000>.
+
+<details>
+<summary>Prefer plain <code>docker run</code>?</summary>
+
+The same setup without compose, using [`config/quickstart.env`](config/quickstart.env).
+Back up `quickstart.env` with the volume — it holds the encryption key.
 
 ```bash
 docker pull ghcr.io/jentic/jentic-one-app:latest
@@ -99,147 +97,75 @@ docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
 curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
 ```
 
-Prefer one file? The
-[quickstart compose file](deploy/docker/quickstart/docker-compose.yaml) has
-the same settings built in and runs the migrations, the control plane and the
-broker as one stack:
+</details>
 
-```bash
-curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
-# The credential-encryption key goes in .env next to it (once; back it up)
-grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
-docker compose up -d
-docker compose exec app python -m jentic_one create-admin --email you@example.com
-```
+The quickstart turns on anonymous telemetry. To opt out, set `JENTIC__TELEMETRY__ENABLED` to
+`false` in the compose file (or in `quickstart.env`) — [what is sent](docs/reference/config.md#telemetry). Something failed? See
+[Troubleshooting](docs/operations/troubleshooting.md).
 
-`quickstart.env` turns on anonymous product telemetry
-(`JENTIC__TELEMETRY__ENABLED=true`). To opt out, set it to `false` in the
-file ([what is sent](docs/reference/config.md#telemetry)).
+### Connect your agent
 
-Something failed? [Troubleshooting](docs/operations/troubleshooting.md)
-indexes recoveries by symptom.
-
-The production shape — external Postgres, image pinned and verified by digest,
-real secrets, TLS — is in [docs/installation/docker.md](docs/installation/docker.md).
-
-### Self-hosted (build from source)
-
-**Prerequisites:** `git`, [`uv`](https://docs.astral.sh/uv/), and Docker
-running (the dev bring-up starts Postgres and the observability stack in
-containers).
-
-```bash
-# Build and start the service
-git clone https://github.com/jentic/jentic-one.git && cd jentic-one
-make install   # install dependencies and git hooks
-make dev       # idempotent local bring-up: fixtures + migrations + UI, then run the app
-curl -fsS http://127.0.0.1:8000/health   # verify it's up
-open http://127.0.0.1:8000               # macOS; Linux: xdg-open
-
-# Build the CLIs
-cd cli && make build
-./jenticctl    # operator CLI — install, manage, admin
-./jentic       # agent CLI — search, inspect, execute
-```
-
-[More on local development](docs/development/local-setup.md).
-
-### Install the CLI
+Install the CLI on the machine where your agent runs, then connect it:
 
 ```bash
 brew install --cask jentic/tap/jentic    # macOS / Linux
 winget install Jentic.Jentic             # Windows
 
-jentic register   # connect this machine to the instance
+jentic setup --url http://127.0.0.1:8000   # registers the agent and installs its skill; approve it in the UI
 ```
 
-`register` waits for an operator to approve the agent — approve it in the UI at
-`/app`.
+Agents that call Jentic One over plain HTTP or the hosted MCP endpoint don't need the CLI — see
+[Connecting agents](docs/guides/connecting-agents.md). Next:
+[make your first brokered call](docs/guides/first-call.md).
 
-Without a package manager: manual download, checksum + signature verification, and
-air-gapped transfer are in [docs/installation/cli.md](docs/installation/cli.md)
-— along with our Scoop bucket, which carries brand-new releases before winget
-review completes.
+### Other ways to run it
 
-### Managed install
-
-[AWS Marketplace](docs/installation/aws-marketplace.md) — buy and run the listed product on EKS
-(prerequisites, zero-touch install, license-check behaviour).
-For commercial use, get in touch: [jentic.com/contact](https://jentic.com/contact).
-
-Next: [make your first brokered call](docs/guides/first-call.md).
+| If you want… | Go to |
+| --- | --- |
+| Production on Docker (Postgres, pinned image, TLS) | [Docker](docs/installation/docker.md) · [docker-compose](docs/installation/docker-compose.md) · [systemd](docs/installation/systemd.md) |
+| Kubernetes | [Helm](docs/installation/helm.md) |
+| Buy it on AWS Marketplace (runs on your EKS) | [AWS Marketplace](docs/installation/aws-marketplace.md) |
+| From source, to develop on it | [Local setup](docs/development/local-setup.md) |
+| CLI without a package manager | [Installing the CLIs](docs/installation/cli.md) |
 
 ## How it works
 
-Jentic One handles secure third-party API execution for agents. It deploys as two peer units
-above a shared database. **App** is the control plane and contains the Registry, Control,
-Admin and Auth surfaces. **Broker** is the data plane. Configuration happens through App; the agent
-talks only to the Broker.
-
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="Two peer units above one database. App is the control plane, containing the Registry, Control, Admin and Auth surfaces, and is where the operator configures the instance. Broker is the data plane: a stateless credential-injecting HTTP proxy, and the only surface that touches a secret. Both sit above PostgreSQL or SQLite with registry, control and admin schemas." width="100%">
+  <img src="docs/assets/architecture.svg" alt="Two units over one database. The operator uses App, the control plane, with the Registry, Control, Admin and Auth surfaces: register APIs, store credentials, approve agents. The agent registers through App and calls the Broker, the data plane, which checks permissions, injects the credential and forwards the call to public or private APIs. App writes rules and credentials to PostgreSQL or SQLite (three databases: registry, control and admin); the Broker reads them and records every call." width="100%">
 </p>
 
-On each call the Broker checks the agent's permissions, attaches the stored credential,
-forwards the request, and writes an execution record. The credential is added inside the Broker,
-after the permission check, and is never returned to the caller.
+Jentic One runs as two units over one database. **App** (the control plane) is where you register
+APIs, store credentials and approve agents. **Broker** (the data plane) is what agents call: it checks
+permissions, injects the credential after the check, forwards the request and writes an execution
+record. More in [Architecture](docs/architecture/README.md).
 
-For the next level of detail — the five surfaces, the process shapes, the broker's
-execution pipeline, and the data model — see [docs/architecture/](docs/architecture/README.md).
-
-## Why we built Jentic One
-
-Agents are getting API access the worst way we know how: keys pasted into env vars,
-MCP configs, and dotfiles on every machine an agent runs on. Anything in the agent's
-context — a prompt injection, a poisoned tool description, a plain bug — can read
-those keys and exfiltrate them. And once an agent holds the key itself, there is no
-scoping it to *this* endpoint, no record of what it called, and no way to revoke one
-agent without rotating the key everywhere.
-
-We think the fix is structural, not better prompting: the agent should never hold the
-credential at all. In Jentic One the key is stored once, encrypted, on your
-infrastructure; the agent gets an identity instead, and every call goes through the
-Broker's permission check. A compromised agent can only make the calls it was allowed
-to make anyway — and you can see every one of them, and cut that one agent off
-without touching the key. One boundary to know before you rely on that: the broker
-protects credentials from agents running as **other** OS users or on other machines —
-an agent running as the *same* OS user as its own credential-holding CLI state can
-read that state; the [same-host hardening guide](docs/security/same-host/README.md)
-covers when and how to split them.
+One boundary to know: the Broker protects credentials from agents running as *other* OS users or on
+other machines. An agent running as the *same* OS user as its CLI state can read that state — see
+[same-host setups](docs/security/same-host/README.md).
 
 ## Documentation
 
-The full index is at [docs/README.md](docs/README.md).
+| I want to… | Start here |
+| --- | --- |
+| Install and run it | [Installation](docs/installation/README.md) |
+| Make my first API call through it | [First brokered call](docs/guides/first-call.md) |
+| Connect my agent | [Connecting agents](docs/guides/connecting-agents.md) |
+| Deploy it securely | [Security](docs/security/README.md) |
+| Keep it running (upgrades, backups, monitoring) | [Operations](docs/operations/README.md) |
+| Understand how it's built | [Architecture](docs/architecture/README.md) |
+| Look up a config key, endpoint or CLI flag | [Reference](docs/reference/README.md) |
+| Contribute | [CONTRIBUTING.md](CONTRIBUTING.md) · [Local setup](docs/development/local-setup.md) |
 
-- [Installation](docs/installation/README.md) — [Docker](docs/installation/docker.md), [systemd](docs/installation/systemd.md), [Helm](docs/installation/helm.md), [AWS Marketplace](docs/installation/aws-marketplace.md)
-- [First brokered call](docs/guides/first-call.md) — from a running instance to a real API response
-- [CLI](cli/README.md) — `jentic` (agent) and `jenticctl` (operator)
-- [Deploying securely](docs/security/README.md) — read before pointing an instance at a real credential
-- [Configuration reference](docs/reference/config.md) — every config key, default, and env var
-- [Endpoint & scope reference](docs/reference/endpoints.md) — every HTTP route and who may call it
-- [Local development](docs/development/local-setup.md) — running from a source checkout
+Everything else is in the [documentation index](docs/README.md). AI agents can start from
+[`llms.txt`](llms.txt).
 
-Anonymous telemetry is **on in the shipped install examples** and pre-selected
-in the interactive installer; set `telemetry.enabled: false` to opt out. A
-config that omits the `telemetry` block sends nothing
-([details](docs/reference/config.md#telemetry)). Vulnerability
-reports: [SECURITY.md](SECURITY.md). Support channels and what's covered:
-[SUPPORT.md](SUPPORT.md).
+## Community
 
-Agents can read [llms.txt](llms.txt) for a machine-oriented map of the project.
-
-## Contributing
-
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[open issues](https://github.com/jentic/jentic-one/issues). Questions and proposals go in
-[Discussions](https://github.com/jentic/jentic-one/discussions).
-
-## Links
-
-[Jentic One](https://jentic.com/jentic-one) ·
-[API Directory](https://github.com/jentic/jentic-public-apis)
+Questions and ideas go to [Discussions](https://github.com/jentic/jentic-one/discussions);
+bugs and contributions to the [issues](https://github.com/jentic/jentic-one/issues).
+Security reports: [SECURITY.md](SECURITY.md). Support options: [SUPPORT.md](SUPPORT.md).
+For commercial use: [jentic.com/contact](https://jentic.com/contact).
 
 ## License
 
-Jentic One is licensed under [Apache 2.0](LICENSE); see
-[NOTICE](NOTICE) for third-party attributions.
+[Apache 2.0](LICENSE); third-party attributions in [NOTICE](NOTICE).
