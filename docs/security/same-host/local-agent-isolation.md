@@ -90,8 +90,10 @@ If the agent runs as `<operator>-local-agent` and the operator is their normal
 login user, then by Unix ownership (plus macOS TCC for protected data) the agent
 user cannot read the operator's jentic keyset (`~/.config/jentic`,
 `~/.local/state/jentic`, legacy `~/.jentic`), DB files, browser profile, or
-Keychain. That closes AP-1–AP-4 in one move — the agent can only reach Jentic One
-over loopback with its own scoped token.
+Keychain. That closes AP-1–AP-3 in one move — the agent can only reach Jentic One
+over loopback with its own scoped token. It cannot close AP-4: the agent must read
+its own key and tokens, so their reuse off-host is bounded only by token lifetime,
+scope, and disabling the agent or replacing its JWKS (see the [threat model](threat-model.md#the-fix-isolate-the-agent)).
 
 It's weaker than a container (same kernel, same machine — a
 local-privilege-escalation bug crosses it) but needs no container runtime and
@@ -136,8 +138,8 @@ aren't there:
    The **jentic-one agent token is itself a virtual key** in this sense: for a
    local deployment it is minted against, and only meaningful to, your own
    control-plane on the local network — it authenticates the agent to *your*
-   broker, carries no third-party provider credential, and is worthless off that
-   network. So while it does sit in the agent home like any other credential, its
+   broker, carries no third-party provider credential, and is useful only to
+   someone who can reach that instance. So while it does sit in the agent home like any other credential, its
    presence there is not a provider-secret exposure; the guidance above is about
    the upstream provider keys you should keep *out* of the agent env by putting a
    virtual key in front of them.
@@ -172,7 +174,7 @@ aren't there:
    default)` profile was rejected as too brittle.
 
 None of these undoes the core hardening: running the agent as a **separate Unix
-user** still closes the operator-facing attack paths (AP-1–AP-4) above. These notes
+user** still closes the operator-facing attack paths (AP-1–AP-3) above. These notes
 scope what the boundary is *for* — protecting the operator and other users from the
 agent — versus what it is *not*: an intra-agent, network-egress, or secret-hiding
 sandbox.

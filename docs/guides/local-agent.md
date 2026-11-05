@@ -378,9 +378,9 @@ confirmation. To remove a single context or identity instead of everything, use
   runtime's native layout (`skill init` / `list` / `update` / `remove`), so the
   launched agent knows how to drive the CLI. `jentic setup` runs it for you.
   See [Skill commands: output and freshness](#skill-commands-output-and-freshness).
-- **`jentic doctor`** — read-only self-check, including whether the agent would
-  run as the same uid as you, and whether any installed skill is older than
-  the copy bundled in this CLI.
+- **`jentic doctor`** — read-only self-check, including whether any installed
+  skill is older than the copy bundled in this CLI. The check that the agent
+  account is not your own uid is in **`jenticctl doctor`**.
 - **`jenticctl wizard`** — the installer-side onboarding; its agent-isolation
   step is the same setup flow described here.
 
