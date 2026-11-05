@@ -106,7 +106,7 @@ matching credential posture:
 - `unix:///path/mcp.sock` — **no credential exists**; the daemon
   authenticates the relay by its uid. A stray `--bearer-file` or
   `$JENTIC_MCP_BEARER` here is refused: it would be pointless key material.
-- `http://<loopback>` — plaintext is loopback-only (same SEC-1 posture as
+- `http://<loopback>` — plaintext is loopback-only (the same rule as
   the broker check); a bearer is forwarded if supplied.
 - `https://…` — for a remote daemon: the caller supplies a **short-lived**
   bearer via `$JENTIC_MCP_BEARER` or `--bearer-file` (mode `0600`), the
