@@ -69,11 +69,11 @@ func TestAgentStateRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRemoveAgentStateDeletesBothCopies proves reset's final step removes the
-// XDG record file AND strips the agent fields from a legacy config, leaving
-// nothing that still describes the torn-down account.
-func TestRemoveAgentStateDeletesBothCopies(t *testing.T) {
-	statePath := withAgentXDG(t)
+// TestClearAgentAccountWinsOverLegacyCopy proves reset's final step leaves no
+// record of the torn-down account, even when a legacy ~/.jentic/config.yaml
+// copy is still present: the emptied XDG record takes precedence over it.
+func TestClearAgentAccountWinsOverLegacyCopy(t *testing.T) {
+	withAgentXDG(t)
 	paths := writeConfig(t, "base_url: https://keep.example.test\nagent_account:\n  user: alice-local-agent\n")
 	if _, err := MutateAgentState(paths, func(*AgentState) error { return nil }); err != nil {
 		t.Fatalf("adopt: %v", err)
@@ -86,26 +86,24 @@ func TestRemoveAgentStateDeletesBothCopies(t *testing.T) {
 		t.Fatalf("seed legacy: %v", err)
 	}
 
-	if err := RemoveAgentState(paths); err != nil {
-		t.Fatalf("RemoveAgentState: %v", err)
-	}
-	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
-		t.Errorf("XDG record must be deleted (err=%v)", err)
+	clearAccount := func(st *AgentState) error { st.ClearAgentAccount(); return nil }
+	if _, err := MutateAgentState(paths, clearAccount); err != nil {
+		t.Fatalf("clear: %v", err)
 	}
 	st, err := LoadAgentState(paths)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	if _, ok := st.AgentAccount(); ok {
-		t.Errorf("no record may survive RemoveAgentState: %+v", st.Agent)
+		t.Errorf("no record may survive the clear: %+v", st.Agent)
 	}
 	legacy, _ := Load(paths)
 	if legacy.BaseURL != "https://keep.example.test" {
 		t.Errorf("unrelated legacy fields must survive, got base_url %q", legacy.BaseURL)
 	}
-	// Idempotent: nothing left to remove is not an error.
-	if err := RemoveAgentState(paths); err != nil {
-		t.Errorf("second RemoveAgentState: %v", err)
+	// Idempotent: clearing again is not an error.
+	if _, err := MutateAgentState(paths, clearAccount); err != nil {
+		t.Errorf("second clear: %v", err)
 	}
 }
 

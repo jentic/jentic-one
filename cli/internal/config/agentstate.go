@@ -187,27 +187,9 @@ func (s *AgentState) AgentAccount() (AgentAccount, bool) {
 	return *s.Agent, true
 }
 
-// RemoveAgentState deletes the agent-account record — the XDG file and any
-// copy still in the legacy ~/.jentic/config.yaml — under the agent-state lock.
-// `jentic reset` calls it LAST, once the account it describes is torn down, so
-// a mid-way failure leaves the record of what still needs cleaning. Absent
-// files are not an error.
-func RemoveAgentState(legacy Paths) error {
-	dir, err := sdkconfig.ConfigDir()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(dir, AgentStateName)
-	if _, err := os.Stat(dir); err == nil {
-		unlock, lerr := lockAgentState(dir)
-		if lerr != nil {
-			return lerr
-		}
-		defer unlock()
-		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-			return fmt.Errorf("remove %s: %w", path, rerr)
-		}
-	}
-	clearLegacyAgentState(legacy)
-	return nil
+// ClearAgentAccount forgets the agent account. The emptied record still wins
+// over any copy left in the legacy ~/.jentic/config.yaml, so a cleaned-up
+// account cannot reappear from it.
+func (s *AgentState) ClearAgentAccount() {
+	s.Agent = nil
 }

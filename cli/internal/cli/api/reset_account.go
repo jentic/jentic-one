@@ -106,7 +106,10 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	// Remove the account record LAST, so a mid-way failure above leaves the
 	// record of what still needs cleaning for the next run. This also clears any
 	// legacy copy still sitting in ~/.jentic/config.yaml.
-	if err := config.RemoveAgentState(paths); err != nil {
+	if _, err := config.MutateAgentState(paths, func(st *config.AgentState) error {
+		st.ClearAgentAccount()
+		return nil
+	}); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Reset complete for the agent account (user %q).", plan.user))

@@ -15,7 +15,7 @@ cleaned:
 
 The command layer that orchestrates the teardown (survey, plan, confirmation,
 ordered execution) lives in [`internal/cli/api/reset*.go`](../cli/api/).
-`jentic doctor`/`jenticctl doctor` probe for leftovers read-only and point at
+`jenticctl doctor` probe for leftovers read-only and point at
 `jentic reset`.
 
 ## Layering contract

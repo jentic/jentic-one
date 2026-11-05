@@ -23,7 +23,7 @@ the public catalog into your local registry, inspect operations, and execute
 against them.
 
 New here? If you're a person setting up a local agent, run `jentic setup`
-to set one up end to end (identity + skills + isolation). If you're an agent
+to set one up end to end (identity + skills). If you're an agent
 that just needs tokens for an existing identity, run `jentic register`. Then
 browse the public catalog with `jentic catalog`. To install and operate
 jentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use

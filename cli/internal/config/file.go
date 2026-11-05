@@ -40,7 +40,7 @@ type FileConfig struct {
 	// is the XDG agent state (~/.config/jentic/agent-account.yaml — see
 	// AgentState); this field remains only so a record still sitting here can be
 	// read (LoadAgentState's fallback), adopted (MutateAgentState), and cleared
-	// (RemoveAgentState). Nothing else writes it.
+	// (ClearAgentAccount). Nothing else writes it.
 	Agent *AgentAccount `yaml:"agent_account,omitempty"`
 	// SameUserNoticeSeen is a legacy one-time notice flag. Nothing reads it; it
 	// is kept so clearing the legacy agent fields drops it too.

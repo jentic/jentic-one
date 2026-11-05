@@ -47,6 +47,8 @@ key; recipes 2 and 3 move that behind a boundary too (of differing strength
 
 ## Recipe 2 — container entry
 
+> CLI releases up to 0.44 refer to this recipe as "Recipe 3".
+
 Where Docker Desktop is available (including Windows), spawn the MCP server
 in a container instead — the MCP ecosystem's mainstream isolation pattern.
 The keys live in a named volume rather than in the desktop user's home, so

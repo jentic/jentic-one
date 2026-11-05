@@ -36,7 +36,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 		"the public catalog into your local registry, inspect operations, and execute\n" +
 		"against them.\n\n" +
 		"New here? If you're a person setting up a local agent, run `jentic setup`\n" +
-		"to set one up end to end (identity + skills + isolation). If you're an agent\n" +
+		"to set one up end to end (identity + skills). If you're an agent\n" +
 		"that just needs tokens for an existing identity, run `jentic register`. Then\n" +
 		"browse the public catalog with `jentic catalog`. To install and operate\n" +
 		"jentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use\n" +
