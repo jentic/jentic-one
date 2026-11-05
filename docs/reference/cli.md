@@ -2539,12 +2539,14 @@ jenticctl uninstall [flags]
 
 ```text
 uninstall deletes the contents of ~/.jentic (venv, source, data, logs,
-CA, etc.). Config files are preserved: each is renamed to a
+etc.). Config files are preserved: each is renamed to a
 '-old' backup so you can restore your settings later. Your agent
 identity (~/.config/jentic, ~/.local/state/jentic, and any legacy
 ~/.jentic/profiles) is ALSO preserved — reinstalling keeps you
 authenticated; run `jentic reset` to remove it. The ~/.jentic
-directory itself is kept.
+directory itself is kept. A local agent account an older release
+created (Unix user, ACLs, sudoers entry) is not touched either;
+`jentic reset` removes it too.
 
 For a Docker install the database lives in a named volume (SQLite data or
 the managed Postgres data dir), not under ~/.jentic. uninstall tears the

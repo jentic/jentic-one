@@ -209,7 +209,8 @@ follows the platform's native cache dir.
     cannot be removed, uninstall still finishes, reports it, and exits
     non-zero.
 - The agent identity (the XDG directories) survives `uninstall`; `jentic reset`
-  removes it.
+  removes it. A local agent account an older release created (Unix user, ACLs,
+  sudoers entry) is also left by `uninstall` and removed by `jentic reset`.
 
 ## Legacy `~/.jentic` profiles
 
