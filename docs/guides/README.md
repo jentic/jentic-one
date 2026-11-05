@@ -24,6 +24,9 @@ Connect agents:
 
 Operate the catalog:
 
+- [Import APIs](importing-apis.md) — from the public catalog (UI, CLI, MCP,
+  HTTP) or your own OpenAPI description; server-URL resolution, revisions
+  and promote, and import troubleshooting.
 - [Fix a spec with an overlay](overlays.md) — patching an imported API
   description without forking it.
 - [How credential resolution works](credentials-and-toolkits.md) — how

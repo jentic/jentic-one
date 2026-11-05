@@ -26,6 +26,9 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_permission_catalog.py`](test_permission_catalog.py) — the conceptual permission catalogue covers every permission in use
 - [`test_revision_pin_regex_matches_spec.py`](test_revision_pin_regex_matches_spec.py) — the broker revision-pin regex matches the OpenAPI spec
 - [`test_gateway_routes.py`](test_gateway_routes.py) — the split-deploy gateway (Docker + Helm) routes every backend path to a backend that serves it, carries no dead locations, and both configs share one map
+- [`test_ci_pass_markers.py`](test_ci_pass_markers.py) — `tools/ci_pass_markers.py` hashes the same input globs the CI paths filter declares, and computes the marker ids the workflow reads back
+- [`test_image_lock_install.py`](test_image_lock_install.py) — every Dockerfile that installs the wheel installs exactly `uv.lock` (hash-checked binary wheels, `--no-deps`, `pip check`)
+- [`test_testing_public_api.py`](test_testing_public_api.py) — the `jentic_one.testing` symbols the extending guide uses exist and are exported
 
 ## Module boundaries and layering
 
@@ -38,6 +41,10 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_no_process_local_state.py`](test_no_process_local_state.py) — no module-level mutable cache in the modules and packages holding cross-request state (it lives on `Context.state_backend` or in the database), and no `MemoryStateBackend` built outside the state factory; process-local exceptions are allowlisted with a reason
 - [`test_search_encapsulation.py`](test_search_encapsulation.py) — services and web never import search strategy modules directly
 - [`test_no_ml_in_core_surfaces.py`](test_no_ml_in_core_surfaces.py) — core surfaces never import ML embedding modules
+- [`test_search_filter_contract.py`](test_search_filter_contract.py) — every built-in search strategy applies the shared pin/active-state/api filter instead of restating it
+- [`test_mcp_handler_registration.py`](test_mcp_handler_registration.py) — no MCP handler is registered on the server after `build_mcp_server` returns
+- [`test_token_verifier_single_source.py`](test_token_verifier_single_source.py) — every control-plane process shape installs the same platform token-verifier chain
+- [`test_no_blocking_dns_in_async_egress.py`](test_no_blocking_dns_in_async_egress.py) — async egress code uses the async URL validators, never a blocking DNS resolve
 - [`test_error_handler_consistency.py`](test_error_handler_consistency.py) — MRO-walk error handling lives only in the shared module
 - [`test_error_modules.py`](test_error_modules.py) — error modules are named `errors.py`, the broker's error module holds only exception classes, and each operation-discovery error is defined once
 - [`test_admin_base_usage.py`](test_admin_base_usage.py), [`test_admin_secrets_isolation.py`](test_admin_secrets_isolation.py), [`test_admin_services_no_sqlalchemy.py`](test_admin_services_no_sqlalchemy.py), [`test_admin_services_style_a.py`](test_admin_services_style_a.py) — the admin surface's model base, secrets isolation, and service style
@@ -55,6 +62,9 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 
 - [`test_orm_conventions.py`](test_orm_conventions.py) — ORM model conventions
 - [`test_no_backref.py`](test_no_backref.py) — no SQLAlchemy `backref`
+- [`test_orm_utc_datetimes.py`](test_orm_utc_datetimes.py) — every ORM timestamp column reads back timezone-aware on every backend (`UTCDateTime`)
+- [`test_no_sqlalchemy_tuple_shims.py`](test_no_sqlalchemy_tuple_shims.py) — no SQLAlchemy typed-tuple shims (`Result.tuples()`, `.t`, `Row._tuple()`, `._t`)
+- [`test_repeated_failure_counter_threading.py`](test_repeated_failure_counter_threading.py) — every call site that runs repeated-failure detection passes the shared counter
 - [`test_keyset_helper.py`](test_keyset_helper.py) — keyset pagination predicates come from `shared/db/keyset.py`, never hand-written
 - [`test_no_direct_db.py`](test_no_direct_db.py) — model modules never import DB internals directly
 - [`test_no_manual_commit.py`](test_no_manual_commit.py) — no production `session.commit()`/`rollback()`
@@ -69,6 +79,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_no_static_secret_defaults.py`](test_no_static_secret_defaults.py) — no config secret ships a static default
 - [`test_secrets_are_secretstr.py`](test_secrets_are_secretstr.py) — secret-like config fields are `SecretStr`
 - [`test_oauth_client_secret_coupling.py`](test_oauth_client_secret_coupling.py) — the OAuth-client none↔NULL-secret-hash coupling stays pinned
+- [`test_oauth_app_registration_invariants.py`](test_oauth_app_registration_invariants.py) — `credentials.oauth_app_registration_id` is written only by the registration service or the connect-session flow
 - [`test_no_system_actor.py`](test_no_system_actor.py) — the removed "system" actor never comes back
 - [`test_origin_propagation.py`](test_origin_propagation.py) — every audit record carries an origin
 - [`test_instance_id_stable.py`](test_instance_id_stable.py) — the telemetry instance id is never regenerated

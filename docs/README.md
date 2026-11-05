@@ -54,6 +54,7 @@ Connect agents:
 
 Operate the catalog:
 
+- [Import APIs](guides/importing-apis.md) — from the public catalog or your own OpenAPI description; server URLs, revisions, troubleshooting
 - [Fix a spec with an overlay](guides/overlays.md) — patching imported API descriptions
 - [How credential resolution works](guides/credentials-and-toolkits.md) — how secrets stay server-side, encrypted, and audited
 
@@ -82,7 +83,8 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 ## Develop
 
 - [development/README.md](development/README.md) — the folder index
-- [Local development setup](development/local-setup.md)
+- [Local development setup](development/local-setup.md) — prerequisites, running the stack, common failures
+- [Testing](development/testing.md) — Python test tiers and generated-artifact drift checks
 - [Extending Jentic One](development/extending-jentic-one.md)
 - [Context and configuration](development/context-and-config.md)
 - [Releasing](development/releasing.md)

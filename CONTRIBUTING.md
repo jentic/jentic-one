@@ -63,36 +63,14 @@ Everything from here down is for code contributions.
 
 ## Getting started
 
-1. Install [uv](https://docs.astral.sh/uv/) — `brew install uv` (or see the uv docs).
-2. Clone the repository.
-3. Install dependencies and git hooks:
-
-   ```bash
-   make install
-   ```
-
-4. Run the checks to confirm your environment is set up:
-
-   ```bash
-   make check
-   ```
-
-   (`make check` ends with `score`, which needs Node/`npx` and network access;
-   the offline gates run first, so a missing Node only fails the last step.)
-
-5. Start the app locally:
-
-   ```bash
-   make start-app
-   ```
-
-   `make start-app` expects the database fixtures to be running. `make dev`
-   starts them, applies migrations, builds the UI if it is missing, then starts
-   the app — see [docs/development/local-setup.md](docs/development/local-setup.md).
+[docs/development/local-setup.md](docs/development/local-setup.md) is the
+on-ramp: prerequisites, `make install`, running the stack (`make dev`,
+`make start-local`, the Docker-free SQLite path), and common failures. Confirm your environment with
+`make check`. Running the tests is [docs/development/testing.md](docs/development/testing.md).
 
 See [deploy/README.md](deploy/README.md) for the build architecture and
-common build tasks, and [docs/development/](docs/development/README.md) for
-the contributor-facing guides (local setup, releasing, product scope).
+[docs/development/](docs/development/README.md) for the other
+contributor-facing guides.
 
 ## Development workflow
 
@@ -177,21 +155,13 @@ pre-commit hook: it trims the baseline and exits 3 so you can stage it.
 
 ## Testing
 
-Tests are split into tiers:
-
-```bash
-make test-unit          # logic with no external services
-make test-integration   # database lifecycle against PostgreSQL fixtures
-make test-arch          # layering and convention enforcement
-make test-smoke         # liveness against running services
-```
+[docs/development/testing.md](docs/development/testing.md) lists the Python
+test tiers, what each needs running, and the generated-artifact drift checks.
+In short:
 
 - Unit tests must not require external services.
-- Integration tests run against PostgreSQL fixtures (`make start-fixtures` /
-  `make stop-fixtures`).
-- If 5432 is taken, set `JENTIC_PG_PORT` (e.g. `JENTIC_PG_PORT=55432`) for both
-  `make start-fixtures` and the test run — the fixtures publish Postgres on it
-  and the integration and web harnesses connect to it.
+- Never mock the database — integration tests run against real PostgreSQL
+  fixtures (`make start-fixtures`) or SQLite (`make test-integration-sqlite`).
 - Use synthetic/fabricated data in tests — never real credentials or data.
 
 ## Architecture & conventions
