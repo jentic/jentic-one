@@ -170,7 +170,7 @@ The `jentic` agent CLI stores its state per the XDG Base Directory spec:
 
 ```
 ~/.config/jentic/config.yaml         # environments, identities, contexts, active_context, theme
-~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants
+~/.config/jentic/agent-account.yaml  # record of an agent account an earlier release created (read by `jentic reset`)
 ~/.local/state/jentic/               # per-identity key material and cached tokens (0600)
 ~/.cache/jentic/                     # disposable caches
 ```
