@@ -2404,6 +2404,24 @@
       "group": "Any authenticated actor",
       "implied_permissions": {},
       "method": "POST",
+      "operation_id": "explainHeldExecution",
+      "path": "/executions/holds/{held_execution_id}:explain",
+      "public": false,
+      "required_permissions": [],
+      "summary": "Explain a held execution",
+      "surface": "executions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {},
+      "method": "POST",
       "operation_id": "withdrawHeldExecution",
       "path": "/executions/holds/{held_execution_id}:withdraw",
       "public": false,
@@ -4884,5 +4902,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 175
+  "total": 176
 }

@@ -5025,6 +5025,14 @@ type ExistingCredentialResponse struct {
 	Type string `json:"type"`
 }
 
+// ExplainHeldExecutionRequest The filing agent's explanation of why it made a held call.
+//
+// Examples: {"reason":"Customer 4821 asked for a replacement order"}
+type ExplainHeldExecutionRequest struct {
+	// Reason One or two sentences on why the call is needed, shown to the reviewer as the agent's own claim. Control and text-direction characters are removed and the text is cut to 1024 characters.
+	Reason string `json:"reason"`
+}
+
 // GovernedHostsResponse The caller's governed host set (canonical order) with its change digest.
 //
 // **Hosts only, deliberately**: the set exists for interception scoping
@@ -5083,11 +5091,11 @@ type HealthResponse struct {
 
 // HeldExecutionDetailResponse A held execution with the agent context and the held request a reviewer decides on.
 //
-// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","agent_owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","request":{"body":"charge=ch_3MmlLrLkdIwHu7ix0snN0B15","body_truncated":false,"method":"POST","url":"https://api.stripe.com/v1/refunds?expand[]=charge"},"review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}
+// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","agent_owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","agent_reason":"Customer 4821 asked for a replacement order","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","request":{"body":"charge=ch_3MmlLrLkdIwHu7ix0snN0B15","body_truncated":false,"method":"POST","url":"https://api.stripe.com/v1/refunds?expand[]=charge"},"review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}
 type HeldExecutionDetailResponse struct {
 	// UnderscoreLinks HAL-style links for a held execution.
 	//
-	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
+	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
 	UnderscoreLinks HeldExecutionLinksResponse `json:"_links"`
 
 	// AgentId The agent whose call was held.
@@ -5104,6 +5112,11 @@ type HeldExecutionDetailResponse struct {
 	//
 	// Examples: usr_6968b3987ee4c3ec0b4ee3b9
 	AgentOwnerId *string `json:"agent_owner_id,omitempty"`
+
+	// AgentReason Why the agent says it made the call, in its own words, sent with `:explain` after the call was held. Unverified; null when the agent gave no reason.
+	//
+	// Examples: Customer 4821 asked for a replacement order
+	AgentReason *string `json:"agent_reason,omitempty"`
 
 	// ApiName Name of the API called.
 	//
@@ -5218,12 +5231,17 @@ type HeldExecutionDetailResponseExecutionStatus string
 
 // HeldExecutionLinksResponse HAL-style links for a held execution.
 //
-// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
+// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
 type HeldExecutionLinksResponse struct {
 	// Execution The execution record, once the approved call has run.
 	//
 	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Execution *string `json:"execution,omitempty"`
+
+	// Explain Explain why the agent made the call, for the reviewer. Present while it is pending and not yet explained; only the agent that filed it may use it.
+	//
+	// Examples: https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain
+	Explain *string `json:"explain,omitempty"`
 
 	// Result The call's result: the upstream response, or why it never ran. Present once the call has finished.
 	//
@@ -5243,11 +5261,11 @@ type HeldExecutionLinksResponse struct {
 
 // HeldExecutionListResponse A page of held executions.
 //
-// Examples: {"data":[{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_reason":"Customer 4821 asked for a replacement order","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type HeldExecutionListResponse struct {
 	// Data The page of held executions.
 	//
-	// Examples: [{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}]
+	// Examples: [{"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_reason":"Customer 4821 asked for a replacement order","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}]
 	Data []HeldExecutionResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -5263,17 +5281,22 @@ type HeldExecutionListResponse struct {
 
 // HeldExecutionResponse A call held for a human decision, and where it stands.
 //
-// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}
+// Examples: {"_links":{"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"},"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_reason":"Customer 4821 asked for a replacement order","api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10","created_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","decided_at":"2026-01-15T09:42:00Z","decided_by":"usr_6968b3987ee4c3ec0b4ee3b9","decision_reason":"Not this account","execution_id":"exec_6968b3982706c619fe73f0cf","execution_status":"held","expires_at":"2026-01-15T10:30:00Z","id":"held_6968b398a1c4e2d07b5f93c6","matched_rule_id":"apr_6968b398c4e1a2b3d5f60718","method":"POST","operation_id":"listCharges","path":"/v1/refunds","review_url":"https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6","state":"pending","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","updated_at":"2026-01-15T09:42:00Z"}
 type HeldExecutionResponse struct {
 	// UnderscoreLinks HAL-style links for a held execution.
 	//
-	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
+	// Examples: {"execution":"https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf","explain":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain","result":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result","self":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6","withdraw":"https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"}
 	UnderscoreLinks HeldExecutionLinksResponse `json:"_links"`
 
 	// AgentId The agent whose call was held.
 	//
 	// Examples: agnt_6968b3984d1c238dbe7e2e29
 	AgentId string `json:"agent_id"`
+
+	// AgentReason Why the agent says it made the call, in its own words, sent with `:explain` after the call was held. Unverified; null when the agent gave no reason.
+	//
+	// Examples: Customer 4821 asked for a replacement order
+	AgentReason *string `json:"agent_reason,omitempty"`
 
 	// ApiName Name of the API called.
 	//
@@ -10724,6 +10747,9 @@ type ConnectCredentialJSONRequestBody = ConnectRequestBody
 // DecideHeldExecutionJSONRequestBody defines body for DecideHeldExecution for application/json ContentType.
 type DecideHeldExecutionJSONRequestBody = DecideHeldExecutionRequest
 
+// ExplainHeldExecutionJSONRequestBody defines body for ExplainHeldExecution for application/json ContentType.
+type ExplainHeldExecutionJSONRequestBody = ExplainHeldExecutionRequest
+
 // IntegrationsConnectJSONRequestBody defines body for IntegrationsConnect for application/json ContentType.
 type IntegrationsConnectJSONRequestBody = IntegrationsConnectRequest
 
@@ -13892,6 +13918,34 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
 	DecideHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExplainHeldExecutionWithBody Explain a held execution
+	//
+	// Say why a held call is needed — the agent that filed it only, once.
+	//
+	// The reviewer sees the reason beside the request, as the agent's own claim.
+	// Any other caller gets ``404``, as if it did not exist; a call that is no
+	// longer pending, or one already explained, answers ``409``. A reason with no
+	// readable text left once cleaned answers ``400``.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+	ExplainHeldExecutionWithBody(ctx context.Context, heldExecutionId PathHeldExecutionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExplainHeldExecution Explain a held execution
+	//
+	// Say why a held call is needed — the agent that filed it only, once.
+	//
+	// The reviewer sees the reason beside the request, as the agent's own claim.
+	// Any other caller gets ``404``, as if it did not exist; a call that is no
+	// longer pending, or one already explained, answers ``409``. A reason with no
+	// readable text left once cleaned answers ``400``.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+	ExplainHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, body ExplainHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// WithdrawHeldExecution Withdraw a held execution
 	//
@@ -18216,6 +18270,54 @@ func (c *Client) DecideHeldExecutionWithBody(ctx context.Context, heldExecutionI
 // Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
 func (c *Client) DecideHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDecideHeldExecutionRequest(c.Server, heldExecutionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExplainHeldExecutionWithBody Explain a held execution
+//
+// Say why a held call is needed — the agent that filed it only, once.
+//
+// The reviewer sees the reason beside the request, as the agent's own claim.
+// Any other caller gets “404“, as if it did not exist; a call that is no
+// longer pending, or one already explained, answers “409“. A reason with no
+// readable text left once cleaned answers “400“.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+func (c *Client) ExplainHeldExecutionWithBody(ctx context.Context, heldExecutionId PathHeldExecutionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainHeldExecutionRequestWithBody(c.Server, heldExecutionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExplainHeldExecution Explain a held execution
+//
+// Say why a held call is needed — the agent that filed it only, once.
+//
+// The reviewer sees the reason beside the request, as the agent's own claim.
+// Any other caller gets “404“, as if it did not exist; a call that is no
+// longer pending, or one already explained, answers “409“. A reason with no
+// readable text left once cleaned answers “400“.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+func (c *Client) ExplainHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, body ExplainHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainHeldExecutionRequest(c.Server, heldExecutionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -26307,6 +26409,53 @@ func NewDecideHeldExecutionRequestWithBody(server string, heldExecutionId PathHe
 	return req, nil
 }
 
+// NewExplainHeldExecutionRequest calls the generic ExplainHeldExecution builder with application/json body
+func NewExplainHeldExecutionRequest(server string, heldExecutionId PathHeldExecutionId, body ExplainHeldExecutionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExplainHeldExecutionRequestWithBody(server, heldExecutionId, "application/json", bodyReader)
+}
+
+// NewExplainHeldExecutionRequestWithBody constructs an http.Request for the ExplainHeldExecution method, with any body, and a specified content type
+func NewExplainHeldExecutionRequestWithBody(server string, heldExecutionId PathHeldExecutionId, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "held_execution_id", heldExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/executions/holds/%s:explain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewWithdrawHeldExecutionRequest constructs an http.Request for the WithdrawHeldExecution method
 func NewWithdrawHeldExecutionRequest(server string, heldExecutionId PathHeldExecutionId) (*http.Request, error) {
 	var err error
@@ -31228,6 +31377,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
 	DecideHeldExecutionWithResponse(ctx context.Context, heldExecutionId PathHeldExecutionId, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideHeldExecutionHTTPResp, error)
+
+	// ExplainHeldExecutionWithBodyWithResponse Explain a held execution
+	//
+	// Say why a held call is needed — the agent that filed it only, once.
+	//
+	// The reviewer sees the reason beside the request, as the agent's own claim.
+	// Any other caller gets ``404``, as if it did not exist; a call that is no
+	// longer pending, or one already explained, answers ``409``. A reason with no
+	// readable text left once cleaned answers ``400``.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+	ExplainHeldExecutionWithBodyWithResponse(ctx context.Context, heldExecutionId PathHeldExecutionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainHeldExecutionHTTPResp, error)
+
+	// ExplainHeldExecutionWithResponse Explain a held execution
+	//
+	// Say why a held call is needed — the agent that filed it only, once.
+	//
+	// The reviewer sees the reason beside the request, as the agent's own claim.
+	// Any other caller gets ``404``, as if it did not exist; a call that is no
+	// longer pending, or one already explained, answers ``409``. A reason with no
+	// readable text left once cleaned answers ``400``.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+	ExplainHeldExecutionWithResponse(ctx context.Context, heldExecutionId PathHeldExecutionId, body ExplainHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainHeldExecutionHTTPResp, error)
 
 	// WithdrawHeldExecutionWithResponse Withdraw a held execution
 	//
@@ -42362,6 +42539,110 @@ func (r DecideHeldExecutionHTTPResp) ContentType() string {
 	return ""
 }
 
+type ExplainHeldExecutionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HeldExecutionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Conflict
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *InternalServerError
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ServiceUnavailable
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *UnexpectedError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExplainHeldExecutionHTTPResp) GetJSON200() *HeldExecutionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON409() *Conflict {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON500() *InternalServerError {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ServiceUnavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExplainHeldExecutionHTTPResp) GetApplicationproblemJSONDefault() *UnexpectedError {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExplainHeldExecutionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExplainHeldExecutionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExplainHeldExecutionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExplainHeldExecutionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type WithdrawHeldExecutionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -50994,6 +51275,46 @@ func (c *ClientWithResponses) DecideHeldExecutionWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseDecideHeldExecutionHTTPResp(rsp)
+}
+
+// ExplainHeldExecutionWithBodyWithResponse Explain a held execution
+//
+// Say why a held call is needed — the agent that filed it only, once.
+//
+// The reviewer sees the reason beside the request, as the agent's own claim.
+// Any other caller gets “404“, as if it did not exist; a call that is no
+// longer pending, or one already explained, answers “409“. A reason with no
+// readable text left once cleaned answers “400“.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+func (c *ClientWithResponses) ExplainHeldExecutionWithBodyWithResponse(ctx context.Context, heldExecutionId PathHeldExecutionId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainHeldExecutionHTTPResp, error) {
+	rsp, err := c.ExplainHeldExecutionWithBody(ctx, heldExecutionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExplainHeldExecutionHTTPResp(rsp)
+}
+
+// ExplainHeldExecutionWithResponse Explain a held execution
+//
+// Say why a held call is needed — the agent that filed it only, once.
+//
+// The reviewer sees the reason beside the request, as the agent's own claim.
+// Any other caller gets “404“, as if it did not exist; a call that is no
+// longer pending, or one already explained, answers “409“. A reason with no
+// readable text left once cleaned answers “400“.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /executions/holds/{held_execution_id}:explain (the `ExplainHeldExecution` operationId).
+func (c *ClientWithResponses) ExplainHeldExecutionWithResponse(ctx context.Context, heldExecutionId PathHeldExecutionId, body ExplainHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainHeldExecutionHTTPResp, error) {
+	rsp, err := c.ExplainHeldExecution(ctx, heldExecutionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExplainHeldExecutionHTTPResp(rsp)
 }
 
 // WithdrawHeldExecutionWithResponse Withdraw a held execution
@@ -61053,6 +61374,95 @@ func ParseDecideHeldExecutionHTTPResp(rsp *http.Response) (*DecideHeldExecutionH
 	}
 
 	response := &DecideHeldExecutionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HeldExecutionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalServerError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ServiceUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest UnexpectedError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExplainHeldExecutionHTTPResp parses an HTTP response from a ExplainHeldExecutionWithResponse call
+func ParseExplainHeldExecutionHTTPResp(rsp *http.Response) (*ExplainHeldExecutionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExplainHeldExecutionHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

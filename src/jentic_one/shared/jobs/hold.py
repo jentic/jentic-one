@@ -20,6 +20,7 @@ from urllib.parse import parse_qsl, urlencode
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
+from jentic_one.admin.core.schema.agent_explanations import AgentExplanation
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
@@ -28,6 +29,7 @@ from jentic_one.admin.repos.audit_repo import AuditRepository
 from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.events import emit_event_best_effort, summary_label, summary_text
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
+from jentic_one.shared.models.agent_explanations import ExplanationSubject
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.held_executions import HeldExecutionState
@@ -61,21 +63,43 @@ ENCRYPTED_PAYLOAD_KEY = "_enc"
 #: them in plaintext.
 INBOUND_COOKIE_PAYLOAD_KEY = "inbound_cookie_enc"
 
-#: What the agent is told to do with a held 202.
-HELD_AGENT_DIRECTIVE = (
+_HELD_SHOW_LINK = (
     "This call needs human approval. Most important: show the user the review_url, "
     "since they cannot approve it without that link, and end your turn so they see it. "
+)
+_HELD_ASK_REASON = (
+    "Before you end your turn, if you can, call explain_held_call once with "
+    "held_execution_id and one or two sentences on why you are making this call; the "
+    "reviewer sees it next to the request. "
+)
+_HELD_THEN_POLL = (
     "Do not call get_execution_result until the user replies; then call it once with "
     "held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is "
     "still held, show the user the review_url again and end your turn again. Do not "
     "re-send the call."
 )
 
+#: What the agent is told to do with a held 202. It is asked, once, to explain
+#: the call for the reviewer; the review link stays the first instruction.
+HELD_AGENT_DIRECTIVE = _HELD_SHOW_LINK + _HELD_ASK_REASON + _HELD_THEN_POLL
+
+#: The same, for a retry that joins a held call the agent already explained:
+#: the reason is given once, so it is not asked again.
+HELD_EXPLAINED_AGENT_DIRECTIVE = _HELD_SHOW_LINK + _HELD_THEN_POLL
+
 #: What the agent is told when a poll answers before the call has finished.
 STILL_HELD_AGENT_DIRECTIVE = (
     "This call is still waiting on human approval. Show the user the review_url again "
     "and end your turn. When they reply, call get_execution_result once with this "
     "held_execution_id. Do not re-send the call."
+)
+
+
+#: What the agent is told once its explanation of a held call is recorded.
+EXPLAINED_AGENT_DIRECTIVE = (
+    "The reviewer will see your reason next to the request. Show the user the "
+    "review_url if you have not yet, and end your turn. When they reply, call "
+    "get_execution_result once with this held_execution_id. Do not re-send the call."
 )
 
 
@@ -129,6 +153,8 @@ class HoldOutcome:
     expires_at: datetime
     execution_id: str | None
     joined: bool
+    #: A joined hold the agent has already explained (``agent_explanations``).
+    explained: bool = False
 
 
 def canonical_body(body: bytes | None) -> bytes:
@@ -227,12 +253,19 @@ async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
 
 async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:
     job = await session.get(Job, row.job_id)
+    explained = await session.scalar(
+        select(AgentExplanation.id).where(
+            AgentExplanation.subject_type == ExplanationSubject.HELD_EXECUTION.value,
+            AgentExplanation.subject_id == row.id,
+        )
+    )
     return HoldOutcome(
         job_id=str(row.job_id),
         approval_id=str(row.id),
         expires_at=row.expires_at,
         execution_id=job.execution_id if job is not None else None,
         joined=True,
+        explained=explained is not None,
     )
 
 

@@ -45,12 +45,15 @@ A held call answers **202 Accepted** with the held envelope:
   "_links": {
     "self": "https://<host>/executions/holds/held_…",
     "result": "https://<host>/executions/holds/held_…/result",
-    "withdraw": "https://<host>/executions/holds/held_…:withdraw"
+    "withdraw": "https://<host>/executions/holds/held_…:withdraw",
+    "explain": "https://<host>/executions/holds/held_…:explain"
   }
 }
 ```
 
-The agent shows the user `review_url`, then follows `_links.self`
+The agent shows the user `review_url`. If it can, it first tells the reviewer
+why it is making the call: `POST {"reason": "…"}` to `_links.explain` (see
+[The agent's reason](#the-agents-reason)). Then it follows `_links.self`
 (`GET /executions/holds/{held_execution_id}`) until `execution_status` says the
 call has finished, and reads `_links.result`
 (`GET /executions/holds/{held_execution_id}/result`):
@@ -82,6 +85,8 @@ credential itself.
 
 `jentic execute` prints the held envelope as its data, shows the review link
 on stderr and exits **3** (`TIMEOUT_PENDING`).
+`jentic executions explain <held_execution_id> "<reason>"` tells the reviewer
+why the call is needed.
 `jentic executions poll <held_execution_id> [--timeout 30s]` then waits for the
 decision and prints the outcome exactly as `execute` prints a call that ran at
 once: the upstream response (exit 0) or the denial or expiry (exit 2).
@@ -99,7 +104,8 @@ Both MCP servers relay the held envelope unchanged, so the agent gets the same
 - **Every client** gets the held result at once from `execute`. The directive
   asks the agent to show the user the review link and end its turn, then —
   once the user replies — call `get_execution_result` with the
-  `held_execution_id`.
+  `held_execution_id`. Before it ends its turn it may call
+  `explain_held_call` with the `held_execution_id` and a `reason`.
 - **`get_execution_result`** takes an optional `timeout` in seconds (default
   and maximum 30; `0` checks once): the server re-polls the held execution and
   returns as soon as the call has finished, or where it stands when the timeout
@@ -110,6 +116,23 @@ Both MCP servers relay the held envelope unchanged, so the agent gets the same
   asked to open the review page for the user. The client's accept only means
   the link was opened — it never decides the approval. The retry reads the
   job, waiting briefly for the decision.
+
+### The agent's reason
+
+The held envelope's directive asks the agent, once, to say why it is making
+the call. The agent answers with one or two sentences:
+
+- **HTTP:** `POST /executions/holds/{held_execution_id}:explain` with
+  `{"reason": "…"}` (the envelope's `_links.explain`).
+- **CLI:** `jentic executions explain <held_execution_id> "<reason>"`.
+- **MCP:** `explain_held_call` with `held_execution_id` and `reason`.
+
+Only the agent that made the call can explain it, once, while it waits for a
+decision. Control and text-direction characters are removed, and the text is
+cut to 1024 characters. The reviewer sees it next to the request, labelled as
+the agent's own claim; it is never sent to the upstream API. Every read of the
+held execution carries it as `agent_reason` (`null` when the agent gave none).
+Explaining is optional: a call with no reason is reviewed as before.
 
 ## Review a held call
 
@@ -141,11 +164,13 @@ checked per call.
 | `GET /executions/holds/{id}/result` | The filing agent, its owner, or an org admin | The outcome once finished (**409** before) |
 | `POST /executions/holds/{id}:decide` | The owner or an org admin (never an agent) | `{"decision": "approve" \| "deny", "reason": "…"}` |
 | `POST /executions/holds/{id}:withdraw` | The agent that filed it | Withdraw a pending held execution; it never runs |
+| `POST /executions/holds/{id}:explain` | The agent that filed it | `{"reason": "…"}`: tell the reviewer why, once, while it is pending |
 
-Deciding or withdrawing a settled held execution answers **409**. Each decision,
-withdrawal and expiry is audit-logged and emits an event
-(`execution.approval_requested` when filed, `execution.approval_decided`,
-`execution.approval_withdrawn`, `execution.approval_expired`).
+Deciding, withdrawing or explaining a settled held execution answers **409**,
+as does explaining one twice. Each decision, withdrawal, explanation and expiry
+is audit-logged and emits an event (`execution.approval_requested` when filed,
+`execution.approval_decided`, `execution.approval_withdrawn`,
+`execution.approval_reason_added`, `execution.approval_expired`).
 
 ## Lifecycle
 

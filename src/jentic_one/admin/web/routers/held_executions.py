@@ -1,10 +1,10 @@
-"""Held executions router — follow, decide, withdraw and collect calls held for approval.
+"""Held executions router — follow, decide, withdraw, explain and collect held calls.
 
 A held execution is a call a require-approval rule parked for a human. The
 routes take no ``jobs:*`` permission: who may see one is the service's
 visibility rule (the filing agent, the agent's owner, or ``org:admin``), who
 may decide one is that same rule minus every agent caller, and who may
-withdraw one is the agent that filed it. Jobs are how a held call runs, never
+withdraw or explain one is the agent that filed it. Jobs are how a held call runs, never
 part of this surface: every read goes through the held execution itself.
 """
 
@@ -24,6 +24,7 @@ from jentic_one.admin.services.schemas.held_executions import (
 from jentic_one.admin.web.deps import get_held_execution_service
 from jentic_one.admin.web.schemas.held_executions import (
     DecideHeldExecutionRequest,
+    ExplainHeldExecutionRequest,
     HeldExecutionDetailResponse,
     HeldExecutionLinksResponse,
     HeldExecutionListResponse,
@@ -59,7 +60,7 @@ _HeldExecutionId = Annotated[
 _FINISHED = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
 
 
-def _fields(view: HeldExecutionView, request: Request) -> dict[str, object]:
+def _fields(view: HeldExecutionView, request: Request, identity: Identity) -> dict[str, object]:
     base = f"/executions/holds/{view.id}"
     return {
         **view.model_dump(exclude={"job_id"}),
@@ -77,6 +78,14 @@ def _fields(view: HeldExecutionView, request: Request) -> dict[str, object]:
                 if view.state == HeldExecutionState.PENDING.value
                 else None
             ),
+            # Only the agent that filed the call may explain it, once.
+            explain=(
+                build_link(request, f"{base}:explain")
+                if view.state == HeldExecutionState.PENDING.value
+                and view.agent_reason is None
+                and identity.sub == view.agent_id
+                else None
+            ),
             execution=(
                 build_link(request, f"/executions/{view.execution_id}")
                 if view.execution_id
@@ -86,19 +95,21 @@ def _fields(view: HeldExecutionView, request: Request) -> dict[str, object]:
     }
 
 
-def _response(view: HeldExecutionView, request: Request) -> HeldExecutionResponse:
+def _response(
+    view: HeldExecutionView, request: Request, identity: Identity
+) -> HeldExecutionResponse:
     """Project a held execution view to its API response."""
-    return HeldExecutionResponse.model_validate(_fields(view, request))
+    return HeldExecutionResponse.model_validate(_fields(view, request, identity))
 
 
 def _detail_response(
-    view: HeldExecutionDetailView, request: Request
+    view: HeldExecutionDetailView, request: Request, identity: Identity
 ) -> HeldExecutionDetailResponse:
     """Project a held execution detail view to its API response."""
     held = view.request
     return HeldExecutionDetailResponse.model_validate(
         {
-            **_fields(view, request),
+            **_fields(view, request, identity),
             "agent_name": view.agent_name,
             "agent_owner_id": view.agent_owner_id,
             "request": (
@@ -145,7 +156,7 @@ async def list_held_executions(
         identity=identity, state=state, agent_id=agent_id, cursor=cursor, limit=limit
     )
     return HeldExecutionListResponse(
-        data=[_response(v, request) for v in page.data],
+        data=[_response(v, request, identity) for v in page.data],
         has_more=page.has_more,
         next_cursor=page.next_cursor,
     )
@@ -169,7 +180,7 @@ async def get_held_execution(
     outside the caller's visibility answers ``404``.
     """
     view = await svc.get(held_execution_id, identity=identity)
-    return _detail_response(view, request)
+    return _detail_response(view, request, identity)
 
 
 #: The result is one of two bodies, chosen by whether the call ran, so the
@@ -257,7 +268,7 @@ async def decide_held_execution(
         DecideInput(decision=body.decision, reason=body.reason),
         identity=identity,
     )
-    return _response(view, request)
+    return _response(view, request, identity)
 
 
 @router.post(
@@ -279,4 +290,27 @@ async def withdraw_held_execution(
     admins use ``:decide`` with ``deny`` instead.
     """
     view = await svc.withdraw(held_execution_id, identity=identity)
-    return _response(view, request)
+    return _response(view, request, identity)
+
+
+@router.post(
+    "/executions/holds/{held_execution_id}:explain",
+    summary="Explain a held execution",
+    responses=with_responses(not_found(), conflict()),
+)
+async def explain_held_execution(
+    held_execution_id: _HeldExecutionId,
+    body: ExplainHeldExecutionRequest,
+    request: Request,
+    identity: Identity = get_current_identity(),
+    svc: HeldExecutionService = Depends(get_held_execution_service),
+) -> HeldExecutionResponse:
+    """Say why a held call is needed — the agent that filed it only, once.
+
+    The reviewer sees the reason beside the request, as the agent's own claim.
+    Any other caller gets ``404``, as if it did not exist; a call that is no
+    longer pending, or one already explained, answers ``409``. A reason with no
+    readable text left once cleaned answers ``400``.
+    """
+    view = await svc.explain(held_execution_id, body.reason, identity=identity)
+    return _response(view, request, identity)

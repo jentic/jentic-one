@@ -1,12 +1,14 @@
 """Hold service — list, read, decide on and withdraw held executions, and read their result.
 
 A hold is an execution a require-approval rule parked for a human, stored as an
-approval row over a held execution job. Visibility follows ``build_access_filters``:
-``org:admin`` sees every hold, a user sees holds filed by agents they own, an
-agent sees its own. Deciding needs that same reviewer visibility — the agent's
-owner or an ``org:admin``; an ownerless agent's holds are admin-only — and is
-refused outright for any agent caller, whatever its scopes. Withdrawing is open
-only to the identity that filed the hold.
+approval row over a held execution job. The agent that filed a pending hold
+may explain it once; every read of the hold carries that explanation.
+Visibility follows ``build_access_filters``: ``org:admin`` sees every hold, a
+user sees holds filed by agents they own, an agent sees its own. Deciding
+needs that same reviewer visibility — the agent's owner or an ``org:admin``;
+an ownerless agent's holds are admin-only — and is refused outright for any
+agent caller, whatever its scopes. Withdrawing and explaining are open only to
+the identity that filed the hold.
 
 The holds routes take no ``jobs:*`` permission, so the service reads a hold's
 job only through ``JobRepository.get_held_execution`` and
@@ -24,17 +26,24 @@ import structlog
 
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
-from jentic_one.admin.repos import AgentRepository, AuditRepository, JobResultRepository
+from jentic_one.admin.repos import (
+    AgentExplanationRepository,
+    AgentRepository,
+    AuditRepository,
+    JobResultRepository,
+)
 from jentic_one.admin.repos.held_execution_repo import HeldExecutionRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.errors import (
     HeldExecutionAlreadyDecidedError,
+    HeldExecutionAlreadyExplainedError,
     HeldExecutionForbiddenError,
     HeldExecutionJobNotHeldError,
     HeldExecutionNotFoundError,
     HeldExecutionResultExpiredError,
     HeldExecutionResultNotReadyError,
+    InvalidInputError,
 )
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.schemas.held_executions import (
@@ -44,6 +53,7 @@ from jentic_one.admin.services.schemas.held_executions import (
     HeldRequestView,
 )
 from jentic_one.admin.services.schemas.jobs import JobResultView
+from jentic_one.shared.agent_text import clean_agent_text
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -55,6 +65,7 @@ from jentic_one.shared.jobs.hold import (
 )
 from jentic_one.shared.jobs.wakeup import notify_on_commit
 from jentic_one.shared.models.actors import ActorType
+from jentic_one.shared.models.agent_explanations import ExplanationSubject
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.held_executions import ApprovalDecision, HeldExecutionState
@@ -69,6 +80,9 @@ _MAX_REVIEW_BODY_BYTES = 64 << 10
 #: A hold's call has a result once its job is completed, or failed with a
 #: recorded problem (a denied or expired approval, or a run-time refusal).
 _RESULT_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
+
+#: The subject type a held execution's explanation is stored under.
+_HELD = ExplanationSubject.HELD_EXECUTION.value
 
 
 def _execution_status(job_status: str | None) -> str | None:
@@ -112,10 +126,18 @@ class HeldExecutionService:
                 [r.job_id for r in rows[:limit]],
                 filters=build_access_filters(identity, Job),
             )
+            # Read for the rows the caller already sees: an explanation is as
+            # visible as its hold.
+            reasons = await AgentExplanationRepository.texts_for(
+                session, _HELD, [r.id for r in rows[:limit]]
+            )
         has_more = len(rows) > limit
         data = [
             HeldExecutionView.model_validate(r).model_copy(
-                update={"execution_status": _execution_status(statuses.get(r.job_id))}
+                update={
+                    "execution_status": _execution_status(statuses.get(r.job_id)),
+                    "agent_reason": reasons.get(r.id),
+                }
             )
             for r in rows[:limit]
         ]
@@ -132,7 +154,8 @@ class HeldExecutionService:
             job = await JobRepository.get_held_execution(
                 session, row.job_id, filters=build_access_filters(identity, Job)
             )
-        view = HeldExecutionView.model_validate(row)
+            reason = await AgentExplanationRepository.get_text(session, _HELD, row.id)
+        view = HeldExecutionView.model_validate(row).model_copy(update={"agent_reason": reason})
         return HeldExecutionDetailView(
             **view.model_dump(exclude={"execution_status"}),
             execution_status=_execution_status(str(job.status) if job is not None else None),
@@ -301,7 +324,10 @@ class HeldExecutionService:
                 update={
                     "execution_status": (
                         JobStatus.QUEUED.value if approve else JobStatus.FAILED.value
-                    )
+                    ),
+                    "agent_reason": await AgentExplanationRepository.get_text(
+                        session, _HELD, approval_id
+                    ),
                 }
             )
         logger.info(
@@ -377,12 +403,109 @@ class HeldExecutionService:
                 },
             )
             view = HeldExecutionView.model_validate(updated).model_copy(
-                update={"execution_status": JobStatus.CANCELLED.value}
+                update={
+                    "execution_status": JobStatus.CANCELLED.value,
+                    "agent_reason": await AgentExplanationRepository.get_text(
+                        session, _HELD, approval_id
+                    ),
+                }
             )
         logger.info(
             "held_execution_withdrawn",
             approval_id=approval_id,
             job_id=view.job_id,
             actor_id=identity.sub,
+        )
+        return view
+
+    async def explain(
+        self, approval_id: str, reason: str, *, identity: Identity
+    ) -> HeldExecutionView:
+        """Record why the filing agent made a pending held call — once.
+
+        Only the identity that filed the hold may explain it; any other caller
+        gets ``HeldExecutionNotFoundError``, as if the row did not exist. A
+        hold that is no longer pending, or past its window, gets
+        ``HeldExecutionAlreadyDecidedError``; one already explained gets
+        ``HeldExecutionAlreadyExplainedError``, so a reviewer never sees the
+        reason change under them. The text is cleaned first
+        (``clean_agent_text``); text with nothing readable left is
+        ``InvalidInputError``. The explanation is audit-logged by its length,
+        never its text, and emits ``execution.approval_reason_added``.
+
+        The hold's row is locked for the transaction: a decision, withdrawal or
+        expiry in flight either lands first, and this answers "already
+        settled", or waits until the explanation is in.
+        """
+        text = clean_agent_text(reason)
+        if text is None:
+            raise InvalidInputError("The reason has no readable text")
+        async with self._ctx.admin_db.transaction() as session:
+            now = await HeldExecutionRepository.now(session)
+            row = await HeldExecutionRepository.get_by_id(session, approval_id, for_update=True)
+            if row is None or row.created_by != identity.sub:
+                raise HeldExecutionNotFoundError(approval_id)
+            if row.state != HeldExecutionState.PENDING or row.expires_at <= now:
+                state = (
+                    row.state
+                    if row.state != HeldExecutionState.PENDING
+                    else HeldExecutionState.EXPIRED.value
+                )
+                raise HeldExecutionAlreadyDecidedError(
+                    f"Execution approval '{approval_id}' is already {state}"
+                )
+            if await AgentExplanationRepository.get_text(session, _HELD, approval_id):
+                raise HeldExecutionAlreadyExplainedError(approval_id)
+            created = await AgentExplanationRepository.create(
+                session,
+                subject_type=_HELD,
+                subject_id=approval_id,
+                agent_id=row.agent_id,
+                text=text,
+            )
+            if created is None:
+                # A concurrent explain won the subject's unique index.
+                raise HeldExecutionAlreadyExplainedError(approval_id)
+            statuses = await JobRepository.held_execution_statuses(
+                session, [row.job_id], filters=build_access_filters(identity, Job)
+            )
+            agent = await AgentRepository.get_by_id(session, row.agent_id)
+            await AuditRepository.record(
+                session,
+                action=AuditAction.EXPLAIN,
+                target_type=AuditTargetType.HELD_EXECUTION,
+                target_id=approval_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                after={"reason_length": len(text)},
+            )
+            await emit_event_best_effort(
+                session,
+                type=EventType.EXECUTION_APPROVAL_REASON_ADDED,
+                severity=EventSeverity.INFO,
+                summary=held_call_summary(
+                    agent_name=agent.name if agent is not None else None,
+                    agent_id=row.agent_id,
+                    method=row.method,
+                    path=row.path,
+                    outcome="explained why",
+                ),
+                job_id=row.job_id,
+                created_by=row.agent_id,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={"held_execution_id": approval_id, "agent_id": row.agent_id},
+            )
+            view = HeldExecutionView.model_validate(row).model_copy(
+                update={
+                    "execution_status": _execution_status(statuses.get(row.job_id)),
+                    "agent_reason": text,
+                }
+            )
+        logger.info(
+            "held_execution_explained",
+            approval_id=approval_id,
+            actor_id=identity.sub,
+            reason_length=len(text),
         )
         return view

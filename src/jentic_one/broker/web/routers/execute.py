@@ -128,6 +128,7 @@ from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     HELD_AGENT_DIRECTIVE,
+    HELD_EXPLAINED_AGENT_DIRECTIVE,
     INBOUND_COOKIE_PAYLOAD_KEY,
     PendingApprovalLimitError,
     file_hold,
@@ -1389,10 +1390,16 @@ async def _handle_hold(
         agent_directive=held_execution_directive(
             held_execution_id=hold.approval_id,
             review_url=review_url,
-            instruction=HELD_AGENT_DIRECTIVE,
+            # A retry joining a call the agent already explained is not asked again.
+            instruction=(
+                HELD_EXPLAINED_AGENT_DIRECTIVE if hold.explained else HELD_AGENT_DIRECTIVE
+            ),
         ),
         links=HeldExecutionAcceptedLinks(
-            self_link=held, result=f"{held}/result", withdraw=f"{held}:withdraw"
+            self_link=held,
+            result=f"{held}/result",
+            withdraw=f"{held}:withdraw",
+            explain=None if hold.explained else f"{held}:explain",
         ),
     )
     return Response(

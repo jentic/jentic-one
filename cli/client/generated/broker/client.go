@@ -454,11 +454,22 @@ type HealthResponseStatus string
 // (`/executions/holds/{held_execution_id}`) to see where it stands;
 // once it has finished, `_links.result` returns the upstream response,
 // or the problem explaining why it never ran (denied, expired, or
-// refused at run time). To abandon the call, `POST` to
-// `_links.withdraw`. Never re-send the call: an identical call while
-// one is pending joins the same held execution.
+// refused at run time). To tell the reviewer why the call is needed,
+// `POST` a `reason` to `_links.explain`, once. To abandon the call,
+// `POST` to `_links.withdraw`. Never re-send the call: an identical
+// call while one is pending joins the same held execution.
 type HeldExecutionAcceptedResponse struct {
 	UnderscoreLinks struct {
+		// Explain `POST` a `reason` here to tell the reviewer why the call is
+		// needed, before it is decided (only the agent that made the
+		// call may, and only once). The reviewer sees it beside the
+		// request, as the agent's own claim. Null when a retry joins a
+		// call that is already explained.
+		//
+		//
+		// Examples: https://control.your-instance.example/executions/holds/held_abc123:explain
+		Explain *string `json:"explain,omitempty"`
+
 		// Result The call's outcome, once it has finished.
 		//
 		// Examples: https://control.your-instance.example/executions/holds/held_abc123/result

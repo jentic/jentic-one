@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DecideHeldExecutionRequest } from '../models/DecideHeldExecutionRequest';
+import type { ExplainHeldExecutionRequest } from '../models/ExplainHeldExecutionRequest';
 import type { HeldExecutionDetailResponse } from '../models/HeldExecutionDetailResponse';
 import type { HeldExecutionListResponse } from '../models/HeldExecutionListResponse';
 import type { HeldExecutionResponse } from '../models/HeldExecutionResponse';
@@ -170,6 +171,50 @@ export class HeldExecutionsService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/executions/holds/{held_execution_id}:decide',
+            path: {
+                'held_execution_id': heldExecutionId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                409: `Conflict`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Explain a held execution
+     * Say why a held call is needed — the agent that filed it only, once.
+     *
+     * The reviewer sees the reason beside the request, as the agent's own claim.
+     * Any other caller gets ``404``, as if it did not exist; a call that is no
+     * longer pending, or one already explained, answers ``409``. A reason with no
+     * readable text left once cleaned answers ``400``.
+     * @returns HeldExecutionResponse Successful Response
+     * @throws ApiError
+     */
+    public static explainHeldExecution({
+        heldExecutionId,
+        requestBody,
+    }: {
+        /**
+         * ID of the held execution.
+         */
+        heldExecutionId: string,
+        /**
+         * The filing agent's explanation of why it made a held call.
+         */
+        requestBody: ExplainHeldExecutionRequest,
+    }): CancelablePromise<HeldExecutionResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/executions/holds/{held_execution_id}:explain',
             path: {
                 'held_execution_id': heldExecutionId,
             },
