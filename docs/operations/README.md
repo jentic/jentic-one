@@ -9,6 +9,7 @@ and the compose-shaped runbook an agent can execute is
 | I want to… | Page |
 | ---------- | ---- |
 | Check it's healthy, watch logs, see what agents did | [Monitoring & logs](monitoring.md) |
+| Size memory and connection pools; know what may run more than once | [Scaling & tuning](scaling-and-tuning.md) |
 | Move to a new release | [Upgrades](upgrades.md) — the contract; [Upgrade notes](upgrade-notes.md) — what changes in each release |
 | Survive a disk failure or a bad migration | [Backup & restore](backup-restore.md) |
 | Fix something that's broken | [Troubleshooting](troubleshooting.md) — the common symptoms, each linking to its fix |
