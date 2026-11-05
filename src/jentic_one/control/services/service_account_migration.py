@@ -100,8 +100,8 @@ _MIGRATED_NOW = frozenset({"migrated", "migrated-disabled"})
 
 _RETIREMENT_RERUN_STEP = (
     "Nothing was swept or dropped. Fix the listed rows, then re-run "
-    "`python -m jentic_one.migrations.run` (safe to repeat). See 'Upgrading to "
-    "0.41.0' in docs/development/releasing.md."
+    "`python -m jentic_one.migrations.run` (safe to repeat). See "
+    "docs/operations/upgrade-notes.md (0.41.0)."
 )
 
 

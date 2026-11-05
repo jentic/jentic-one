@@ -40,10 +40,15 @@ There are two structurally different moves, and they are **not** equally powerfu
 
 - **Isolate the *agent*** (own OS user or container) — the agent can't reach
   `~/.jentic`, the DB, *or* the operator's browser profile. Closes AP-1
-  through AP-3 outright; AP-4 (the agent's *own* token reused off-host) is
-  neutralized not by the uid boundary but by the token contract — short-lived
-  opaque tokens, redeemable only at this loopback-bound instance, are
-  worthless off the network (see the
+  through AP-3 outright. It cannot close AP-4 (the agent's *own* key or token
+  reused off-host): the agent must read its own credentials. AP-4 is only
+  bounded — access tokens are opaque, stored hashed, and expire after
+  `auth.access_ttl_seconds` (default 1 hour; refresh tokens 7 days), and carry
+  only the agent's scopes; but the agent's signing key is long-lived and mints
+  new tokens until the agent is disabled or archived, or its JWKS is replaced
+  (revoking its API key does not stop it). `jenticctl install` binds the
+  instance to `127.0.0.1` by default; the server's own default bind is `0.0.0.0`, and any exposure
+  beyond loopback widens AP-4 (see the
   [residual risks](local-agent-isolation.md#what-this-model-does-not-protect--residual-risks)). This is the
   real fix.
 - **Isolate *Jentic One*** (own user / separate host) — closes AP-1/AP-2, but the

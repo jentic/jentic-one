@@ -3,9 +3,9 @@
 Jentic One deployments can serve MCP directly over HTTP: a **stateless
 Streamable HTTP endpoint at `/mcp`** on the control plane (MCP spec revision
 2026-07-28). It exposes the same tool surface as the local `jentic mcp` stdio
-server — the nine tools pinned in
+server — the tools pinned in
 [`docs/reference/mcp-tools.json`](../reference/mcp-tools.json) (`search_apis`,
-`execute`, `import_api`, …) — and the two transports
+`execute`, `import_api`, …), minus the stdio-only `get_started` — and the two transports
 are contract-tested against each other, so an agent gets identical envelopes
 whichever one its runtime speaks.
 

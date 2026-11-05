@@ -132,41 +132,12 @@ telemetry:
   enabled: true
 ```
 
-**Connection-pool sizing:** each process holds up to `pool_max` connections
-per DB at steady state, plus 10 overflow per pool under burst, and **both**
-the app and broker containers open all three pools — the example above holds
-(20+15+10) × 2 = **90 server connections** at steady state, and up to
-**150** if every pool bursts into its overflow. Size against
-your instance's `max_connections` (managed-PG entry tiers are often ~100) or
-front Postgres with a pooler like pgbouncer.
-
-**Connection health checks:** by default a pool checkout pings the
-connection (`pool_pre_ping: true`) once it has sat idle in the pool for at
-least `pool_pre_ping_idle_s: 1.0` seconds (active checkouts within that
-window skip the wire ping unless the driver connection is already closed)
-and transparently replaces one that died while idle, pooled connections are
-recycled once they are 30 minutes old (`pool_recycle_s: 1800`), and TCP
-keepalive is enabled on every connection. On asyncpg the ping costs three
-round trips (`BEGIN`, `;`, `ROLLBACK`) when it runs; setting
-`pool_pre_ping_idle_s: 0` pings on every checkout, and `pool_pre_ping: false`
-disables pre-ping altogether. Keep `pool_recycle_s` below the shortest idle
-timeout on the path (Postgres `idle_session_timeout`, pgbouncer/proxy, cloud
-NAT or load balancer) so connections are retired before anything in between
-drops them, lowering it from the default if any of those cut off sooner.
-`pool_recycle_s: 0` disables recycling. All three are ignored for SQLite.
-
-Recycling and keepalive do **not** cover a Postgres restart or failover
-(including managed-Postgres maintenance), a pgbouncer/proxy restart, or a
-backend terminated with `pg_terminate_backend`: every pooled connection is
-dead until it is next used. Without pre-ping, the first request on each pool
-in each process after such an event can fail with an HTTP `503`
-(`database_unavailable`); work that runs through the retrying transaction
-helper is re-run on a fresh connection instead, unless the connection drops
-while the commit is in flight, when the outcome is unknown and the `503` is
-returned without a re-run. Each server process holds its own pools, so the
-count scales with the number of processes. Only disable pre-ping where those
-events are rare and that error is acceptable. See
-[`databases.*.pool_pre_ping`](../reference/config.md#databases).
+**Connection pools:** both the app and broker containers open all three
+pools, so the example above holds (20+15+10) × 2 = 90 server connections at
+steady state and up to 150 under burst — size against your Postgres
+`max_connections` or front it with a pooler. Pre-ping, recycling and
+keepalive are on by default; how to size and tune them:
+[Scaling and tuning](../operations/scaling-and-tuning.md#database-connection-pools).
 
 Secrets go in an env file, `/etc/jentic/prod.env` (`chmod 600`, values
 unquoted — `docker --env-file` takes them literally):
@@ -236,74 +207,12 @@ auth:
         -----END EC PRIVATE KEY-----
 ```
 
-> **Warning: the default `memory` shared-state backend is bounded and fails
-> closed.**
-> `state.backend: memory` keeps `Idempotency-Key`
-> records, rate-limit buckets, circuit-breaker counters and the auth
-> surface's single-use markers in the process, with a fixed budget per key
-> namespace. It never evicts a live entry. When a namespace (or one caller's
-> share of it) is full, the request that needed the write gets a **503**
-> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
-> `Retry-After` of when its earliest entry expires.
->
-> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on any other
-> backend; the `idem` budget of 128 MiB; about
-> 1.2 KiB budgeted per record with typical response headers), one broker
-> process sustains about **30 idempotent requests per second**, and about
-> **3 per second per caller**, because each caller may hold at most 10% of
-> the budget. Above that, `Idempotency-Key` requests get 503. Stored
-> response bodies have their own 32 MiB `idem-body` budget. Past about
-> 5 req/s of 1 KiB bodies, replays omit the body
-> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
-> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
-> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
-> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
-> `Content-Location` and `Retry-After` first, so a replay may lack the
-> others.
->
-> Every other namespace defaults to 16 MiB, and all namespaces of the
-> backend together are capped at
-> `state.memory.max_total_bytes` (192 MiB), refused the
-> same way. The budgets track real memory to within about 15% (measured
-> with `tracemalloc`), so on the defaults the broker's state stays under
-> about 192 MiB on top of a ~130 MiB process baseline, which the broker
-> chart's 512Mi memory limit holds. The broker always runs as its own
-> process. A process builds one such backend, shared by every surface it
-> serves, so in the combined app the auth and control surfaces share one
-> backend and the cap covers the whole process.
->
-> The local login page stores one CSRF nonce per page load in `login-csrf`
-> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
-> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
-> nonces: twice what the default authorize rate limit lets one client network
-> request in that time. A client flooding the page gets 503 with `Retry-After` while
-> other clients still sign in; a flood spread over about 50 or more networks
-> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which a
-> shared backend or a larger budget absorbs. Behind a reverse proxy, list it in
-> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
-> proxy's address and its share.
->
-> To raise it: raise `state.memory.namespaces.idem`
-> (and its `max_owner_share`) together with `max_total_bytes`, or lower
-> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
-> as much as you raise the budgets.
->
-> **Password and OAuth client-secret memory (`admin.auth.argon2_max_concurrency`):**
-> in the `app` container, every concurrent password or OAuth client-secret
-> hash or verification allocates 64 MiB (argon2id with `memory_cost=65536`).
-> Concurrent argon2 operations are capped per process at
-> `admin.auth.argon2_max_concurrency`
-> (`JENTIC__ADMIN__AUTH__ARGON2_MAX_CONCURRENCY`, default `4`, capping peak
-> argon2 memory at `4 × 64 MiB = 256 MiB`); callers beyond the cap wait up to
-> `admin.auth.argon2_acquire_timeout_s`
-> (`JENTIC__ADMIN__AUTH__ARGON2_ACQUIRE_TIMEOUT_S`, default `5.0`s) for a slot
-> and then get a `503` with `Retry-After` instead of allocating another 64 MiB
-> buffer. Size the `app` container's `--memory` limit to cover the ~150 MiB
-> baseline, `state.memory.max_total_bytes` (192 MiB budgeted, ~220 MiB real),
-> and `64 MiB × argon2_max_concurrency` (at least `512m`, `1g` recommended at
-> the defaults), and add `64m` per slot if you raise
-> `argon2_max_concurrency`.
+**Sizing:** the default `memory` shared-state backend is bounded and answers
+`503` when full (about 30 `Idempotency-Key` requests per second per broker),
+and the `app` container needs at least `512m` (`1g` recommended) for its
+shared state and concurrent password hashing. The budgets, the formulas and
+the keys that raise them are in
+[Scaling and tuning](../operations/scaling-and-tuning.md).
 
 ## 3. Prepare the database
 
@@ -449,7 +358,7 @@ Three worked compose examples as an alternative to the two `docker run`s:
 ## 7. Connect the CLIs
 
 - **Admin host:** install `jenticctl` from the release archive
-  ([download + verify](../../cli/README.md#4-manual-download--verify)).
+  ([download + verify](cli.md#manual-download)).
 - **Every host using the instance:** install `jentic` the same way, then
   register — an operator approves each agent in the UI:
 

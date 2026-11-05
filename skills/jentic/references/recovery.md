@@ -278,7 +278,7 @@ conflicts. Read your access again and amend the request to fit. After the human 
 
 ## Quick Reference — MCP session
 
-The mount serves exactly twelve tools; the stdio server adds `get_started`.
+The mount serves exactly thirteen tools; the stdio server adds `get_started`.
 Each maps onto the loop — the one-line whens and the structural facts (the
 `instance` stamp; the CLI verbs that do **not** exist on the mount) are in
 `references/mcp.md`, which is the authoritative lane reference. In short:

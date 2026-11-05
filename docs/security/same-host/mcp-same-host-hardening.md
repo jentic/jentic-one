@@ -25,7 +25,7 @@ Two things to keep straight before choosing a recipe:
   shape: a command to spawn.
 
 Pick the lowest rung that matches the sensitivity of the credentials your
-instance holds (the general tier ladder is in [security.md](../README.md)).
+instance holds (the general tier ladder is in [Security overview](../README.md)).
 
 ## Recipe 1 — isolate the instance
 
@@ -53,8 +53,9 @@ and let the agent runtime spawn it through an argv-pinned `sudo` line. `sudo`
 inherits stdin/stdout, so the JSON-RPC pipe survives the user switch; the
 desktop side is left holding only a disposable spawn line, while the process
 and the context's key/token files live under the service user, unreadable by
-the desktop user. macOS/Linux only; this is a manual recipe today — a later
-release automates it as an optional `jentic setup` isolation step.
+the desktop user. macOS/Linux only. `jentic setup` offers to apply this recipe
+as an optional, consent-gated step (interactive sessions only); the steps below
+are the manual equivalent.
 
 1. **Create one service user per agent identity/runtime** (`_jentic-claude`,
    `_jentic-cursor`, …) — *not* a shared catch-all user, which would

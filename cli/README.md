@@ -1,690 +1,181 @@
 # Jentic CLI
 
-The Jentic CLI ships as **two Go binaries** built from one module, sharing the
-same [`internal/`](internal/) packages. Their state is split: `jenticctl` (the installer)
-keeps its install/lifecycle state under `~/.jentic`, while the `jentic` agent
-CLI stores its config/state in the **XDG layout** (`~/.config/jentic`,
-`~/.local/state/jentic` — see the XDG section below).
+The Jentic CLI ships as **two Go binaries** built from one module:
 
 - **`jenticctl`** — the **installer / lifecycle** CLI. It **installs and operates
   Jentic One locally**: stand up a deployment (source venv or Docker) and
-  manage the running app (health, start/stop, logs, updates, teardown).
+  manage the running app (health, start/stop, logs, updates, teardown). Its
+  state lives under `~/.jentic`.
 - **`jentic`** — the **agent** CLI. It manages **agent identities**,
   **discovers and imports APIs** from the public catalog, inspects operations,
-  and executes against them.
+  and executes against them. Its state lives in the [XDG layout](#xdg-layout).
+  It is self-contained: talking to a remote instance needs no `jenticctl` and
+  no local install.
 
-## What it does
+## Commands
 
 Run `jenticctl` or `jentic` (no args) for the grouped command list, or
-`<binary> <command> --help` for any command.
+`<binary> <command> --help` for any command. Every command, flag, and example
+is in the generated **[CLI reference](../docs/reference/cli.md)** (also served
+in the app at `/app/docs`).
 
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
 | `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up Jentic One locally (source venv or Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
-| `jentic` | **Identity & access** | `register` · `setup` · `logout` · `whoami` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, `whoami` to see your identity/permissions/bindings as the control plane does, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
-| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` · `connect` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + permission reference; `credentials` lists the credentials the control plane holds; `connect <vendor>` starts a vendor connect session (prints the approval URL a human approves — `--wait` polls it). |
-| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
-| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
+| `jentic` | **Identity & access** | `register` · `setup` · `logout` · `whoami` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `whoami` to see your identity/permissions/bindings as the control plane does. |
+| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` · `connect` · `access` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry. `endpoints` prints the platform's endpoint + permission reference; `credentials` lists the credentials the control plane holds; `connect <vendor>` starts a connect session a human approves; `access` shows and changes what your credential bindings let you do. |
+| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `executions` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their contract, and call them through the broker. `executions` follows held calls awaiting human approval; `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route. |
+| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` · `mcp` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check; `mcp` serves Jentic tools to a local MCP client. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
 | `jentic` | **Administration** | `admin` · `theme` | `admin config providers` manages the platform's credential-provider configuration; `theme` sets the persisted color theme. |
-
-The table mirrors the CLI's own command groups (what `jentic` with no args
-prints). The **complete command + flag reference** is generated from these
-cobra definitions (`make cli-reference`) and rendered in the platform docs —
-open `/app/docs` on your deployment (Reference → CLI). This README covers
-building, onboarding, and operating; it does not duplicate per-flag docs.
-
-**New here?** Two paths, depending on where the Jentic server lives:
-
-**Local install** (stand up Jentic One on your own machine, then connect to it):
-
-```bash
-# 1. Install the CLI + stand up the local stack. The one-liner installs the
-#    binaries and flows straight into the `jenticctl install` wizard, which
-#    brings the server up on http://127.0.0.1:8000:
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
-
-# 2. Connect this machine. `register` defaults to the local install
-#    (http://127.0.0.1:8000) and seeds the local broker for you, so just confirm:
-jentic register
-```
-
-(Setting up a local **coding agent**? Run `jentic setup` instead of `jentic
-register` — it does the registration above *plus* an isolated account and the
-agent skills.)
-
-**Remote server** (connect to a Jentic server someone else is running): you
-don't need `jenticctl` or a local install at all — the `jentic` binary is
-self-contained (it links none of the installer/lifecycle code; enforced by an
-arch test) and one command onboards it:
-
-```bash
-jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
-```
-
-Ask your operator for both URLs — the control plane and the broker often live on
-different hosts, and the CLI never derives one from the other.
 
 ## Install
 
-Fastest first. `jentic` (agent) and `jenticctl` (installer/server) are **separate
-downloads** — most users only need `jentic`, unless you're standing up the stack
-locally.
-
-### 1. Homebrew (macOS / Linux) — both binaries
-
 ```bash
-brew install --cask jentic/tap/jentic
+brew install --cask jentic/tap/jentic   # macOS / Linux — both binaries
+winget install Jentic.Jentic            # Windows — jentic only (or Scoop)
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
 
-The cask installs both `jentic` and `jenticctl`.
+The one-liner installs both binaries (verified download, or a from-source
+build when no release asset matches) and flows straight into the
+`jenticctl install` wizard. Manual download, signature verification, the
+installer's environment knobs, and air-gapped installs are in
+**[Installing the CLIs](../docs/installation/cli.md)**. `jenticctl` and
+`jentic run` are not supported on native Windows — use WSL
+([platform support](../docs/installation/platform-support.md)).
 
-### 2. Winget / Scoop (Windows) — agent CLI
+## Quick start
 
-```powershell
-winget install Jentic.Jentic
-
-# or, via our Scoop bucket (carries brand-new releases before winget review completes):
-scoop bucket add jentic https://github.com/jentic/scoop-bucket
-scoop install jentic
-```
-
-Both install `jentic.exe` only — `jenticctl` is not shipped for native Windows
-(its job is Docker/compose lifecycle; use WSL, see
-[docs/installation/windows.md](../docs/installation/windows.md)).
-
-### 3. One-line download (verified binary, no compiler)
+**Local install** — stand up Jentic One on this machine, then connect to it:
 
 ```bash
-# both binaries (default) — jentic (discover/run) + jenticctl (run the stack locally):
-JENTIC_INSTALL_METHOD=binary \
-  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
-
-# jentic only — for talking to a remote jentic server without the stack tooling:
-JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=jentic \
-  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+jentic register        # defaults to http://127.0.0.1:8000 and seeds the local broker
 ```
 
-This downloads the released archive for your OS/arch from the GitHub Releases
-page, **verifies its `sha256`** against `checksums.txt` (fail-closed — a
-mismatch aborts and installs nothing), and, when `cosign` is on your `PATH`,
-**verifies the release signature** too (absent `cosign` is a loud warning, never
-a silent skip). No Go toolchain, no clone, no compile.
-
-The default method is `auto`: it prefers this verified download when a matching
-release asset exists and **falls back to building from source** otherwise (forks,
-dev refs, or a ref with no published assets).
-
-Environment knobs:
-
-- `JENTIC_INSTALL_METHOD` — `auto` (default) · `binary` (force download; errors
-  if no asset) · `source` (force the from-source build).
-- `JENTIC_INSTALL_BINARIES` — `both` (default) · `jentic` (agent CLI only).
-- `JENTIC_NO_INSTALL=1` — install the binaries only; **skip** the
-  `jenticctl install` stack wizard (useful in CI or when you only want the CLI).
-- `GITHUB_TOKEN=ghp_xxx` — download/clone from a **private** fork (token needs
-  `repo` read scope); also used to build the server image from source.
-- `JENTIC_REF=v0.38.2` — pin the release tag to install (download mode) or the
-  ref (tag / branch / commit) to build (source mode).
-
-On a machine with **no interactive terminal** (piped `curl … | sh` in CI), the
-installer installs the binaries and then prints the exact non-interactive
-follow-up (`jenticctl install --defaults`) instead of blocking on a wizard.
-
-### 4. Manual download + verify
-
-Grab the archive for your platform from the
-[Releases page](https://github.com/jentic/jentic-one/releases), then verify and
-install it yourself. The full recipe — `cosign verify-blob` over
-`checksums.txt`, the sha256 check, the install step, and the separate
-`jenticctl` archive — is in
-[docs/installation/cli.md](../docs/installation/cli.md) (Manual download,
-Verify, and Install).
-
-**Windows.** `jentic` ships a Windows build as
-`jentic_${VER}_windows_amd64.zip` (and `_arm64`). Download it from the
-[Releases page](https://github.com/jentic/jentic-one/releases), unzip it, put
-`jentic.exe` on your `PATH`, and run `jentic doctor`. Note: `jenticctl` is **not**
-shipped natively for Windows, and `jentic run` (the local-agent sandbox) is
-**unsupported on native Windows** — use **WSL** for agent-sandbox and local-stack
-workflows.
-
-### 5. From source (contributors / advanced)
-
-Build from a checkout with `make build` (below), or force the installer's
-from-source path with `JENTIC_INSTALL_METHOD=source`.
-
-## Build from a checkout (developers)
+**Remote server** — connect to an instance someone else runs (ask your
+operator for both URLs):
 
 ```bash
-cd cli
-make build   # builds both binaries (jenticctl + jentic), stamping version/commit/date
-make help    # list all targets (test, lint, check, cov, ...)
-```
-
-`make build-ctl` / `make build-api` build a single binary; `make check` runs
-lint + vet + race tests.
-
-### Debugging the MCP server (Inspector loop)
-
-`jentic mcp` serves the agent tool surface over **stdio MCP** — stdin/stdout
-are the JSON-RPC wire, so you can't poke it from a shell. The fast debug loop
-is the official Inspector, a local web UI that spawns the server exactly like
-a real client would:
-
-```bash
-make build-api
-npx @modelcontextprotocol/inspector ./jentic mcp
-```
-
-It opens a browser page where you can run `tools/list`, call tools with
-hand-written arguments, read the `skill://` resources, and watch the raw
-JSON-RPC frames. Handy checks while developing:
-
-- `tools/list` works with **no config at all** (the "always boots"
-  invariant), and `get_started` diagnoses the machine's setup state.
-- `resources/read` on `skill://jentic` reports `one.jentic/source: hosted`
-  when the configured backend answers, `bundled` offline / pre-auth.
-- Flag behavior: `--read-only` withholds exactly `execute`;
-  `--exclude-tools` drops what you name.
-
-Server logs never touch stdout (it's the wire) — tail them with
-`tail -f ~/.local/state/jentic/logs/mcp.log`, or point `--log-file`
-somewhere else (pass flags after `jentic mcp` in the Inspector command line).
-
-The examples below assume both binaries are on your `PATH`:
-
-```bash
-make build && sudo install -m 0755 jenticctl jentic /usr/local/bin/
-# or, without installing, run them straight from the build directory:
-export PATH="$PWD:$PATH"
-```
-
-### Internal architecture
-
-Where to look when changing the CLI (each package's doc comment carries the
-detail):
-
-| Package | Owns |
-| ------- | ---- |
-| `internal/cli` | Command trees: `api` (the `jentic` tree), `ctl`/`ctlcmd` (`jenticctl`), `cmdcore` (shared command plumbing), `binder` (flag/form building from the OpenAPI spec), `apispec` (parsing the vendored control spec), `clictx`, `prompt`, `ux`, `localagentcmd`. |
-| `internal/agentops` | The UX-free execute/inspect core both binaries share. |
-| `internal/agentkey` | The agent's Ed25519 identity key: generation, storage, assertion signing. |
-| `internal/config` | Filesystem paths (XDG layout) and default settings. |
-| `internal/install` | The `jenticctl install` onboarding wizard. |
-| `internal/localagent` | OS-level primitives behind `jentic run` — see [its README](internal/localagent/README.md). |
-| `internal/mcpcfg` | Writing the `jentic mcp` server entry into supported agent configs. |
-| `internal/skillgen` | Rendering the canonical agent skill. |
-| `internal/serverinfo`, `internal/proc`, `internal/update`, `internal/theme` | Server probing, process helpers, `jenticctl update`, colour theme. |
-| `pkg/core`, `pkg/clitree` | The public composition seam for building your own CLI binary — see [Extending Jentic One](../docs/development/extending-jentic-one.md). |
-
-## Supported platforms
-
-The `jentic` and `jenticctl` binaries are pure-Go and build/run on **Linux**,
-**macOS** (Intel + Apple Silicon), and **Windows** (x86-64). Each release is
-smoke-tested end-to-end on all three (`ubuntu-24.04`, `macos-latest`,
-`windows-latest`) via the CI `e2e-install` matrix, which runs the built binaries'
-`--version` / `jentic doctor` / `jentic search --json` / `jenticctl doctor`
-contract on every OS.
-
-| Platform | `install.sh` | `jenticctl install` (server) | `jentic` agent CLI | `jentic run` isolation |
-| --- | --- | --- | --- | --- |
-| **Linux** (Ubuntu 24.04+) | ✅ | ✅ Docker + source | ✅ | ✅ (`bwrap` + userns/ACLs) |
-| **macOS** (latest) | ✅ | ✅ source; Docker via Colima/Docker Desktop | ✅ | ✅ (Seatbelt `sandbox-exec`) |
-| **Windows** 10/11 | ⚠️ **via WSL only** | via WSL | ✅ native | ❌ not supported |
-
-Notes:
-
-- **`install.sh` is bash-only** (macOS + Linux). On **native Windows** it exits
-  with a "run this inside WSL" message — there is no PowerShell installer. Windows
-  users run the prebuilt binaries directly (or build with `make build`); the agent
-  surface (`jentic ...`) works natively.
-- **`jentic run` (local-agent isolation) is Unix-only.** It uses Seatbelt on
-  macOS and `bwrap`+ACLs on Linux; there is no Windows sandbox analogue, so the
-  command refuses cleanly on Windows rather than running unconfined.
-
-## Usage
-
-```bash
-# Connect this machine to a Jentic install, browse the catalog, execute an operation.
-jentic register                                       # local install (defaults to 127.0.0.1, seeds the broker)
-# …or, for a remote server:
 jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
-jentic catalog
-jentic whoami                                         # a fresh agent is bound to no APIs
-jentic connect <vendor>       # start connecting a registry vendor's credential — a human
-                              # approves the printed approval_url; for anything else, ask your
-                              # operator to connect a credential and bind this agent (dashboard)
-jentic execute <operation>
 ```
 
-> **Remote install:** a remote control plane's broker usually lives on a
-> different host, so `jentic register` does **not** guess a `broker_url` for it
-> — pass `--broker-url` as above (ask your operator for it). Without a broker,
-> `jentic execute` fail-closes with `RESOLVE_FAILED` rather than dialing your
-> local default. Forgot it? Re-running register fills it in on the existing
-> environment:
->
-> ```bash
-> jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
-> ```
->
-> (`jentic env add <env> --url <URL> --broker-url <URL> --force` does the same
-> without re-registering.) See [Local setup](#local-setup) for the loopback
-> case, where `register` seeds the broker automatically.
+Setting up a local **coding agent**? Run `jentic setup` instead of
+`jentic register` — it registers the agent *plus* installs the agent skills and
+offers an isolated account ([local-agent guide](../docs/guides/local-agent.md)).
 
-## MCP server (`jentic mcp`)
-
-`jentic mcp` runs a Model Context Protocol server on stdin/stdout for a local
-MCP client (Claude Code, Cursor, …) to spawn. The session always boots —
-`tools/list` works with no or invalid configuration — and the `get_started`
-tool diagnoses this machine's setup state with the exact operator instruction
-for each gap. Context selection uses the root `--context` flag /
-`$JENTIC_CONTEXT`; server logs go to `--log-file` (default under the XDG state
-dir), never stdout.
-
-**Windows is in scope** for `jentic mcp`: the `jentic` binary ships natively
-for Windows (see [Supported platforms](#supported-platforms)) and the stdio
-server runs with it — the remaining work is verification, not porting (the
-stdio path and per-runtime config writers are to be verified on Windows —
-paths, `.exe` in written entries — before one-click client configs are
-published; WSL is documented only as an alternative).
-
-## Local setup
-
-Running against a **local** install (the stack `jenticctl install` stands up on
-`127.0.0.1`) has two rules that trip people up. Bare `jentic register` handles
-both for you (it defaults to `http://127.0.0.1:8000` and seeds the broker); the
-rules below matter only if you pass `--url` explicitly.
-
-1. **Use `127.0.0.1`, not `localhost`.** The token-exchange assertion's audience
-   is compared byte-for-byte against the backend's `auth.canonical_base_url`,
-   which is `http://127.0.0.1:8000` for a local install. Registering with
-   `--url http://localhost:8000` signs the wrong audience and every token
-   exchange fails with `invalid_grant` — even after you approve the agent. (The
-   prefilled default and bare `jentic register` already use `127.0.0.1`, so this
-   only bites if you type `localhost` yourself.)
-
-2. **The local broker is plain HTTP on port 8100.** `jentic execute` targets
-   the broker at `https://127.0.0.1:8100` by default; against a local http
-   broker that yields `server gave HTTP response to HTTPS client`. The
-   environment's `broker_url` overrides that default — and `jentic register`
-   seeds it automatically when the control-plane URL is loopback.
+`register` creates the environment, identity, and context, registers the key,
+prints the console approval link, waits for an operator to approve, and mints a
+token. Re-running is idempotent (`--force` re-registers from scratch; exit
+code 3 means "still pending — approve, then re-run"). Then:
 
 ```bash
-# One command connects this machine. `register` defaults to the local install
-# URL (http://127.0.0.1:8000) and seeds broker_url for you — just press Enter to
-# confirm the prefilled URL:
-jentic register
-
-# (Non-interactive / scripts: pass it explicitly.)
-jentic register --url http://127.0.0.1:8000
-
-# Approve the agent in the console, then:
-jentic doctor                 # identity + reachability + clock-skew report
-jentic catalog                # browse APIs
-jentic whoami                 # a fresh agent starts bound to no APIs
-jentic connect <vendor>       # start connecting a registry vendor's credential (a human
-                              # approves the approval_url); for anything else, ask your
-                              # operator to connect a credential and bind this agent (dashboard)
-jentic execute GET:https://api.example.com/v1/pets  # routed through http://127.0.0.1:8100 automatically
+jentic doctor             # identity + reachability + clock-skew report
+jentic catalog            # browse APIs
+jentic whoami             # a fresh agent is bound to no APIs
+jentic connect <vendor>   # start connecting a credential — a human approves the printed URL
+jentic execute GET:https://api.example.com/v1/pets
 ```
 
-If an environment already exists without a broker URL (e.g. created before this
-behavior, or pointing at a remote broker), set it explicitly:
+The worked end-to-end example is [First brokered call](../docs/guides/first-call.md).
+
+## Local vs remote installs
+
+The control plane (`--url`) and the broker (`--broker-url`, the data plane
+`jentic execute` goes through) are separate; the CLI never derives one from the
+other.
+
+- **Local** (the stack `jenticctl install` stands up): bare `jentic register`
+  gets both right. If you pass `--url` yourself, two rules apply:
+  1. **Use `127.0.0.1`, not `localhost`.** The token-exchange assertion's
+     audience is compared byte-for-byte against the backend's
+     `auth.canonical_base_url` (`http://127.0.0.1:8000` locally); `localhost`
+     signs the wrong audience and every token exchange fails with
+     `invalid_grant`, even after approval.
+  2. **The local broker is plain HTTP on port 8100.** `jentic execute`
+     defaults to `https://127.0.0.1:8100`, which against a local broker fails
+     with `server gave HTTP response to HTTPS client`. `register` seeds
+     `broker_url=http://127.0.0.1:8100` for a loopback URL.
+- **Remote**: the broker usually lives on another host, so `register` does
+  **not** guess it — pass `--broker-url`. Without one, `jentic execute`
+  refuses with `RESOLVE_FAILED` rather than dialing the local default.
+
+An environment missing its broker URL? Re-run `jentic register --broker-url <URL>`,
+or set it without re-registering:
 
 ```bash
 jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
 ```
 
-or override the broker per call: `jentic execute <op> --broker-scheme http --broker-host 127.0.0.1:8100`.
+or override per call: `jentic execute <op> --broker-scheme http --broker-host 127.0.0.1:8100`.
 
-## Onboarding (`jenticctl install`)
-
-`jenticctl install` is an interactive wizard (colored, keyboard-selectable menus
-with sensible defaults) that helps you stand up the **Jentic One app**. It asks
-how you want to deploy and configure the platform, **generates** a
-`jentic-one.yaml`, and then performs the install for you — either a local
-virtualenv (the **Run locally** path) or a containerized docker-compose stack
-(the **Run in Docker** path).
-
-**Unattended (CI / scripted):** the wizard is a TTY-only TUI, so for
-non-interactive installs pass `--defaults` (take the wizard's defaults — Docker +
-Postgres, loopback — as-is) or `--answers <file>` (overlay a YAML answers file on
-top of those defaults; unlisted keys keep the default). Both skip the wizard and
-are held to the exact same field validators, so a headless install can't produce
-a config the wizard would have rejected. Example answers file:
-
-```yaml
-# answers.yaml — only the fields you want to override; the rest keep defaults.
-bind_host: 127.0.0.1
-app_port: "18000"
-broker_port: "18100"
-database: postgres
-```
+**File-less mode (orchestrators).** An orchestrator that injects credentials can
+skip the config file entirely — nothing is read from or written to disk:
 
 ```bash
-jenticctl install --defaults --no-wizard          # zero-prompt default install
-jenticctl install --answers answers.yaml --no-wizard
+export JENTIC_BASE_URL=https://jentic.example.com             # control plane
+export JENTIC_BEARER_TOKEN=<token minted for this agent>     # never persisted
+export JENTIC_BROKER_URL=https://broker.jentic.example.com   # required for execute on a remote install
 ```
 
-Everything `jenticctl` owns (plus the legacy `jentic` store read only by
-`migrate`) is rooted under `~/.jentic`:
+## Environments, identities, and contexts
 
-```
-~/.jentic/
-├── jentic-one.yaml      # generated app config (this wizard)
-├── docker-compose.yaml  # generated stack (Run in Docker path only)
-├── config.yaml          # legacy CLI settings (base_url, default_profile) — read only by `migrate`
-├── data/                # local databases (SQLite files)
-└── logs/                # log output
-```
-
-```bash
-# Run the wizard (writes ~/.jentic/jentic-one.yaml by default)
-jenticctl install
-
-# Write the config somewhere else
-jenticctl install --out ./config/my-install.yaml
-```
-
-The wizard collects, with defaults:
-
-- **Deployment** — run from source (uv) or in Docker (docker compose); combined
-  vs parts topology.
-- **Database** — SQLite (no extra services) or PostgreSQL; connection
-  details for Postgres, or the data directory for SQLite.
-- **Surfaces** — which `apps` to enable (registry / admin / control / auth /
-  broker).
-- **Server** — bind host + port (the backend derives its public origin — OAuth callback, issuer, token audience — from these; `server.public_base_url` is written only for an explicit base URL or a non-loopback Docker publish).
-- **Runtime** — debug toggle + log level.
-- **Observability** — metrics + tracing exporters.
-
-For the **Run locally** path the wizard performs a real install once the config
-is written:
-
-0. **Preflight** — checks the required tools are on `PATH` before doing any work
-   (`uv` always; `git` when the source must be cloned). It prints a checklist
-   with versions and aborts with install hints if anything required is missing.
-   Requirements are defined per path in `requirementsFor`
-   ([`internal/install/preflight.go`](internal/install/preflight.go)) so it's
-   easy to add more.
-1. **Build** a virtualenv at `~/.jentic/venv` and install `jentic-one` (editable)
-   into it. The source is repo-aware:
-   - **Inside a jentic-one checkout** (detected by walking up for `pyproject.toml`
-     + `src/jentic_one`): installs from your local source.
-   - **Outside the repo**: clones
-     [`github.com/jentic/jentic-one`](https://github.com/jentic/jentic-one) into
-     `~/.jentic/src` first, then installs from there.
-2. **Migrate** — runs `jentic_one.migrations.run` with the venv interpreter
-   against your generated config, creating the database schema (the SQLite files
-   live under `~/.jentic/data/`). For Postgres, if the database isn't reachable
-   yet the wizard warns and leaves the migrate command in the next steps instead
-   of failing the whole install.
-3. **Start the app (background)** — once migrations are applied, the wizard
-   launches `~/.jentic/venv/bin/python -m jentic_one` detached, capturing its
-   console output to `~/.jentic/logs/app.log` with the PID in `~/.jentic/app.pid`.
-   It watches the first couple of seconds for an early crash; if the app stays up
-   the summary shows the PID plus how to view logs (`jenticctl logs -f`) and stop it
-   (`jenticctl stop`). A failure to start is non-fatal — the install is complete and
-   the manual start command is left in the next steps. Pass `--no-start` to skip
-   this.
-
-### Logs (`jenticctl logs`)
-
-`jenticctl logs` tails the app's captured console output at `~/.jentic/logs/app.log`.
-
-```bash
-jenticctl logs              # last 200 lines
-jenticctl logs -f           # follow (stream new lines)
-jenticctl logs -n 50        # last 50 lines
-jenticctl logs --json       # the structured JSON-lines sink (if enabled)
-jenticctl logs --path       # print the resolved log file path and exit
-```
-
-The **Logging** section of the install wizard controls the app's file sink
-(`logging.file_enabled`): when enabled it writes one JSON object per line to
-`~/.jentic/logs/<file_name>` (default `app.jsonl`) in addition to stdout.
-`jenticctl logs --json` reads that structured file, resolving its exact path from
-the generated config.
-
-For the **Run in Docker** path the wizard performs an equivalent install:
-
-0. **Preflight** — checks `docker` is on `PATH` (plus `git` when the source must
-   be cloned to build the image).
-1. **Get the app image.** By default the wizard **pulls the published, signed
-   image** (`ghcr.io/jentic/jentic-one-app`, version-matched to the CLI) — no
-   local build. `--build-local` builds `jentic-one/app:jentic-cli` from your
-   checkout instead (auto-selected inside a jentic-one source tree or with
-   `$JENTIC_SRC`; the shared `python-base` stages are built first); `--ref`
-   builds a specific branch/tag/commit; `--image-tag` pins a tag or
-   `@sha256:` digest.
-2. **Write** `~/.jentic/docker-compose.yaml` (app + a managed Postgres
-   when you choose Postgres) with your generated config mounted read-only at
-   `/etc/jentic/jentic-one.yaml`. The config is rendered with container-aware
-   values (bind `0.0.0.0`, Postgres host `db`, SQLite under `/data`, logs under
-   `/logs`); `JENTIC__APPS` is set from your selected surfaces. SQLite databases
-   live in a Docker **named volume** (`jentic-data`), not a host bind mount —
-   Docker Desktop's file sharing doesn't support the locking SQLite needs, which
-   otherwise surfaces as `disk I/O error`.
-3. **Migrate** in a one-shot container
-   (`docker compose run --rm app python -m jentic_one.migrations.run`). For
-   Postgres, compose starts and health-waits the db first.
-4. **Start the stack** — `docker compose up -d` (unless `--no-start`). Manage it
-   afterwards with `jenticctl start` / `jenticctl stop`, which detect the generated
-   compose file and drive `docker compose up -d` / `down`.
-
-Use `--skip-build` to only generate config (no image build, compose file,
-migrate, or start) and print the next-step commands.
-
-Secrets (the credential-encryption key, admin JWT secret, invite pepper, connect
-state secret, and, for a managed Docker Postgres, a random database password)
-are generated on first install and written into the config with `0600` perms —
-never prompted for. On reinstall they are **reused** from your existing config
-by default so previously-encrypted data stays readable; pass `--fresh-secrets`
-to deliberately rotate them (see "Reinstalling over existing data" below).
-There is **no default admin credential**: after install, `jenticctl setup` (or
-the guided wizard) creates the first administrator account with a password you
-choose — nothing pre-seeded, nothing to rotate.
-
-> **Local development only.** Both the generated `jentic-one.yaml` and the
-> `docker-compose.yaml` embed credentials (including the Postgres password) in
-> plain text — standard for a self-contained local stack. For any deployed
-> environment, do **not** ship these files: source secrets from Docker secrets,
-> Kubernetes secrets, or an external secret manager (the production path is
-> configured via Helm values under [`deploy/helm/values/`](../deploy/helm/values/), not this wizard).
-
-The generated file mirrors
-[`jentic_one.shared.config.AppConfig`](../src/jentic_one/shared/config/app.py). Since
-it lives under `~/.jentic` (not the cwd), point the app at it with
-`JENTIC_CONFIG_FILE=<path>` — the printed next-step commands already do this for
-you. SQLite databases default to `~/.jentic/data/`.
-
-### Uninstall (`jenticctl uninstall`)
-
-`jenticctl uninstall` wipes everything under `~/.jentic` (venv, source, data, logs)
-but **preserves your config**: each config file is renamed to a `-old` backup so
-you can restore it later. Your agent identity (`~/.jentic/profiles`) and the
-`~/.jentic` directory itself are kept; run `jentic reset` to remove the identity.
-
-```bash
-jenticctl uninstall            # prompts for confirmation
-jenticctl uninstall --yes      # skip the prompt
-jenticctl uninstall --dry-run  # show what would be removed; change nothing
-```
-
-After running, `~/.jentic` contains only the backups (plus `profiles/`):
-
-```
-~/.jentic/
-├── jentic-one-old.yaml   # was jentic-one.yaml
-└── config-old.yaml       # was config.yaml
-```
-
-#### Agent skills
-
-Skills written by `jentic skill init` / `jentic bootstrap` live outside
-`~/.jentic` (`~/.claude/skills/jentic/`, `~/.cursor/…`, `~/.hermes/…`,
-`~/.codex/AGENTS.md`, and project-scope `./AGENTS.md` blocks or
-`./.claude|.cursor|.hermes/skills/jentic/`). By default `uninstall` leaves them
-alone and lists the ones still installed, with the command to remove them.
-
-| Flag | Effect on skills |
-| ---- | ---------------- |
-| *(none)* | List remaining skills; change nothing |
-| `--remove-skills` | Also remove user-scope installs under your home directory |
-| `--purge` | Implies `--remove-skills` (user scope only), as well as deleting the Docker data volume |
-| `--remove-project-skills` | Also remove project-scope installs under the **current directory**; implies `--remove-skills` |
-| `--dry-run` | List what would be removed; change nothing |
-
-- `--purge` never touches the current directory. Project-scope installs are
-  found relative to the directory you run from, which may be a repo where the
-  skill is committed on purpose, so they need `--remove-project-skills`.
-- Uninstall lists the exact files before removing them, and asks first unless
-  `--yes` is given (including when `~/.jentic` is already gone).
-- Manually edited skills are kept and listed with a targeted
-  `jentic skill remove --operator <op> --skill <name> --scope <scope> --force`
-  command. A `SKILL.md` at a Jentic skill path that Jentic did not write (no
-  provenance) is labelled `(not written by Jentic)` and never removed.
-- A symlinked `AGENTS.md` is edited at the file it points to; the link stays.
-  At project scope the link (and any symlinked skill directory) is only
-  followed when it resolves inside the current directory and outside its git
-  metadata (`.git/`, or the gitdir a `.git` file names); one pointing
-  elsewhere, such as into your home directory or at `.git/config`, is refused
-  and left for you to edit by hand.
-- A skill target that is not a regular file (a FIFO, device or socket) is
-  never read or written.
-- Skills are removed only after the `~/.jentic` teardown succeeds. If a skill
-  cannot be removed, uninstall still finishes, reports it, and exits non-zero.
-- To clean up by hand at any time: `jentic skill remove --all` (add `--force`
-  for edited installs), run from the directory holding any project-scope
-  install.
-
-### Reinstalling over existing data
-
-On a Docker install `uninstall` **preserves** the database volume by default
-(the "reinstall reattaches your data" contract in `--keep-data`'s help), and
-a plain re-`install` never touches it. The next `jenticctl install` reuses
-secrets from an existing `jentic-one.yaml` at `--out` (or the
-`jentic-one-old.yaml` backup beside it) so the fresh config's encryption key
-matches the one that encrypted the credentials, invite pepper, OAuth tokens
-etc. in the preserved data:
-
-- Reused: `credentials.encryption` (whole keyset — a hand-rotated
-  `active_id: v2` + `v1`/`v2` layout survives verbatim), `admin.auth.jwt_secret`,
-  `admin.invite.pepper`, `credentials.connect.state_secret`,
-  `auth.id_signing`, `telemetry.instance_id`.
-- Not reused: wizard-owned settings (ports, backend, apps list, etc.) — the
-  operator may be legitimately changing them.
-- **Don't delete `jentic-one-old.yaml` by hand** if you plan to reinstall
-  and keep the data — that file holds the encryption key that makes the
-  preserved credentials decryptable.
-- Pass `--fresh-secrets` to `jenticctl install` for deliberate rotation
-  (invalidates existing sessions, invites, and stored ciphertexts).
-
-### Wizard structure
-
-The wizard is a **hub-and-spoke TUI** ([`internal/install/wizard.go`](internal/install/wizard.go),
-built on [bubbletea](https://github.com/charmbracelet/bubbletea) +
-[huh](https://github.com/charmbracelet/huh)): a deployment page, then a menu of
-configuration **sections** with a live detail pane, each drilling into a small
-form, ending in **Continue**.
-
-To onboard a new `AppConfig` option:
-
-1. Add a field to `Draft` in
-   [`internal/install/draft.go`](internal/install/draft.go) (with a default in
-   `NewDraft`).
-2. Add it to a `Section` in
-   [`internal/install/sections.go`](internal/install/sections.go): a huh field in
-   the section's `Groups` (use `WithHideFunc` for conditional fields) and a line
-   in its `Summary` for the detail pane. Add a whole new `Section` to the
-   `Sections` slice to create a new hub row.
-3. Map the field into the generated YAML in
-   [`internal/install/render.go`](internal/install/render.go).
-
-No changes to the command wiring are needed — the hub is built from the
-`Sections` registry automatically.
-
-## Agent identity & contexts (`jentic register`)
-
-The CLI's identity model has three small pieces, glued by one binding:
-
-- **Environment** — a Jentic install: its control-plane URL (and optionally a
-  broker URL). You'll usually have one; add more to talk to dev/staging/prod.
-- **Identity** — an actor (this agent). Its credential is an Ed25519 keypair
-  scoped **per environment** (or a `jak_*` API key).
-- **Context** — binds one environment + one identity (+ an interaction mode).
-  The **active context** is what every command acts through — switch context
-  and the whole CLI points somewhere else, atomically.
-
-You do **not** assemble that by hand. `jentic register` is the one onboarding
-command:
-
-```bash
-# Fresh machine → working setup, one command. Creates the environment,
-# identity and context, activates them, registers the key, waits for the
-# operator to approve, and mints a token. --broker-url points `jentic execute`
-# at the remote data plane (loopback installs seed it automatically).
-jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
-
-# Name things explicitly (defaults: identity = hostname, env = URL's first label)
-jentic register --url https://jentic.example.com --name crawler --env prod
-
-# With a context already active, re-register / resume that identity:
-jentic register
-
-# Fill in a missing broker on the active environment while re-registering:
-jentic register --broker-url https://broker.jentic.example.com
-
-# Interactive: bare `jentic register` on a fresh machine prompts for the
-# install URL (prefilled with the local default — just confirm after a local
-# install) + agent name (and the broker URL, for a remote install) and does
-# the rest.
-```
-
-Approval is a human, out-of-band step: `register` prints the console link
-(`{base}/app/agents/{id}`), polls, and continues automatically once an operator
-approves. Re-running is idempotent and resumable (`--force` re-registers from
-scratch; exit code 3 means "still pending — approve, then re-run").
-
-After onboarding:
-
-```bash
-jentic context view      # what am I pointing at?
-jentic doctor            # paths / identity / token / reachability self-check
-jentic catalog           # browse the API catalog
-```
-
-To work against several installs, add more environments and switch contexts:
+An **environment** is a Jentic install (control-plane URL, optional broker
+URL); an **identity** is an actor (this agent), with an Ed25519 keypair scoped
+per environment or a `jak_*` API key; a **context** binds one environment +
+one identity + an interaction mode. The active context is what every command
+acts through (`--context` > `$JENTIC_CONTEXT` > the persisted active context).
+To work against several installs:
 
 ```bash
 jentic env add staging --url https://staging.jentic.example.com --broker-url https://broker.staging.jentic.example.com
 jentic context create staging --env staging --identity crawler
 jentic context use staging
 jentic register          # register the identity's key with the new env
+jentic context view      # what am I pointing at?
 ```
 
-State lives in the XDG layout (see below): the config in
-`~/.config/jentic/config.yaml`, keys/tokens per (identity, environment) in
-`~/.local/state/jentic/` (0600).
+## Local install (`jenticctl install`)
 
-## XDG layout (`~/.config/jentic`) — where `jentic` keeps state
+`jenticctl install` is an interactive wizard that generates
+`~/.jentic/jentic-one.yaml` (`--out` writes elsewhere) and stands up the app as
+a local virtualenv (**Run locally**) or a docker-compose stack (**Run in
+Docker**, which pulls the published, signed image by default). For unattended
+installs pass `--defaults` (Docker + Postgres, loopback) or `--answers <file>`
+(a YAML file overlaid on those defaults); both are held to the wizard's
+validators. There is no default admin credential: `jenticctl setup` (or
+`jenticctl wizard`) creates the first administrator account.
+
+```
+~/.jentic/
+├── jentic-one.yaml      # generated app config
+├── docker-compose.yaml  # generated stack (Run in Docker only)
+├── data/                # local databases (SQLite files)
+└── logs/                # app.log (console) and the optional JSON-lines sink
+```
+
+`jenticctl logs` tails `~/.jentic/logs/app.log` (`-f` follow, `-n` lines,
+`--json` for the structured sink). The generated files embed secrets in plain
+text (`0600`) — fine for a local stack, never for a deployed one (use the
+[Helm values](../deploy/helm/values/) path). Secrets are generated on first
+install and **reused** on reinstall — from `jentic-one.yaml` or its
+`jentic-one-old.yaml` backup — so preserved data stays decryptable; don't
+delete the backup if you plan to reinstall over existing data, and pass
+`--fresh-secrets` only to rotate deliberately. What each install path does step
+by step is in [Installing the CLIs](../docs/installation/cli.md#what-jenticctl-install-does).
+
+## XDG layout
 
 The `jentic` agent CLI stores its state per the XDG Base Directory spec:
 
 ```
 ~/.config/jentic/config.yaml         # environments, identities, contexts, active_context, theme
-~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants (see docs/guides/local-agent.md)
-~/.local/state/jentic/               # per-identity key material and cached tokens
+~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants
+~/.local/state/jentic/               # per-identity key material and cached tokens (0600)
 ~/.cache/jentic/                     # disposable caches
 ```
 
-`config.yaml` declares
-**environments** (control-plane `base_url` and an optional `broker_url` — the
-latter is never derived from `base_url`, but `jentic register` seeds it for a
-loopback install), **identities** (agent keypairs), and **contexts** binding an
-environment + identity + mode, plus `active_context`. A local environment looks
-like:
+A local environment in `config.yaml` looks like:
 
 ```yaml
 environments:
@@ -693,58 +184,40 @@ environments:
     broker_url: http://127.0.0.1:8100  # data plane; http, seeded by register for loopback
 ```
 
-Inspect and edit it with `jentic context/env/identity` rather than by hand;
-`jentic context view` shows the resolved state. The standard `XDG_CONFIG_HOME`
-and `XDG_STATE_HOME` variables relocate the config and state directories (the
-XDG layout is enforced on every OS, including Windows, so paths stay
-predictable); the cache follows the platform's native cache dir.
+Edit it with `jentic context` / `env` / `identity` rather than by hand.
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` relocate the config and state
+directories (the layout is enforced on every OS, including Windows); the cache
+follows the platform's native cache dir.
 
-### File-less mode (orchestrators)
+## Uninstall
 
-An orchestrator that injects credentials can skip the config file entirely by
-setting environment variables — nothing is read from or written to disk:
+- `jenticctl uninstall` wipes `~/.jentic` (venv, source, data, logs) but keeps
+  each config file as a `-old` backup; `--dry-run` shows what would go, `--yes`
+  skips the prompt. A Docker install's database volume is preserved by
+  default so a reinstall reattaches it (`--purge` deletes it; interactively,
+  uninstall asks).
+- Agent skills (`~/.claude/skills/jentic/`, project `./AGENTS.md` blocks, …)
+  are listed, not removed, unless you pass `--remove-skills` (user scope; implied by `--purge`) or
+  `--remove-project-skills` (the current directory); edited skills are always
+  kept. `jentic skill remove --all` cleans them up at any time.
+  - A `SKILL.md` at a Jentic skill path with no Jentic provenance is labelled
+    `(not written by Jentic)` and never removed.
+  - A symlinked `AGENTS.md` is edited at the file it points to. At project
+    scope a link that resolves outside the current directory or into its git
+    metadata is refused and left for you to edit by hand.
+  - Skills are removed only after the `~/.jentic` teardown succeeds; if one
+    cannot be removed, uninstall still finishes, reports it, and exits
+    non-zero.
+- The agent identity (the XDG directories) survives `uninstall`; `jentic reset`
+  removes it.
 
-```bash
-export JENTIC_BASE_URL=https://jentic.example.com                # control plane
-export JENTIC_BEARER_TOKEN=<token minted for this agent>        # never persisted
-export JENTIC_BROKER_URL=https://broker.jentic.example.com      # required for execute on a remote install
-```
+## Legacy `~/.jentic` profiles
 
-`JENTIC_BROKER_URL` is the file-less counterpart of the environment's
-`broker_url`: without it, `jentic execute` against a remote `JENTIC_BASE_URL`
-fail-closes with `RESOLVE_FAILED` (it never falls back to the local default
-for a remote control plane). All three are required for a working remote
-data-plane loop; the control-plane commands need only the first two.
+A machine with a profile store from an older `jentic` CLI must run
+`jentic migrate` once: it copies the profiles into XDG contexts and leaves the
+legacy tree in place. See `jentic migrate --help`.
 
-## Appendix — the legacy `~/.jentic` store (pre-activation CLIs)
+## Contributing
 
-Machines with an existing `~/.jentic` profile store from a pre-activation CLI
-are **read-only** to this release until you run `jentic migrate`, which copies
-the profile(s) into the XDG context model (leaving `~/.jentic` intact apart
-from a `MIGRATED` marker). It also adopts a legacy local-agent
-`agent_account:` record from `~/.jentic/config.yaml` into
-`~/.config/jentic/agent-account.yaml` (as does the first
-`jentic run`/`jentic reset` write, so localagent keeps no state in
-`~/.jentic`). Until you migrate, non-exempt commands stop and point you at
-`jentic migrate`. There is no in-place V1 `register --profile` / `--base-url`
-flow; migrate first, then use the `context` / `env` / `identity` commands.
-
-```bash
-jentic migrate                       # copy legacy profiles → XDG contexts (named after each profile)
-jentic context list                  # see the migrated contexts
-jentic context use <name>            # activate one
-jentic doctor                        # verify identity + reachability
-```
-
-What `migrate` reads, all under `~/.jentic/` at `0600`:
-
-- `profiles/<name>/` — `profile.yaml` (base_url, agent identity, kid,
-  registration token), `agent.key` (Ed25519 PEM), `tokens.json` (cached
-  tokens).
-- `config.yaml` — legacy CLI settings (`base_url`, `default_profile`). Its
-  `broker:` block was a pre-V2 forward target and is ignored by V2
-  `jentic execute`, which reads the active environment's `broker_url` instead —
-  set it with `jentic env add <env> --url … --broker-url … --force`.
-
-The rest of `~/.jentic` belongs to `jenticctl`
-(see [Onboarding](#onboarding-jenticctl-install)).
+Building from a checkout, the MCP Inspector debug loop, the package map, and the
+install wizard's internals are in [Developing the CLI](../docs/development/cli.md).

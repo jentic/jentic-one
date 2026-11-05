@@ -48,7 +48,7 @@ historical shape (post ``h9c0d1e2f3a4`` lookup_hash, ``m4a5b6c7d8e9``
 match_mode, ``n5b6c7d8e9f0`` permissions-drop, ``t1b2c3d4e5f6``
 migrated_actor_id, ``a8b9c0d1e2f3`` nullable created_by). Rows come back only
 via ``jentic_one export-toolkits --import <file>`` from a pre-drop export —
-see the rollback runbook in ``docs/development/releasing.md``.
+see the rollback runbook in ``docs/operations/upgrade-notes.md``.
 
 Revision ID: f3c4d5e6a7b8
 Revises: f2b3c4d5e6a7
@@ -98,8 +98,8 @@ _RUNBOOK = (
     "confirm zero creations), then `jentic_one flatten-toolkits --verify "
     "--acknowledge`, and re-run this migration. To discard the toolkit data "
     "instead, take an export first (`jentic_one export-toolkits --out "
-    "<file>`), truncate the toolkit tables, and re-run. See the theme-5 "
-    "upgrading runbook in docs/development/releasing.md."
+    "<file>`), truncate the toolkit tables, and re-run. See "
+    "docs/operations/upgrade-notes.md (0.41.0)."
 )
 
 _REMEDIATION_NO_ACK = (
@@ -129,8 +129,8 @@ _REMEDIATION_LIVE_KEYS = (
     "`retire-toolkit-keys`, so to use it roll the control database back to "
     "e1a2b3c4d5f6 on this image first, run the command on 0.40.x, then upgrade "
     "again. Then re-run `jentic_one flatten-toolkits --verify --acknowledge` "
-    "and this migration. See the theme-5 upgrading runbook in "
-    "docs/development/releasing.md."
+    "and this migration. See "
+    "docs/operations/upgrade-notes.md (0.41.0)."
 )
 
 #: Live toolkit keys with no successor actor (the ``active_toolkit_key``
@@ -177,8 +177,8 @@ def _assert_no_foreign_fks(bind: sa.engine.Connection) -> None:
             f"it from outside the toolkit tables: {holders}. Apply the "
             "enterprise migration first (jentic-one-enterprise d47c3a91be02 "
             "drops toolkit_user_grants and its FK), then re-run this "
-            "migration. See the theme-5 upgrading runbook in "
-            "docs/development/releasing.md."
+            "migration. See "
+            "docs/operations/upgrade-notes.md (0.41.0)."
         )
 
 
@@ -224,7 +224,7 @@ def downgrade() -> None:
 
     A downgrade alone restores no access: rows come back only via
     ``jentic_one export-toolkits --import <file>`` (rollback = downgrade the
-    drops **plus** re-import — docs/development/releasing.md). There are no ORM models
+    drops **plus** re-import — docs/operations/upgrade-notes.md). There are no ORM models
     for these tables any more, so raw inserts on SQLite must supply explicit
     ids (no server-side KSUID there), which the import tool does.
     """

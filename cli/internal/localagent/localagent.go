@@ -157,7 +157,7 @@ func Lookup(id string) (Descriptor, bool) {
 }
 
 // DefaultUserName derives the single-user default agent account name for the
-// current operator: "<operator>-local-agent". Matches doc 05's recipe.
+// current operator: "<operator>-local-agent".
 func DefaultUserName(operator string) string { return operator + "-local-agent" }
 
 // UserExists reports whether an OS account with the given name exists. It shells
@@ -452,7 +452,7 @@ func DirAccess(ctx context.Context, agentUser, dir string) bool {
 //	  and everything created inside it (inherited).
 //
 // The default-deny is provided by the operator's home already being mode 0700
-// (the machine-independent isolation guarantee from doc 05): with `~` at 0700
+// (the machine-independent isolation guarantee): with `~` at 0700
 // the agent — like every other non-owner user — cannot even traverse it, so it
 // reaches *nothing* inside until we open a specific path. We deliberately do
 // NOT add a recursive agent-scoped `deny` ACL across `~`: an earlier design did,

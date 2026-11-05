@@ -13,33 +13,54 @@ from jentic_one.shared.config.mcp import McpConfig
 class ServerConfig(BaseModel):
     """HTTP server settings."""
 
-    host: str = "0.0.0.0"
-    port: int = 8000
-    reload: bool = False
-    backend: Literal["local", "remote"] = "local"
-    """Self-declared backend locality surfaced by ``GET /instance``: ``local`` for
-    a self-hosted install on the operator's own machine/network, ``remote`` for a
-    hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
-    which backend they reached — not an authorization signal. Defaults to
-    ``local``; the hosted platform sets ``remote`` in its own config."""
+    host: str = Field(
+        default="0.0.0.0",
+        description=(
+            "Interface the HTTP server binds to. ``0.0.0.0`` / ``::`` listen on all "
+            "interfaces; a loopback address keeps the app reachable from this "
+            "machine only."
+        ),
+    )
+    port: int = Field(default=8000, description="TCP port the HTTP server listens on.")
+    reload: bool = Field(
+        default=False,
+        description=(
+            "Run uvicorn with auto-reload on code changes (development only). "
+            "Ignored, with a warning, when the admin database is SQLite or the "
+            "config comes from a one-shot source such as a pipe."
+        ),
+    )
+    # The hosted platform sets ``remote`` in its own config.
+    backend: Literal["local", "remote"] = Field(
+        default="local",
+        description=(
+            "Backend locality reported by ``GET /instance``: ``local`` for a "
+            "self-hosted install on the operator's own machine or network, "
+            "``remote`` for a hosted install run elsewhere. A hint for clients, not "
+            "an authorization signal; ``remote`` also skips the release check."
+        ),
+    )
     mcp: McpConfig = Field(default_factory=McpConfig)
 
-    public_base_url: str = ""
-    """The single public origin of this deployment (e.g.
-    ``https://jentic.example.com``).
-
-    Every absolute URL the app builds for external consumption on the
-    control/auth surfaces — the OAuth connect ``redirect_uri``, the OIDC issuer
-    / JWT-Bearer audience, the DCR ``registration_client_uri``, the SPA login
-    callback, and connect-session approval links — falls back to this when its
-    own more specific knob is unset. Explicit per-field values still win
-    (needed behind a reverse proxy that fronts multiple surfaces on distinct
-    origins). The broker's ``jobs_api_base_url`` is deliberately independent:
-    it names another service's origin, not this one. Left unset, request-scoped consumers derive
-    from the incoming request's origin and request-less ones from the serving
-    bind (``http://{host}:{port}``), so zero-config local dev on any port just
-    works — set this only when clients reach the app on an origin it can't
-    see (reverse proxy, ingress, port mapping)."""
+    # Explicit per-key values still win over this (needed behind a reverse proxy
+    # that fronts multiple surfaces on distinct origins). The broker's
+    # ``jobs_api_base_url`` is deliberately independent: it names another
+    # service's origin, not this one.
+    public_base_url: str = Field(
+        default="",
+        description=(
+            "The public origin of this deployment (e.g. "
+            "``https://jentic.example.com``). Absolute URLs the app hands to "
+            "external clients — the OAuth connect ``redirect_uri``, the OIDC "
+            "issuer and JWT-Bearer audience, DCR ``registration_client_uri``, "
+            "the SPA login callback, approval links — fall back to it when "
+            "their own more specific key is unset. Unset, they derive from the "
+            "incoming request's origin, or from the bind "
+            "(``http://{host}:{port}``) when there is no request; set it when "
+            "clients reach the app through a reverse proxy, ingress or port "
+            "mapping."
+        ),
+    )
 
     _normalize_public_base_url = field_validator("public_base_url")(_normalize_optional_base_url)
 
@@ -57,15 +78,32 @@ class TelemetryConfig(BaseModel):
     container's; sent once per boot, on the ``instance_booted`` event.
     """
 
-    enabled: bool = False
-    instance_id: str | None = None
-    host_os: str | None = None
-    """Host OS family stamped at install time by the onboarding CLI (from Go's
-    ``runtime.GOOS``): the recommended install runs the app in Docker, where
-    runtime detection would always report the container's Linux instead of the
-    operator's machine. ``None`` (hand-rolled config) falls back to runtime
-    detection. Consumed once per boot, on the ``instance_booted`` telemetry
-    event; values outside the closed ``HostOs`` enum degrade to ``other``."""
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Send anonymous product telemetry. Off when the block is omitted; the "
+            "onboarding CLI writes it explicitly."
+        ),
+    )
+    instance_id: str | None = Field(
+        default=None,
+        description=(
+            "Opaque instance id reported with telemetry (at most 64 characters). "
+            "When set it is authoritative and overwrites the id stored in the "
+            "admin database; unset, a random UUID is generated on first startup "
+            "and kept."
+        ),
+    )
+    host_os: str | None = Field(
+        default=None,
+        description=(
+            "Host OS family stamped by the onboarding CLI, so an instance running "
+            "in Docker reports the operator's OS rather than the container's "
+            "Linux. Unset falls back to runtime detection; unrecognised values are "
+            "reported as ``other``. Sent once per boot, on the ``instance_booted`` "
+            "event."
+        ),
+    )
     endpoint: str = "https://api.jentic.com/api/v1"
     """Ingest endpoint for telemetry events. Not intended for operator override —
     this is a hardcoded Jentic service URL. Exposed in config only for internal
@@ -109,14 +147,27 @@ class ReleaseCheckConfig(BaseModel):
     banner) rather than erroring — the version probe must never break the app.
     """
 
-    enabled: bool = True
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Check GitHub for a newer jentic-one release so the web console can "
+            'show an "update available" banner. Runs only when ``server.backend`` '
+            "is ``local``."
+        ),
+    )
     # ``owner/name`` slug of the GitHub repo whose releases represent this build.
     # The check hits ``https://api.github.com/repos/{repo}/releases/latest``.
     repo: str = "jentic/jentic-one"
-    # In-process cache lifetime for the resolved latest release. Zero is a kill
-    # switch (disables the check outright — air-gapped installs, no egress),
-    # mirroring the catalog scanner's ``interval <= 0`` convention.
-    cache_ttl_seconds: int = 21600  # 6h
+    # Zero as a kill switch mirrors the catalog scanner's ``interval <= 0``
+    # convention.
+    cache_ttl_seconds: int = Field(
+        default=21600,
+        description=(
+            "Seconds the latest-release lookup is cached in process (default 6 h), "
+            "so at most one GitHub request is made per TTL. 0 disables the check "
+            "entirely (air-gapped installs, no egress)."
+        ),
+    )
 
 
 class EntitlementConfig(BaseModel):
@@ -135,29 +186,64 @@ class EntitlementConfig(BaseModel):
     "not entitled" answer from AWS locks out immediately.
     """
 
-    enabled: bool = False
-    # The Marketplace product code, issued by the AWS Marketplace portal when
-    # the container product is created. Required whenever ``enabled``.
-    product_code: str | None = None
-    region: str = "us-east-1"
-    # Which paid listing model the check calls: ``contract`` → License Manager
-    # ``CheckoutLicense`` (needs ``license_sku``); ``usage`` → Metering Service
-    # ``RegisterUsage`` (hourly/usage pricing). The live listing is contract
-    # priced (decided 2026-08-20), hence the default; the usage variant is kept
-    # until the listing is public in case the model changes during review.
-    pricing_model: Literal["usage", "contract"] = "contract"
-    refresh_interval_seconds: int = 3600
-    grace_period_seconds: int = 86400
-    # Contract pricing only (License Manager); unused for usage pricing.
-    # This is the Marketplace **product ID** from the portal (CheckoutLicense
-    # ``ProductSKU``) — NOT the product code above; the portal issues both.
-    license_sku: str | None = None
-    # Contract pricing only: the listing's entitlement dimension keys the gate
-    # checks out (all must be granted by the buyer's license). The live listing
-    # defines ``users`` and ``executions``. Accepts a YAML list or a
-    # comma-separated string (env: JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS).
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Gate the HTTP surface on an active AWS Marketplace subscription "
+            "(503 except health checks when AWS reports the deployment is not "
+            "entitled). Off makes no AWS calls."
+        ),
+    )
+    product_code: str | None = Field(
+        default=None,
+        description=(
+            "Marketplace product code issued by the AWS Marketplace portal for the "
+            "container product. Required when ``enabled``."
+        ),
+    )
+    region: str = Field(
+        default="us-east-1",
+        description="AWS region the License Manager / Metering Service calls go to.",
+    )
+    # The live listing is contract priced, hence the default; the usage variant
+    # stays available in case the listing's pricing model changes.
+    pricing_model: Literal["usage", "contract"] = Field(
+        default="contract",
+        description=(
+            "Which Marketplace API the check calls: ``contract`` uses License "
+            "Manager ``CheckoutLicense`` (requires ``license_sku``); ``usage`` uses "
+            "Metering Service ``RegisterUsage`` (hourly/usage pricing)."
+        ),
+    )
+    refresh_interval_seconds: int = Field(
+        default=3600,
+        description="Seconds between entitlement re-checks after the one at startup.",
+    )
+    grace_period_seconds: int = Field(
+        default=86400,
+        description=(
+            "How long (seconds) the last definitive verdict holds while the AWS "
+            "API is unreachable or erroring, before the gate fails closed. An "
+            'explicit "not entitled" answer locks out immediately.'
+        ),
+    )
+    license_sku: str | None = Field(
+        default=None,
+        description=(
+            "Contract pricing only: the Marketplace product ID from the portal "
+            "(``CheckoutLicense`` ``ProductSKU``) — not the product code; the "
+            "portal issues both. Required when ``pricing_model`` is ``contract``."
+        ),
+    )
+    # The live listing defines ``users`` and ``executions``
+    # (env: JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS).
     license_dimensions: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "Contract pricing only: entitlement dimension keys checked out from the "
+            "buyer's license; every one must be granted. Accepts a YAML list or a "
+            "comma-separated string."
+        ),
     )
     # Test-only endpoint override (same posture as ``TelemetryConfig.endpoint``):
     # points the client at a stub server for deployed-gate rehearsal —

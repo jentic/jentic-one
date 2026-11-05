@@ -102,9 +102,9 @@ endpoints: ## Regenerate the endpoint + permission reference (docs/reference/end
 	uv run python -m tools.endpoint_tree
 	@echo "Regenerated docs/reference/endpoints.md and docs/reference/endpoints.json."
 
-cli-reference: ## Regenerate the CLI command reference (ui/public/cli-reference.json) from the cobra command tree
-	cd cli && go run ./cmd/clidocs -o ../ui/public/cli-reference.json
-	@echo "Regenerated ui/public/cli-reference.json."
+cli-reference: ## Regenerate the CLI command reference (ui/public/cli-reference.json + docs/reference/cli.md) from the cobra command tree
+	cd cli && go run ./cmd/clidocs -o ../ui/public/cli-reference.json -md ../docs/reference/cli.md
+	@echo "Regenerated ui/public/cli-reference.json and docs/reference/cli.md."
 
 broker-reference: ## Regenerate the Broker OpenAPI artifact (ui/public/broker-openapi.json) from the hand-curated spec
 	uv run python -m tools.broker_reference
@@ -178,7 +178,7 @@ stop-fixtures: ## Stop Docker database fixtures
 destroy-fixtures: ## Remove Docker database fixtures and volumes
 	docker compose -f docker/local-setup/docker-compose.yaml down -v
 
-start-app: ## Start combined app (all surfaces)
+start-app: ## Start combined app (registry, admin, control, auth) on :8000; the broker is start-broker
 	uv run python -m jentic_one
 
 start-registry: ## Start registry surface standalone
@@ -209,7 +209,7 @@ migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/lo
 	@mkdir -p .data
 	JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one.migrations.run
 
-start-app-sqlite: migrate-sqlite ## Start combined app on local SQLite (ingest only; search disabled)
+start-app-sqlite: migrate-sqlite ## Start combined app on local SQLite (lexical search; no Docker)
 	JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one
 
 build-wheel: ## Build Python wheel (packaging TEST ONLY — never published; the container image is the canonical backend distribution)

@@ -248,7 +248,7 @@ a failure by its symptom, not by assuming access: transport failures
   bindings (report gaps to your operator in ONE summary) → catalog import →
   registry search → inspect → execute through the broker.
 - CLI session: the full command cheatsheet is in `references/cli.md` (and
-  `jentic --help` is always current); MCP session: the 9 mount tools / 10
+  `jentic --help` is always current); MCP session: the 13 mount tools / 14
   stdio tools with one-line whens are in `references/mcp.md`.
 - Both cheatsheets, side by side with pitfalls and verification, are in
   `references/recovery.md`.

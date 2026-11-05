@@ -1,6 +1,6 @@
 # Jentic One UI
 
-In-repo frontend for Jentic One. Built with React 18 + Vite + TypeScript +
+In-repo frontend for Jentic One. Built with React 19 + Vite + TypeScript +
 Tailwind v4, served same-origin as static files by the **admin** surface.
 
 This is the **foundation** slice: the themed app shell (`/app`) behind a
@@ -113,8 +113,6 @@ A feature PR plugs in by touching **one line per registry** (no merge conflicts)
 - `shared/app/routes.ts` — one import + one `...xRoutes,` spread (paths are `/app`-relative).
 - `shared/app/nav.ts` — replace your placeholder slot's one line (nav `to` is absolute `/app/<domain>`).
 - `src/mocks/handlers.ts` — one import + one `...xHandlers,` spread (Mode A / Option B).
-
-See `../../jentic-one-ui-migration/COLLABORATION.md` §3.
 
 ### Boundary rules (enforced by ESLint)
 
