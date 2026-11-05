@@ -105,18 +105,12 @@ flowchart TB
 - **Multi-process** — not supported by OSS on its own. Each surface keeps
   its rate-limit buckets, circuit-breaker counters, `Idempotency-Key`
   records and the auth surface's single-use markers in its process (the
-  `memory` shared-state backend), so a second process of the same surface —
-  a replica, or a second uvicorn worker — gets its own copy: limits
-  multiply, an `Idempotency-Key` replay can be re-executed, and a consent
-  handle can be redeemed twice. **OSS supports one process per surface**
-  (the combined and parts shapes above). Running several processes of a
-  surface needs a shared backend registered with `register_state_backend`
-  and selected with `state.backend`
+  `memory` shared-state backend), so a second process of the same surface
+  gets its own copy. **OSS supports one process per surface** (the combined
+  and parts shapes above); several processes need a shared backend
+  registered with `register_state_backend`
   ([extending-jentic-one.md](../development/extending-jentic-one.md)). The
-  built-in `redis` backend is deprecated and will be removed; it needs the
-  optional `[redis]` extra, which the published container image does not
-  include. The Helm chart warns when any surface but the gateway asks for
-  more than one replica.
+  topology rules: [Scaling and tuning](../operations/scaling-and-tuning.md#process-topology).
 
 ## One shared-state backend per process
 
@@ -138,74 +132,17 @@ admin database (`assertion_jtis`), so a replayed assertion is refused by
 every auth process sharing it, whatever the state backend.
 
 The same backend carries the repeated-failure counters that gate the
-`execution.repeated_failure` database scan, in the `repeated_failure` key
-namespace. On the `memory` backend that namespace has its own built-in budget
-(10,000 entries, about 8.4 MiB; override it under
-`state.memory.namespaces.repeated_failure`), so a failure storm cannot crowd
-out idempotency or other shared state; when it is full the counter fails open
-and every failure runs the scan. On a shared backend the count is
-cluster-wide, so failures spread across replicas still reach the threshold.
-Several worker processes serving one broker count as several instances on the
-`memory` backend: each process keeps its own counters, so the event fires late
-— or, for a thin spread, not at all — and the counter is therefore not built
-when the broker is told it runs in more than one process. A shared store that
-evicts live keys (every counter key carries a TTL) makes the gate undercount
-without raising, so size it to hold them.
+`execution.repeated_failure` database scan, in their own `repeated_failure`
+key namespace so a failure storm cannot crowd out idempotency or other shared
+state; when that namespace is full the counter fails open and every failure
+runs the scan. On a shared backend the count is cluster-wide. A shared store
+that evicts live keys (every counter key carries a TTL) makes the gate
+undercount without raising, so size it to hold them.
 
-## The memory shared-state backend is bounded
-
-> **Warning: the default `memory` shared-state backend is bounded and fails
-> closed.**
-> `state.backend: memory` keeps `Idempotency-Key`
-> records, rate-limit buckets, circuit-breaker counters and the auth
-> surface's single-use markers in the process, with a fixed budget per key
-> namespace. It never evicts a live entry. When a namespace (or one caller's
-> share of it) is full, the request that needed the write gets a **503**
-> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
-> `Retry-After` of when its earliest entry expires.
->
-> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on any other
-> backend; the `idem` budget of 128 MiB; about
-> 1.2 KiB budgeted per record with typical response headers), one broker
-> process sustains about **30 idempotent requests per second**, and about
-> **3 per second per caller**, because each caller may hold at most 10% of
-> the budget. Above that, `Idempotency-Key` requests get 503. Stored
-> response bodies have their own 32 MiB `idem-body` budget. Past about
-> 5 req/s of 1 KiB bodies, replays omit the body
-> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
-> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
-> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
-> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
-> `Content-Location` and `Retry-After` first, so a replay may lack the
-> others.
->
-> Every other namespace defaults to 16 MiB, and all namespaces of the
-> backend together are capped at
-> `state.memory.max_total_bytes` (192 MiB), refused the
-> same way. The budgets track real memory to within about 15% (measured
-> with `tracemalloc`), so on the defaults the broker's state stays under
-> about 192 MiB on top of a ~130 MiB process baseline, which the broker
-> chart's 512Mi memory limit holds. The broker always runs as its own
-> process. A process builds one such backend, shared by every surface it
-> serves, so in the combined app the auth and control surfaces share one
-> backend and the cap covers the whole process.
->
-> The local login page stores one CSRF nonce per page load in `login-csrf`
-> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
-> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
-> nonces: twice what the default authorize rate limit lets one client network
-> request in that time. A client flooding the page gets 503 with `Retry-After` while
-> other clients still sign in; a flood spread over about 50 or more networks
-> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which a
-> shared backend or a larger budget absorbs. Behind a reverse proxy, list it in
-> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
-> proxy's address and its share.
->
-> To raise it: raise `state.memory.namespaces.idem`
-> (and its `max_owner_share`) together with `max_total_bytes`, or lower
-> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
-> as much as you raise the budgets.
+The `memory` backend is bounded: each key namespace has a fixed budget, a
+live entry is never evicted, and a write into a full namespace is refused with
+a `503`. Budgets, idempotency capacity and how to raise them:
+[Scaling and tuning](../operations/scaling-and-tuning.md#the-memory-shared-state-backend).
 
 ## Lifespan ordering
 
@@ -243,39 +180,31 @@ plane for import jobs.
 
 ### Job worker scheduling
 
-The `WorkerLoop` runs up to `worker.concurrency` jobs at once (default `1`,
-serial) and polls the jobs table every `worker.poll_interval_s` (default
-`2.0`, bounded `0.25`–`60`) while idle. It re-polls as soon as a running job
-frees a slot, and a job enqueued in the **same process** — the broker's
-`Prefer: respond-async` path, a registry import — wakes it the moment the
-enqueuing transaction commits, so in-process pickup does not wait out the
+The `WorkerLoop` runs up to `worker.concurrency` jobs at once and polls the
+jobs table every `worker.poll_interval_s` while idle. It re-polls as soon as a
+running job frees a slot, and a job enqueued in the **same process** — the
+broker's `Prefer: respond-async` path, a registry import — wakes it the moment
+the enqueuing transaction commits, so in-process pickup does not wait out the
 interval. Jobs enqueued by another process are picked up on the next poll.
-Every poll is a write transaction, even against an empty queue (on SQLite it
-takes the database write lock), so a lower interval buys faster cross-process
-pickup and reclaim at a constant write cost per process.
-Between polls the loop also runs a retention sweep (lapsed approvals, expired
-job results, long-expired token rows) every `worker.sweep_interval_s` of wall
-time (default `120`).
+Every poll is a write transaction, even against an empty queue. Between polls
+the loop also runs a retention sweep (lapsed approvals, expired job results,
+long-expired token rows) every `worker.sweep_interval_s` of wall time.
 
 Every claim is one atomic `UPDATE … RETURNING` over a `FOR UPDATE SKIP LOCKED`
 subquery on Postgres (a `BEGIN IMMEDIATE` write transaction on SQLite), so any
 number of loops — several slots in one process, several uvicorn workers, or
 several replicas — can poll the same queue without double-claiming a job.
-Visibility-timeout reclaim and the retry/dead-letter budget apply per job
-unchanged.
+Visibility-timeout reclaim and the retry/dead-letter budget apply per job.
 
-`worker.concurrency > 1` is Postgres-only. A job's handler runs in one admin
-transaction that spans its upstream call; on SQLite that transaction holds the
-database write lock, so a second concurrent job's claim or outcome write would
-wait past `busy_timeout` and fail. Config validation refuses
-`concurrency > 1` with a SQLite admin database (a loop built without validated
-config is clamped to `1` with a `worker_concurrency_clamped_sqlite` warning).
-On Postgres each in-flight job holds about **two** admin-DB connections at
-once — the handler transaction plus the run-time authorization or
-credential-audit session it opens — so validation requires
-`2 × worker.concurrency < databases.admin.pool_max`. Size `pool_max` above that
-with headroom for the HTTP requests and other background work sharing the
-admin pool in the same process.
+`worker.concurrency > 1` is Postgres-only: a job's handler runs in one admin
+transaction that spans its upstream call, and on SQLite that transaction holds
+the database write lock, so a second concurrent job's writes would time out.
+Config validation refuses `concurrency > 1` with a SQLite admin database (a
+loop built without validated config is clamped to `1` with a
+`worker_concurrency_clamped_sqlite` warning). On Postgres each in-flight job
+holds about two admin-DB connections, so the admin pool bounds concurrency; the
+validated limits are in the
+[configuration reference](../reference/config.md#worker).
 
 On shutdown the worker drains: it stops claiming and waits up to
 `worker.drain_timeout_s` for every in-flight job, including one whose claim was
