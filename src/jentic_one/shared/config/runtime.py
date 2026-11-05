@@ -63,7 +63,7 @@ def _warn_retired_sa_sweep_age_once() -> None:
         "config_retired_setting_ignored",
         setting=f"services.{_RETIRED_SA_SWEEP_AGE_KEY}",
         detail=(
-            "removed in theme-8 Phase 4 with the automatic service-account sweep; "
+            "removed in 0.41.0 with the automatic service-account sweep; "
             "the upgrade migrates and sweeps every service account itself, and the "
             "value is ignored"
         ),

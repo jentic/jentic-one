@@ -361,12 +361,12 @@ class BrokerConfig(BaseModel):
             value = data["direct_bindings_enabled"]
             if value is False or str(value).strip().lower() in {"false", "0", "no", "off"}:
                 raise ValueError(
-                    "broker.direct_bindings_enabled was removed in theme-5 Phase 6b: "
+                    "broker.direct_bindings_enabled was removed in 0.41.0: "
                     "the toolkit path it selected no longer exists and direct "
                     "agent-credential bindings are the only access path. Remove "
                     "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
-                    "if toolkit-bound agents lose access, run the Phase-6a flattening "
-                    "(docs/development/releasing.md)."
+                    "if toolkit-bound agents lose access, run the toolkit flattening "
+                    "(`flatten-toolkits`, docs/development/releasing.md)."
                 )
             _warn_retired_direct_bindings_flag_once()
             data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
@@ -404,7 +404,7 @@ def _warn_retired_direct_bindings_flag_once() -> None:
         "config_retired_setting_ignored",
         setting="broker.direct_bindings_enabled",
         detail=(
-            "removed in theme-5 Phase 6b; direct agent-credential bindings are the "
+            "removed in 0.41.0; direct agent-credential bindings are the "
             "only access path and the value is ignored"
         ),
         actionable_step=(

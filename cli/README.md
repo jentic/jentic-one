@@ -22,9 +22,9 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | ------ | ---- | -------- | ------------ |
 | `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up Jentic One locally (source venv or Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
 | `jentic` | **Identity & access** | `register` · `setup` · `logout` · `whoami` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, `whoami` to see your identity/permissions/bindings as the control plane does, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
-| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` · `connect` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + permission reference; `credentials` lists the credentials the control plane holds; `connect <vendor>` starts a vendor connect session (prints the approval URL a human approves — `--wait` polls it). |
-| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
-| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
+| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` · `connect` · `access` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry (revisions, operations, promote/archive, spec download) with interactive TUI browsers. `endpoints` prints the platform's own endpoint + permission reference; `credentials` lists the credentials the control plane holds; `connect <vendor>` starts a vendor connect session (prints the approval URL a human approves — `--wait` polls it); `access` shows and changes what your credential bindings let you do. |
+| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `executions` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `executions` follows held calls awaiting human approval; `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
+| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` · `mcp` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check; `mcp` serves Jentic tools to a local MCP client over stdio. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
 | `jentic` | **Administration** | `admin` · `theme` | `admin config providers` manages the platform's credential-provider configuration; `theme` sets the persisted color theme. |
 
 The table mirrors the CLI's own command groups (what `jentic` with no args
@@ -219,8 +219,9 @@ detail):
 
 ## Supported platforms
 
-The `jentic` and `jenticctl` binaries are pure-Go and build/run on **Linux**,
-**macOS** (Intel + Apple Silicon), and **Windows** (x86-64). Each release is
+The `jentic` and `jenticctl` binaries are pure Go and build on **Linux**,
+**macOS** (Intel + Apple Silicon), and **Windows** (x86-64). Native Windows
+releases ship `jentic` only; run `jenticctl` under WSL. Each release is
 smoke-tested end-to-end on all three (`ubuntu-24.04`, `macos-latest`,
 `windows-latest`) via the CI `e2e-install` matrix, which runs the built binaries'
 `--version` / `jentic doctor` / `jentic search --json` / `jenticctl doctor`
@@ -503,8 +504,8 @@ you. SQLite databases default to `~/.jentic/data/`.
 
 `jenticctl uninstall` wipes everything under `~/.jentic` (venv, source, data, logs)
 but **preserves your config**: each config file is renamed to a `-old` backup so
-you can restore it later. Your agent identity (`~/.jentic/profiles`) and the
-`~/.jentic` directory itself are kept; run `jentic reset` to remove the identity.
+you can restore it later. Your agent identity (`~/.config/jentic`, `~/.local/state/jentic`, and any
+legacy `~/.jentic/profiles`) and the `~/.jentic` directory itself are kept; run `jentic reset` to remove the identity.
 
 ```bash
 jenticctl uninstall            # prompts for confirmation
@@ -522,7 +523,7 @@ After running, `~/.jentic` contains only the backups (plus `profiles/`):
 
 #### Agent skills
 
-Skills written by `jentic skill init` / `jentic bootstrap` live outside
+Skills written by `jentic skill init` / `jentic setup` live outside
 `~/.jentic` (`~/.claude/skills/jentic/`, `~/.cursor/…`, `~/.hermes/…`,
 `~/.codex/AGENTS.md`, and project-scope `./AGENTS.md` blocks or
 `./.claude|.cursor|.hermes/skills/jentic/`). By default `uninstall` leaves them
