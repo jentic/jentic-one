@@ -28,14 +28,15 @@ func newResetCmd(app *app) *cobra.Command {
 	opts := &resetOptions{}
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Tear down the agent account and wipe this machine's jentic identity state",
-		Long: "reset is the inverse of the agent-user setup folded into `jentic setup`,\n" +
-			"and the clean-slate hatch for this machine's jentic identity state.\n\n" +
-			"It tears down the agent account — the dedicated Unix user, the named-user\n" +
-			"ACLs stamped across your home (both the leaf read/write grants and the\n" +
-			"execute-only ancestor traverse grants), and the passwordless-launch sudoers\n" +
-			"drop-in — plus any MCP-isolation service accounts (`_jentic-<runtime>`,\n" +
-			"their sudoers lines, and their exported key material), and then also wipes\n" +
+		Short: "Wipe this machine's jentic identity state and remove any leftover agent account",
+		Long: "reset is the clean-slate hatch for this machine's jentic identity state.\n\n" +
+			"If an older jentic release left a local agent account on this machine, reset\n" +
+			"tears it down first — the dedicated Unix user (`<you>-local-agent`), the\n" +
+			"named-user ACLs stamped across your home (both the leaf read/write grants and\n" +
+			"the execute-only ancestor traverse grants), and the passwordless-launch\n" +
+			"sudoers drop-in — plus any MCP-isolation service accounts (`_jentic-<runtime>`,\n" +
+			"their sudoers lines, their exported key material, and the root-owned jentic\n" +
+			"copy they ran). Current releases never create these. Then it wipes\n" +
 			"your OWN jentic identity state: the store\n" +
 			"(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n" +
 			"~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\n" +
@@ -43,12 +44,12 @@ func newResetCmd(app *app) *cobra.Command {
 			"a separate, explicit confirmation.\n\n" +
 			"To remove a single context/identity instead of everything, use\n" +
 			"`jentic context delete` / `jentic identity delete`.\n\n" +
-			"Deleting the account and stripping ACLs are privileged, so reset requires\n" +
-			"sudo to complete: run it as yourself and you'll be prompted for your\n" +
+			"Deleting an agent account and stripping ACLs are privileged, so reset\n" +
+			"requires sudo for those steps: run it as yourself and you'll be prompted for your\n" +
 			"password when it reaches the privileged steps. It shows the full plan before\n" +
 			"touching anything. It only ever removes the agent's own named-user ACLs and\n" +
 			"never touches another user's files.",
-		Example: "  jentic reset                              # full clean slate: the account + your identity state\n" +
+		Example: "  jentic reset                              # full clean slate: any agent account + your identity state\n" +
 			"  jentic reset --force                      # non-interactive; keeps the home\n" +
 			"  jentic reset --force --delete-home        # non-interactive; deletes the home",
 		Args: cobra.NoArgs,
@@ -66,9 +67,8 @@ func newResetCmd(app *app) *cobra.Command {
 func (a *app) resetE(ctx context.Context, opts *resetOptions) error {
 	// reset runs as the operator (not `sudo jentic reset`): it reads the operator's
 	// own config and only the teardown STEPS are privileged (each is sudo-fronted),
-	// so a single password prompt is triggered when it reaches them — the same
-	// sudo-last posture as agent-user creation. We flag that up front so the
-	// prompt isn't a surprise, mirroring the "(requires sudo)" account gate.
+	// so a single password prompt is triggered when it reaches them (sudo-last).
+	// We flag that up front so the prompt isn't a surprise.
 	operator, operatorHome := resetOperator()
 	st, err := config.LoadAgentState(a.Paths)
 	if err != nil {

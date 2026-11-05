@@ -364,7 +364,7 @@ func indexOfContains(hay []string, needle string) int {
 // point XDG_CONFIG_HOME at a temp dir via withXDG).
 func errSeedAgentState(paths config.Paths, acct config.AgentAccount) error {
 	_, err := config.MutateAgentState(paths, func(s *config.AgentState) error {
-		s.SetAgentAccount(acct)
+		s.Agent = &acct
 		return nil
 	})
 	return err

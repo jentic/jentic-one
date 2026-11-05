@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -274,75 +273,63 @@ func TestCheckStatusString(t *testing.T) {
 	}
 }
 
-// The client-side self-check (5.1 §3c, plan.md Phase 5 item 6) must always render
-// the local-agent confinement prereq breakdown — jenticctl is absent from agent
-// hosts, so doctor is the only place these prereqs surface there.
-func TestDoctorReportsLocalAgentPrereqs(t *testing.T) {
-	app := testApp(t)
+// localAgentRows runs doctor in JSON mode and returns the "Local agent" rows.
+func localAgentRows(t *testing.T, app *app) []doctorRow {
+	t.Helper()
 	opts := offlineOpts()
 	opts.json = true
 	_ = app.doctorE(context.Background(), opts)
-
 	var report struct {
-		Checks []struct {
-			Section string `json:"section"`
-		} `json:"checks"`
+		Checks []doctorRow `json:"checks"`
 	}
 	if err := json.Unmarshal(app.Out.(*bytes.Buffer).Bytes(), &report); err != nil {
 		t.Fatalf("decode doctor JSON: %v", err)
 	}
-	found := false
+	var rows []doctorRow
 	for _, c := range report.Checks {
 		if c.Section == "Local agent" {
-			found = true
-			break
+			rows = append(rows, c)
 		}
 	}
-	if !found {
-		t.Errorf("doctor is missing the \"Local agent\" section:\n%s", app.Out.(*bytes.Buffer).String())
-	}
+	return rows
 }
 
-// A provisioned agent account whose OS user resolves to the operator's own uid is
-// the isolation-defeating case the same-uid warning exists to catch. We seed the
-// account with the CURRENT user (guaranteed same uid) and assert a warning row.
-func TestDoctorWarnsSameUIDAgentAccount(t *testing.T) {
-	me, err := user.Current()
-	if err != nil {
-		t.Skipf("cannot resolve current user: %v", err)
-	}
+type doctorRow struct {
+	Section string `json:"section"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Detail  string `json:"detail"`
+	Hint    string `json:"hint"`
+}
 
+// A recorded agent account is a leftover of an older release (nothing creates
+// one any more): doctor must warn and name `jentic reset` as the cleanup path.
+func TestDoctorWarnsLeftoverAgentAccount(t *testing.T) {
 	app := testApp(t)
 	if _, err := config.MutateAgentState(app.Paths, func(s *config.AgentState) error {
-		s.SetAgentAccount(config.AgentAccount{User: me.Username, AccountCreated: true, Enabled: true})
+		s.Agent = &config.AgentAccount{User: "alice-local-agent", AccountCreated: true, Enabled: true}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed agent state: %v", err)
 	}
-
-	opts := offlineOpts()
-	opts.json = true
-	_ = app.doctorE(context.Background(), opts)
-
-	var report struct {
-		Checks []struct {
-			Section string `json:"section"`
-			Name    string `json:"name"`
-			Status  string `json:"status"`
-			Detail  string `json:"detail"`
-		} `json:"checks"`
-	}
-	if err := json.Unmarshal(app.Out.(*bytes.Buffer).Bytes(), &report); err != nil {
-		t.Fatalf("decode doctor JSON: %v", err)
-	}
-	warned := false
-	for _, c := range report.Checks {
-		if c.Section == "Local agent" && c.Name == "account uid" {
-			warned = c.Status == "warn"
+	for _, r := range localAgentRows(t, app) {
+		if r.Name == "agent account" {
+			if r.Status != "warn" || !strings.Contains(r.Hint, "jentic reset") {
+				t.Errorf("leftover account row should warn with a reset hint, got %+v", r)
+			}
+			return
 		}
 	}
-	if !warned {
-		t.Errorf("expected a same-uid warning for agent account %q:\n%s", me.Username, app.Out.(*bytes.Buffer).String())
+	t.Errorf("expected a leftover agent account warning:\n%s", app.Out.(*bytes.Buffer).String())
+}
+
+// With no recorded account doctor renders no agent-account row at all.
+func TestDoctorNoAgentAccountRowWithoutRecord(t *testing.T) {
+	app := testApp(t)
+	for _, r := range localAgentRows(t, app) {
+		if r.Name == "agent account" {
+			t.Errorf("unexpected agent account row without a record: %+v", r)
+		}
 	}
 }
 

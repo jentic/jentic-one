@@ -30,22 +30,17 @@ func TestAgentStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAgentState: %v", err)
 	}
-	if st.Loaded || st.HasAgentUser() {
+	if _, ok := st.AgentAccount(); st.Loaded || ok {
 		t.Fatal("fresh state should be empty and not Loaded")
 	}
 
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.SetAgentAccount(AgentAccount{
+		s.Agent = &AgentAccount{
 			User:           "alice-local-agent",
 			AccountCreated: true,
 			Enabled:        true,
 			HomeDir:        "/Users/Shared/alice-local-agent",
-		})
-		if !s.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
-			t.Error("expected AddGrantedDir to report a new grant")
-		}
-		if s.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
-			t.Error("expected duplicate AddGrantedDir to be idempotent")
+			GrantedDirs:    []string{"/Users/Shared/alice-local-agent/work"},
 		}
 		return nil
 	}); err != nil {
@@ -58,9 +53,6 @@ func TestAgentStateRoundTrip(t *testing.T) {
 	}
 	if !got.Loaded {
 		t.Fatal("expected the XDG state file to exist after a mutation")
-	}
-	if !got.HasAgentUser() {
-		t.Fatal("expected an enabled agent account after reload")
 	}
 	acct, ok := got.AgentAccount()
 	if !ok {
@@ -75,22 +67,51 @@ func TestAgentStateRoundTrip(t *testing.T) {
 	if len(acct.GrantedDirs) != 1 {
 		t.Fatalf("granted dirs = %v", acct.GrantedDirs)
 	}
+}
 
-	if !got.RemoveGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected RemoveGrantedDir to report removal")
+// TestRemoveAgentStateDeletesBothCopies proves reset's final step removes the
+// XDG record file AND strips the agent fields from a legacy config, leaving
+// nothing that still describes the torn-down account.
+func TestRemoveAgentStateDeletesBothCopies(t *testing.T) {
+	statePath := withAgentXDG(t)
+	paths := writeConfig(t, "base_url: https://keep.example.test\nagent_account:\n  user: alice-local-agent\n")
+	if _, err := MutateAgentState(paths, func(*AgentState) error { return nil }); err != nil {
+		t.Fatalf("adopt: %v", err)
 	}
-	if got.RemoveGrantedDir("/nope") {
-		t.Fatal("did not expect removal of an absent dir")
+	// Re-plant a legacy copy so both locations carry a record.
+	if _, err := Mutate(paths, func(c *FileConfig) error {
+		c.Agent = &AgentAccount{User: "alice-local-agent"}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
 	}
-	acct, _ = got.AgentAccount()
-	if len(acct.GrantedDirs) != 0 {
-		t.Errorf("granted dirs after remove = %v", acct.GrantedDirs)
+
+	if err := RemoveAgentState(paths); err != nil {
+		t.Fatalf("RemoveAgentState: %v", err)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Errorf("XDG record must be deleted (err=%v)", err)
+	}
+	st, err := LoadAgentState(paths)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if _, ok := st.AgentAccount(); ok {
+		t.Errorf("no record may survive RemoveAgentState: %+v", st.Agent)
+	}
+	legacy, _ := Load(paths)
+	if legacy.BaseURL != "https://keep.example.test" {
+		t.Errorf("unrelated legacy fields must survive, got base_url %q", legacy.BaseURL)
+	}
+	// Idempotent: nothing left to remove is not an error.
+	if err := RemoveAgentState(paths); err != nil {
+		t.Errorf("second RemoveAgentState: %v", err)
 	}
 }
 
 // TestAgentStateLegacyFallback proves a record written by an older release into
-// ~/.jentic/config.yaml is still visible when no XDG state exists yet — listing
-// grants, launching, and resetting all keep working before any migration.
+// ~/.jentic/config.yaml is still visible when no XDG state exists yet, so reset
+// can tear the account down before any migration.
 func TestAgentStateLegacyFallback(t *testing.T) {
 	withAgentXDG(t)
 	paths := writeConfig(t, strings.Join([]string{
@@ -112,7 +133,7 @@ func TestAgentStateLegacyFallback(t *testing.T) {
 	if st.Loaded {
 		t.Error("legacy fallback must not claim the XDG file was loaded")
 	}
-	if !st.HasAgentUser() || !st.SameUserNoticeSeen {
+	if acct, ok := st.AgentAccount(); !ok || acct.User != "alice-local-agent" {
 		t.Fatalf("legacy record not projected: %+v", st)
 	}
 	acct, _ := st.AgentAccount()
@@ -140,7 +161,7 @@ func TestMutateAgentStateAdoptsAndClearsLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MutateAgentState: %v", err)
 	}
-	if !got.HasAgentUser() || !got.SameUserNoticeSeen {
+	if acct, ok := got.AgentAccount(); !ok || acct.User != "alice-local-agent" {
 		t.Fatalf("adopted state lost the legacy record: %+v", got)
 	}
 	if _, err := os.Stat(statePath); err != nil {
@@ -159,15 +180,14 @@ func TestMutateAgentStateAdoptsAndClearsLegacy(t *testing.T) {
 	}
 }
 
-// TestMutateAgentStateNeverCreatesLegacy proves the store keeps localagent out
-// of ~/.jentic entirely: mutating agent state on a machine with no legacy
-// config must not conjure one into being.
+// TestMutateAgentStateNeverCreatesLegacy proves mutating agent state on a
+// machine with no legacy config never conjures ~/.jentic into being.
 func TestMutateAgentStateNeverCreatesLegacy(t *testing.T) {
 	withAgentXDG(t)
 	paths := Paths{Root: filepath.Join(t.TempDir(), "jentic-home")}
 
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.SameUserNoticeSeen = true
+		s.Agent = &AgentAccount{User: "a"}
 		return nil
 	}); err != nil {
 		t.Fatalf("MutateAgentState: %v", err)
@@ -184,7 +204,7 @@ func TestMutateAgentStateReloadsBeforeApplying(t *testing.T) {
 	withAgentXDG(t)
 	paths := Paths{Root: t.TempDir()}
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
+		s.Agent = &AgentAccount{User: "a", AccountCreated: true, Enabled: true}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -192,7 +212,7 @@ func TestMutateAgentStateReloadsBeforeApplying(t *testing.T) {
 
 	// Writer 1 commits grant A.
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.AddGrantedDir("/opt/a/A")
+		s.Agent.GrantedDirs = append(s.Agent.GrantedDirs, "/opt/a/A")
 		return nil
 	}); err != nil {
 		t.Fatalf("mutate A: %v", err)
@@ -201,7 +221,7 @@ func TestMutateAgentStateReloadsBeforeApplying(t *testing.T) {
 	// Writer 2 adds grant B; its fn reloads the on-disk state first, so it sees
 	// A and appends B rather than replacing.
 	got, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.AddGrantedDir("/opt/a/B")
+		s.Agent.GrantedDirs = append(s.Agent.GrantedDirs, "/opt/a/B")
 		return nil
 	})
 	if err != nil {
@@ -223,7 +243,7 @@ func TestMutateAgentStateConcurrentContention(t *testing.T) {
 	withAgentXDG(t)
 	paths := Paths{Root: t.TempDir()}
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
+		s.Agent = &AgentAccount{User: "a", AccountCreated: true, Enabled: true}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -237,7 +257,7 @@ func TestMutateAgentStateConcurrentContention(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := MutateAgentState(paths, func(s *AgentState) error {
-				s.AddGrantedDir(fmt.Sprintf("/opt/a/dir-%02d", i))
+				s.Agent.GrantedDirs = append(s.Agent.GrantedDirs, fmt.Sprintf("/opt/a/dir-%02d", i))
 				return nil
 			})
 			errs <- err
@@ -268,14 +288,14 @@ func TestMutateAgentStateErrorLeavesStateUntouched(t *testing.T) {
 	withAgentXDG(t)
 	paths := Paths{Root: t.TempDir()}
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.SetAgentAccount(AgentAccount{User: "keep"})
+		s.Agent = &AgentAccount{User: "keep"}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	if _, err := MutateAgentState(paths, func(s *AgentState) error {
-		s.SetAgentAccount(AgentAccount{User: "clobbered"})
+		s.Agent = &AgentAccount{User: "clobbered"}
 		return os.ErrInvalid
 	}); err == nil {
 		t.Fatal("expected MutateAgentState to propagate the fn error")

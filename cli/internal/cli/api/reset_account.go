@@ -35,9 +35,7 @@ func (a *app) confirmFullReset() (bool, error) {
 }
 
 // execAccountReset runs the privileged teardown steps for the already-surveyed,
-// already-confirmed agent account and clears its config record last. It is the
-// shared execution tail for both a full `jentic reset` and the optional
-// account-teardown offered after removing the last agent-owned profile.
+// already-confirmed agent account and removes its record last.
 func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bool) error {
 	// Re-validate every operator-editable path the teardown is about to hand to a
 	// privileged command BEFORE the first one runs. The steps do `rm -rf` on the
@@ -105,14 +103,10 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 		}
 	}
 
-	// Clear the account record LAST, so a mid-way failure above leaves the record
-	// of what still needs cleaning for the next run. Under the agent-state lock
-	// (MutateAgentState) so it can't race a concurrent grant write; this also
-	// clears any legacy copy still sitting in ~/.jentic/config.yaml.
-	if _, err := config.MutateAgentState(paths, func(st *config.AgentState) error {
-		st.ClearAgentAccount()
-		return nil
-	}); err != nil {
+	// Remove the account record LAST, so a mid-way failure above leaves the
+	// record of what still needs cleaning for the next run. This also clears any
+	// legacy copy still sitting in ~/.jentic/config.yaml.
+	if err := config.RemoveAgentState(paths); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Reset complete for the agent account (user %q).", plan.user))
@@ -330,7 +324,7 @@ func (a *app) printResetPlan(plan resetPlan) {
 		"agent account (user "+plan.user+"). This cannot be undone."))
 
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Warn.Render("  Directory ACLs to remove (agent access granted by jentic run):"))
+	fmt.Fprintln(a.Out, theme.Warn.Render("  Directory ACLs to remove (agent access granted to the account):"))
 	found := false
 	for _, acl := range plan.acls {
 		if !acl.present {
@@ -357,7 +351,7 @@ func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Files & config to remove:"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - sudoers drop-in        /etc/sudoers.d/jentic-agent (if present)"))
-	fmt.Fprintln(a.Out, theme.Dim.Render("    - agent_account entry    in your agent state (~/.config/jentic/agent-account.yaml)"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - agent account record   ~/.config/jentic/agent-account.yaml (and any legacy copy)"))
 	if plan.homeDir != "" {
 		for _, dir := range localagent.AgentIdentityDirs(plan.homeDir) {
 			fmt.Fprintln(a.Out, theme.Dim.Render("    - agent identity         "+dir+" (its registration, tokens, key)"))

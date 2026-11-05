@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
+	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -351,56 +351,36 @@ func (d *doctor) checkAgent() {
 	d.add(section, "context", status, pair+", token "+state, hint)
 }
 
-// checkLocalAgent is the client-side sibling of jenticctl's local-agent probe
-// (5.1 §3c, plan.md Phase 5 item 6). jenticctl is deliberately absent from agent
-// hosts, so `jentic doctor` is the only self-check that can run there. It reports
-// per-session confinement prerequisites (the SAME AgentUserPrereqs probe `jentic
-// run`'s launch gate uses, so the two can never disagree) and, when this operator
-// has provisioned a dedicated agent account, warns if the agent would run under
-// the operator's own uid — the boundary the whole isolation model exists to
-// establish. It is read-only and, like the rest of doctor, keeps warnings at a
-// zero exit so it stays CI-safe.
+// checkLocalAgent reports agent accounts left behind by older releases: the
+// dedicated `<operator>-local-agent` Unix account (recorded in the XDG agent
+// state, with a read-only legacy fallback) and the `_jentic-<runtime>` MCP
+// service accounts plus the root-owned jentic copy they ran. Nothing in this
+// CLI creates them, so any that exist predate it — `jentic reset` is the only
+// teardown path, and doctor names it. Read-only and warn-only, like the rest
+// of doctor; a clean machine renders no section at all.
 func (d *doctor) checkLocalAgent() {
-	const section = "Local agent"
+	const (
+		section = "Local agent"
+		hint    = "run `jentic reset` to remove it (this CLI no longer uses or creates agent accounts)"
+	)
 
-	for _, p := range localagent.AgentUserPrereqs() {
-		if p.OK {
-			d.add(section, p.Name, statusPass, "available", "")
-			continue
+	// A load failure just skips the record check — doctor must stay warn-only.
+	if st, err := config.LoadAgentState(d.app.Paths); err == nil {
+		if acct, ok := st.AgentAccount(); ok && acct.User != "" {
+			d.add(section, "agent account", statusWarn,
+				fmt.Sprintf("leftover agent account %q is still recorded on this machine", acct.User), hint)
 		}
-		d.add(section, p.Name, statusWarn, p.Reason, p.Hint)
 	}
-
-	// The account record lives in the XDG agent state (with a read-only legacy
-	// fallback). A load failure just skips the account checks — the prereq rows
-	// above already rendered, and doctor must stay warn-only.
-	st, err := config.LoadAgentState(d.app.Paths)
-	if err != nil {
-		return
+	for _, rt := range mcpcfg.SupportedRuntimes() {
+		svc := localagent.ServiceUserName(string(rt))
+		if localagent.UserExists(d.ctx, svc) {
+			d.add(section, "mcp service account", statusWarn,
+				fmt.Sprintf("leftover MCP service account %q exists on this machine", svc), hint)
+		}
 	}
-	acct, hasAcct := st.AgentAccount()
-	if !hasAcct || !acct.AccountCreated {
-		return
-	}
-	// A provisioned account whose OS user cannot be resolved, or which resolves
-	// to the operator's own account, means an agent launched here would share the
-	// operator's disk view — the isolation is nominal, not real. We compare
-	// against the CURRENT user's Uid rather than os.Getuid(): user.User.Uid is a
-	// numeric uid on Unix and a SID on Windows, and comparing like-for-like works
-	// on both (os.Getuid() returns -1 on Windows, so the old comparison could
-	// never fire there — the same-principal case would go unwarned).
-	agentUser, err := user.Lookup(acct.User)
-	me, meErr := user.Current()
-	switch {
-	case err != nil:
-		d.add(section, "account", statusWarn, fmt.Sprintf("account %q not found on this host: %v", acct.User, err),
-			"run `jentic setup` on the agent host, or `jentic reset` to clear the stale record")
-	case meErr == nil && agentUser.Uid == me.Uid:
-		d.add(section, "account uid", statusWarn,
-			fmt.Sprintf("agent account %q shares this operator's identity (%s)", acct.User, agentUser.Uid),
-			"the agent would run unconfined against your files; re-provision a dedicated account with `jentic setup`")
-	default:
-		d.add(section, "account", statusPass, fmt.Sprintf("%s (uid %s)", acct.User, agentUser.Uid), "")
+	if localagent.ServiceBinaryInstalled() {
+		d.add(section, "mcp service binary", statusWarn,
+			fmt.Sprintf("leftover root-owned jentic copy %s exists on this machine", localagent.ServiceBinaryPath()), hint)
 	}
 }
 

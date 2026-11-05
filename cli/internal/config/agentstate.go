@@ -12,19 +12,15 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 )
 
-// AgentStateName is the localagent state file under the XDG config dir
-// (~/.config/jentic/agent-account.yaml). It is the OPERATOR-side record of the
-// shared agent account: whether it exists, where its home lives, and which
-// directories it has been granted — paths and names only, never secrets.
-//
-// It lives in the operator's XDG config tree (like the rest of the V2 store)
-// rather than the legacy ~/.jentic root: localagent no longer reads or writes
-// ~/.jentic for its own state. It is a SEPARATE file from config.yaml (the
-// contexts/environments/identities store) because it is CLI-internal — not part
-// of the public SDK schema — and has its own writers (`jentic run` grants) that
-// must not contend with SDK config mutations. Crucially, both ~/.config/jentic
-// and the legacy ~/.jentic are hard-banned grant targets and sandbox-denied, so
-// the agent can never edit its own access record wherever it lives.
+// AgentStateName is the agent-account record under the XDG config dir
+// (~/.config/jentic/agent-account.yaml): the OPERATOR-side record of a
+// dedicated agent account an older release provisioned — whether it exists,
+// where its home lives, and which directories it was granted (paths and names
+// only, never secrets). Nothing in this CLI provisions accounts; the record is
+// read so `jentic reset` can tear an existing account down (and so doctor can
+// flag it), adopted from the legacy ~/.jentic/config.yaml by `jentic migrate`,
+// and removed by reset once the teardown succeeds. It is a SEPARATE file from
+// config.yaml because it is CLI-internal — not part of the public SDK schema.
 const AgentStateName = "agent-account.yaml"
 
 // agentStateLockName is the flock sidecar for AgentStateName. A separate lock
@@ -32,19 +28,11 @@ const AgentStateName = "agent-account.yaml"
 // never replace the file the lock is held on.
 const agentStateLockName = "agent-account.lock"
 
-// AgentState is the on-disk agent-account record. It carries exactly the two
-// pieces of localagent state that used to live in the legacy ~/.jentic
-// config.yaml: the account record and the one-time same-user notice flag.
+// AgentState is the on-disk agent-account record.
 type AgentState struct {
-	// Agent is the SINGLE dedicated Unix account every local coding agent runs
-	// under (one per human). Nil until the operator has been through the
-	// agent-user decision at least once.
+	// Agent is the dedicated Unix account recorded for this operator, or nil
+	// when none is recorded.
 	Agent *AgentAccount `yaml:"agent_account,omitempty"`
-	// SameUserNoticeSeen records that the operator has already been shown the
-	// one-time notice that `jentic run` is launching the agent same-user (no
-	// dedicated account, no confinement). Set the first time that unconfined
-	// path is taken so the security notice informs once, not on every launch.
-	SameUserNoticeSeen bool `yaml:"same_user_notice_seen,omitempty"`
 
 	// Path records where the state was (or would be) persisted.
 	Path string `yaml:"-"`
@@ -65,10 +53,9 @@ func AgentStatePath() (string, error) {
 
 // LoadAgentState reads the agent-account record. The XDG file is authoritative;
 // when it does not exist yet, the legacy ~/.jentic/config.yaml (via legacy
-// Paths) is consulted READ-ONLY so accounts recorded by older releases keep
-// working — listing grants, launching, and resetting all see the old record
-// without requiring a migration first. The first MutateAgentState adopts the
-// legacy values into the XDG file and clears them from the legacy config.
+// Paths) is consulted READ-ONLY so an account recorded only there can still be
+// reset without a migration first. MutateAgentState adopts the legacy values
+// into the XDG file and clears them from the legacy config.
 func LoadAgentState(legacy Paths) (*AgentState, error) {
 	path, err := AgentStatePath()
 	if err != nil {
@@ -97,19 +84,19 @@ func LoadAgentState(legacy Paths) (*AgentState, error) {
 		return nil, err
 	}
 	return &AgentState{
-		Agent:              cfg.Agent,
-		SameUserNoticeSeen: cfg.SameUserNoticeSeen,
-		Path:               path,
+		Agent: cfg.Agent,
+		Path:  path,
 	}, nil
 }
 
 // MutateAgentState performs a race-safe read-modify-write of the agent state:
 // it takes an exclusive flock on the sidecar lock file, reloads the state from
-// disk UNDER that lock (so it sees any change a concurrent writer committed —
-// two concurrent `jentic run` grants must not drop each other's dir), applies
-// fn, and saves atomically before releasing the lock.
+// disk UNDER that lock (so it sees any change a concurrent writer committed),
+// applies fn, and saves atomically before releasing the lock. `jentic migrate`
+// uses it with a no-op fn to adopt a legacy record before the legacy tree can
+// be purged.
 //
-// The first mutation on a machine with a legacy record ADOPTS it: the reload
+// A mutation on a machine with a legacy record ADOPTS it: the reload
 // falls back to the legacy ~/.jentic/config.yaml, fn is applied on top, the
 // result lands in the XDG file, and the agent fields are then cleared from the
 // legacy config (best-effort) so exactly one copy of the record exists.
@@ -200,53 +187,27 @@ func (s *AgentState) AgentAccount() (AgentAccount, bool) {
 	return *s.Agent, true
 }
 
-// HasAgentUser reports whether a dedicated Unix agent account has been
-// provisioned and is enabled. This is the single gate the rest of the CLI keys
-// off: false means behave exactly as for an operator with no agent account.
-func (s *AgentState) HasAgentUser() bool {
-	return s.Agent != nil && s.Agent.AccountCreated && s.Agent.Enabled
-}
-
-// SetAgentAccount records (or replaces) the agent account entry. Call inside
-// MutateAgentState so the write is race-safe and persisted.
-func (s *AgentState) SetAgentAccount(acct AgentAccount) {
-	a := acct
-	s.Agent = &a
-}
-
-// ClearAgentAccount removes the agent-account record entirely — used when a full
-// reset tears down the Unix account, its home, and every grant, so nothing in
-// the state points at things that no longer exist.
-func (s *AgentState) ClearAgentAccount() {
-	s.Agent = nil
-}
-
-// AddGrantedDir records dir against the agent account (idempotently) and returns
-// true if it was newly added. Returns false when no account exists.
-func (s *AgentState) AddGrantedDir(dir string) bool {
-	if s.Agent == nil {
-		return false
+// RemoveAgentState deletes the agent-account record — the XDG file and any
+// copy still in the legacy ~/.jentic/config.yaml — under the agent-state lock.
+// `jentic reset` calls it LAST, once the account it describes is torn down, so
+// a mid-way failure leaves the record of what still needs cleaning. Absent
+// files are not an error.
+func RemoveAgentState(legacy Paths) error {
+	dir, err := sdkconfig.ConfigDir()
+	if err != nil {
+		return err
 	}
-	for _, d := range s.Agent.GrantedDirs {
-		if d == dir {
-			return false
+	path := filepath.Join(dir, AgentStateName)
+	if _, err := os.Stat(dir); err == nil {
+		unlock, lerr := lockAgentState(dir)
+		if lerr != nil {
+			return lerr
+		}
+		defer unlock()
+		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", path, rerr)
 		}
 	}
-	s.Agent.GrantedDirs = append(s.Agent.GrantedDirs, dir)
-	return true
-}
-
-// RemoveGrantedDir drops dir from the agent account's grant inventory and
-// returns true if it was present.
-func (s *AgentState) RemoveGrantedDir(dir string) bool {
-	if s.Agent == nil {
-		return false
-	}
-	for i, d := range s.Agent.GrantedDirs {
-		if d == dir {
-			s.Agent.GrantedDirs = append(s.Agent.GrantedDirs[:i], s.Agent.GrantedDirs[i+1:]...)
-			return true
-		}
-	}
-	return false
+	clearLegacyAgentState(legacy)
+	return nil
 }

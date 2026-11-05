@@ -1,65 +1,51 @@
-# `internal/localagent` — OS primitives for the local-agent sandbox
+# `internal/localagent` — agent-account teardown primitives
 
-This package holds the OS-level primitives behind `jentic run`: the registry of
-known coding agents, and the helpers that create/probe/grant/confine/launch as a
-dedicated agent user. The command layer that orchestrates them (prompts, config
-persistence, cobra wiring) lives in
-[`internal/cli/localagentcmd`](../cli/localagentcmd/) — that package is the
-**only** one that performs privileged host mutation, and this one produces the
-`*exec.Cmd` values and pure data it runs.
+This package holds the OS-level primitives `jentic reset` uses to remove agent
+accounts that older jentic releases provisioned on a machine. Nothing in this
+CLI creates them; the package exists so machines that still carry one can be
+cleaned:
 
-Operator-facing guide: [`docs/guides/local-agent.md`](../../../docs/guides/local-agent.md).
-Security design: [`docs/security/same-host/`](../../../docs/security/same-host/README.md).
+- the dedicated `<operator>-local-agent` Unix user — its named-user directory
+  ACLs (read/write leaf grants and execute-only ancestor traverse grants), its
+  passwordless-launch line in `/etc/sudoers.d/jentic-agent`, the identity and
+  seeded agent/provider config in its home, and the account itself;
+- the per-runtime `_jentic-<runtime>` MCP service accounts — their sudoers
+  lines, their 0700 homes holding exported key material, and the root-owned
+  jentic copy at `/usr/local/libexec/jentic/jentic` they ran.
+
+The command layer that orchestrates the teardown (survey, plan, confirmation,
+ordered execution) lives in [`internal/cli/api/reset*.go`](../cli/api/).
+`jentic doctor`/`jenticctl doctor` probe for leftovers read-only and point at
+`jentic reset`.
 
 ## Layering contract
 
 - **Stdlib-only.** Production code here imports nothing but the standard
-  library — no cobra, no `internal/config`, no API client. Keep it that way:
-  the command layer stays a thin orchestrator, and this package stays testable
-  without a CLI.
+  library — no cobra, no `internal/config`, no API client.
 - **Commands out, execution up.** Functions return `*exec.Cmd` /
   `[]AccountStep`; callers decide when to run them, wire stdio, and handle
-  errors. The few direct probes (`UserExists`, `ProbeBinary`, `DirAccess`,
-  `AgentACLPresent`) are read-only.
-- **Durable state lives elsewhere.** The agent-account record and grant
-  inventory are `internal/config`'s `AgentState` (persisted at
-  `~/.config/jentic/agent-account.yaml`); this package only reads the
-  agent's own JSON files (`~/.claude.json`, `~/.claude/settings.json`) under
-  the operator's home.
+  errors. The few direct probes (`UserExists`, `AgentACLPresent`,
+  `ServiceBinaryInstalled`, `LookupHomeDir`) are read-only.
+- **Durable state lives elsewhere.** The agent-account record (user, home,
+  granted dirs) is `internal/config`'s `AgentState`, read from
+  `~/.config/jentic/agent-account.yaml` (with a read-only fallback to the
+  legacy `~/.jentic/config.yaml`).
 
 ## File map
 
 | File | What it holds |
 | ---- | ------------- |
-| `localagent.go` | `Descriptor`/`Registry` (known agents), account lifecycle commands, the traverse-walk + rwx-leaf ACL grant model, config/provider seeding + secret scrubbing, `Classify` path bans, sudoers install/remove, trusted-workspace discovery |
-| `confine.go` | Per-session confinement: prereq probing (`AgentUserPrereqs`), `SessionAccess` (single source of truth for what a session reaches), SBPL profile builder (macOS), `bwrap` argv builder (Linux), `ConfineLaunchCmd` |
-| `serviceaccount.go` | The MCP service-account profile (`_jentic-<runtime>`): account + 0700 home creation, root-side context export, the argv-pinned MCP sudoers rule, teardown |
-| `servicebinary.go` | The root-owned jentic copy (`/usr/local/libexec/jentic/jentic`) the MCP sudoers rule and sudo-shim entry pin: atomic root-side install/refresh, removal, staleness check |
-| `validate.go` | The injection choke point: `ValidateAgentUser`, `ValidateHomeDir`, `ValidateGrantPath` — every operator-editable value is constrained here before it reaches a shell, sudoers line, ACL entry, or SBPL profile |
-| `operators_test.go` | Registry ↔ `internal/skillgen` parity guardrail, descriptor well-formedness, adversarial scrub-path containment |
-
-## Adding a new runnable agent
-
-One data row, no code: add a `Descriptor` to `Registry` in `localagent.go`
-(ID, binary, probe paths, install command, `SingleBinary`, `ConfigPaths`, and —
-if the agent keeps a separable credential file inside its config tree —
-`SecretConfigPaths` so seeding scrubs it). If the agent is a skill target but
-has no runnable binary, add it to `SkillOnly` instead. The parity test in
-`operators_test.go` fails until every `skillgen` operator is accounted for in
-exactly one of the two sets. If the agent records trusted workspaces, wire a
-reader into `TrustedWorkspaces` (it dispatches on the descriptor).
+| `localagent.go` | Account teardown commands (ACL revokes, home re-own/delete, identity + seeded-config scrub, sudoers line removal, account delete), the ACL-presence probe, and `VerifyManagedHome` |
+| `serviceaccount.go` | MCP service-account naming and its teardown steps |
+| `servicebinary.go` | The root-owned jentic copy's path, presence probe, and removal |
+| `validate.go` | The injection choke point: `ValidateAgentUser`, `ValidateHomeDir`, `ValidateGrantPath` — every recorded, hand-editable value is constrained here before it reaches a privileged command |
 
 ## Security invariants — don't loosen casually
 
-- **Validate at the source, quote at the sink.** Account names and paths are
-  constrained by `validate.go` *and* re-checked/quoted at each sink
-  (`shellQuote`, `sbplPath` control-char stripping, direct argv with `--`).
-- **Fail closed.** Confinement unavailable → the launch must be refused
-  (`ConfinementAvailable`); an inconclusive userns probe reads as disabled;
-  `VerifyManagedHome` gates every privileged chown/rm of the home.
-- **Never dereference symlinks** in privileged recursion: `chown -Rh`,
-  `cp -RP`, `find ! -type l`, `EvalSymlinks` before classification.
-- **Absolute wrapper paths.** `sandbox-exec`/`bwrap` are resolved in the
-  trusted operator process; an agent-controlled PATH must never pick them.
-- **Read-only exec routes, emitted last** (SBPL last-match / bwrap mount
-  order), including the agent's own `~/.local/bin` — the self-rewrite guard.
+- **Validate at the source, quote at the sink.** Recorded names and paths are
+  constrained by `validate.go` *and* quoted at each sink (`shellQuote`, direct
+  argv with `--`).
+- **Fail closed.** `VerifyManagedHome` gates every privileged chown/rm of a
+  home: the account's live home must equal the recorded managed home.
+- **Never dereference symlinks** in privileged recursion: `find` (default `-P`
+  walk) with `chown -h`, and multiply hard-linked files are skipped.
