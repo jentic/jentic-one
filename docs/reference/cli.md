@@ -1491,8 +1491,9 @@ jentic executions [flags]
 ```text
 executions follows your held executions: calls a permission rule held for
 a human to approve or deny. `jentic execute` prints a held call's
-held_execution_id; `jentic executions poll <held_execution_id>` collects
-its outcome.
+held_execution_id; `jentic executions explain <held_execution_id> <reason>`
+tells the reviewer why you made it, and `jentic executions poll
+<held_execution_id>` collects its outcome.
 ```
 
 Also accepts the [jentic global flags](#jentic-global-flags).
@@ -1502,6 +1503,7 @@ Also accepts the [jentic global flags](#jentic-global-flags).
 | Command | Description |
 |---|---|
 | [`jentic executions poll`](#jentic-executions-poll) | Collect a held execution's outcome, waiting up to --timeout |
+| [`jentic executions explain`](#jentic-executions-explain) | Tell the reviewer why a held call is needed |
 
 ##### jentic executions poll
 
@@ -1548,6 +1550,34 @@ Also accepts the [jentic global flags](#jentic-global-flags).
 jentic executions poll held_2mXk... --json
 jentic executions poll held_2mXk... --timeout 2m
 jentic executions poll held_2mXk... --timeout 0
+```
+
+##### jentic executions explain
+
+Tell the reviewer why a held call is needed
+
+```text
+jentic executions explain <held_execution_id> <reason> [flags]
+```
+
+```text
+explain sends the reviewer of a held call — one a permission rule held
+for human approval — your reason for making it, in a sentence or two.
+They see it next to the request, as your own claim. Only the agent that
+made the call can explain it, once, while it waits for a decision.
+
+Exit codes:
+  0 — the reason is recorded
+  1 — local/transport failure, or an empty reason
+  2 — an unknown held execution id, or a call already decided or explained
+```
+
+Also accepts the [jentic global flags](#jentic-global-flags).
+
+**Examples**
+
+```sh
+jentic executions explain held_2mXk... "Customer 4821 asked for a refund in ticket #88"
 ```
 
 #### jentic history
