@@ -61,7 +61,7 @@ Operate the catalog:
 Integrate apps:
 
 - [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users
-- [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
+- [CLI README](../cli/README.md) — the `jentic` / `jenticctl` overview: command groups, onboarding, local vs remote; every flag is in the [CLI reference](reference/cli.md)
 
 Agent runbook: [use](agent/use.md) — discover → check access → execute, as executable steps.
 
@@ -87,6 +87,7 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 - [Testing](development/testing.md) — Python test tiers and generated-artifact drift checks
 - [Extending Jentic One](development/extending-jentic-one.md)
 - [Context and configuration](development/context-and-config.md)
+- [Developing the CLI](development/cli.md) — building `jentic` / `jenticctl` from source, the MCP Inspector loop, package map, install-wizard internals
 - [Releasing](development/releasing.md)
 - [Product scope](development/product-scope.md) — the product-fit rubric the issue-intake harness scores against
 - [deploy/README.md](../deploy/README.md) — build architecture: images, charts, Terraform, multi-arch
@@ -98,4 +99,5 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 
 - [Configuration](reference/config.md) — every config key, default, and env var (`make config-reference`)
 - [Endpoints & permissions](reference/endpoints.md) — every HTTP route and its required permission (`make endpoints`)
+- [CLI](reference/cli.md) — every `jentic` / `jenticctl` command, flag, and example (`make cli-reference`)
 - [reference/README.md](reference/README.md) — how the generated material works

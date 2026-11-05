@@ -102,9 +102,9 @@ endpoints: ## Regenerate the endpoint + permission reference (docs/reference/end
 	uv run python -m tools.endpoint_tree
 	@echo "Regenerated docs/reference/endpoints.md and docs/reference/endpoints.json."
 
-cli-reference: ## Regenerate the CLI command reference (ui/public/cli-reference.json) from the cobra command tree
-	cd cli && go run ./cmd/clidocs -o ../ui/public/cli-reference.json
-	@echo "Regenerated ui/public/cli-reference.json."
+cli-reference: ## Regenerate the CLI command reference (ui/public/cli-reference.json + docs/reference/cli.md) from the cobra command tree
+	cd cli && go run ./cmd/clidocs -o ../ui/public/cli-reference.json -md ../docs/reference/cli.md
+	@echo "Regenerated ui/public/cli-reference.json and docs/reference/cli.md."
 
 broker-reference: ## Regenerate the Broker OpenAPI artifact (ui/public/broker-openapi.json) from the hand-curated spec
 	uv run python -m tools.broker_reference

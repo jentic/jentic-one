@@ -26,12 +26,48 @@ binary on `PATH`, and upgrade with the manager's native command (`brew
 upgrade`, `winget upgrade`, `scoop update`). `jenticctl` is not shipped for
 native Windows — use WSL ([windows.md](windows.md)).
 
-Everything below is the manual path: locked-down hosts, air-gapped transfer,
-or when you want to verify the supply chain yourself. There is also a
-[one-line installer script](../../cli/README.md#3-one-line-download-verified-binary-no-compiler)
-which downloads, sha256-checks, and cosign-verifies for you — with one caveat:
-if `cosign` isn't installed it prints a warning and continues with the
-sha256 check only.
+Beyond package managers: the [one-line installer script](#one-line-installer-script),
+which downloads, sha256-checks, and cosign-verifies for you, and the manual
+path: locked-down hosts, air-gapped transfer, or when you want to verify the
+supply chain yourself.
+
+## One-line installer script
+
+```bash
+# both binaries (default), then straight into the `jenticctl install` stack wizard:
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+
+# jentic only, verified download — for talking to a remote instance:
+JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=jentic \
+  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+```
+
+The script downloads the released archive for your OS/arch, **verifies its
+`sha256`** against `checksums.txt` (fail-closed — a mismatch aborts and
+installs nothing), and, when `cosign` is on your `PATH`, **verifies the release
+signature** too. Without `cosign` it prints a warning and continues with the
+sha256 check only. It is bash-only (macOS + Linux); on native Windows it exits
+with a "run this inside WSL" message.
+
+Environment knobs:
+
+- `JENTIC_INSTALL_METHOD` — `auto` (default: the verified download when a
+  matching release asset exists, otherwise a from-source build — forks, dev
+  refs) · `binary` (force download; errors if no asset) · `source` (force the
+  from-source build).
+- `JENTIC_INSTALL_BINARIES` — `both` (default) · `jentic` (agent CLI only).
+- `JENTIC_NO_INSTALL=1` — install the binaries only; **skip** the
+  `jenticctl install` stack wizard.
+- `GITHUB_TOKEN` — download/clone from a **private** fork (token needs `repo`
+  read scope).
+- `JENTIC_REF=v0.38.2` — pin the release tag to install (download mode) or the
+  ref (tag / branch / commit) to build (source mode).
+
+With no interactive terminal (CI, piped `curl … | sh`), the script installs
+the binaries and prints the non-interactive follow-up
+(`jenticctl install --defaults`) instead of blocking on the wizard. The
+from-source path's own settings (`JENTIC_INSTALL_DIR`, `JENTIC_GO_VERSION`, …)
+are in [`tools/install-README.md`](../../tools/install-README.md).
 
 ## Manual download
 
@@ -113,5 +149,50 @@ Register the host against your instance — an operator approves it in the UI:
 jentic register --url https://jentic.example.com --broker-url https://broker.jentic.example.com
 ```
 
-Then make the [first brokered call](../guides/first-call.md). The full command
-surface is in the [CLI README](../../cli/README.md#usage).
+Then make the [first brokered call](../guides/first-call.md). Every command and
+flag is in the generated [CLI reference](../reference/cli.md); the
+[CLI README](../../cli/README.md) has the overview.
+
+## What `jenticctl install` does
+
+For the **Run locally** path, once the config is written:
+
+0. **Preflight** — checks the required tools are on `PATH` before doing any work
+   (`uv` always; `git` when the source must be cloned). It prints a checklist
+   with versions and aborts with install hints if anything required is missing.
+   Requirements are defined per path in `requirementsFor`
+   ([`internal/install/preflight.go`](../../cli/internal/install/preflight.go)).
+1. **Build** a virtualenv at `~/.jentic/venv` and install `jentic-one` (editable)
+   into it. Inside a jentic-one checkout (detected by walking up for
+   `pyproject.toml` + `src/jentic_one`) it installs from your local source;
+   outside one it clones `github.com/jentic/jentic-one` into `~/.jentic/src`
+   first.
+2. **Migrate** — runs `jentic_one.migrations.run` with the venv interpreter
+   against the generated config. For Postgres, if the database isn't reachable
+   yet the wizard warns and leaves the migrate command in the next steps
+   instead of failing the whole install.
+3. **Start the app (background)** — launches `~/.jentic/venv/bin/python -m
+   jentic_one` detached, capturing its console output to `~/.jentic/logs/app.log`
+   with the PID in `~/.jentic/app.pid`, and watches the first couple of seconds
+   for an early crash. A failure to start is non-fatal. `--no-start` skips this.
+
+For the **Run in Docker** path:
+
+0. **Preflight** — checks `docker` is on `PATH` (plus `git` when the source must
+   be cloned to build the image).
+1. **Get the app image** — pulls the published, signed
+   `ghcr.io/jentic/jentic-one-app` (version-matched to the CLI) by default;
+   `--build-local` builds `jentic-one/app:jentic-cli` from a checkout instead
+   (the shared `python-base` stages are built first).
+2. **Write** `~/.jentic/docker-compose.yaml` (app + a managed Postgres when you
+   choose Postgres) with the config mounted read-only at
+   `/etc/jentic/jentic-one.yaml`, rendered with container-aware values (bind
+   `0.0.0.0`, Postgres host `db`, SQLite under `/data`, logs under `/logs`);
+   `JENTIC__APPS` is set from the selected surfaces. SQLite databases live in a
+   Docker named volume (`jentic-data`), not a host bind mount — Docker Desktop's
+   file sharing doesn't support the locking SQLite needs.
+3. **Migrate** in a one-shot container
+   (`docker compose run --rm app python -m jentic_one.migrations.run`).
+4. **Start the stack** — `docker compose up -d` (unless `--no-start`).
+   `jenticctl start` / `jenticctl stop` drive `docker compose up -d` / `down`
+   afterwards.
