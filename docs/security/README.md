@@ -207,6 +207,14 @@ strongest:
 - **Container / devcontainer** with a default-deny egress firewall, optionally
   under [gVisor](https://gvisor.dev/); in Kubernetes, a default-deny egress
   [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
+  To connect a CLI or skill agent from inside the container, install `jentic`
+  in the image and register from inside it with both URLs: a non-loopback
+  address doesn't seed the broker URL, so pass it explicitly —
+  `jentic setup --url http://host.docker.internal:8000 --broker-url http://host.docker.internal:8100`.
+  Keep the container's `~/.config/jentic` in its own named volume; never
+  bind-mount your host's `~/.config/jentic` or `~/.jentic` into it.
+  [MCP hardening, Recipe 2](same-host/mcp-same-host-hardening.md#recipe-2--container-entry)
+  shows a minimal image.
 - **Separate VM / microVM** — [Firecracker](https://firecracker-microvm.github.io/)
   gives each workload its own guest kernel.
 

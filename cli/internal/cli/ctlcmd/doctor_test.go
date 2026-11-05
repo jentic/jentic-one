@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -302,25 +304,65 @@ type doctorRow struct {
 	Hint    string `json:"hint"`
 }
 
-// A recorded agent account is a leftover of an older release (nothing creates
-// one any more): doctor must warn and name `jentic reset` as the cleanup path.
-func TestDoctorWarnsLeftoverAgentAccount(t *testing.T) {
-	app := testApp(t)
+func seedAgentAccount(t *testing.T, app *app, acct config.AgentAccount) {
+	t.Helper()
 	if _, err := config.MutateAgentState(app.Paths, func(s *config.AgentState) error {
-		s.Agent = &config.AgentAccount{User: "alice-local-agent", AccountCreated: true, Enabled: true}
+		s.Agent = &acct
 		return nil
 	}); err != nil {
 		t.Fatalf("seed agent state: %v", err)
 	}
+}
+
+func agentAccountRow(t *testing.T, app *app) (doctorRow, bool) {
+	t.Helper()
 	for _, r := range localAgentRows(t, app) {
 		if r.Name == "agent account" {
-			if r.Status != "warn" || !strings.Contains(r.Hint, "jentic reset") {
-				t.Errorf("leftover account row should warn with a reset hint, got %+v", r)
-			}
-			return
+			return r, true
 		}
 	}
-	t.Errorf("expected a leftover agent account warning:\n%s", app.Out.(*bytes.Buffer).String())
+	return doctorRow{}, false
+}
+
+// A created agent account whose OS user still exists is a leftover of an older
+// release (nothing creates one any more): doctor must warn and name
+// `jentic reset` as the cleanup path. The current OS user stands in for the
+// agent account, since only an existing user may trigger the warning.
+func TestDoctorWarnsLeftoverAgentAccount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("agent accounts are POSIX users")
+	}
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("no current user: %v", err)
+	}
+	app := testApp(t)
+	seedAgentAccount(t, app, config.AgentAccount{User: me.Username, AccountCreated: true, Enabled: true})
+	r, ok := agentAccountRow(t, app)
+	if !ok {
+		t.Fatalf("expected a leftover agent account warning:\n%s", app.Out.(*bytes.Buffer).String())
+	}
+	if r.Status != "warn" || !strings.Contains(r.Hint, "jentic reset") {
+		t.Errorf("leftover account row should warn with a reset hint, got %+v", r)
+	}
+}
+
+// Older setups recorded a declined account (AccountCreated false) with no OS
+// user behind it, and a created account's user may already be gone. Neither is
+// worth sending the operator to `jentic reset` (which wipes their identity).
+func TestDoctorIgnoresAgentRecordWithoutAccount(t *testing.T) {
+	for name, acct := range map[string]config.AgentAccount{
+		"declined":     {User: "alice-local-agent", AccountCreated: false},
+		"user is gone": {User: "jentic-no-such-user-xyz", AccountCreated: true, Enabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := testApp(t)
+			seedAgentAccount(t, app, acct)
+			if r, ok := agentAccountRow(t, app); ok {
+				t.Errorf("unexpected agent account row: %+v", r)
+			}
+		})
+	}
 }
 
 // With no recorded account doctor renders no agent-account row at all.

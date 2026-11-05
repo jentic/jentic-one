@@ -366,7 +366,11 @@ func (d *doctor) checkLocalAgent() {
 
 	// A load failure just skips the record check — doctor must stay warn-only.
 	if st, err := config.LoadAgentState(d.app.Paths); err == nil {
-		if acct, ok := st.AgentAccount(); ok && acct.User != "" {
+		// Older setups recorded a declined account (AccountCreated false) with no
+		// OS user behind it; only an account that was created and still exists
+		// is worth sending the operator to reset for.
+		if acct, ok := st.AgentAccount(); ok && acct.AccountCreated && acct.User != "" &&
+			localagent.UserExists(d.ctx, acct.User) {
 			d.add(section, "agent account", statusWarn,
 				fmt.Sprintf("leftover agent account %q is still recorded on this machine", acct.User), hint)
 		}

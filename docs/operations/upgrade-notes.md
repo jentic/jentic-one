@@ -26,7 +26,9 @@ Changes on `main` since 0.44.0; they ship in the next release.
   deletes the users, revokes the ACL grants, removes the sudoers lines and the
   root-owned copy, and then wipes your local jentic identity state (re-run
   `jentic setup` afterwards). `jenticctl doctor` warns about any that remain,
-  and about a sudo-shim MCP entry left in a runtime config. To keep a coding
+  and about a sudo-shim MCP entry left in a runtime config; on a machine
+  without `jenticctl`, `jentic reset` shows what it would remove before it
+  changes anything. To keep a coding
   agent away from the instance's files, run it in a container or VM, or run
   the instance on another machine — see
   [same-host options](../security/same-host/README.md) and
