@@ -207,6 +207,7 @@ jobs:
               - 'docs/reference/mcp-tools.json'
             installer:
               - 'tools/install.sh'
+              - 'tools/clis/**'
               - 'tests/tools/**'
             e2e-install:
               # The cross-OS install + smoke
