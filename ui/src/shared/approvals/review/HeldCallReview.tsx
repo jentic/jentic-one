@@ -344,7 +344,7 @@ function receiptToast(done: ReviewReceipt) {
 	};
 }
 
-/** "2 of 7 waiting for you", with previous / next and a dot per call. */
+/** "2 of 7 waiting for you", with previous / next and a dot per call that jumps to it. */
 function ReviewStepper<T extends { id: string }>({
 	queue,
 	position,
@@ -378,15 +378,34 @@ function ReviewStepper<T extends { id: string }>({
 						<ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
 					</Button>
 					{queue.length <= MAX_STEPPER_DOTS && (
-						<span className="flex gap-1" aria-hidden="true">
+						// A dot per call, each one a jump straight to its call; the
+						// current one marks where the pop-up is.
+						<span className="flex">
 							{queue.map((c, i) => (
-								<span
+								<button
 									key={c.id}
+									type="button"
+									aria-label={`Call ${i + 1} of ${queue.length}: ${labelOf(c)}`}
+									aria-current={i === position ? 'step' : undefined}
+									title={labelOf(c)}
+									disabled={disabled}
+									onClick={() => i !== position && onStep(c.id)}
 									className={cn(
-										'h-1.5 w-4 rounded-full',
-										i === position ? 'bg-primary' : 'bg-surface-tonal-hover',
+										'group focus-visible:ring-ring rounded-full px-0.5 py-2 focus-visible:ring-2 focus-visible:outline-none',
+										i === position ? 'cursor-default' : 'cursor-pointer',
+										'disabled:cursor-not-allowed',
 									)}
-								/>
+								>
+									<span
+										aria-hidden="true"
+										className={cn(
+											'block h-1.5 w-4 rounded-full transition-colors',
+											i === position
+												? 'bg-primary'
+												: 'bg-surface-tonal-hover group-hover:bg-foreground-faint',
+										)}
+									/>
+								</button>
 							))}
 						</span>
 					)}

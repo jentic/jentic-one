@@ -363,6 +363,28 @@ describe('deciding', () => {
 		expect(within(dialog).getByText('2 of 2 waiting for you')).toBeInTheDocument();
 		expect(decisions).toHaveLength(0);
 	});
+
+	it('jumps straight to a call from its dot', async () => {
+		seedCall('held_a', { created_at: minutesAgo(30) });
+		seedCall('held_b', { created_at: minutesAgo(20), operation_id: 'createRefund' });
+		seedCall('held_c', { created_at: minutesAgo(10), operation_id: 'mergePull' });
+		renderHost('/agents?agent=agnt_billing&review=held_a');
+
+		const dialog = await screen.findByRole('dialog', { name: 'Review call' });
+		await within(dialog).findByText('“Create a charge”');
+		const first = within(dialog).getByRole('button', { name: /^Call 1 of 3: / });
+		expect(first).toHaveAttribute('aria-current', 'step');
+
+		await userEvent.click(within(dialog).getByRole('button', { name: /^Call 3 of 3: / }));
+		expect(await within(dialog).findByText('“Merge a pull request”')).toBeInTheDocument();
+		expect(within(dialog).getByText('3 of 3 waiting for you')).toBeInTheDocument();
+		expect(currentParams().get('review')).toBe('held_c');
+		expect(within(dialog).getByRole('button', { name: /^Call 3 of 3: / })).toHaveAttribute(
+			'aria-current',
+			'step',
+		);
+		expect(decisions).toHaveLength(0);
+	});
 });
 
 describe('the queue the pop-up walks', () => {
@@ -531,5 +553,45 @@ describe('states without verbs', () => {
 		await userEvent.click(closeButtons[closeButtons.length - 1]);
 		await waitFor(() => expect(currentParams().has('review')).toBe(false));
 		expect(currentParams().get('agent')).toBe('agnt_billing');
+	});
+});
+
+describe("the agent's reason arriving while the pop-up is open", () => {
+	it('shows a reason that lands with no event, on its own re-read', async () => {
+		seedCall('held_fresh', { created_at: new Date().toISOString() });
+		renderHost('/agents?agent=agnt_billing&review=held_fresh');
+		const dialog = await screen.findByRole('dialog', { name: 'Review call' });
+		await within(dialog).findByText('“Create a charge”');
+		expect(within(dialog).queryByText('Why the agent is asking')).not.toBeInTheDocument();
+
+		// The agent explains; no event reaches the page.
+		getMockApproval('held_fresh')!.agent_reason = 'Renewal invoice is still open';
+		expect(
+			await within(dialog).findByText(
+				'“Renewal invoice is still open”',
+				{},
+				{ timeout: 8000 },
+			),
+		).toBeInTheDocument();
+	});
+
+	it('leaves a call held long ago alone: no reason, no re-reads', async () => {
+		seedCall('held_old', { created_at: minutesAgo(10) });
+		const reads: string[] = [];
+		const record = ({ request }: { request: Request }) => {
+			const path = new URL(request.url).pathname;
+			if (path === '/executions/holds/held_old') reads.push(path);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderHost('/agents?agent=agnt_billing&review=held_old');
+			const dialog = await screen.findByRole('dialog', { name: 'Review call' });
+			await within(dialog).findByText('“Create a charge”');
+			const settled = reads.length;
+			await new Promise((resolve) => setTimeout(resolve, 4000));
+			expect(reads.length).toBe(settled);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
 	});
 });

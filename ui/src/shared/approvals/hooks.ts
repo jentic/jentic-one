@@ -46,6 +46,23 @@ export {
 const CALL_POLL_MS = 3_000;
 
 /**
+ * An agent asked to explain its held call answers right after the hold. For
+ * this long after a call is held, a surface showing it with no reason yet
+ * re-reads it every `REASON_POLL_MS`, so the reason shows even when its
+ * `execution.approval_reason_added` event is missed (it can land while the
+ * call is still being read). Past it, the event alone carries a late reason.
+ */
+const REASON_WINDOW_MS = 2 * 60_000;
+const REASON_POLL_MS = 3_000;
+
+/** A waiting call held moments ago whose agent has not explained it yet. */
+function awaitsReason(call: HeldCallDetail | undefined, now: number): boolean {
+	if (!call || call.state !== 'pending' || call.agent_reason) return false;
+	const heldFor = now - Date.parse(call.created_at);
+	return heldFor >= 0 && heldFor < REASON_WINDOW_MS;
+}
+
+/**
  * A detail just read is fresh for a moment: the pop-up landing on a call the
  * walk re-read a breath ago doesn't read it again on mount.
  */
@@ -72,11 +89,14 @@ function detailQuery(heldExecutionId: string, poll: boolean) {
 		queryFn: () => getApproval(heldExecutionId),
 		staleTime: DETAIL_FRESH_MS,
 		// A decided call moves on (queued → running → its outcome) without an
-		// event the surface can count on, so poll while it is still under way.
-		refetchInterval: (query: { state: { data?: HeldCallDetail } }) =>
-			poll && isCallUnderWay(query.state.data?.state, query.state.data?.execution_status)
-				? CALL_POLL_MS
-				: false,
+		// event the surface can count on, so poll while it is still under way;
+		// a call just held polls until its agent's reason arrives.
+		refetchInterval: (query: { state: { data?: HeldCallDetail } }) => {
+			if (!poll) return false;
+			const call = query.state.data;
+			if (isCallUnderWay(call?.state, call?.execution_status)) return CALL_POLL_MS;
+			return awaitsReason(call, Date.now()) ? REASON_POLL_MS : false;
+		},
 	};
 }
 
