@@ -366,7 +366,7 @@ class BrokerConfig(BaseModel):
                     "agent-credential bindings are the only access path. Remove "
                     "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
                     "if toolkit-bound agents lose access, run the toolkit flattening "
-                    "(`flatten-toolkits`, docs/development/releasing.md)."
+                    "(`flatten-toolkits`, docs/operations/upgrade-notes.md)."
                 )
             _warn_retired_direct_bindings_flag_once()
             data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}

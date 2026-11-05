@@ -23,7 +23,7 @@ runners, scripts) register as an agent and authenticate with its `jak_` API
 key.
 
 Two former actor kinds are retired (upgrade steps: the
-[0.41 upgrade notes](../development/releasing.md#upgrading-to-0410)):
+[0.41 upgrade notes](../operations/upgrade-notes.md#0410)):
 
 - **`service_account`** — retired in 0.40. The migration converted each
   service account into a successor agent, carrying over its grants and

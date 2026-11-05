@@ -44,7 +44,7 @@ The admin half of the deletion cut. Two pieces:
 historical shape (post ``s8t9u0v1w2x3`` toolkit_id index, ``q6r7s8t9u0v1``
 nullable created_by, ``b9d0e1f2a3b4`` FK-less agent_id). Rows come back only
 via ``jentic_one export-toolkits --import <file>`` — see the rollback
-runbook in ``docs/development/releasing.md``. The scope sweep is not reversed: the
+runbook in ``docs/operations/upgrade-notes.md``. The scope sweep is not reversed: the
 strings granted nothing.
 
 Revision ID: d1e2f3a4b5c6
@@ -97,8 +97,8 @@ _RUNBOOK = (
     "confirm zero creations), then `jentic_one flatten-toolkits --verify "
     "--acknowledge`, and re-run this migration. To discard the binding data "
     "instead, take an export first (`jentic_one export-toolkits --out "
-    "<file>`), truncate agent_toolkit_bindings, and re-run. See the theme-5 "
-    "upgrading runbook in docs/development/releasing.md."
+    "<file>`), truncate agent_toolkit_bindings, and re-run. See "
+    "docs/operations/upgrade-notes.md (0.41.0)."
 )
 
 _REMEDIATION = (
@@ -268,7 +268,7 @@ def downgrade() -> None:
     """Recreate ``agent_toolkit_bindings`` empty, in its final historical shape.
 
     Rows come back only via ``jentic_one export-toolkits --import <file>``
-    (rollback = downgrade the drops **plus** re-import — docs/development/releasing.md).
+    (rollback = downgrade the drops **plus** re-import — docs/operations/upgrade-notes.md).
     The scope sweep is not reversed. No ORM model exists for this table any
     more, so raw inserts on SQLite must supply explicit ids, which the import
     tool does.
