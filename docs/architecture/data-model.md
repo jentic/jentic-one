@@ -97,7 +97,7 @@ toolkit tables (`toolkits`, `toolkit_permission_rules`,
 `toolkit_credential_bindings`, `toolkit_keys`, and admin's
 `agent_toolkit_bindings`) are dropped from 0.41, gated on the
 `toolkit_flattening_acks` sentinel — see the
-[0.41 upgrade notes](../development/releasing.md#upgrading-to-0410).
+[0.41 upgrade notes](../operations/upgrade-notes.md#0410).
 
 ### Admin — identity and operations
 
@@ -107,7 +107,7 @@ holds the long-lived API-key alternative to the OAuth flow. The retired
 `service_accounts`, `service_account_credentials` and
 `service_account_migration_acks` tables are dropped from 0.41, after the
 migration runner has moved every remaining service account to a successor
-agent (see the [0.41 upgrade notes](../development/releasing.md#upgrading-to-0410)).
+agent (see the [0.41 upgrade notes](../operations/upgrade-notes.md#0410)).
 Token state lives in
 `access_tokens`/`refresh_tokens`/`authorization_codes`, and `assertion_jtis`
 holds the single-use record of each JWT-bearer assertion's `jti` (a digest,

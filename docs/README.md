@@ -34,6 +34,7 @@ What Jentic One is and how it works: [repository README](../README.md).
 - [Operating Jentic One](operations/README.md) — the day-2 map
 - [Monitoring & logs](operations/monitoring.md) — health endpoints, log sinks, executions and the audit trail, metrics
 - [Upgrades](operations/upgrades.md) — the version/migration contract, per-install pointers
+- [Upgrade notes](operations/upgrade-notes.md) — per-release breaking changes, required steps and rollback, newest first
 - [Backup & restore](operations/backup-restore.md) — what a restorable backup must contain
 - [Troubleshooting](operations/troubleshooting.md) — symptom index for humans, backed by the [agent failure catalogue](agent/troubleshoot.md)
 - Agent runbook: [operate](agent/operate.md) — status/logs/upgrade/uninstall as executable steps

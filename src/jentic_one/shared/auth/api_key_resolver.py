@@ -45,7 +45,7 @@ def is_retired_service_account_key(token: str) -> bool:
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
 # authenticating as its successor agent for the same reason (digest copied into
 # ``agent_credentials``). The prefix is DEPRECATED (see
-# ``docs/development/releasing.md``): each successful resolve logs a warning
+# ``docs/operations/upgrade-notes.md``): each successful resolve logs a warning
 # naming the actor; acceptance ends no earlier than 2026-12-01.
 RETIRED_TOOLKIT_KEY_PREFIX = "jntc_live_"
 
@@ -139,7 +139,7 @@ class ApiKeyResolver:
             actionable_step=(
                 "Service-account (sak_) keys stopped working in 0.41. Mint a jak_ key "
                 "for the successor agent and switch this caller to it (see "
-                "'Upgrading to 0.41.0' in docs/development/releasing.md)."
+                "docs/operations/upgrade-notes.md, 0.41.0)."
             ),
         )
 
@@ -162,7 +162,7 @@ class ApiKeyResolver:
                 agent_id=arm.sub,
                 actionable_step=(
                     "Rotate this caller to its successor agent's jak_ key; "
-                    f"{deadline_note} (see docs/development/releasing.md)."
+                    f"{deadline_note} (see docs/operations/upgrade-notes.md)."
                 ),
             )
             return arm
