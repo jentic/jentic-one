@@ -205,7 +205,7 @@ describe('CredentialInventorySheet — credential flows', () => {
 		await user.click(await screen.findByRole('button', { name: /Enter manually/i }));
 		await user.type(screen.getByPlaceholderText('Production API key'), 'CI token');
 		await user.type(screen.getByPlaceholderText('acme'), 'acme');
-		await user.type(screen.getByPlaceholderText('sk_live_…'), 'super-secret-value');
+		await user.type(screen.getByPlaceholderText('Paste the token'), 'super-secret-value');
 		await user.click(screen.getByRole('button', { name: 'Create credential' }));
 
 		await expectCredentialCreatedToast();
@@ -240,7 +240,7 @@ describe('CredentialInventorySheet — credential flows', () => {
 		await user.click(await screen.findByRole('button', { name: /Enter manually/i }));
 		await user.type(screen.getByPlaceholderText('Production API key'), 'CI token');
 		await user.type(screen.getByPlaceholderText('acme'), 'acme');
-		await user.type(screen.getByPlaceholderText('sk_live_…'), 'super-secret-value');
+		await user.type(screen.getByPlaceholderText('Paste the token'), 'super-secret-value');
 		await user.click(screen.getByRole('button', { name: 'Create credential' }));
 
 		await waitFor(() => {
@@ -331,7 +331,9 @@ describe('CredentialInventorySheet — credential flows', () => {
 		await user.click((await screen.findAllByText('acme.com'))[0]);
 		expect(await screen.findByText(/imports on save/i)).toBeInTheDocument();
 
-		const tokenInput = (await screen.findByPlaceholderText('sk_live_…')) as HTMLInputElement;
+		const tokenInput = (await screen.findByPlaceholderText(
+			'Paste the token',
+		)) as HTMLInputElement;
 		await user.type(tokenInput, 'token-from-catalog');
 		await user.click(screen.getByRole('button', { name: 'Create credential' }));
 

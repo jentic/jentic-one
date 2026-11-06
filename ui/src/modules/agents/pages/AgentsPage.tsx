@@ -30,6 +30,10 @@ import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSe
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
 import { WaitingForYouSection } from '@/modules/agents/components/flat/WaitingForYouSection';
 import { CreateCredentialFlow, PostConnectBindMore } from '@/shared/credentials/components';
+import {
+	NEW_AGENT_PLACEMENT,
+	type NewAgentPlacement,
+} from '@/modules/agents/lib/newAgentPlacement';
 
 /** The connect session the approve wizard is open on. */
 interface ApprovalSession {
@@ -47,7 +51,10 @@ const SHORTCUTS: KeyboardShortcut[] = [
 	{ keys: ['Esc'], label: 'close' },
 ];
 
-export default function AgentsPage() {
+/** `newAgentPlacement` defaults to the app's setting; tests pin each one. */
+export default function AgentsPage({
+	newAgentPlacement = NEW_AGENT_PLACEMENT,
+}: { newAgentPlacement?: NewAgentPlacement } = {}) {
 	const navigate = useNavigate();
 	const [agentCreateOpen, setAgentCreateOpen] = useState(false);
 	const [inventoryOpen, setInventoryOpen] = useState(false);
@@ -57,11 +64,14 @@ export default function AgentsPage() {
 	// lives here and the strip consumes it.
 	const [agentFilter, setAgentFilter] = useState('');
 	const filterRef = useRef<HTMLInputElement | null>(null);
-	useHotkey('/', () => filterRef.current?.focus());
-	useHotkey('n', () => setAgentCreateOpen(true));
 	// Reported by the section below, so the header steps back exactly while the
 	// zero-agents landing is on screen.
 	const [firstRun, setFirstRun] = useState(false);
+	// Reported by the section below: while the strip shows `+ New agent`, the header drops its own.
+	const [stripShown, setStripShown] = useState(false);
+	// The hook swallows `/` unconditionally, so leave it to the page while the landing is up.
+	useHotkey('/', () => filterRef.current?.focus(), !firstRun);
+	useHotkey('n', () => setAgentCreateOpen(true));
 
 	const [searchParams, setSearchParams] = useSearchParams();
 	const inventoryParam = searchParams.get('credentials');
@@ -118,13 +128,14 @@ export default function AgentsPage() {
 	return (
 		// The surface mounts the fixed AgentDock, so the page pads its bottom to keep
 		// the last row of tiles clear of it — and, below `md`, of the bottom nav.
-		<PageShell className={FOOTER_ACTION_BAR_PAGE_PADDING}>
+		// The zero-agents landing mounts no dock, so it drops that reserve.
+		<PageShell className={firstRun ? 'pb-0' : FOOTER_ACTION_BAR_PAGE_PADDING}>
 			<PageHeader
 				title="Agents"
 				subtitle="Approve, deny, and govern agents across their lifecycle."
 				actions={
 					<>
-						<div className="relative min-w-0 flex-1 sm:flex-none">
+						<div hidden={firstRun} className="relative min-w-0 flex-1 sm:flex-none">
 							<SearchInput
 								ref={filterRef}
 								size="sm"
@@ -142,18 +153,18 @@ export default function AgentsPage() {
 								</Kbd>
 							)}
 						</div>
-						{/* Opens the New agent panel. Secondary while the landing is up: its
-						    register card is the recommended way in, and the panel opens on
-						    "Create here" there. */}
-						<Button
-							size="sm"
-							variant={firstRun ? 'outline' : 'primary'}
-							data-emphasis={firstRun ? 'secondary' : 'primary'}
-							onClick={() => setAgentCreateOpen(true)}
-						>
-							<Plus className="h-4 w-4" />
-							New agent
-						</Button>
+						{/* Only without the strip's `+ New agent`; secondary while the landing is up. */}
+						{!stripShown && (
+							<Button
+								size="sm"
+								variant={firstRun ? 'outline' : 'primary'}
+								data-emphasis={firstRun ? 'secondary' : 'primary'}
+								onClick={() => setAgentCreateOpen(true)}
+							>
+								<Plus className="h-4 w-4" />
+								New agent
+							</Button>
+						)}
 						{/* The org-wide inventory trigger — page level, not the dock, whose every
 						    verb is agent-scoped. */}
 						<Button
@@ -236,6 +247,8 @@ export default function AgentsPage() {
 				setCreateOpen={setAgentCreateOpen}
 				filter={agentFilter}
 				onLandingChange={setFirstRun}
+				onStripChange={setStripShown}
+				newAgentPlacement={newAgentPlacement}
 			/>
 
 			{/* The org-wide credential inventory — a page-level surface, since it is

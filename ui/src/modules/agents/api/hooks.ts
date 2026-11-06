@@ -669,7 +669,8 @@ export function useDetachAgentBindingRuleSet(agentId: string, credentialId: stri
 	});
 }
 
-/** Replace the full rule set on one direct binding (idempotent PUT). */
+/** Replace the full rule set on one direct binding (idempotent PUT). Manage
+ * access confirms a save inline, so only a failure toasts. */
 export function useReplaceAgentBindingPermissions(agentId: string, credentialId: string) {
 	const qc = useQueryClient();
 	return useMutation<BindingPermissionRule[], Error, PermissionRuleInput[]>({
@@ -682,7 +683,6 @@ export function useReplaceAgentBindingPermissions(agentId: string, credentialId:
 				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
 			});
 			qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
-			toast({ title: 'Permission rules saved', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to save permission rules.'),
 	});

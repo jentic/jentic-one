@@ -20,6 +20,12 @@ export interface SegmentedToggleOption<T extends string = string> {
 	label: string;
 	/** Optional leading glyph (decorative — the label stays the accessible name). */
 	icon?: ReactNode;
+	/**
+	 * Classes for this option while it is the active one — its pill fill and
+	 * label colour (e.g. a caution tint for an "Ask" choice). Absent → the
+	 * tone's neutral pill.
+	 */
+	activeTint?: { pill: string; text: string };
 }
 
 /**
@@ -29,6 +35,16 @@ export interface SegmentedToggleOption<T extends string = string> {
  * `inset` is one step lighter than a `surface-1` panel (smaller labels).
  */
 export type SegmentedToggleTone = 'default' | 'surface' | 'inset';
+
+/** `xs` fits inside a list row (a per-row choice); `default` is a toolbar control. */
+export type SegmentedToggleSize = 'default' | 'xs';
+
+/** The `xs` size's overrides on any tone: a slimmer frame and segments. */
+const XS_STYLES = {
+	root: 'gap-px p-[2px]',
+	pill: 'top-[2px] bottom-[2px] rounded-[5px]',
+	segment: 'rounded-[5px] px-2 py-0.5 text-[11px] font-semibold',
+};
 
 const TONE_STYLES: Record<
 	SegmentedToggleTone,
@@ -44,7 +60,7 @@ const TONE_STYLES: Record<
 	surface: {
 		root: 'bg-surface-1 rounded-field gap-[2px] border-0 p-[3px]',
 		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
-		segment: 'rounded-[6px] px-3 py-[5px] text-[12.5px] font-semibold',
+		segment: 'rounded-[6px] px-3 py-[5px] text-xs font-semibold',
 		active: 'text-foreground',
 		idle: 'text-foreground-sub',
 	},
@@ -59,8 +75,14 @@ const TONE_STYLES: Record<
 
 interface SegmentedToggleProps<T extends string = string> {
 	options: SegmentedToggleOption<T>[];
-	value: T;
+	/** The pressed option; `null` = none (only meaningful with `onClear`). */
+	value: T | null;
 	onChange: (value: T) => void;
+	/**
+	 * Lets the choice be emptied: pressing the pressed option, or Delete /
+	 * Backspace in `'choice'` mode, calls this instead of `onChange`.
+	 */
+	onClear?: () => void;
 	/**
 	 * Kept for API compatibility with existing call sites. No longer used for
 	 * the animation (the pill is measured locally, not shared via `layoutId`),
@@ -71,10 +93,15 @@ interface SegmentedToggleProps<T extends string = string> {
 	/**
 	 * Semantic role of the control. `'tabs'` opts into full ARIA tab semantics
 	 * (`role=tablist/tab`, `aria-selected`, roving `tabIndex`, and Left/Right/
-	 * Home/End arrow-key navigation). Defaults to `'toggle'` — a plain group of
-	 * buttons — to preserve behaviour for non-tab call sites (filters, etc.).
+	 * Home/End arrow-key navigation). `'choice'` is a pick-one-or-none field
+	 * inside a list row: a named `role=group` of `aria-pressed` buttons with ONE
+	 * tab stop (roving `tabIndex`). Arrow keys and Home/End move focus only;
+	 * Space/Enter press. Pressing the pressed option (or Delete/Backspace) calls
+	 * `onClear`, so "none" is always reachable — which a radio group can't do.
+	 * Defaults to `'toggle'` — a plain group of buttons — to preserve behaviour
+	 * for non-tab call sites (filters, etc.).
 	 */
-	as?: 'toggle' | 'tabs';
+	as?: 'toggle' | 'tabs' | 'choice';
 	/**
 	 * Accessible name for the group. Applied as `aria-label` on the tablist
 	 * when `as='tabs'`, or on a `role="group"` wrapper in toggle mode.
@@ -94,6 +121,8 @@ interface SegmentedToggleProps<T extends string = string> {
 	disabled?: boolean;
 	/** Surface the control sits on (default: one step lighter than its container). */
 	tone?: SegmentedToggleTone;
+	/** `xs` for a choice inside a list row. Default `default`. */
+	size?: SegmentedToggleSize;
 	/**
 	 * The control acts as a form field (a choice inside a form, not a
 	 * toolbar/panel filter): draws the inputs' faint resting edge.
@@ -117,13 +146,34 @@ export function SegmentedToggle<T extends string = string>({
 	getTabId,
 	disabled = false,
 	tone = 'default',
+	size = 'default',
 	field = false,
+	onClear,
 }: SegmentedToggleProps<T>) {
-	const styles = TONE_STYLES[tone];
+	const toneStyles = TONE_STYLES[tone];
+	const styles =
+		size === 'xs'
+			? {
+					...toneStyles,
+					root: cn(toneStyles.root, XS_STYLES.root),
+					pill: cn(toneStyles.pill, XS_STYLES.pill),
+					segment: XS_STYLES.segment,
+				}
+			: toneStyles;
+	const activeOption = options.find((o) => o.value === value);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const btnRefs = useRef(new Map<string, HTMLButtonElement>());
 	const [pill, setPill] = useState<PillRect | null>(null);
 	const isTabs = as === 'tabs';
+	const isChoice = as === 'choice';
+	const roving = isTabs || isChoice;
+	// `'choice'`: the one tab stop is the pressed option, else the last one
+	// focused, else the first.
+	const [focusValue, setFocusValue] = useState<T | null>(null);
+	const tabStop: T | undefined =
+		value ??
+		(focusValue && options.some((o) => o.value === focusValue) ? focusValue : undefined) ??
+		options[0]?.value;
 
 	// Measure the active button's box relative to the container after layout,
 	// and re-measure on resize. `useLayoutEffect` so the pill is positioned
@@ -134,14 +184,20 @@ export function SegmentedToggle<T extends string = string>({
 	useLayoutEffect(() => {
 		function measure() {
 			const container = containerRef.current;
-			const btn = btnRefs.current.get(value);
-			if (!container || !btn) return;
-			setPill({ left: btn.offsetLeft, width: btn.offsetWidth });
+			const btn = value == null ? undefined : btnRefs.current.get(value);
+			if (!container) return;
+			if (!btn) {
+				setPill(null);
+				return;
+			}
+			const { offsetLeft: left, offsetWidth: width } = btn;
+			// Unchanged geometry keeps the same state: no re-render per observer tick.
+			setPill((p) => (p?.left === left && p.width === width ? p : { left, width }));
 		}
 		measure();
 		const ro = new ResizeObserver(measure);
 		if (containerRef.current) ro.observe(containerRef.current);
-		const activeBtn = btnRefs.current.get(value);
+		const activeBtn = value == null ? undefined : btnRefs.current.get(value);
 		if (activeBtn) ro.observe(activeBtn);
 		return () => ro.disconnect();
 	}, [value, options]);
@@ -149,9 +205,17 @@ export function SegmentedToggle<T extends string = string>({
 	// Roving Left/Right/Home/End navigation for tab semantics. Moving focus also
 	// activates the tab (automatic activation), matching the WAI-ARIA tabs pattern
 	// for a small, cheap-to-render lens switcher.
-	function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
-		if (!isTabs) return;
-		const idx = options.findIndex((o) => o.value === value);
+	function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>, current: T) {
+		if (!roving) return;
+		if (isChoice && (e.key === 'Delete' || e.key === 'Backspace')) {
+			if (value != null && onClear) {
+				e.preventDefault();
+				onClear();
+			}
+			return;
+		}
+		// Tabs move from the selected tab; a choice moves from the focused option.
+		const idx = options.findIndex((o) => o.value === (isChoice ? current : value));
 		if (idx === -1) return;
 		let nextIdx: number | null = null;
 		if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nextIdx = (idx + 1) % options.length;
@@ -162,14 +226,16 @@ export function SegmentedToggle<T extends string = string>({
 		if (nextIdx == null) return;
 		e.preventDefault();
 		const next = options[nextIdx].value;
-		onChange(next);
+		// A choice moves focus only (Space/Enter press); tabs activate on focus.
+		if (isChoice) setFocusValue(next);
+		else onChange(next);
 		btnRefs.current.get(next)?.focus();
 	}
 
 	return (
 		<div
 			ref={containerRef}
-			role={isTabs ? 'tablist' : ariaLabel ? 'group' : undefined}
+			role={isTabs ? 'tablist' : ariaLabel || isChoice ? 'group' : undefined}
 			aria-label={ariaLabel}
 			aria-disabled={disabled || undefined}
 			className={cn(
@@ -188,7 +254,11 @@ export function SegmentedToggle<T extends string = string>({
 			{pill && (
 				<motion.div
 					aria-hidden="true"
-					className={cn('pointer-events-none absolute', styles.pill)}
+					className={cn(
+						'pointer-events-none absolute',
+						styles.pill,
+						activeOption?.activeTint?.pill,
+					)}
 					initial={false}
 					animate={{ left: pill.left, width: pill.width }}
 					// INVARIANT: the pill must never extend past the control's own
@@ -218,14 +288,28 @@ export function SegmentedToggle<T extends string = string>({
 						aria-selected={isTabs ? isActive : undefined}
 						aria-pressed={isTabs ? undefined : isActive}
 						aria-controls={isTabs ? getControls?.(option.value) : undefined}
-						tabIndex={isTabs ? (isActive ? 0 : -1) : undefined}
+						tabIndex={
+							isTabs
+								? isActive
+									? 0
+									: -1
+								: isChoice
+									? option.value === tabStop
+										? 0
+										: -1
+									: undefined
+						}
 						ref={(el) => {
 							if (el) btnRefs.current.set(option.value, el);
 							else btnRefs.current.delete(option.value);
 						}}
 						disabled={disabled}
-						onClick={() => onChange(option.value)}
-						onKeyDown={handleKeyDown}
+						onClick={() => {
+							if (isActive && onClear) onClear();
+							else onChange(option.value);
+						}}
+						onFocus={isChoice ? () => setFocusValue(option.value) : undefined}
+						onKeyDown={(e) => handleKeyDown(e, option.value)}
 						className={cn(
 							'relative flex items-center transition-colors',
 							styles.segment,
@@ -236,7 +320,7 @@ export function SegmentedToggle<T extends string = string>({
 							className={cn(
 								'relative z-10 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors',
 								isActive
-									? styles.active
+									? (option.activeTint?.text ?? styles.active)
 									: disabled
 										? styles.idle
 										: cn(styles.idle, 'hover:text-foreground'),

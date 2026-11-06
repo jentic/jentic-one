@@ -8,6 +8,7 @@ import {
 	useRef,
 	useState,
 	type FocusEvent,
+	type PointerEvent,
 	type ReactElement,
 	type ReactNode,
 } from 'react';
@@ -108,8 +109,16 @@ export function Tooltip({
 		setShow(true);
 	}, [measure]);
 
-	/** Hover open — gated behind `delayMs` so a quick pass-over doesn't flash. */
+	/** Hover open — gated behind `delayMs` so a quick pass-over doesn't flash.
+	 *  Armed by the pointer MOVING over the trigger, not by `mouseenter`: the
+	 *  browser also reports an enter when the trigger appears under a pointer
+	 *  that is resting still (a sheet opening its footer where the click
+	 *  landed), and that must not open a bubble. Once armed, further moves
+	 *  don't restart the wait; leaving disarms it. */
+	const armedRef = useRef(false);
 	const openDelayed = useCallback(() => {
+		if (armedRef.current) return;
+		armedRef.current = true;
 		clearTimer();
 		if (delayMs <= 0) {
 			reveal();
@@ -118,10 +127,17 @@ export function Tooltip({
 		timerRef.current = setTimeout(reveal, delayMs);
 	}, [clearTimer, delayMs, reveal]);
 
+	/** Hide now; the pointer stays armed, so a dismissed bubble isn't reopened
+	 *  by the next small move over the same trigger. */
 	const close = useCallback(() => {
 		clearTimer();
 		setShow(false);
 	}, [clearTimer]);
+
+	const leave = useCallback(() => {
+		armedRef.current = false;
+		close();
+	}, [close]);
 
 	/** Focus open — KEYBOARD focus only. A sheet or dialog opened by a click
 	 *  moves focus onto its first control (and back onto the opener when it
@@ -133,6 +149,18 @@ export function Tooltip({
 			reveal();
 		},
 		[reveal],
+	);
+
+	/** A tap toggles the bubble: a touch screen has no hover to arm it, and the
+	 *  disabled-reason tooltips would otherwise be unreachable there. A mouse
+	 *  press is not a tap — hover already opened its bubble. */
+	const tapToggle = useCallback(
+		(event: PointerEvent<HTMLElement>) => {
+			if (event.pointerType !== 'touch') return;
+			if (show) close();
+			else reveal();
+		},
+		[show, close, reveal],
 	);
 
 	// Never leak a pending open timer if the trigger unmounts mid-delay.
@@ -159,14 +187,23 @@ export function Tooltip({
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') close();
 		};
+		// A tap away dismisses a tap-opened bubble (no blur fires for it).
+		const onPointerDownOutside = (e: globalThis.PointerEvent) => {
+			if (e.pointerType !== 'touch') return;
+			const target = e.target as Node | null;
+			if (triggerRef.current?.contains(target) || bubbleRef.current?.contains(target)) return;
+			close();
+		};
 		window.addEventListener('scroll', onReflow, true);
 		window.addEventListener('resize', onReflow);
 		document.addEventListener('keydown', onKeyDown);
+		document.addEventListener('pointerdown', onPointerDownOutside, true);
 		return () => {
 			if (rafId !== null) window.cancelAnimationFrame(rafId);
 			window.removeEventListener('scroll', onReflow, true);
 			window.removeEventListener('resize', onReflow);
 			document.removeEventListener('keydown', onKeyDown);
+			document.removeEventListener('pointerdown', onPointerDownOutside, true);
 		};
 	}, [show, measure, close]);
 
@@ -215,8 +252,9 @@ export function Tooltip({
 			className={cn('inline-flex', className)}
 			tabIndex={interactiveChild ? undefined : 0}
 			aria-describedby={interactiveChild ? undefined : tooltipId}
-			onMouseEnter={openDelayed}
-			onMouseLeave={close}
+			onPointerMove={openDelayed}
+			onPointerDown={tapToggle}
+			onMouseLeave={leave}
 			onFocus={revealOnFocus}
 			onBlur={close}
 		>

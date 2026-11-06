@@ -24,6 +24,8 @@ import type {
 	VendorSummary,
 } from '@/shared/credentials/api/vendors-types';
 import type { ApiResponse, CatalogEntryResponse } from '@/shared/api';
+import { slugifyApiField } from '@/shared/lib/apiSlug';
+import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 
 /** The mock caller: the agent's owner, who reviews its requests. */
 const MOCK_REVIEWER_ID = 'usr_mock_owner';
@@ -65,10 +67,12 @@ function redact(body: CredentialCreateRequest, id: string, now: string): Credent
 		provider: (body as { provider?: string }).provider ?? 'manual',
 		// Omitted axes are wildcards: the backend stores NULL and serialises it as
 		// `""` (the create flow saves unpinned, so `version` is usually omitted).
+		// Canonicalised as the backend's `canonical_credential_scope` does:
+		// vendor and name slugged, version only trimmed.
 		api: {
-			vendor: body.api.vendor,
-			name: body.api.name ?? '',
-			version: body.api.version ?? '',
+			vendor: slugifyApiField(body.api.vendor),
+			name: body.api.name?.trim() ? slugifyApiField(body.api.name) : '',
+			version: body.api.version?.trim() ?? '',
 		},
 		active: true,
 		details,
@@ -152,7 +156,7 @@ function devCredentialsSeed(): Credential[] {
 			credential_id: 'cred_slack_1',
 			name: 'Slack bot token',
 			type: CredentialType.BEARER_TOKEN,
-			api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+			api: { vendor: 'slack.com', name: 'web-api', version: '1.0.0' },
 			catalog_api_id: 'slack.com',
 			details: { hint: '••••xoxb' },
 			created_at: '2026-03-02T09:12:00Z',
@@ -1089,7 +1093,20 @@ export const credentialsHandlers = [
 		const now = new Date().toISOString();
 		const credential = redact(body, id, now);
 		store.push(credential);
-		return HttpResponse.json({ credential, secret: secretFor(body) }, { status: 201 });
+		// The backend's advisory check runs on the CANONICAL scope, so a vendor
+		// typed as `nytimes.com` matches APIs stored under `nytimes-com`. Only
+		// judged when this store holds the workspace APIs (a test seeded them).
+		const covered = apisStore.some(({ row }) => apiScopeCovers(credential.api, row.api));
+		const warnings =
+			apisStore.length > 0 && !covered
+				? [
+						`API scope '${credential.api.vendor}/${credential.api.name || '*'}/${credential.api.version || '*'}' matches no imported API — executions using this credential will fail.`,
+					]
+				: null;
+		return HttpResponse.json(
+			{ credential, secret: secretFor(body), warnings },
+			{ status: 201 },
+		);
 	}),
 
 	http.get('/credentials/providers', () => {

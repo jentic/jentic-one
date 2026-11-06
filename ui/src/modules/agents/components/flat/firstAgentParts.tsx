@@ -6,13 +6,14 @@
  * (Approve / Deny, then its first API).
  */
 import { useEffect, useId, useReducer, useState, type ReactNode, type RefObject } from 'react';
-import { AnimatePresence, motion, type Transition } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotionConfig, type Transition } from 'framer-motion';
 import {
 	Award,
 	Check,
 	ChevronRight,
 	CircleCheck,
 	Clock,
+	Copy,
 	KeyRound,
 	Plus,
 	Terminal,
@@ -30,16 +31,18 @@ import {
 	ExpandReveal,
 	Input,
 	Label,
+	McpIcon,
 	SectionLabel,
 	Skeleton,
 	Tag,
 	VendorMark,
-	Tooltip,
+	toast,
 } from '@/shared/ui';
+import { useCopyToClipboard } from '@/shared/lib/useCopyToClipboard';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { smartInitials } from '@/shared/lib/smartInitials';
 import { ROUTES } from '@/shared/app/routes';
-import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
+import { AGENTS_WRITE, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
@@ -50,7 +53,8 @@ import {
 } from '@/modules/agents/api';
 import { DuplicateNameHint } from '@/modules/agents/components/DuplicateNameHint';
 import { EASE_OUT_SOFT } from '@/modules/agents/components/flat/GhostFleet';
-import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agentName';
+import { REGISTER_NAME_MAX_LENGTH, registerNameError } from '@/modules/agents/lib/registerCommand';
+import { registerNameWasTyped } from '@/modules/agents/lib/useRegisterName';
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
@@ -80,7 +84,7 @@ export type RegisterSurface = 'landing' | 'panel';
 
 /** Card header: glyph, title, one line, trailing badge. The title takes focus
  * (programmatically only) when the card's content changes under the keyboard. */
-function CardHeader({
+export function CardHeader({
 	titleId,
 	glyph,
 	title,
@@ -100,7 +104,7 @@ function CardHeader({
 				<h2
 					id={titleId}
 					tabIndex={-1}
-					className="font-heading text-foreground-name text-[17px] leading-6 font-semibold tracking-[-0.01em] [overflow-wrap:anywhere] outline-none"
+					className="font-heading text-foreground-name text-base leading-6 font-semibold tracking-[-0.01em] [overflow-wrap:anywhere] outline-none"
 				>
 					{title}
 				</h2>
@@ -115,8 +119,8 @@ function CardHeader({
 // Listening: the register command
 // ---------------------------------------------------------------------------
 
-/** How each word of the displayed command is coloured. */
-const TONE_CLASS: Record<CommandTone, string | undefined> = {
+/** How each word of a displayed command is coloured. */
+export const TONE_CLASS: Record<CommandTone, string | undefined> = {
 	program: 'text-accent-yellow',
 	plain: undefined,
 	flag: 'text-muted-foreground',
@@ -147,6 +151,7 @@ export function RegisterCommand({
 	commandName,
 	duplicateOf,
 	surface = 'landing',
+	route = 'cli',
 	inputRef,
 }: {
 	titleId: string;
@@ -157,15 +162,21 @@ export function RegisterCommand({
 	/** The existing agent name `name` duplicates, or `null`. */
 	duplicateOf: string | null;
 	surface?: RegisterSurface;
+	/** `mcp` shows `jentic setup`, which registers and then wires the MCP clients. */
+	route?: 'cli' | 'mcp';
 	inputRef?: RefObject<HTMLInputElement | null>;
 }) {
 	const inputId = useId();
 	const hintId = `${inputId}-duplicate`;
-	const nameError = agentNameError(name);
+	// The CLI's own rule, not the server's: this name goes on the command.
+	const nameError = registerNameError(name);
 	const target = useRegisterTarget();
-	const tokens = registerCommandTokens({ ...target, name: commandName });
+	const mcp = route === 'mcp';
+	const verb = mcp ? 'setup' : 'register';
+	const tokens = registerCommandTokens({ ...target, name: commandName, verb });
 	// Approving needs `agents:write` (or `org:admin`): anyone else is told who does.
 	const canApprove = useCanAccess(AGENTS_WRITE);
+	const Glyph = mcp ? McpIcon : Terminal;
 
 	return (
 		<div>
@@ -177,15 +188,19 @@ export function RegisterCommand({
 						aria-hidden="true"
 						className="text-primary bg-primary/10 grid h-11 w-11 shrink-0 place-items-center rounded-full"
 					>
-						<Terminal className="h-[18px] w-[18px]" />
+						<Glyph className="h-[18px] w-[18px]" />
 					</span>
 				}
-				title="Let your agent register itself"
-				detail={
+				title={mcp ? 'Connect your agent over MCP' : 'Let your agent register itself'}
+				detail={`${
+					mcp
+						? 'Run setup where your agent runs. It registers with its own key and shows up here'
+						: 'Run one command where your agent runs. It signs up with its own key and shows up here'
+				}${
 					canApprove
-						? 'Run one command where your agent runs. It signs up with its own key and shows up here for you to approve.'
-						: 'Run one command where your agent runs. It signs up with its own key and shows up here, pending until someone who can manage agents approves it.'
-				}
+						? ' for you to approve.'
+						: ', pending until someone who can manage agents approves it.'
+				}`}
 				badge={
 					surface === 'landing' ? (
 						// Glyph and word, as the app marks a state — no pill.
@@ -200,7 +215,7 @@ export function RegisterCommand({
 			<div className="mt-5 mb-3 flex items-start gap-3">
 				<Label
 					htmlFor={inputId}
-					className="text-foreground/90 mt-2 text-[13px] font-semibold whitespace-nowrap"
+					className="text-foreground/90 mt-2 text-sm font-semibold whitespace-nowrap"
 				>
 					Agent name
 				</Label>
@@ -212,12 +227,12 @@ export function RegisterCommand({
 						value={name}
 						onChange={(e) => onNameChange(e.target.value)}
 						error={nameError ?? undefined}
-						maxLength={AGENT_NAME_MAX_LENGTH}
+						maxLength={REGISTER_NAME_MAX_LENGTH}
 						spellCheck={false}
 						autoComplete="off"
 						// Only while shown: an explicit `undefined` would drop the error's own link.
 						{...(duplicateOf && !nameError ? { 'aria-describedby': hintId } : {})}
-						className="h-[34px] font-mono text-[13px]"
+						className="h-[34px] font-mono text-sm"
 					/>
 					{duplicateOf && !nameError && (
 						<DuplicateNameHint id={hintId} existing={duplicateOf} />
@@ -225,53 +240,7 @@ export function RegisterCommand({
 				</div>
 			</div>
 
-			<div className="bg-field border-hairline-field overflow-hidden rounded-lg border">
-				<div className="border-hairline-field flex h-[34px] items-center gap-2 border-b pr-1.5 pl-3">
-					<SectionLabel className="flex-1">where your agent runs</SectionLabel>
-					{/* The quoting is POSIX (sh, bash, zsh) — not PowerShell or cmd. */}
-					<Tooltip content="Quoted for a POSIX shell (sh, bash, zsh)">
-						<span
-							className="text-foreground-faint font-mono text-[10.5px]"
-							data-testid="register-command-shell"
-						>
-							POSIX shell
-						</span>
-					</Tooltip>
-					<CopyButton
-						value={commandText(tokens)}
-						label="Copy"
-						ariaLabel="Copy the register command"
-						toastMessage="Command copied"
-						variant="ghost"
-						className="text-muted-foreground hover:text-foreground hover:bg-tint-2 h-6 gap-1.5 px-2 text-xs font-semibold [&_svg]:h-3.5 [&_svg]:w-3.5"
-					/>
-				</div>
-				{/* A hanging indent: when the command wraps, it breaks only between
-				    a flag and the next (see `commandWordGroups`), and each
-				    continuation line sits under `jentic`, clear of the `$`. */}
-				<pre
-					data-testid="register-command"
-					className="text-foreground/90 py-3 pr-3.5 pl-[calc(0.875rem+2ch)] [text-indent:-2ch] font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
-				>
-					<span className="text-success select-none">$</span>
-					{commandWordGroups(tokens).map((group, i) => (
-						<span key={i}>
-							{' '}
-							{/* A line breaks only between groups; a group wider than the
-							    whole line (a long URL) still breaks inside. Its own
-							    lines take no indent of their own. */}
-							<span className="inline-block max-w-full [text-indent:0]">
-								{group.map((token, j) => (
-									<span key={j}>
-										{j > 0 && ' '}
-										<span className={TONE_CLASS[token.tone]}>{token.text}</span>
-									</span>
-								))}
-							</span>
-						</span>
-					))}
-				</pre>
-			</div>
+			<CommandBlock tokens={tokens} verb={verb} />
 			{target.backend === 'remote' && (
 				<p
 					data-testid="register-broker-note"
@@ -288,6 +257,140 @@ export function RegisterCommand({
 	);
 }
 
+const COMMAND_REVEAL_S = 0.75;
+
+/** The command as a small terminal; the whole block is one button that copies it. */
+export function CommandBlock({
+	tokens,
+	verb,
+	testIdPrefix = 'register-command',
+}: {
+	tokens: CommandToken[];
+	verb: string;
+	/** Prefix for this block's test ids, so two blocks can sit in one tree. */
+	testIdPrefix?: string;
+}) {
+	const { copied, copy } = useCopyToClipboard();
+	const reduced = useReducedMotionConfig() ?? false;
+	const onCopy = async () => {
+		try {
+			await copy(commandText(tokens));
+			toast({
+				id: 'copy-to-clipboard',
+				title: 'Command copied',
+				variant: 'success',
+				durationMs: 2000,
+			});
+		} catch {
+			toast({
+				id: 'copy-to-clipboard',
+				title: 'Could not copy to clipboard',
+				variant: 'error',
+			});
+		}
+	};
+	// The command is text first — selectable, so it can be copied by hand where
+	// the clipboard API is unavailable (a plain-HTTP install) — with one Copy
+	// button in the block's title bar, not a block that is all button.
+	return (
+		<div
+			role="group"
+			aria-label={`The ${verb} command`}
+			data-testid={`${testIdPrefix}-block`}
+			data-copied={copied || undefined}
+			className={cn(
+				'group bg-code relative block w-full overflow-hidden rounded-lg text-left font-normal',
+				'shadow-[inset_0_0_0_1px_hsl(var(--hairline-field))]',
+			)}
+		>
+			<span className="border-hairline-field flex h-[34px] items-center gap-2 border-b pr-2 pl-3">
+				<span aria-hidden="true" className="flex shrink-0 items-center gap-1.5">
+					{[0, 1, 2].map((i) => (
+						<span key={i} className="bg-foreground-faint/35 size-2 rounded-full" />
+					))}
+				</span>
+				<SectionLabel className="ml-1.5 min-w-0 flex-1 truncate">
+					where your agent runs
+				</SectionLabel>
+				{/* The quoting is POSIX (sh, bash, zsh) — not PowerShell or cmd. */}
+				<span
+					className="text-foreground-faint hidden font-mono text-[10.5px] sm:inline"
+					data-testid={`${testIdPrefix}-shell`}
+				>
+					POSIX shell
+				</span>
+				<Button
+					variant="ghost"
+					size="xs"
+					onClick={() => void onCopy()}
+					aria-label={`${copied ? 'Copied' : 'Copy'} the ${verb} command: ${commandText(tokens)}`}
+					data-testid={`${testIdPrefix}-copy`}
+					className={cn(
+						'h-7 gap-1.5 rounded-md px-2.5 text-xs font-semibold shadow-xs transition-colors duration-150',
+						copied
+							? 'bg-success/15 text-success hover:bg-success/15 hover:text-success'
+							: 'bg-surface-tonal text-foreground hover:bg-primary hover:text-primary-foreground',
+					)}
+				>
+					<AnimatePresence mode="wait" initial={false}>
+						<motion.span
+							key={copied ? 'check' : 'copy'}
+							initial={reduced ? false : { scale: 0.6, opacity: 0, rotate: -30 }}
+							animate={{ scale: 1, opacity: 1, rotate: 0 }}
+							exit={reduced ? undefined : { scale: 0.6, opacity: 0 }}
+							transition={{ duration: 0.16, ease: EASE_OUT_SOFT }}
+							className="inline-flex"
+						>
+							{copied ? (
+								<Check className="h-3.5 w-3.5" />
+							) : (
+								<Copy className="h-3.5 w-3.5" />
+							)}
+						</motion.span>
+					</AnimatePresence>
+					{copied ? 'Copied' : 'Copy'}
+				</Button>
+			</span>
+			<AnimatePresence>
+				{copied && !reduced && (
+					<motion.span
+						key="sweep"
+						aria-hidden="true"
+						initial={{ x: '-100%', opacity: 1 }}
+						animate={{ x: '100%', opacity: 1 }}
+						exit={{ opacity: 0 }}
+						transition={{ duration: 0.6, ease: EASE_OUT_SOFT }}
+						className="via-primary/12 pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent to-transparent"
+					/>
+				)}
+			</AnimatePresence>
+			{/* Hanging indent: wraps break between flags (`commandWordGroups`), aligned under `jentic`. */}
+			<motion.span
+				data-testid={testIdPrefix}
+				initial={reduced ? false : { clipPath: 'inset(0 100% 0 0)' }}
+				animate={{ clipPath: 'inset(0 0% 0 0)' }}
+				transition={{ duration: COMMAND_REVEAL_S, ease: EASE_OUT_SOFT, delay: 0.1 }}
+				className="text-foreground/90 block py-3 pr-3.5 pl-[calc(0.875rem+2ch)] [text-indent:-2ch] font-mono text-sm leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap select-text"
+			>
+				<span className="text-success select-none">$</span>
+				{commandWordGroups(tokens).map((group, i) => (
+					<span key={i}>
+						{' '}
+						<span className="inline-block max-w-full [text-indent:0]">
+							{group.map((token, j) => (
+								<span key={j}>
+									{j > 0 && ' '}
+									<span className={TONE_CLASS[token.tone]}>{token.text}</span>
+								</span>
+							))}
+						</span>
+					</span>
+				))}
+			</motion.span>
+		</div>
+	);
+}
+
 /** The install one-liners, as `cli/README.md` gives them. */
 const CLI_INSTALL = {
 	brew: 'brew install --cask jentic/tap/jentic',
@@ -299,7 +402,15 @@ const CLI_INSTALL = {
  * trigger at the foot of the card, collapsed by default, that opens onto the
  * copyable install commands and the docs.
  */
-export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
+export function CliInstallHint({
+	reducedMotion,
+	route = 'cli',
+}: {
+	reducedMotion: boolean;
+	/** The command above: `jentic setup` on the MCP route, which the hint must not
+	 * then suggest "instead". */
+	route?: 'cli' | 'mcp';
+}) {
 	const [open, setOpen] = useState(false);
 	const bodyId = useId();
 	return (
@@ -340,10 +451,24 @@ export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
 							<CodeSnippet label="Homebrew" code={CLI_INSTALL.brew} />
 							<CodeSnippet label="Install script" code={CLI_INSTALL.script} />
 							<p className="text-muted-foreground text-xs leading-relaxed">
-								Setting up a local coding agent? Run{' '}
-								<code className="text-foreground/90 font-mono">jentic setup</code>{' '}
-								instead — it registers too, and adds an isolated account and the
-								agent skills.{' '}
+								{route === 'mcp' ? (
+									<>
+										<code className="text-foreground/90 font-mono">
+											jentic setup
+										</code>{' '}
+										registers the agent and also adds an isolated account and
+										the agent skills.{' '}
+									</>
+								) : (
+									<>
+										Setting up a local coding agent? Run{' '}
+										<code className="text-foreground/90 font-mono">
+											jentic setup
+										</code>{' '}
+										instead — it registers too, and adds an isolated account and
+										the agent skills.{' '}
+									</>
+								)}
 								<AppLink
 									href={`${ROUTES.docs}#installation`}
 									data-no-transition
@@ -369,22 +494,18 @@ const STEPS: Array<{
 	id?: 'approve';
 	icon: LucideIcon;
 	title: string;
-	detail: string | Record<RegisterSurface, string>;
+	detail: string;
 }> = [
-	{ icon: Terminal, title: 'Run the command', detail: 'The CLI makes its keypair and signs up' },
 	{
-		icon: Clock,
-		title: 'It appears here as pending',
-		detail: {
-			landing: 'In the tab below, with no access',
-			panel: 'And in your fleet, with no access',
-		},
+		icon: Terminal,
+		title: 'Run the command',
+		detail: 'It makes its keypair and registers itself',
 	},
 	{
 		id: 'approve',
 		icon: CircleCheck,
 		title: 'You approve it',
-		detail: 'Then it can authenticate',
+		detail: 'It waits here as pending, with no access, until then',
 	},
 	{ icon: KeyRound, title: 'Give it an API', detail: 'With the credential it calls through' },
 ];
@@ -394,7 +515,7 @@ const APPROVED_BY_OTHERS: (typeof STEPS)[number] = {
 	id: 'approve',
 	icon: CircleCheck,
 	title: 'It gets approved',
-	detail: 'By someone who can manage agents',
+	detail: 'By someone who can manage agents; until then it waits as pending',
 };
 
 type StepState = 'done' | 'current' | 'upcoming';
@@ -403,17 +524,17 @@ type StepState = 'done' | 'current' | 'upcoming';
  * (or skipping) is the exit that hands the page to the fleet view, so the
  * landing never shows it done. */
 const STEP_STATES: Record<FirstAgentPhase, StepState[]> = {
-	listening: ['current', 'upcoming', 'upcoming', 'upcoming'],
-	arrived: ['done', 'done', 'current', 'upcoming'],
-	approved: ['done', 'done', 'done', 'current'],
+	listening: ['current', 'upcoming', 'upcoming'],
+	arrived: ['done', 'current', 'upcoming'],
+	approved: ['done', 'done', 'current'],
 };
 
-/** How full each connector is (1→2, 2→3, 3→4): each phase leads the line
+/** How full each connector is (1→2, 2→3): each phase leads the line
  * halfway on toward the step it makes current. */
-const SEGMENT_FILL: Record<FirstAgentPhase, [number, number, number]> = {
-	listening: [0, 0, 0],
-	arrived: [1, 0.5, 0],
-	approved: [1, 1, 0.5],
+const SEGMENT_FILL: Record<FirstAgentPhase, [number, number]> = {
+	listening: [0, 0],
+	arrived: [0.5, 0],
+	approved: [1, 0.5],
 };
 
 /** One full connector's fill time. */
@@ -447,7 +568,7 @@ export function Stepper({
 			data-testid="register-stepper"
 			className={cn(
 				'mt-4 grid grid-cols-1 gap-y-2.5',
-				inPanel ? '@[40rem]:grid-cols-4 @[40rem]:gap-x-3' : 'sm:grid-cols-4 sm:gap-x-3',
+				inPanel ? '@[40rem]:grid-cols-3 @[40rem]:gap-x-3' : 'sm:grid-cols-3 sm:gap-x-3',
 			)}
 		>
 			{steps.map(({ icon: Icon, title, detail }, i) => {
@@ -455,8 +576,7 @@ export function Stepper({
 				const fill = i > 0 ? fills[i - 1] : 0;
 				// A connector that starts filling in this phase waits for the one
 				// before it, so the line reads as one run.
-				const trailing =
-					(i === 2 && phase === 'arrived') || (i === 3 && phase === 'approved');
+				const trailing = i === 2 && phase === 'approved';
 				const delay = !reducedMotion && trailing ? SEGMENT_S : 0;
 				return (
 					<li
@@ -512,7 +632,7 @@ export function Stepper({
 						>
 							<span
 								className={cn(
-									'block text-[13px] leading-5 font-semibold transition-colors duration-500',
+									'block text-sm leading-5 font-semibold transition-colors duration-500',
 									state === 'current' && 'text-foreground',
 									state === 'done' && 'text-foreground-sub',
 									state === 'upcoming' && 'text-muted-foreground',
@@ -522,7 +642,7 @@ export function Stepper({
 								{state === 'done' && <span className="sr-only"> (done)</span>}
 							</span>
 							<span className="text-muted-foreground block text-xs leading-snug">
-								{typeof detail === 'string' ? detail : detail[surface]}
+								{detail}
 							</span>
 						</span>
 					</li>
@@ -609,8 +729,8 @@ function relativeTime(iso: string): string {
 /** The step the card is on, for its one-line progress (the stepper's four
  * steps, which only the listening card draws in full). */
 const PROGRESS: Record<Exclude<FirstAgentPhase, 'listening'>, { step: number; label: string }> = {
-	arrived: { step: 3, label: 'Approve it' },
-	approved: { step: 4, label: 'Give it an API' },
+	arrived: { step: 2, label: 'Approve it' },
+	approved: { step: 3, label: 'Give it an API' },
 };
 
 /**
@@ -618,9 +738,20 @@ const PROGRESS: Record<Exclude<FirstAgentPhase, 'listening'>, { step: number; la
  * segments (done, current, to come) and the current step's label. The words
  * carry it for assistive tech; the segments are drawn for the eye.
  */
-export function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'listening'> }) {
+function StepProgress({
+	phase,
+	approvedElsewhere,
+}: {
+	phase: Exclude<FirstAgentPhase, 'listening'>;
+	/** Another user approved it (the bell, a second admin): the step says so. */
+	approvedElsewhere: boolean;
+}) {
 	const { step, label } = PROGRESS[phase];
 	const states = STEP_STATES[phase];
+	const title = (i: number): string =>
+		approvedElsewhere && STEPS[i].id === 'approve'
+			? 'Approved by someone else'
+			: STEPS[i].title;
 	return (
 		<div className="flex min-w-0 items-center gap-2.5">
 			<ol
@@ -641,7 +772,7 @@ export function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'liste
 						)}
 					>
 						<span className="sr-only">
-							{STEPS[i].title}
+							{title(i)}
 							{state === 'done' && ' (done)'}
 						</span>
 					</li>
@@ -677,6 +808,7 @@ export function AgentDetails({
 	expectedName,
 	morePending,
 	onShowFleet,
+	progress = true,
 }: {
 	titleId: string;
 	agent: AgentEntity;
@@ -692,6 +824,8 @@ export function AgentDetails({
 	/** Other agents waiting besides this one — pointed at, never hidden. */
 	morePending: number;
 	onShowFleet: () => void;
+	/** Off for an agent created by hand, which never ran the command. */
+	progress?: boolean;
 }) {
 	// "Registered 12s ago" matters while the agent waits; once approved it stops.
 	const [, tick] = useReducer((n: number) => n + 1, 0);
@@ -701,6 +835,9 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
+	const viewer = useOptionalCurrentUser();
+	const approvedBy = agent.status === 'active' ? agent.attribution.approvedBy : null;
+	const approvedElsewhere = approvedBy != null && viewer != null && approvedBy !== viewer.id;
 	// Approval makes the requested permissions live (or the defaults, when there
 	// are none), so Approve waits until what it grants is read and on screen — the
 	// catalogue included, since it tells which requested permissions count.
@@ -717,10 +854,10 @@ export function AgentDetails({
 
 	return (
 		<div data-testid="arrival-card">
-			<StepProgress phase={phase} />
+			{progress && <StepProgress phase={phase} approvedElsewhere={approvedElsewhere} />}
 			{/* The agent card's own head: the round avatar, the name with its
 			    status glyph and word, and one facts line under it. */}
-			<header className="mt-4 flex items-start gap-3.5 sm:gap-4">
+			<header className={cn('flex items-start gap-3.5 sm:gap-4', progress && 'mt-4')}>
 				<AgentBadge
 					id={agent.id}
 					name={agent.name}
@@ -851,12 +988,15 @@ function ArrivalWarnings({
 	expectedName: string | null;
 	morePending: number;
 }) {
-	const nameDiffers = expectedName != null && expectedName !== agentName;
+	// A name the operator typed into a register command anywhere this session —
+	// the panel they closed mid-flow included — is theirs, not a stranger's.
+	const nameDiffers =
+		expectedName != null && expectedName !== agentName && !registerNameWasTyped(agentName);
 	if (!nameDiffers && morePending === 0) return null;
 	return (
 		<div
 			data-testid="arrival-warnings"
-			className="border-hairline-field mb-3 space-y-1.5 rounded-lg border px-3 py-2.5"
+			className="bg-caution/10 mb-3 space-y-1.5 rounded-lg px-3 py-2.5"
 		>
 			{nameDiffers && (
 				<p
@@ -915,7 +1055,7 @@ function AgentFactsLine({
 	return (
 		<p
 			data-testid="agent-facts-line"
-			className="text-foreground-sub flex min-w-0 flex-wrap items-center pt-1 text-[12.5px] leading-5"
+			className="text-foreground-sub flex min-w-0 flex-wrap items-center pt-1 text-xs leading-5"
 		>
 			<span data-testid="arrival-registered">
 				Registered {relativeTime(agent.createdAt)} ·{' '}
@@ -936,6 +1076,16 @@ function AgentFactsLine({
 				)}{' '}
 				· {signsIn}
 			</span>
+			{/* The owner rides on the facts line, with the registration it came from
+			    (approving sets it) — not as a row of its own below the next step. */}
+			{agent.ownerId && (
+				<>
+					<FactSep />
+					<span data-testid="agent-owner-fact">
+						Owner <ActorLabel actorId={agent.ownerId} />
+					</span>
+				</>
+			)}
 			<FactSep />
 			<span
 				data-testid="agent-id-fact"
@@ -986,7 +1136,7 @@ function AgentFacts({
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
-	const extras = keyInfo.data || agent.ownerId || agent.parentAgentId || agent.description;
+	const extras = keyInfo.data || agent.parentAgentId || agent.description;
 
 	return (
 		<div
@@ -998,11 +1148,6 @@ function AgentFacts({
 					{keyInfo.data && (
 						<Fact label="Key ID">
 							<span className="font-mono">{keyInfo.data.id}</span>
-						</Fact>
-					)}
-					{agent.ownerId && (
-						<Fact label="Owner">
-							<ActorLabel actorId={agent.ownerId} />
 						</Fact>
 					)}
 					{agent.parentAgentId && (
@@ -1097,7 +1242,7 @@ function PermissionRow({ permission, description }: { permission: string; descri
 			</span>
 			<span className="min-w-0">
 				{description && (
-					<span className="text-foreground-sub block text-[12.5px]">{description}</span>
+					<span className="text-foreground-sub block text-xs">{description}</span>
 				)}
 				<code
 					className={cn(
@@ -1208,7 +1353,7 @@ function RequestedPermissions({
 							data-testid="permissions-summary"
 							className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
 						>
-							<span className="text-foreground-sub text-[13px]">{summary}</span>
+							<span className="text-foreground-sub text-sm">{summary}</span>
 							<Button
 								variant="ghost"
 								size="xs"
@@ -1292,7 +1437,7 @@ function RequestedPermissions({
 						id={reviewId}
 						role="group"
 						aria-label={listLabel}
-						className="border-hairline-field @container mt-3 rounded-lg border p-3.5"
+						className="bg-surface-inset @container mt-3 rounded-lg p-3.5"
 					>
 						{/* Two columns of areas once there is room for them. */}
 						<div className="grid gap-x-6 gap-y-4 @[34rem]:grid-cols-2">
@@ -1392,7 +1537,7 @@ function FirstApiPanel({
 			aria-labelledby={headingId}
 			aria-busy={github.loading || undefined}
 			data-testid="first-api-panel"
-			className="bg-surface-tonal/60 border-hairline-field mt-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border p-3.5 sm:p-4"
+			className="bg-surface-tonal/60 mt-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg p-3.5 sm:p-4"
 		>
 			{github.loading ? (
 				<span aria-hidden="true" className="h-7 w-7 shrink-0" />

@@ -78,7 +78,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 				credential_id: 'cred_github_1',
 				name: 'GitHub PAT',
 				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				api: { vendor: 'github', name: 'default', version: '1.0.0' },
 			}),
 		];
 	}
@@ -234,7 +234,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 					credential_id: 'cred_github_1',
 					name: 'GitHub PAT',
 					type: CredentialType.BEARER_TOKEN,
-					api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+					api: { vendor: 'github', name: 'default', version: '1.0.0' },
 				}),
 				makeMockCredential({
 					credential_id: 'cred_orphan_1',
@@ -579,7 +579,7 @@ describe('CredentialInventorySheet — credentials shared with the viewer', () =
 				credential_id: 'cred_github_1',
 				name: 'GitHub PAT',
 				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				api: { vendor: 'github', name: 'default', version: '1.0.0' },
 				created_by: VIEWER,
 			}),
 		]);

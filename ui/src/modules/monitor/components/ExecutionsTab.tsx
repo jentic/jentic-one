@@ -80,6 +80,7 @@ export function ExecutionsTab() {
 		to: filters.to,
 		actorId: filters.actorId,
 		origin: filters.origin,
+		traceId: filters.traceId,
 		api: apiFilter,
 	});
 	const pager = useCursorStack(filterKey);
@@ -90,6 +91,7 @@ export function ExecutionsTab() {
 			to: filters.to,
 			actorId: filters.actorId,
 			origin: filters.origin,
+			traceId: filters.traceId,
 			api: apiFilter,
 			cursor: pager.cursor,
 		},
@@ -100,7 +102,11 @@ export function ExecutionsTab() {
 	// Distinguish a still-loading first paint from a genuinely empty result so we
 	// don't flash the empty state while a filter/source switch is in flight.
 	const showEmpty = rows.length === 0 && !query.isLoading && !query.isFetching;
-	const narrowed = statusFilter !== 'all' || apiFilter != null || filters.range != null;
+	const narrowed =
+		statusFilter !== 'all' ||
+		apiFilter != null ||
+		filters.range != null ||
+		filters.traceId != null;
 
 	return (
 		<LogLayout

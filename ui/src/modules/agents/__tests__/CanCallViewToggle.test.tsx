@@ -158,10 +158,7 @@ describe('Can call — list⇄cards view toggle', () => {
 		const { container } = renderPage();
 		const grid = await screen.findByTestId('can-call-cards');
 		await settleAnimations(container);
-		const cells = [
-			...within(grid).getAllByTestId('api-card'),
-			within(grid).getByTestId('card-add-api-tile'),
-		];
+		const cells = within(grid).getAllByTestId('api-card');
 		const heights = new Set(cells.map((c) => Math.round(c.getBoundingClientRect().height)));
 		expect([...heights]).toEqual([92]);
 		for (const li of grid.querySelectorAll(':scope > li')) {
@@ -202,35 +199,34 @@ describe('Can call — list⇄cards view toggle', () => {
 		expect(await screen.findByRole('dialog')).toBeInTheDocument();
 	});
 
-	it('the cards grid has a working add-API tile for a viewer who can bind', async () => {
+	it('the cards grid adds no second Add APIs: the card header holds the one entry point', async () => {
 		seedViewer(['org:admin']);
 		window.localStorage.setItem(API_VIEW_STORAGE_KEY, 'cards');
 		const user = userEvent.setup();
 		renderPage();
-		await screen.findByTestId('can-call-cards');
+		const grid = await screen.findByTestId('can-call-cards');
 
-		const addTile = screen.getByTestId('card-add-api-tile');
-		expect(addTile).toBeEnabled();
-		await user.click(addTile);
-		// Opens the Add-APIs tray (the same flow the tree's Add APIs opens).
+		expect(within(grid).queryByRole('button', { name: /Add API/ })).toBeNull();
+		const add = within(screen.getByTestId('agent-card')).getByRole('button', {
+			name: 'Add APIs',
+		});
+		expect(screen.getAllByRole('button', { name: /^Add APIs?$/ })).toEqual([add]);
+		await user.click(add);
 		expect(await screen.findByRole('dialog', { name: /Add APIs/i })).toBeInTheDocument();
 	});
 
-	it('disables the add-API tile with a reason when the viewer cannot bind', async () => {
-		// A reader without agents:write can't add APIs — the tile is disabled and
-		// its wrapper carries the reason on hover/focus (the Tooltip pattern the
-		// tree's add button uses).
+	it("disables the card's Add APIs with a reason when the viewer cannot bind", async () => {
+		// Without agents:write the button is disabled; its focusable Tooltip wrapper carries the reason.
 		seedViewer(['agents:read']);
 		window.localStorage.setItem(API_VIEW_STORAGE_KEY, 'cards');
 		const user = userEvent.setup();
 		renderPage();
 		await screen.findByTestId('can-call-cards');
 
-		const addTile = screen.getByTestId('card-add-api-tile');
-		expect(addTile).toBeDisabled();
-		// The reason rides on the focusable Tooltip wrapper around the disabled
-		// button — reveal it by hovering the wrapper.
-		await user.hover(addTile.parentElement!);
+		const add = screen.getByTestId('card-add-api');
+		expect(add).toBeDisabled();
+		expect(add).toHaveAttribute('data-variant', 'primary');
+		await user.hover(add.parentElement!);
 		expect(await screen.findByRole('tooltip')).toHaveTextContent(
 			'Adding APIs needs permission to manage agents.',
 		);

@@ -253,7 +253,12 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 				onClose={() => setConfirmRevoke(false)}
 			/>
 
-			<ApiKeyDialog open={apiKey != null} apiKey={apiKey} onClose={() => setApiKey(null)} />
+			<ApiKeyDialog
+				open={apiKey != null}
+				apiKey={apiKey}
+				agentName={agent.name}
+				onClose={() => setApiKey(null)}
+			/>
 		</div>
 	);
 }

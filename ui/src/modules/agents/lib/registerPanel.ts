@@ -9,7 +9,9 @@
  * here, neither picked nor counted. Of several arrivals the one carrying the
  * command's name wins, then the newest. Once shown, the pick is tracked by id,
  * so it never swaps under the operator and stays the panel's after approval
- * turns it active.
+ * turns it active — an approval made during this opening, by anyone. A tracked
+ * agent a reopened panel picks up again counts while it still waits; approved
+ * before this opening, it is finished business, and the panel listens afresh.
  */
 import type { AgentEntity } from '@/modules/agents/api';
 import type { FirstAgentPhase } from '@/modules/agents/lib/firstRun';
@@ -43,14 +45,16 @@ export function derivePanelArrival(input: {
 	expectedName: string;
 }): PanelArrival {
 	const { agents, openedAt, knownAtOpen, trackedId, deniedId, expectedName } = input;
+	const since = openedAt - ARRIVAL_CLOCK_SKEW_MS;
 	const tracked = agents.find((a) => a.id === trackedId);
 	const trackedLive =
 		tracked &&
 		tracked.id !== deniedId &&
-		(tracked.status === 'pending' || tracked.status === 'active')
+		(tracked.status === 'pending' ||
+			(tracked.status === 'active' &&
+				(tracked.approvedAt == null || Date.parse(tracked.approvedAt) >= since)))
 			? tracked
 			: null;
-	const since = openedAt - ARRIVAL_CLOCK_SKEW_MS;
 	const arrivals = agents
 		.filter(
 			(a) =>

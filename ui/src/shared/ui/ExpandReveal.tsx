@@ -32,18 +32,17 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 import { useReducedMotionConfig } from 'framer-motion';
+import { cn } from '@/shared/lib/utils';
 
 /** The reveal's timings and curve, in one place. */
 export const REVEAL_MOTION = {
 	/** Height, opening. */
-	openMs: 240,
+	openMs: 200,
 	/** Height, closing — a little quicker than it came. */
-	closeMs: 180,
+	closeMs: 160,
 	/** How far into the height the content starts to fade and settle in. */
-	contentDelayMs: 40,
-	/** Material "standard": eases in briefly, then settles softly — an even
-	 * velocity, without the hard first-frame jump of a pure ease-out. */
-	ease: 'cubic-bezier(0.4, 0, 0.2, 1)',
+	contentDelayMs: 30,
+	ease: 'cubic-bezier(0.2, 0, 0, 1)',
 } as const;
 
 /** `mounting` and `leaving` hold still for two frames before the height
@@ -63,6 +62,8 @@ export interface ExpandRevealProps {
 	/** On the outer element — what a disclosure's `aria-controls` names. */
 	id?: string;
 	'data-testid'?: string;
+	/** Keep the content mounted (hidden) once folded, so its state survives. */
+	keepMounted?: boolean;
 }
 
 export function ExpandReveal({
@@ -74,9 +75,12 @@ export function ExpandReveal({
 	ref,
 	id,
 	'data-testid': testId,
+	keepMounted = false,
 }: ExpandRevealProps) {
 	const reduced = useReducedMotionConfig() ?? false;
 	const [phase, setPhase] = useState<Phase>(open ? 'open' : 'closed');
+	/** Open and settled: only then may content overflow (focus rings, dropdowns). */
+	const [settled, setSettled] = useState(open);
 	const fallback = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const callbacks = useRef({ onOpened, onClosed });
 	useLayoutEffect(() => {
@@ -114,13 +118,17 @@ export function ExpandReveal({
 	useEffect(() => {
 		if (fallback.current) clearTimeout(fallback.current);
 		fallback.current = null;
+		if (phase !== 'open') setSettled(false);
+		else if (reduced) setSettled(true);
 		if (phase === 'closing') {
 			fallback.current = setTimeout(() => setPhase('closed'), REVEAL_MOTION.closeMs + 100);
+		} else if (phase === 'open' && !reduced) {
+			fallback.current = setTimeout(() => setSettled(true), REVEAL_MOTION.openMs + 100);
 		}
 		return () => {
 			if (fallback.current) clearTimeout(fallback.current);
 		};
-	}, [phase]);
+	}, [phase, reduced]);
 
 	const wasPhase = useRef(phase);
 	useEffect(() => {
@@ -136,16 +144,23 @@ export function ExpandReveal({
 			return;
 		}
 		if (phase === 'closing') setPhase('closed');
-		else if (phase === 'open') callbacks.current.onOpened?.();
+		else if (phase === 'open') {
+			setSettled(true);
+			callbacks.current.onOpened?.();
+		}
 	}
 
-	if (phase === 'closed') return null;
+	if (phase === 'closed' && !keepMounted) return null;
+	const folded = phase === 'closed';
 
 	const expanded = phase === 'open' || phase === 'leaving';
+	const moving = !folded && !(phase === 'open' && settled);
 	const { openMs, closeMs, contentDelayMs, ease } = REVEAL_MOTION;
 	const outer: CSSProperties = {
-		display: 'grid',
+		display: folded ? 'none' : 'grid',
 		gridTemplateRows: expanded ? '1fr' : '0fr',
+		// Explicit column: an implicit `auto` one lets a wide settled child widen the reveal.
+		gridTemplateColumns: 'minmax(0, 1fr)',
 		transition: reduced
 			? 'none'
 			: `grid-template-rows ${expanded ? openMs : closeMs}ms ${ease}`,
@@ -153,6 +168,7 @@ export function ExpandReveal({
 	const content: CSSProperties = {
 		opacity: expanded ? 1 : 0,
 		transform: expanded ? 'none' : 'translateY(4px)',
+		willChange: moving ? 'opacity, transform' : undefined,
 		transition: reduced
 			? 'none'
 			: expanded
@@ -166,13 +182,20 @@ export function ExpandReveal({
 			id={id}
 			data-testid={testId}
 			data-state={phase}
+			hidden={folded || undefined}
 			style={outer}
 			className={className}
 			onTransitionEnd={onTransitionEnd}
 		>
 			<div
-				className="min-h-0 overflow-hidden"
-				inert={phase === 'closing' || phase === 'leaving' || undefined}
+				// Clipped only while moving, so settled rings/dropdowns overflow. `min-w-0`
+				// keeps it shrinkable once it no longer clips.
+				className={cn(
+					'min-h-0 min-w-0',
+					moving || folded ? 'overflow-hidden' : 'overflow-visible',
+				)}
+				style={moving ? { contain: 'layout paint' } : undefined}
+				inert={folded || phase === 'closing' || phase === 'leaving' || undefined}
 			>
 				<div style={content}>{children}</div>
 			</div>

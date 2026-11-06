@@ -8,7 +8,8 @@
  * API. "Any version" is the default everywhere, so a re-ingested spec keeps its
  * credential. On "Any version" a calm note spells out that the credential —
  * and so any access rules on it — reaches future versions of the API too.
- * Renders nothing without a version to pin.
+ * Renders nothing without a version to pin: a workspace API offers its own,
+ * a catalog pick the one its import will register (`catalogImportVersion`).
  */
 import { SegmentedToggle } from '@/shared/ui';
 
@@ -17,21 +18,30 @@ export type CredentialVersionScopeValue = 'pinned' | 'any';
 
 /** The registry version a pick can be pinned to, or `''` when it has none we can trust. */
 export function pinnableVersionOf(api: { source: 'local' | 'catalog'; version?: string }): string {
-	// A catalog row carries no real version (the picker fills in a placeholder)
-	// and the registry's ingested spec need not report the same string, so only
-	// a workspace (registered) API offers a pin.
+	// A catalog row's version is a placeholder; its pin comes from the spec instead.
 	return api.source === 'local' ? (api.version?.trim() ?? '') : '';
+}
+
+/** The version a catalog import will register: the spec's trimmed `info.version`, or `''`. */
+export function catalogImportVersion(spec: Record<string, unknown> | null | undefined): string {
+	const info = spec?.info;
+	if (!info || typeof info !== 'object') return '';
+	const version = (info as { version?: unknown }).version;
+	return typeof version === 'string' || typeof version === 'number' ? String(version).trim() : '';
 }
 
 export function CredentialVersionScope({
 	version,
 	value,
 	onChange,
+	hideNote = false,
 }: {
 	/** The version "Version X" pins to. Empty hides the picker. */
 	version: string;
 	value: CredentialVersionScopeValue;
 	onChange: (value: CredentialVersionScopeValue) => void;
+	/** The host says what "Any version" means itself (e.g. behind Details). */
+	hideNote?: boolean;
 }) {
 	if (!version) return null;
 	return (
@@ -52,7 +62,7 @@ export function CredentialVersionScope({
 					onChange={onChange}
 				/>
 			</div>
-			{value === 'any' && (
+			{value === 'any' && !hideNote && (
 				<p
 					className="text-muted-foreground text-xs"
 					data-testid="credential-version-any-note"

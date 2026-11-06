@@ -178,6 +178,85 @@ const slackApi = {
 
 const APIS = [stripeApi, adyenApi, bigApi, showcaseApi, githubApi, slackApi];
 
+/** Operations of APIs added after module load (the dev seed), by `vendor/name/version`. */
+const EXTRA_OPERATIONS: Record<string, unknown[]> = {};
+
+/** `[operation_id, method, path, description, name]`. */
+type DevOperation = [string, string, string, string | null, string?];
+
+/** MOCKED-DEV ONLY (`installDevSeed`): one more imported API and its operations, once. */
+function addDevApi(
+	api: {
+		vendor: string;
+		name: string;
+		version: string;
+		host: string;
+		title: string;
+		description: string;
+		rev: string;
+		schemes: string[];
+	},
+	ops: DevOperation[],
+): void {
+	const key = `${api.vendor}/${api.name}/${api.version}`;
+	if (APIS.some((a) => `${a.api.vendor}/${a.api.name}/${a.api.version}` === key)) return;
+	APIS.push({
+		api: apiRef(api.vendor, api.name, api.version, api.host),
+		display_name: api.title,
+		description: api.description,
+		icon_url: null,
+		current_revision_id: api.rev,
+		revision_count: 1,
+		operation_count: ops.length,
+		security_schemes: api.schemes,
+		source: 'local',
+		registered: true,
+		created_at: '2026-10-19T10:00:00Z',
+		updated_at: '2026-10-19T10:00:00Z',
+		_links: {
+			self: `/apis/${key}`,
+			revisions: `/apis/${key}/revisions`,
+			current_revision: `/apis/${key}/revisions/${api.rev}`,
+			import: null,
+		},
+	});
+	EXTRA_OPERATIONS[key] = ops.map(([operation_id, method, path, description, name]) => ({
+		operation_id,
+		method,
+		path,
+		name: name ?? null,
+		description,
+		tags: [],
+		deprecated: false,
+		revision_id: api.rev,
+		_links: {},
+	}));
+}
+
+/**
+ * MOCKED-DEV ONLY (`installDevSeed`): two APIs of ONE vendor, `nytimes-com` —
+ * Archive and Article Search — as a catalog import registers them (slugged
+ * vendor and name), so one vendor-wide credential can serve both.
+ */
+export function installDevNytApis(): void {
+	const nyt = {
+		vendor: 'nytimes-com',
+		version: '1.0.0',
+		host: 'api.nytimes.com',
+		schemes: ['apiKey'],
+	};
+	const archive = { name: 'archive', title: 'Archive', rev: 'rev_nyt_archive_live' };
+	const search = { name: 'article-search', title: 'Article Search', rev: 'rev_nyt_search_live' };
+	for (const [api, op] of [
+		[archive, ['archive', 'get', '/{year}/{month}.json', null, 'Archive API']],
+		[search, ['articlesearch', 'get', '/articlesearch.json', null, 'Article Search']],
+	] as const) {
+		addDevApi({ ...nyt, ...api, description: `The New York Times ${api.title} API.` }, [
+			[...op],
+		]);
+	}
+}
+
 const BIG_OPERATIONS = Array.from({ length: 60 }, (_, i) => ({
 	operation_id: `Op${i}`,
 	method: i % 2 === 0 ? 'get' : 'post',
@@ -915,6 +994,83 @@ function registerUploadedApi(source: { type?: string; url?: string; filename?: s
 	return ref;
 }
 
+/**
+ * MOCKED-DEV ONLY (`installDevSeed`): adhook.io, with operations as its
+ * published spec has them — most with no summary, some with only a
+ * description — so the access editors' plain-English fallbacks are on screen.
+ */
+export function installDevAdhookApi(): void {
+	const ops: DevOperation[] = [
+		['updateCustomEvent', 'put', '/v1/customEvents/{id}', 'Updates a customEvent'],
+		['createCustomEvent', 'post', '/v1/customEvents', 'Creates customEvent'],
+		[
+			'updateCustomEventByExternalId',
+			'put',
+			'/v1/customEvents/externalId/{externalId}',
+			'Creates or Updates a customEvent by externalId',
+		],
+		['registerDeviceToken', 'post', '/v1/fcmDeviceToken', null],
+		['deleteDeviceToken_1', 'delete', '/v1/fcmDeviceToken', null],
+		['deleteDeviceToken', 'delete', '/v1/fcmDeviceToken/{deviceToken}', null],
+		['countNotifications', 'get', '/v1/notifications/count', null],
+		['readNotification', 'put', '/v1/notifications/read', null],
+		['getInfluencer', 'get', '/v1/influencers/{id}', 'Get influencer by ID'],
+		['updateInfluencer', 'put', '/v1/influencers/{id}', 'Update an influencer'],
+		['deleteInfluencer', 'delete', '/v1/influencers/{id}', 'Delete an influencer'],
+		[
+			'getAllInfluencers',
+			'get',
+			'/v1/influencers',
+			'Get all influencers for the current tenant',
+		],
+		['createInfluencer', 'post', '/v1/influencers', 'Create a new influencer'],
+		[
+			'getInfluencerPosts',
+			'get',
+			'/v1/influencers/{id}/posts',
+			'Get posts for an influencer with date range filtering',
+		],
+		[
+			'createInfluencerPost',
+			'post',
+			'/v1/influencers/{id}/posts',
+			'Create a new post for an influencer',
+		],
+		[
+			'updateInfluencerPost',
+			'put',
+			'/v1/influencers/{id}/posts/{postId}',
+			'Update a post for an influencer',
+		],
+		[
+			'deleteInfluencerPost',
+			'delete',
+			'/v1/influencers/{id}/posts/{postId}',
+			'Delete a post for an influencer',
+		],
+		['updateStatus', 'put', '/v1/listings/{id}/status', null],
+		['uploadMedia', 'post', '/v1/listings/{id}/images', null],
+		['getListings', 'get', '/v1/listings', null],
+		['countListings', 'get', '/v1/listings/count', null],
+		['updateOpeningHours', 'put', '/v1/listings/{id}/opening-hours', null],
+		['updateListingData', 'put', '/v1/listings/{id}/location-data', null],
+		['getListingStatistics', 'get', '/v1/listings/statistics', null],
+	];
+	addDevApi(
+		{
+			vendor: 'adhook-io',
+			name: 'main',
+			version: '1.0',
+			host: 'app.adhook.io',
+			title: 'adhook.io',
+			description: 'Ads, promotions and listings.',
+			rev: 'rev_adhook_live',
+			schemes: ['bearer'],
+		},
+		ops,
+	);
+}
+
 export const workspaceHandlers = [
 	http.get(`/apis`, ({ request }) => {
 		const url = new URL(request.url);
@@ -1074,7 +1230,8 @@ export const workspaceHandlers = [
 		// BigCo is the multi-page fixture; the kitchen-sink has its own 21 ops;
 		// everything else fits a single page.
 		const ops =
-			key === 'bigco/big-api/1'
+			EXTRA_OPERATIONS[key] ??
+			(key === 'bigco/big-api/1'
 				? BIG_OPERATIONS
 				: key === KS_KEY
 					? KS_OPERATIONS
@@ -1082,7 +1239,7 @@ export const workspaceHandlers = [
 						? GITHUB_OPERATIONS
 						: key === 'slack.com/web-api/1.0.0'
 							? SLACK_OPERATIONS
-							: STRIPE_OPERATIONS;
+							: STRIPE_OPERATIONS);
 		return HttpResponse.json(paginate(ops, cursor, limit));
 	}),
 

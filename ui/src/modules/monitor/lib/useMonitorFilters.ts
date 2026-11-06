@@ -14,6 +14,9 @@
  *               system | mcp — the backend `Origin` enum; absent = all).
  *               Executions-only (the executions endpoint is the one list with
  *               an `origin` query param), so it's dropped on lens switches.
+ *   trace       one request's trace — the id a call's detail, the CLI and the
+ *               broker's headers print. Executions-only, like `origin`
+ *               (`trace_id` is the detail pane's own key, see useLogDetail).
  *
  *   from, to    a custom range (ISO instants) — set by brushing the log's
  *               timeline. Overrides `days` while present; picking a window
@@ -86,9 +89,12 @@ export interface MonitorFilters {
 	actorType: string | null;
 	/** Origin scope for the executions lens (null = all origins). */
 	origin: string | null;
+	/** One trace, for the executions lens (null = every call). */
+	traceId: string | null;
 	setWindow: (value: WindowValue) => void;
 	setActor: (actorId: string | null, actorType: string | null) => void;
 	setOrigin: (origin: string | null) => void;
+	setTraceId: (traceId: string | null) => void;
 	setRange: (range: TimeRange | null) => void;
 }
 
@@ -100,6 +106,7 @@ export function useMonitorFilters(): MonitorFilters {
 	const actorId = searchParams.get('actor_id');
 	const actorType = searchParams.get('actor_type');
 	const origin = searchParams.get('origin');
+	const traceId = searchParams.get('trace');
 	const fromParam = searchParams.get('from');
 	const toParam = searchParams.get('to');
 	const range = useMemo(() => parseRange(fromParam, toParam), [fromParam, toParam]);
@@ -163,6 +170,22 @@ export function useMonitorFilters(): MonitorFilters {
 		[setSearchParams],
 	);
 
+	const setTraceId = useCallback(
+		(nextTraceId: string | null) => {
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					if (nextTraceId) next.set('trace', nextTraceId);
+					else next.delete('trace');
+					next.delete('cursor');
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
+
 	const setRange = useCallback(
 		(nextRange: TimeRange | null) => {
 			setSearchParams(
@@ -193,9 +216,11 @@ export function useMonitorFilters(): MonitorFilters {
 		actorId,
 		actorType,
 		origin,
+		traceId,
 		setWindow,
 		setActor,
 		setOrigin,
+		setTraceId,
 		setRange,
 	};
 }

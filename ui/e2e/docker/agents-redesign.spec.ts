@@ -20,8 +20,9 @@ import { setAgentOwner } from './db';
 /**
  * The redesigned Agents page against the real backend: the agent strip and its
  * picker, the sticky agent card, the "Can call" rows and cards, the Add APIs
- * flow's Access step, permission-gated verbs, and the connect-request entry
- * points (`?approve=` and "Waiting for you") over the new layout.
+ * flow's setup queue (① Credential, ② Access), permission-gated verbs, and the
+ * connect-request entry points (`?approve=` and "Waiting for you") over the new
+ * layout.
  *
  * One rich agent (four bound APIs, one of them Blocked) is shared by the
  * read-mostly cases; cases that write make their own agents.
@@ -235,17 +236,21 @@ test('rows pin open with their chevron and Esc unpins; Manage access opens the s
 	await page.keyboard.press('Escape');
 	await expect(row).not.toHaveAttribute('data-pinned', /.*/);
 
-	// An allowed binding: the sidebar opens on its overview.
+	// An allowed binding: the sidebar opens on its read view, the danger zone below.
 	const sheet = await manageAccess(page, row);
+	await expect(sheet.getByTestId('access-read-view')).toBeVisible();
 	await expect(sheet.getByRole('button', { name: /^Unbind/ }).first()).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(sheet).toBeHidden();
 
-	// A Blocked binding (no rules): Manage access lands on "Add rule".
+	// A Blocked binding (no rules): Manage access lands on the editor, its
+	// first access choice focused.
 	const blocked = rowFor(page, blockedApi.credentialName);
 	await expect(blocked).toHaveAttribute('data-status', 'blocked-no-rules');
 	const blockedSheet = await manageAccess(page, blocked);
-	await expect(blockedSheet.locator('[data-rule-add]')).toBeFocused();
+	await expect(
+		blockedSheet.getByTestId('manage-rules-preset').getByRole('radio').first(),
+	).toBeFocused();
 	await page.keyboard.press('Escape');
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
@@ -273,7 +278,7 @@ test('the list/cards lens persists across a reload', async ({ page }) => {
 	await expect(page.getByTestId('api-tile')).toHaveCount(apis.length);
 });
 
-test('Add APIs → Access: Set up later warns first; a preset binds and the row is not left Blocked', async ({
+test('Add APIs → the setup queue: ① Credential, ② Access defaulting to Read only; a preset binds and the row is not left Blocked', async ({
 	page,
 	request,
 }) => {
@@ -281,11 +286,19 @@ test('Add APIs → Access: Set up later warns first; a preset binds and the row 
 	const errors = captureConsoleErrors(page);
 	const sfx = uniqueSuffix();
 	const agent = await provisionAdminOwnedAgent(request, { name: `e2e-access-${sfx}` });
-	const vendor = `e2e-access-${sfx}.example.com`;
+	const vendor = `e2e-access-${sfx}`;
 	const apiName = `access-${sfx}`;
-	await importInlineApi(request, { vendor, apiName });
+	await importInlineApi(request, {
+		vendor,
+		apiName,
+		content: apiKeySpec(`E2e access ${sfx}`, `${vendor}.example.com`),
+	});
+	// An inline import lands as a draft, whose operations can't be read: promote it
+	// so Custom rules can offer "By action".
+	await promoteLatestRevision(request, { vendor, name: apiName, version: '1.0.0' });
+	const credentialName = `e2e-access-key-${sfx}`;
 	await createApiKeyCredential(request, {
-		name: `e2e-access-key-${sfx}`,
+		name: credentialName,
 		vendor,
 		apiName,
 		apiVersion: '1.0.0',
@@ -299,23 +312,93 @@ test('Add APIs → Access: Set up later warns first; a preset binds and the row 
 	await tray.getByRole('checkbox', { name: new RegExp(`/${apiName}@1\\.0\\.0`) }).click();
 	await tray.getByRole('button', { name: 'Continue' }).click();
 
-	await page.getByRole('button', { name: 'Use this credential' }).click();
-	const step = page.getByTestId('queue-access-step');
-	await expect(step).toBeVisible();
+	// Two panes: the APIs on the left, the open one's ① Credential and ② Access on the right.
+	const queue = page.getByRole('dialog', { name: /^Set up 1 API for / });
+	await expect(queue).toBeVisible();
+	await expect(queue.getByRole('navigation', { name: 'APIs to set up' })).toBeVisible();
+	await expect(queue.getByTestId('queue-rail-list').getByRole('listitem')).toHaveCount(1);
+	const pane = queue.getByTestId('queue-active-pane');
+	await expect(pane).toBeVisible();
 
-	// Set up later is a confirm, not a click-through: it says every call is denied.
-	await step.getByRole('button', { name: 'Set up later' }).click();
-	const confirm = step.getByTestId('queue-later-confirm');
+	// ① Credential: the one covering credential is preselected, never bound on its own.
+	const credentials = pane
+		.getByTestId('queue-credential-section')
+		.getByRole('group', { name: /^Use your credential for / });
+	await expect(
+		credentials.getByRole('radio', { name: new RegExp(credentialName) }),
+	).toBeChecked();
+
+	// ② Access: Read only by default, beside the ask-first preset, Full access and Custom rules.
+	const step = pane.getByTestId('queue-access-step');
+	await expect(step).toHaveAttribute('data-ready', 'true');
+	// The presets stay inert until the credential's reach is read.
+	await expect(step.getByTestId('queue-access-reach-pending')).toHaveCount(0);
+	const presets = step.getByRole('radiogroup', { name: `What can ${agent.name} call?` });
+	// Exact names: "Read only" is a prefix of "Read only, ask before anything else".
+	const preset = (name: string) => presets.getByRole('radio', { name, exact: true });
+	await expect(presets.getByRole('radio')).toHaveText([
+		/^Read only/,
+		/^Read only, ask before anything else/,
+		/^Full access/,
+		/^Custom rules/,
+	]);
+	await expect(preset('Read only')).toBeChecked();
+
+	// Custom rules: the API lists its operations, so rules build by action or by path.
+	await preset('Custom rules').click();
+	const build = step.getByRole('group', { name: 'Build rules' });
+	await expect(build.getByRole('button')).toHaveText(['By action', 'By path']);
+	// By action: each operation is Allow · Ask · Deny, unset until chosen; pressing
+	// the pressed choice unsets it again.
+	await build.getByRole('button', { name: 'By action' }).click();
+	const access = step.getByRole('group', { name: 'Access for GET /get' });
+	await expect(access.getByRole('button')).toHaveText(['Allow', 'Ask', 'Deny']);
+	for (const choice of await access.getByRole('button').all()) {
+		await expect(choice).toHaveAttribute('aria-pressed', 'false');
+	}
+	const ask = access.getByRole('button', { name: 'Ask' });
+	await ask.click();
+	await expect(ask).toHaveAttribute('aria-pressed', 'true');
+	await expect(step.getByTestId('queue-access-actions-count')).toHaveText(
+		/^0 allow · 1 ask · 0 deny · \d+ not set$/,
+	);
+	await expect(step.getByTestId('queue-access-apply-status')).toHaveText('1 change not applied');
+	await ask.click();
+	await expect(ask).toHaveAttribute('aria-pressed', 'false');
+	await expect(step.getByTestId('queue-access-actions-count')).toHaveText(
+		/^0 allow · 0 ask · 0 deny · \d+ not set$/,
+	);
+	await preset('Read only').click();
+
+	// Under the presets: Effective access, Try a request, Add without rules….
+	await expect(step.getByTestId('queue-access-tools').getByRole('listitem')).toHaveText([
+		/Effective access/,
+		/Try a request/,
+		/Add without rules…/,
+	]);
+
+	// The footer: back to the picks, skip this API, or add it (named for the API).
+	await expect(queue.getByRole('button', { name: 'Back to APIs' })).toBeVisible();
+	await expect(queue.getByRole('button', { name: 'Skip for now' })).toBeVisible();
+	const add = queue.getByTestId('queue-add');
+	await expect(add).toHaveAccessibleName(/^Add \S/);
+
+	// Adding without rules is a confirm, not a click-through: it says every call is denied.
+	await step.getByTestId('queue-add-without-rules').click();
+	const confirm = page.getByRole('dialog', { name: /^Add .+ without rules\?$/ });
 	await expect(confirm).toContainText('every call is denied');
 	await confirm.getByRole('button', { name: 'Keep setting up' }).click();
 	await expect(confirm).toBeHidden();
+	await expect(step.getByTestId('queue-add-without-rules')).toBeFocused();
 
 	// A preset answers it; adding binds AND saves the rules.
-	await step.getByRole('radio', { name: /Allow all operations/ }).check();
-	await step.getByRole('button', { name: new RegExp(`^Add `) }).click();
-	await expect(page.getByTestId('queue-done-pane')).toBeVisible();
-	await expect(page.getByTestId('queue-done-pane')).toContainText('1 API added');
-	await page.getByRole('button', { name: 'Done' }).click();
+	await preset('Full access').click();
+	await expect(preset('Full access')).toBeChecked();
+	await add.click();
+	await expect(queue.getByTestId('queue-done-pane')).toBeVisible();
+	await expect(queue.getByTestId('queue-done-pane')).toContainText('1 API added');
+	await queue.getByTestId('queue-done').click();
+	await expect(queue).toBeHidden();
 
 	const row = rowFor(page, `e2e-access-key-${sfx}`);
 	await expect(row).toBeVisible();
@@ -347,7 +430,10 @@ test('a member without agents:write or credentials:write gets no binding verbs',
 	const sheet = await manageAccess(viewer, row);
 	await expect(sheet.getByRole('button', { name: /^Unbind/ })).toHaveCount(0);
 	await expect(sheet.getByRole('button', { name: /^Pause/ })).toHaveCount(0);
-	await expect(sheet.locator('[data-rule-add]')).toHaveCount(0);
+	// No way to edit the rules and no danger zone. (The rules read itself is
+	// owner-scoped: this member can't read an admin's credential's rules.)
+	await expect(sheet.getByRole('button', { name: /Edit access/ })).toHaveCount(0);
+	await expect(sheet.getByTestId('sidebar-danger-zone')).toHaveCount(0);
 	await viewer.context().close();
 });
 

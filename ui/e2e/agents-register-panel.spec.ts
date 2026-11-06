@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * The New agent panel (mocked). "New agent" opens on "Create here"; over an
+ * The New agent panel (mocked). "New agent" opens on "Register from the CLI"; over an
  * existing fleet, its "Register from the CLI" tab takes an agent that registers
  * after the panel opened, approves it and hands it its first API, and the panel
  * closes onto the fleet with it selected.
@@ -23,18 +23,10 @@ test('an existing fleet registers another agent from the New agent panel', async
 	await page.getByRole('button', { name: 'New agent' }).click();
 	const panel = page.getByRole('dialog', { name: 'New agent' });
 	await expect(panel).toBeVisible();
-	const createTab = panel.getByRole('tab', { name: 'Create here' });
 	const registerTab = panel.getByRole('tab', { name: 'Register from the CLI' });
-	await expect(createTab).toHaveAttribute('aria-selected', 'true');
-	await expect(panel.getByLabel('Name', { exact: true })).toBeFocused();
-	await expect(panel.getByText('Recommended')).toHaveCount(0);
-	// The two routes split the bar in equal halves.
-	const [a, b] = await Promise.all([createTab.boundingBox(), registerTab.boundingBox()]);
-	expect(Math.abs((a?.width ?? 0) - (b?.width ?? -1))).toBeLessThan(1);
-
-	await registerTab.click();
 	await expect(registerTab).toHaveAttribute('aria-selected', 'true');
 	await expect(panel.getByLabel('Agent name')).toBeFocused();
+	await expect(panel.getByText('Recommended')).toHaveCount(0);
 	// The fleet already holds names; the suggestion is one none of them has.
 	await expect(panel.getByLabel('Agent name')).toHaveValue('my-agent');
 	// The seeded fleet's pending agents were there before the panel: not arrivals.
@@ -60,18 +52,17 @@ test('an existing fleet registers another agent from the New agent panel', async
 	await expect(panel.getByTestId('arrival-warnings')).toHaveCount(0);
 
 	await panel.getByRole('button', { name: 'Approve research-bot' }).click();
-	const firstApi = panel.getByTestId('first-api-panel');
-	await expect(
-		firstApi.getByRole('heading', { name: 'Add GitHub to research-bot' }),
-	).toBeVisible();
-	await expect(panel.getByTestId('register-progress')).toHaveText('Step 4 of 4 · Give it an API');
-
-	await firstApi.getByRole('button', { name: 'Continue with GitHub' }).click();
-	const queue = page.getByRole('dialog', { name: 'Set up 1 API' });
-	await expect(queue).toBeVisible();
-	await expect(queue.getByTestId('queue-active-pane')).toContainText('GitHub');
+	// The org already has agents: no GitHub step; the sheet goes to the Add-APIs tray.
+	const tray = page.getByRole('dialog', { name: 'Add APIs' });
+	await expect(tray).toBeVisible();
+	await expect(tray.getByText(/^Pick what research-bot should be able to call/)).toBeVisible();
 	await expect(panel).toHaveCount(0);
+	await expect(page.getByTestId('first-api-panel')).toHaveCount(0);
+	await expect(tray.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
 	await expect(page).toHaveURL(new RegExp(`agent=${id}`));
+
+	await tray.getByRole('button', { name: 'Skip for now' }).click();
+	await expect(tray).toHaveCount(0);
 	await expect(page.getByRole('tab', { name: /research-bot/ })).toHaveAttribute(
 		'aria-selected',
 		'true',

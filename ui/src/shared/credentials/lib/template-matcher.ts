@@ -50,6 +50,27 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * The API operation a concrete request is: the one whose method matches and
+ * whose path template the path instantiates — a literal template first (the
+ * broker resolves the same way), then a parameterised one. Null when none
+ * does. Action rules name operations by id, so a dry run without the id
+ * would never see them.
+ */
+export function operationForRequest<T extends { method: string; path: string }>(
+	operations: readonly T[],
+	method: string,
+	path: string,
+): T | null {
+	const m = method.toUpperCase();
+	const candidates = operations.filter((op) => op.method.toUpperCase() === m);
+	return (
+		candidates.find((op) => op.path === path) ??
+		candidates.find((op) => templateToRegex(op.path).test(path)) ??
+		null
+	);
+}
+
+/**
  * Does any concrete path derivable from ``template`` also satisfy the
  * rule's path constraint? Used by the ops preview to decide whether a
  * given op is affected by a rule. Method + operation-id constraints are
@@ -93,16 +114,48 @@ function prefixCanApply(prefix: string, template: string): boolean {
 	for (let i = 0; i < pParts.length; i++) {
 		const tSeg = tParts[i];
 		const pSeg = pParts[i];
-		if (isPlaceholder(tSeg)) continue;
+		const last = i === pParts.length - 1;
+		// A placeholder on either side takes any segment: the broker compiles a
+		// `{name}` in a prefix or exact rule path to a wildcard, so `/{year}/`
+		// is not the literal text "{year}" to it, and must not be to this preview.
+		if (isPlaceholder(tSeg) || isPlaceholder(pSeg)) continue;
+		const tMixed = hasPlaceholder(tSeg);
+		const pMixed = hasPlaceholder(pSeg);
+		if (tMixed && pMixed) continue;
+		if (pMixed) {
+			// `{month}.json` against a fixed segment: the literal parts must fit.
+			if (!segmentRegex(pSeg, last).test(tSeg)) return false;
+			continue;
+		}
+		if (tMixed) {
+			// A fixed prefix segment against `{year}.json`: a partial last segment
+			// may still grow into an instance; a whole one must be an instance.
+			if (!last && !segmentRegex(tSeg, false).test(pSeg)) return false;
+			continue;
+		}
 		// Last prefix segment might be partial — allow "startsWith" against
 		// the fixed template segment. Non-last segments must equal exactly.
-		if (i === pParts.length - 1) {
+		if (last) {
 			if (!tSeg.startsWith(pSeg)) return false;
 		} else if (tSeg !== pSeg) {
 			return false;
 		}
 	}
 	return true;
+}
+
+function hasPlaceholder(segment: string): boolean {
+	return /\{[^}]+\}/.test(segment);
+}
+
+/** One path segment with `{name}` placeholders as a regex; `open` leaves the
+ * end unanchored (a prefix's last segment may stop short). */
+function segmentRegex(segment: string, open: boolean): RegExp {
+	const source = segment
+		.split(/(\{[^}]+\})/g)
+		.map((p) => (/^\{[^}]+\}$/.test(p) ? '[^/]+' : escapeRegex(p)))
+		.join('');
+	return new RegExp(`^${source}${open ? '' : '$'}`);
 }
 
 function splitPath(s: string): string[] {

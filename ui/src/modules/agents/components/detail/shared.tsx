@@ -27,8 +27,7 @@ export function successShare(success: number, total: number): string {
 
 // ---------------------------------------------------------------------------
 // Direct-binding surfaces — the rule projections (display and editor shapes)
-// and the motion preset shared by the API access sheet and its rule editor and
-// tester.
+// shared by the API access sheet and its rule editor and tester.
 // ---------------------------------------------------------------------------
 
 /** The condition fields every rule shape here carries — the stored read rule and
@@ -83,11 +82,3 @@ export function toEditorRule(rule: RuleConditions): EditorRule {
 		operations: rule.operations ?? null,
 	};
 }
-
-/** Expand/collapse motion for inline panels (the rule editor's pending-changes diff). */
-export const panelMotion = {
-	initial: { opacity: 0, height: 0 },
-	animate: { opacity: 1, height: 'auto' as const },
-	exit: { opacity: 0, height: 0 },
-	transition: { duration: 0.2, ease: 'easeOut' as const },
-};

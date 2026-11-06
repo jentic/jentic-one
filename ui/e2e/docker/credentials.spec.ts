@@ -46,7 +46,7 @@ test('create a bearer credential via the wizard and see it in the list', async (
 
 	await page.getByPlaceholder('Production API key').fill(name);
 	await page.getByPlaceholder('acme').fill('httpbin.org');
-	await page.getByPlaceholder('sk_live_…').fill('e2e-secret-value');
+	await page.getByPlaceholder('Paste the token').fill('e2e-secret-value');
 	await page.getByRole('button', { name: 'Create credential' }).click();
 
 	// Real POST /credentials -> 201; success is a toast (no secret reveal) and

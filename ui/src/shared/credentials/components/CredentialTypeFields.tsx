@@ -195,7 +195,7 @@ export function CredentialTypeFields({
 					autoComplete="off"
 					value={state.token}
 					onChange={(e): void => onChange({ token: e.target.value })}
-					placeholder="sk_live_…"
+					placeholder="Paste the token"
 				/>
 			</Field>
 		);

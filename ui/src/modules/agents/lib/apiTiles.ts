@@ -27,6 +27,8 @@ export interface ApiTileModel {
 	/** Null when the API is not imported into the workspace. */
 	version: string | null;
 	authLabel: string | null;
+	/** The credential's auth type, for its icon; null when the credential is unreachable. */
+	authType: CredentialType | null;
 	/** Null when the API is not imported into the workspace. */
 	operationCount: number | null;
 	/** One binding can fan out to several tiles. */
@@ -48,6 +50,9 @@ export interface ApiTileModel {
 	awaitingConsent: boolean;
 	/** The registry has an upstream spec update this API hasn't adopted. */
 	updateAvailable: boolean;
+	/** The binding's served reference — the credential's own scope. Its
+	 * wildcards say how far the binding's rules reach (see `apiScopeReach`). */
+	scope: ServedApiEntity;
 }
 
 /** Human labels for the credential auth types shown on a tile. */
@@ -192,6 +197,8 @@ export function composeApiTiles(
 			suspendedReason: binding.suspendedReason,
 			awaitingConsent: credentialAwaitsConsent(credential),
 			authLabel: credential ? (AUTH_TILE_LABEL[credential.type] ?? null) : null,
+			authType: credential?.type ?? null,
+			scope: served,
 		};
 
 		if (api == null) {

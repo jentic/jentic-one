@@ -167,16 +167,27 @@ interface CompiledRule {
 	operations: Set<string> | null;
 }
 
+// A rule is never changed in place (an edit builds a new object), so its
+// compiled form is kept with it: previews evaluate the same rules against
+// every operation of an API on each render.
+const compiledRules = new WeakMap<PermissionRule, CompiledRule>();
+
 function compileRule(rule: PermissionRule): CompiledRule {
-	return {
-		effect: rule.effect,
-		methods:
-			rule.methods && rule.methods.length > 0
-				? new Set(rule.methods.map((m) => m.toUpperCase()))
-				: null,
-		path: compileMatcher(rule.path, rule.match_mode ?? 'regex'),
-		operations: rule.operations && rule.operations.length > 0 ? new Set(rule.operations) : null,
-	};
+	let compiled = compiledRules.get(rule);
+	if (!compiled) {
+		compiled = {
+			effect: rule.effect,
+			methods:
+				rule.methods && rule.methods.length > 0
+					? new Set(rule.methods.map((m) => m.toUpperCase()))
+					: null,
+			path: compileMatcher(rule.path, rule.match_mode ?? 'regex'),
+			operations:
+				rule.operations && rule.operations.length > 0 ? new Set(rule.operations) : null,
+		};
+		compiledRules.set(rule, compiled);
+	}
+	return compiled;
 }
 
 function isConditionLess(r: CompiledRule): boolean {

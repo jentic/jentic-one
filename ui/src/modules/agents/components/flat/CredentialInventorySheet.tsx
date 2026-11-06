@@ -20,6 +20,7 @@ import {
 	SheetHeader,
 	SheetPrimitive,
 	toast,
+	type SegmentedToggleOption,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
 import {
@@ -54,15 +55,20 @@ import {
 } from '@/shared/credentials/components';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 
 type CredentialTypeFilter = 'all' | CredentialType;
 
-const FILTER_OPTIONS: { value: CredentialTypeFilter; label: string }[] = [
+const FILTER_OPTIONS: SegmentedToggleOption<CredentialTypeFilter>[] = [
 	{ value: 'all', label: 'All' },
-	...CREDENTIAL_TYPE_ORDER.map((type) => ({
-		value: type as CredentialTypeFilter,
-		label: CREDENTIAL_TYPE_LABELS[type],
-	})),
+	...CREDENTIAL_TYPE_ORDER.map((type) => {
+		const Icon = credentialTypeIcon(type);
+		return {
+			value: type as CredentialTypeFilter,
+			label: CREDENTIAL_TYPE_LABELS[type],
+			icon: <Icon className="h-3.5 w-3.5" />,
+		};
+	}),
 ];
 
 /** Which credentials the list is narrowed to by fleet usage. */

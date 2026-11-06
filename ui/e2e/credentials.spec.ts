@@ -49,7 +49,7 @@ test('create a credential and see it in the list', async ({ page }) => {
 
 	await page.getByPlaceholder('Production API key').fill('CI bearer token');
 	await page.getByPlaceholder('acme').fill('acme');
-	await page.getByPlaceholder('sk_live_…').fill('super-secret-value');
+	await page.getByPlaceholder('Paste the token').fill('super-secret-value');
 	await page.getByRole('button', { name: 'Create credential' }).click();
 
 	// Success surfaces as a toast (no secret reveal), then the dialog closes
