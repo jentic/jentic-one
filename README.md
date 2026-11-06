@@ -87,6 +87,21 @@ jentic setup --url "$JENTIC_ONE_URL"   # registers the agent and installs its sk
 
 Next: [make your first brokered call](docs/guides/first-call.md).
 
+## Manage the instance
+
+Run these in the folder with `docker-compose.yaml`.
+
+```bash
+# Stop the stack
+docker compose down
+
+# Start it again
+docker compose up -d
+
+# Restart it
+docker compose restart
+```
+
 ## Alternative deployments
 
 | If you want… | Go to |
