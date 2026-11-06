@@ -10331,6 +10331,27 @@
         ],
         "type": "object"
       },
+      "ExplainHeldExecutionRequest": {
+        "additionalProperties": false,
+        "description": "The filing agent's explanation of why it made a held call.",
+        "examples": [
+          {
+            "reason": "Customer 4821 asked for a replacement order"
+          }
+        ],
+        "properties": {
+          "reason": {
+            "description": "One or two sentences on why the call is needed, shown to the reviewer as the agent's own claim. Control and text-direction characters are removed and the text is cut to 1024 characters.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
       "GovernedHostsResponse": {
         "description": "The caller's governed host set (canonical order) with its change digest.\n\n**Hosts only, deliberately**: the set exists for interception scoping\n(divert lists, host filters), so it carries the minimum knowledge — API\ndetail stays behind the existing authenticated reads (``GET /apis``).\n\nDeliberately **unpaginated**: the set is bounded by the caller's own\ncredential bindings (tens of hosts, not thousands) and the digest must\ncover the whole set atomically — a paginated digest would be meaningless.\nThis is a documented deviation from the list-endpoint pagination\nconvention.",
         "examples": [
@@ -10441,6 +10462,7 @@
           {
             "_links": {
               "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+              "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
               "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
               "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
               "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
@@ -10448,6 +10470,7 @@
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "agent_name": "billing-assistant",
             "agent_owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+            "agent_reason": "Customer 4821 asked for a replacement order",
             "api_name": "stripe",
             "api_vendor": "stripe.com",
             "api_version": "2024-04-10",
@@ -10482,6 +10505,7 @@
             "examples": [
               {
                 "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                 "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                 "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                 "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
@@ -10521,6 +10545,20 @@
             "description": "The agent's owner; null for an ownerless agent (admin-only).",
             "examples": [
               "usr_6968b3987ee4c3ec0b4ee3b9"
+            ]
+          },
+          "agent_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the agent says it made the call, in its own words, sent with `:explain` after the call was held. Unverified; null when the agent gave no reason.",
+            "examples": [
+              "Customer 4821 asked for a replacement order"
             ]
           },
           "api_name": {
@@ -10780,6 +10818,7 @@
         "examples": [
           {
             "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+            "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
             "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
             "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
             "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
@@ -10798,6 +10837,20 @@
             "description": "The execution record, once the approved call has run.",
             "examples": [
               "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf"
+            ]
+          },
+          "explain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explain why the agent made the call, for the reviewer. Present while it is pending and not yet explained; only the agent that filed it may use it.",
+            "examples": [
+              "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain"
             ]
           },
           "result": {
@@ -10849,11 +10902,13 @@
               {
                 "_links": {
                   "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                  "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                   "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                   "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                   "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
                 },
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                "agent_reason": "Customer 4821 asked for a replacement order",
                 "api_name": "stripe",
                 "api_vendor": "stripe.com",
                 "api_version": "2024-04-10",
@@ -10888,11 +10943,13 @@
                 {
                   "_links": {
                     "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                    "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                     "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                     "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                     "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
                   },
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "agent_reason": "Customer 4821 asked for a replacement order",
                   "api_name": "stripe",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10",
@@ -10955,11 +11012,13 @@
           {
             "_links": {
               "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+              "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
               "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
               "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
               "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
             },
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "agent_reason": "Customer 4821 asked for a replacement order",
             "api_name": "stripe",
             "api_vendor": "stripe.com",
             "api_version": "2024-04-10",
@@ -10988,6 +11047,7 @@
             "examples": [
               {
                 "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                 "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                 "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                 "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
@@ -11000,6 +11060,20 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ],
             "type": "string"
+          },
+          "agent_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the agent says it made the call, in its own words, sent with `:explain` after the call was held. Unverified; null when the agent gave no reason.",
+            "examples": [
+              "Customer 4821 asked for a replacement order"
+            ]
           },
           "api_name": {
             "description": "Name of the API called.",
@@ -35552,11 +35626,13 @@
                     {
                       "_links": {
                         "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                        "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                         "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                         "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                         "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
                       },
                       "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                      "agent_reason": "Customer 4821 asked for a replacement order",
                       "api_name": "stripe",
                       "api_vendor": "stripe.com",
                       "api_version": "2024-04-10",
@@ -35640,6 +35716,7 @@
                 "example": {
                   "_links": {
                     "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                    "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                     "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                     "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                     "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
@@ -35647,6 +35724,7 @@
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "agent_name": "billing-assistant",
                   "agent_owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+                  "agent_reason": "Customer 4821 asked for a replacement order",
                   "api_name": "stripe",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10",
@@ -35900,11 +35978,13 @@
                 "example": {
                   "_links": {
                     "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                    "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                     "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                     "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                     "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
                   },
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "agent_reason": "Customer 4821 asked for a replacement order",
                   "api_name": "stripe",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10",
@@ -35973,6 +36053,112 @@
       },
       "summary": "Approve or deny a held execution"
     },
+    "/executions/holds/{held_execution_id}:explain": {
+      "description": "`POST`: Explain a held execution.",
+      "post": {
+        "description": "Say why a held call is needed — the agent that filed it only, once.\n\nThe reviewer sees the reason beside the request, as the agent's own claim.\nAny other caller gets ``404``, as if it did not exist; a call that is no\nlonger pending, or one already explained, answers ``409``. A reason with no\nreadable text left once cleaned answers ``400``.",
+        "operationId": "explainHeldExecution",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathHeldExecutionId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "reason": "Customer 4821 asked for a replacement order"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/ExplainHeldExecutionRequest"
+              }
+            }
+          },
+          "description": "The filing agent's explanation of why it made a held call.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "_links": {
+                    "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                    "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
+                    "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
+                    "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
+                    "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
+                  },
+                  "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "agent_reason": "Customer 4821 asked for a replacement order",
+                  "api_name": "stripe",
+                  "api_vendor": "stripe.com",
+                  "api_version": "2024-04-10",
+                  "created_at": "2026-01-15T09:30:00Z",
+                  "credential_id": "cred_6968b39855d91a3561684b32",
+                  "decided_at": "2026-01-15T09:42:00Z",
+                  "decided_by": "usr_6968b3987ee4c3ec0b4ee3b9",
+                  "decision_reason": "Not this account",
+                  "execution_id": "exec_6968b3982706c619fe73f0cf",
+                  "execution_status": "held",
+                  "expires_at": "2026-01-15T10:30:00Z",
+                  "id": "held_6968b398a1c4e2d07b5f93c6",
+                  "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
+                  "method": "POST",
+                  "operation_id": "listCharges",
+                  "path": "/v1/refunds",
+                  "review_url": "https://jentic.example.com/app/agents/approvals/held_6968b398a1c4e2d07b5f93c6",
+                  "state": "pending",
+                  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                  "updated_at": "2026-01-15T09:42:00Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/HeldExecutionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Explain a held execution",
+        "tags": [
+          "Held Executions"
+        ]
+      },
+      "summary": "Explain a held execution"
+    },
     "/executions/holds/{held_execution_id}:withdraw": {
       "description": "`POST`: Withdraw a held execution.",
       "post": {
@@ -35990,11 +36176,13 @@
                 "example": {
                   "_links": {
                     "execution": "https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf",
+                    "explain": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:explain",
                     "result": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6/result",
                     "self": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6",
                     "withdraw": "https://jentic.example.com/executions/holds/held_6968b398a1c4e2d07b5f93c6:withdraw"
                   },
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "agent_reason": "Customer 4821 asked for a replacement order",
                   "api_name": "stripe",
                   "api_vendor": "stripe.com",
                   "api_version": "2024-04-10",

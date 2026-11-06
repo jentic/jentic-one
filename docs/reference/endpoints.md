@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **175**._
+_Total endpoints: **176**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -209,7 +209,7 @@ _Total endpoints: **175**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable a user |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue a user's invite |
 
-## Any authenticated actor (83)
+## Any authenticated actor (84)
 
 
 ### `actors`
@@ -299,6 +299,7 @@ _Total endpoints: **175**._
 | GET | `/executions/holds/{held_execution_id}` | _any authenticated_ | any | Get a held execution |
 | GET | `/executions/holds/{held_execution_id}/result` | _any authenticated_ | any | Get a held execution's result |
 | POST | `/executions/holds/{held_execution_id}:decide` | _any authenticated_ | any | Approve or deny a held execution |
+| POST | `/executions/holds/{held_execution_id}:explain` | _any authenticated_ | any | Explain a held execution |
 | POST | `/executions/holds/{held_execution_id}:withdraw` | _any authenticated_ | any | Withdraw a held execution |
 
 ### `governed-hosts`

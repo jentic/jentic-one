@@ -61,6 +61,9 @@ const (
 // byte-identical with HELD_AGENT_DIRECTIVE in src/jentic_one/shared/jobs/hold.py.
 const heldAgentDirective = "This call needs human approval. Most important: show the user the review_url, " +
 	"since they cannot approve it without that link, and end your turn so they see it. " +
+	"Before you end your turn, if you can, call explain_held_call once with " +
+	"held_execution_id and one or two sentences on why you are making this call; the " +
+	"reviewer sees it next to the request. " +
 	"Do not call get_execution_result until the user replies; then call it once with " +
 	"held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is " +
 	"still held, show the user the review_url again and end your turn again. Do not " +

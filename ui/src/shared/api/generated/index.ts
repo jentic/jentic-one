@@ -125,6 +125,7 @@ export type { ExecutionStatsResponse } from './models/ExecutionStatsResponse';
 export { ExecutionStatus } from './models/ExecutionStatus';
 export type { ExistingCredentialConfirmSessionRequest } from './models/ExistingCredentialConfirmSessionRequest';
 export type { ExistingCredentialResponse } from './models/ExistingCredentialResponse';
+export type { ExplainHeldExecutionRequest } from './models/ExplainHeldExecutionRequest';
 export type { GovernedHostsResponse } from './models/GovernedHostsResponse';
 export { GroupBy } from './models/GroupBy';
 export type { HealthResponse } from './models/HealthResponse';

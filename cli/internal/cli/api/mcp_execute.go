@@ -1239,6 +1239,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			},
 			handler: s.handleGetExecutionResult,
 		},
+		s.explainHeldCallSpec(),
 	}
 }
 

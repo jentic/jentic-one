@@ -167,6 +167,11 @@ class EventType:
     # undecided and its job fails. Settles the matching approval_requested prompt.
     EXECUTION_APPROVAL_EXPIRED = "execution.approval_expired"
 
+    # Emitted by the admin explain path when the agent that filed a pending
+    # hold explains why it made the call. Tagged with the agent, so its owner
+    # sees it; the text itself is read from the hold, never carried here.
+    EXECUTION_APPROVAL_REASON_ADDED = "execution.approval_reason_added"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -215,6 +220,7 @@ class EventType:
             EXECUTION_APPROVAL_DECIDED,
             EXECUTION_APPROVAL_WITHDRAWN,
             EXECUTION_APPROVAL_EXPIRED,
+            EXECUTION_APPROVAL_REASON_ADDED,
         }
     )
 
@@ -474,6 +480,7 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.EXECUTION_APPROVAL_DECIDED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_EXPIRED: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_APPROVAL_REASON_ADDED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_CREATED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_EDIT_REQUESTED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_AMENDED: frozenset({EventSeverity.INFO}),

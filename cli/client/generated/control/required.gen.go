@@ -197,7 +197,8 @@ func (ExistingCredentialConfirmSessionRequest) RequiredFields() []string {
 func (ExistingCredentialResponse) RequiredFields() []string {
 	return []string{"can_bind", "credential_id", "name", "type"}
 }
-func (GovernedHostsResponse) RequiredFields() []string { return []string{"data", "digest"} }
+func (ExplainHeldExecutionRequest) RequiredFields() []string { return []string{"reason"} }
+func (GovernedHostsResponse) RequiredFields() []string       { return []string{"data", "digest"} }
 func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }

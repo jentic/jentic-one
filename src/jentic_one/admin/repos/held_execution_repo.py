@@ -31,11 +31,18 @@ class HeldExecutionRepository:
         approval_id: str,
         *,
         filters: Sequence[ColumnElement[bool]] | None = None,
+        for_update: bool = False,
     ) -> HeldExecution | None:
-        """The approval row, or None when missing or excluded by ``filters``."""
+        """The approval row, or None when missing or excluded by ``filters``.
+
+        ``for_update`` locks the row for the transaction, so a concurrent
+        decision, withdrawal or expiry waits for it, or it for them.
+        """
         stmt = select(HeldExecution).where(HeldExecution.id == approval_id)
         for f in filters or ():
             stmt = stmt.where(f)
+        if for_update:
+            stmt = stmt.with_for_update()
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
