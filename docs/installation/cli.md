@@ -34,13 +34,15 @@ supply chain yourself.
 
 ## Linux packages (.deb / .rpm / .apk)
 
-Every release attaches native packages for `linux/amd64` and `linux/arm64`,
-one per binary, so an agent host can install `jentic` alone. They are listed in
-the signed `checksums.txt` like the archives (see [Verify](#verify)), and
-install the binaries to `/usr/bin`.
+From the first release after v0.44.0, every release attaches native packages
+for `linux/amd64` and `linux/arm64`, one per binary, so an agent host can
+install `jentic` alone. They are listed in the signed `checksums.txt` like the
+archives (see [Verify](#verify)), and install the binaries to `/usr/bin`.
 
 ```bash
-VER=0.44.0                                                   # the release to install
+VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest \
+  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')          # or pin a release: VER=X.Y.Z
+: "${VER:?could not resolve the latest version — set VER manually}"
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')    # amd64 | arm64
 BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
 curl -fsSLO "${BASE}/jentic_${VER}_linux_${ARCH}.deb"        # or .rpm / .apk; jenticctl_… for the admin host
