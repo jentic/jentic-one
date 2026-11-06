@@ -1,19 +1,20 @@
 # Jentic One quickstart — the README's Docker trial shape as one compose file.
 #
 # The same settings as config/quickstart.env (SQLite files on one volume,
-# development-mode secrets, no TLS), with the published image. `migrate` is a
-# one-shot init service; `app` and `broker` wait for it to finish.
+# development-mode secrets, no TLS), with the published image. `keygen` and
+# `migrate` are one-shot init services; `app` and `broker` wait for them.
 #
 #   curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
-#   grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
-#   docker compose up -d
-#   docker compose exec app python -m jentic_one create-admin --email you@example.com
+#   docker compose up -d --wait
 #
-# Then sign in at http://127.0.0.1:8000. Agents call the broker on :8100.
+# Then open http://127.0.0.1:8000 and create the first admin account. Agents
+# call the broker on :8100.
 #
-# The credential-encryption key is the one kept secret: generated once into
-# .env (the second command above), read from there by compose. Back .env up
-# with the volume — without the key, stored credentials are unreadable.
+# The credential-encryption key is the one kept secret. `keygen` generates it
+# on first start into ~/.jentic/enc-key on the host (or, if .env next to this
+# file still sets JENTIC_ENCRYPTION_KEY, saves that key there instead) and
+# copies it into the data volume for the app. Back up ~/.jentic/enc-key with
+# the volume — without the key, stored credentials are unreadable.
 #
 # Trial use only: the other secrets are per-process dev values and the image
 # tag floats.
@@ -43,9 +44,9 @@ x-env: &env
   JENTIC__DATABASES__ADMIN__BACKEND: sqlite
   JENTIC__DATABASES__ADMIN__PATH: /data/admin.db
   # Credential-encryption key (the keyset's one entry, active by default); the
-  # value comes from .env.
+  # file is written by `keygen`.
   JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID: v1
-  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL: ${JENTIC_ENCRYPTION_KEY:?set JENTIC_ENCRYPTION_KEY in .env - see the header of this file}
+  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL_FILE: /data/enc-key
   # Anonymous product telemetry (docs/reference/config.md#telemetry).
   # Set to "false" to opt out.
   JENTIC__TELEMETRY__ENABLED: "true"
@@ -56,32 +57,98 @@ x-common: &common
     - jentic-data:/data
 
 services:
+  # Ensures ~/.jentic/enc-key exists on the host, then copies it into the data
+  # volume. The only service that mounts ~/.jentic; it runs as root to write
+  # there, and gives the host file back to the directory's owner.
+  keygen:
+    image: *image
+    user: "0:0"
+    environment:
+      # Pre-enc-key installs kept their key in .env; carried over once.
+      JENTIC_ENCRYPTION_KEY: ${JENTIC_ENCRYPTION_KEY:-}
+    volumes:
+      - ${HOME:-${USERPROFILE}}/.jentic:/host-jentic
+      - jentic-data:/data
+    command:
+      - python
+      - -c
+      - |
+        import base64, binascii, os, sys
+        host, vol = "/host-jentic/enc-key", "/data/enc-key"
+        legacy = os.environ.get("JENTIC_ENCRYPTION_KEY", "").strip()
+
+        def write(path, text, uid, gid):
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(text + "\n")
+            os.chmod(path, 0o600)
+            try:
+                os.chown(path, uid, gid)
+            except OSError:
+                pass
+
+        if os.path.exists(host):
+            key = open(host).read().strip()
+            if legacy and legacy != key:
+                sys.exit("keygen: ~/.jentic/enc-key and JENTIC_ENCRYPTION_KEY in .env differ - keep the one your data was encrypted with and remove the other")
+        else:
+            key = legacy or base64.b64encode(os.urandom(32)).decode()
+            owner = os.stat("/host-jentic")
+            write(host, key, owner.st_uid, owner.st_gid)
+            print("keygen: saved the encryption key to ~/.jentic/enc-key - back it up")
+        try:
+            valid = len(base64.b64decode(key, validate=True)) == 32
+        except (binascii.Error, ValueError):
+            valid = False
+        if not valid:
+            sys.exit("keygen: ~/.jentic/enc-key is not a base64-encoded 32-byte key")
+        write(vol, key, 10001, 10001)
+    restart: "no"
+
   migrate:
     <<: *common
+    depends_on:
+      keygen: { condition: service_completed_successfully }
     command: ["python", "-m", "jentic_one.migrations.run"]
     restart: "no"
 
-  # Control plane: UI + APIs.
+  # Control plane: UI + APIs, and the MCP endpoint at /mcp. It also publishes
+  # the broker's port, since the broker runs in this container's network.
   app:
     <<: *common
+    environment:
+      <<: *env
+      # MCP execute calls reach the broker on 127.0.0.1:8100 (the default
+      # broker URL) through the shared network; a bearer is only sent over
+      # plain http to loopback. Not in config/quickstart.env: its `docker run`
+      # containers share no network.
+      JENTIC__SERVER__MCP__ENABLED: "true"
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:8000:8000", "127.0.0.1:8100:8100"]
     restart: unless-stopped
     healthcheck: *healthcheck
 
   # Data plane: agents call this. The broker must run as the sole surface of
-  # its process, so it is its own service.
+  # its process, so it is its own service, sharing the app's network and
+  # listening on 8100. `restart: true` restarts it with `docker compose
+  # restart app`. If the app instead crashes and Docker restarts it, the broker
+  # loses that network (while still reporting healthy): run
+  # `docker compose restart broker`.
   broker:
     <<: *common
     environment:
       <<: *env
       JENTIC__APPS: broker
+      JENTIC__SERVER__PORT: "8100"
+    network_mode: "service:app"
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["127.0.0.1:8100:8000"]
+      app: { condition: service_started, restart: true }
     restart: unless-stopped
-    healthcheck: *healthcheck
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
 
 volumes:
   jentic-data:

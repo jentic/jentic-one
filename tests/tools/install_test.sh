@@ -648,6 +648,54 @@ if [ -x /bin/sh ]; then
   rm -rf "$bindir" "$curl_log"
 fi
 
+# --- tools/clis/install.sh: download-only wrapper ----------------------------
+# The wrapper only sets env and delegates, so a stub installer that echoes the
+# env it receives is enough. Hermetic: no network, no real install.
+CLIS_SH="$TESTS_DIR/../../tools/clis/install.sh"
+if [ -f "$CLIS_SH" ]; then
+  wdir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-clis.XXXXXX")"
+  stub='echo "method=$JENTIC_INSTALL_METHOD no_install=$JENTIC_NO_INSTALL ref=${JENTIC_REF:-}"'
+
+  # Checkout mode: runs the sibling ../install.sh with download-only env.
+  mkdir -p "$wdir/tools/clis"
+  cp "$CLIS_SH" "$wdir/tools/clis/install.sh"
+  printf '%s\n' "$stub" > "$wdir/tools/install.sh"
+  out="$(env -u JENTIC_VERSION -u JENTIC_REF sh "$wdir/tools/clis/install.sh" 2>&1)"
+  assert_eq "clis wrapper: download-only, latest release by default" \
+    "method=binary no_install=1 ref=" "$out"
+  out="$(JENTIC_VERSION=0.44.0 sh "$wdir/tools/clis/install.sh" 2>&1)"
+  assert_eq "clis wrapper: JENTIC_VERSION without v is normalized" \
+    "method=binary no_install=1 ref=v0.44.0" "$out"
+  out="$(JENTIC_VERSION=v0.44.0 sh "$wdir/tools/clis/install.sh" 2>&1)"
+  assert_eq "clis wrapper: JENTIC_VERSION with v is kept" \
+    "method=binary no_install=1 ref=v0.44.0" "$out"
+
+  # Piped mode: fetches tools/install.sh via curl (stubbed) and runs it, and
+  # never runs an unrelated ../install.sh near the cwd.
+  bindir="$wdir/bin"
+  make_min_path "$bindir"
+  ln -sf "$(command -v dirname)" "$bindir/dirname"
+  curl_log="$wdir/curl.log"
+  cat > "$bindir/curl" <<EOF
+#!/bin/sh
+echo "\$@" >> "$curl_log"
+while [ \$# -gt 0 ]; do [ "\$1" = "-o" ] && { shift; printf '%s\n' '$stub' > "\$1"; }; shift; done
+EOF
+  chmod +x "$bindir/curl"
+  printf 'echo DECOY-RAN\n' > "$wdir/install.sh"
+  mkdir -p "$wdir/cwd"
+  mkdir -p "$wdir/tmp"
+  out="$(cd "$wdir/cwd" && PATH="$bindir" TMPDIR="$wdir/tmp" /bin/sh < "$CLIS_SH" 2>&1)"
+  assert_eq "clis wrapper piped: runs the fetched installer" \
+    "method=binary no_install=1 ref=" "$out"
+  assert_contains "clis wrapper piped: fetches tools/install.sh from main" \
+    "$(cat "$curl_log")" "jentic/jentic-one/main/tools/install.sh"
+  assert_eq "clis wrapper piped: temp copy is removed" "" \
+    "$(ls -A "$wdir/tmp")"
+
+  rm -rf "$wdir"
+fi
+
 # ---------------------------------------------------------------------------
 if [ "$FAIL" -ne 0 ]; then
   printf '\nFAILED\n' >&2

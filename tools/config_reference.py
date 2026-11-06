@@ -87,6 +87,12 @@ def _clean_text(text: str) -> str:
     return text.replace("|", "\\|")
 
 
+def _clean_paragraphs(text: str) -> str:
+    """Normalise a section description, keeping blank-line paragraph breaks."""
+    paragraphs = re.split(r"\n\s*\n", text.strip())
+    return "\n\n".join(_clean_text(p) for p in paragraphs if p.strip())
+
+
 def _resolve_ref(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
     """Follow a ``$ref`` into ``$defs`` (returns ``node`` unchanged otherwise)."""
     ref = node.get("$ref")
@@ -282,7 +288,7 @@ def _section_lines(
     lines = [f"## `{name}`", ""]
     section_desc = resolved.get("description") or node.get("description")
     if section_desc:
-        lines.extend([_clean_text(section_desc).replace("\\|", "|"), ""])
+        lines.extend([_clean_paragraphs(section_desc).replace("\\|", "|"), ""])
 
     rows: dict[str, _Row] = {}
     _walk([name], node, defs, required, rows)
