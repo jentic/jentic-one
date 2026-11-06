@@ -49,8 +49,9 @@ export function agentInitials(name: string | undefined): string {
 		.split(/[\s_-]+/)
 		.filter(Boolean);
 	if (words.length === 0) return '';
-	if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-	return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+	// Code points, so an emoji in the name is never cut to half a glyph.
+	if (words.length === 1) return [...words[0]].slice(0, 2).join('').toUpperCase();
+	return ([...words[0]][0] + [...words[words.length - 1]][0]).toUpperCase();
 }
 
 /**

@@ -59,6 +59,28 @@ interface TooltipProps {
  * `delayMs` (focus opens it at once). */
 export const TOOLTIP_DELAY_MS = 400;
 
+/**
+ * Hover opens are held while the pointer rests after {@link
+ * quietHoverUntilPointerMoves}: a trigger that slides under a resting pointer
+ * (a strip tab mid-switch) is being hovered by accident, and a bubble over it
+ * would be noise. Once the pointer moves, a trigger it is still over opens as
+ * a hover would have. Keyboard focus is never held. Module-level, as the
+ * pointer is: one signal for every tooltip, with no trigger re-rendered to
+ * carry it.
+ */
+let hoverQuiet = false;
+const rearmHover = () => {
+	hoverQuiet = false;
+};
+
+/** Hold hover-opened tooltips until the pointer next moves. */
+export function quietHoverUntilPointerMoves(): void {
+	if (typeof window === 'undefined') return;
+	hoverQuiet = true;
+	window.removeEventListener('pointermove', rearmHover, true);
+	window.addEventListener('pointermove', rearmHover, { capture: true, once: true });
+}
+
 export function Tooltip({
 	content,
 	children,
@@ -70,6 +92,9 @@ export function Tooltip({
 }: TooltipProps) {
 	const triggerRef = useRef<HTMLSpanElement>(null);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Whether the pointer is over the trigger: a hover held while quiet opens
+	// on the pointer's next move over it, since `mouseenter` won't fire again.
+	const hoveringRef = useRef(false);
 	const [show, setShow] = useState(false);
 	const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 	const tooltipId = useId();
@@ -108,9 +133,12 @@ export function Tooltip({
 		setShow(true);
 	}, [measure]);
 
-	/** Hover open — gated behind `delayMs` so a quick pass-over doesn't flash. */
+	/** Hover open — gated behind `delayMs` so a quick pass-over doesn't flash,
+	 *  and held while the pointer rests after a `quietHoverUntilPointerMoves`. */
 	const openDelayed = useCallback(() => {
+		hoveringRef.current = true;
 		clearTimer();
+		if (hoverQuiet) return;
 		if (delayMs <= 0) {
 			reveal();
 			return;
@@ -119,9 +147,18 @@ export function Tooltip({
 	}, [clearTimer, delayMs, reveal]);
 
 	const close = useCallback(() => {
+		hoveringRef.current = false;
 		clearTimer();
 		setShow(false);
 	}, [clearTimer]);
+
+	/** The pointer moved over the trigger: a hover that was held (the trigger
+	 *  slid under a resting pointer, or the enter came in the same move sample
+	 *  as the rearm) opens now. The window's capture-phase rearm has run first. */
+	const openOnMove = useCallback(() => {
+		if (!hoveringRef.current || show || timerRef.current !== null || hoverQuiet) return;
+		openDelayed();
+	}, [show, openDelayed]);
 
 	/** Focus open — KEYBOARD focus only. A sheet or dialog opened by a click
 	 *  moves focus onto its first control (and back onto the opener when it
@@ -217,6 +254,7 @@ export function Tooltip({
 			aria-describedby={interactiveChild ? undefined : tooltipId}
 			onMouseEnter={openDelayed}
 			onMouseLeave={close}
+			onPointerMove={openOnMove}
 			onFocus={revealOnFocus}
 			onBlur={close}
 		>

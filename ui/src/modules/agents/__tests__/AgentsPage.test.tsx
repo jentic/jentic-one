@@ -322,6 +322,21 @@ describe('AgentsPage — flat agents surface', () => {
 		);
 	});
 
+	it('resumes the agent last shown here on a bare landing, over the first tab', async () => {
+		// The strip's history: the selection writes it, newest first. Its first
+		// id still in the fleet is what a return to Agents shows again.
+		window.localStorage.setItem(
+			'agents.stripRecent',
+			JSON.stringify(['agnt_gone', 'agnt_active_1', 'agnt_pending_2']),
+		);
+		renderPage('/');
+		await screen.findAllByText('inbox-triage-bot');
+		expect(stripTab('support-agent')).toHaveAttribute('aria-selected', 'true');
+		await waitFor(() =>
+			expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_active_1'),
+		);
+	});
+
 	it('a fallback write-back landing mid-navigation does not undo the navigation', async () => {
 		// React Router commits a navigation as a transition, so the Agents page
 		// stays mounted on its old location until the destination has rendered.

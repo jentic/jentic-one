@@ -127,7 +127,7 @@ const EXECUTIONS = rebaseFixture([
 	},
 	{
 		// Header-less run: the backend stores `trace_id="unknown"`, so this row
-		// must open by execution_id (no trace deep-link / no audit lens).
+		// must open by execution_id (no trace deep-link).
 		_links: { self: '/executions/exec_4' },
 		actor_id: 'agent_billing',
 		actor_type: 'agent',
@@ -343,8 +343,9 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 980,
 			trend: [22, 18, 15, 12, 10, 8, 6, 3, 2, 0, 0, 0],
 		},
-		// A historical pre-theme-8 service-account bucket: executions keep
-		// their original actor_type, so the Breakdown must still list it.
+		// A historical service-account bucket: executions recorded before the
+		// service-account migration keep their original actor_type, so the
+		// Breakdown must still list it.
 		{
 			key: 'service_account/sva_active_1',
 			label: 'service_account/sva_active_1',
@@ -437,7 +438,7 @@ const EVENTS = rebaseFixture([
 
 const AUDIT = rebaseFixture([
 	{
-		action: 'execution.start',
+		action: 'credential.create',
 		actor_id: 'user_admin',
 		actor_session_id: 'sess_1',
 		actor_type: 'user',
@@ -450,10 +451,10 @@ const AUDIT = rebaseFixture([
 		occurred_at: '2026-06-19T10:00:00Z',
 		reason: null,
 		request_id: 'req_1',
-		target_id: 'exec_1',
+		target_id: 'cred_stripe',
 		target_parent_id: null,
-		target_type: 'execution_record',
-		trace_id: TRACE_A,
+		target_type: 'credential',
+		trace_id: null,
 		user_agent: 'jentic-cli/1.0',
 	},
 	{

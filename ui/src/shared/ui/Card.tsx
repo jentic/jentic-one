@@ -1,7 +1,13 @@
 import React from 'react';
 import { cn } from '@/shared/lib/utils';
 
-interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+interface CardProps extends React.HTMLAttributes<HTMLElement> {
+	/**
+	 * The element the card renders as. `section` keeps a labelled region
+	 * landmark (pair it with `aria-labelledby`); `article` and `li` suit a card
+	 * in a feed or a list. Defaults to `div`.
+	 */
+	as?: 'div' | 'section' | 'article' | 'li';
 	/** Clickable card: lightens and lifts a soft shadow on hover (no movement). */
 	hoverable?: boolean;
 	/**
@@ -19,6 +25,7 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
  * automatically (`--field-bg`).
  */
 export function Card({
+	as: Tag = 'div',
 	hoverable,
 	outlined,
 	selected,
@@ -28,7 +35,8 @@ export function Card({
 	...props
 }: CardProps) {
 	return (
-		<div
+		<Tag
+			data-surface="card"
 			data-selected={selected || undefined}
 			className={cn(
 				'bg-surface-1 overflow-hidden rounded-lg [outline:1px_solid_hsl(var(--card-edge))] [outline-offset:-1px] [--field-bg:var(--surface-field)]',
@@ -41,7 +49,7 @@ export function Card({
 			{...props}
 		>
 			{children}
-		</div>
+		</Tag>
 	);
 }
 
