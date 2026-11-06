@@ -25,7 +25,7 @@
 > **Public beta.** Schemas and CLI commands can change between 0.x releases — pin a version if
 > you need stability.
 
-## What it is
+# What it is
 
 <p align="center">
   <img src="docs/assets/how-it-works.svg" alt="An agent sends POST /v1/invoices to Jentic One, which checks the permission, injects the stored credential and forwards the call to the Stripe API; the API returns 201 and the call is logged. The agent then sends POST /v1/refunds; the permission check denies it by rule, the request never leaves Jentic One, the agent gets a 403, and the denial is logged. The agent never sees the API key." width="100%">
@@ -42,7 +42,7 @@ Agents connect through the `jentic` CLI, a generated skill, an MCP server, or pl
 access; teams running agents inside a private network; anyone who has to pass a security review
 before an agent touches production credentials.
 
-## Quickstart
+# Quickstart
 
 - On Windows, use the [Windows guide](docs/installation/windows.md). For other deployment methods, see
   [Alternative deployments](#alternative-deployments).
@@ -50,7 +50,7 @@ before an agent touches production credentials.
   see [Telemetry](docs/reference/config.md#telemetry).
 - Something failed? See [Troubleshooting](docs/operations/troubleshooting.md).
 
-### Self-hosted (Docker)
+## Self-hosted (Docker)
 
 Run the control plane and broker as one stack, on SQLite. Run your agents in a separate environment
 from the stack (a different machine, VM or user), with access to it only over HTTP. **Back up `~/.jentic/enc-key`**: it holds the key that encrypts stored credentials.
@@ -63,11 +63,11 @@ curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/dock
 docker compose up -d --wait
 ```
 
-### Connect your agent
+## Connect your agent
 
 On the machine where your agent runs
 
-#### Install the CLIs
+### Install the CLIs
 
 ```bash
 brew install --cask jentic/tap/jentic    # macOS / Linux
@@ -77,7 +77,7 @@ winget install Jentic.Jentic             # Windows
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/clis/install.sh | sh
 ```
 
-#### Register your agent
+### Register your agent
 
 ```bash
 JENTIC_ONE_URL=http://127.0.0.1:8000   # where your Jentic One web app is running
@@ -88,7 +88,7 @@ Agents that call Jentic One over plain HTTP or the hosted MCP endpoint don't nee
 [Connecting agents](docs/guides/connecting-agents.md). Next:
 [make your first brokered call](docs/guides/first-call.md).
 
-### Alternative deployments
+## Alternative deployments
 
 | If you want… | Go to |
 | --- | --- |
@@ -99,7 +99,7 @@ Agents that call Jentic One over plain HTTP or the hosted MCP endpoint don't nee
 | From source, to develop on it | [Local setup](docs/development/local-setup.md) |
 | CLI without a package manager | [Installing the CLIs](docs/installation/cli.md) |
 
-## How it works
+# How it works
 
 <p align="center">
   <img src="docs/assets/architecture.svg" alt="Two units over one database. The operator uses App, the control plane, with the Registry, Control, Admin and Auth surfaces: register APIs, store credentials, approve agents. The agent registers through App and calls the Broker, the data plane, which checks permissions, injects the credential and forwards the call to public or private APIs. App writes rules and credentials to PostgreSQL or SQLite (three databases: registry, control and admin); the Broker reads them and records every call." width="100%">
@@ -114,7 +114,7 @@ One boundary to know: the Broker protects credentials from agents running as *ot
 other machines. An agent running as the *same* OS user as its CLI state can read that state — see
 [same-host setups](docs/security/same-host/README.md).
 
-## Documentation
+# Documentation
 
 | I want to… | Start here |
 | --- | --- |
@@ -130,13 +130,13 @@ other machines. An agent running as the *same* OS user as its CLI state can read
 Everything else is in the [documentation index](docs/README.md). AI agents can start from
 [`llms.txt`](llms.txt).
 
-## Community
+# Community
 
 Questions and ideas go to [Discussions](https://github.com/jentic/jentic-one/discussions);
 bugs and contributions to the [issues](https://github.com/jentic/jentic-one/issues).
 Security reports: [SECURITY.md](SECURITY.md). Support options: [SUPPORT.md](SUPPORT.md).
 For commercial use: [jentic.com/contact](https://jentic.com/contact).
 
-## License
+# License
 
 [Apache 2.0](LICENSE); third-party attributions in [NOTICE](NOTICE).
