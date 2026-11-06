@@ -8,8 +8,6 @@ import { Navigate, useLocation, useParams } from 'react-router';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app';
 import { toast } from '@/shared/ui';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
-import ApprovalsPage from '@/modules/agents/pages/ApprovalsPage';
-import ApprovalDetailPage from '@/modules/agents/pages/ApprovalDetailPage';
 
 /**
  * `/app/agents/service-accounts/:id` (the retired service-account detail page —
@@ -72,6 +70,26 @@ function AgentPathRedirect() {
 	return <Navigate to={agentId ? ROUTE_PATHS.agentTab(agentId) : ROUTES.agents} replace />;
 }
 
+/**
+ * `/app/agents/approvals/:id` is the path the broker builds into a held call's
+ * `review_url`; the review is a pop-up over the Agents page, so the path
+ * redirects to it (`?review=<id>`). A component for the same TDZ reason as
+ * above.
+ */
+function HeldCallReviewRedirect() {
+	const { id } = useParams<{ id: string }>();
+	return <Navigate to={id ? ROUTE_PATHS.approval(id) : ROUTE_PATHS.approvalsInbox()} replace />;
+}
+
+/**
+ * `/app/agents/approvals` lands on the Agents page with the shell rail open on
+ * its Inbox tab, where every held call waiting on the viewer is listed. A
+ * component for the same TDZ reason as above.
+ */
+function ApprovalsInboxRedirect() {
+	return <Navigate to={ROUTE_PATHS.approvalsInbox()} replace />;
+}
+
 export const agentsRoutes: RouteObject[] = [
 	{ path: 'agents', element: <AgentsPage /> },
 	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
@@ -79,9 +97,8 @@ export const agentsRoutes: RouteObject[] = [
 	// Declared before `agents/:agentId` so the `service-accounts` and
 	// `approvals` segments are never captured as an `agentId`.
 	{ path: 'agents/service-accounts/*', element: <RetiredServiceAccountRedirect /> },
-	// Execution approvals: the held calls waiting on the agents' owners, and one
-	// approval's review page (a held call's `review_url`).
-	{ path: 'agents/approvals', element: <ApprovalsPage /> },
-	{ path: 'agents/approvals/:id', element: <ApprovalDetailPage /> },
+	// Held calls: the inbox, and one call's review (a held call's `review_url`).
+	{ path: 'agents/approvals', element: <ApprovalsInboxRedirect /> },
+	{ path: 'agents/approvals/:id', element: <HeldCallReviewRedirect /> },
 	{ path: 'agents/:agentId', element: <AgentPathRedirect /> },
 ];

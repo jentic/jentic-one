@@ -442,11 +442,11 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const actions = inlineActionsFor(ev);
 		expect(actions.map((a) => a.kind)).toEqual(['view_approval']);
 		expect(actions[0]?.label).toBe('Review');
-		expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/held_1');
-		expect(primaryDestinationFor(ev)).toBe('/agents/approvals/held_1');
+		expect(actions[0]?.href?.(ev)).toBe('/agents?review=held_1');
+		expect(primaryDestinationFor(ev)).toBe('/agents?review=held_1');
 	});
 
-	it('routes decided/withdrawn/expired approval events to the review page, never the job', () => {
+	it('routes decided/withdrawn/expired approval events to the review pop-up, never the job', () => {
 		for (const type of [
 			'execution.approval_decided',
 			'execution.approval_withdrawn',
@@ -459,8 +459,8 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			});
 			const actions = inlineActionsFor(ev);
 			expect(actions.map((a) => a.kind)).toEqual(['view_approval']);
-			expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/held_1');
-			expect(primaryDestinationFor(ev)).toBe('/agents/approvals/held_1');
+			expect(actions[0]?.href?.(ev)).toBe('/agents?review=held_1');
+			expect(primaryDestinationFor(ev)).toBe('/agents?review=held_1');
 			// Without a held execution id there is no record to open: never the job.
 			const bare = makeEvent({ type, kind: 'execution', tokens: { job_id: 'job_held' } });
 			expect(inlineActionsFor(bare)).toEqual([]);
@@ -788,7 +788,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		);
 	});
 
-	it("routes an approval request's Review to the review page, never the execution", async () => {
+	it("routes an approval request's Review to the review pop-up, never the execution", async () => {
 		const user = userEvent.setup();
 		worker.use(
 			http.get('/events', () =>
@@ -823,7 +823,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		expect(screen.queryByRole('button', { name: 'View execution' })).not.toBeInTheDocument();
 		await user.click(review);
 		await waitFor(() =>
-			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/held_1'),
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents?review=held_1'),
 		);
 	});
 

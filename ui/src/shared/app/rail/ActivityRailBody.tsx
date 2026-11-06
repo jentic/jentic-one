@@ -1,19 +1,23 @@
 /**
- * ActivityRailBody — everything inside the Activity rail, shared verbatim by
- * the docked `xl+` rail (`AgentRail`) and the below-`xl` drawer
- * (`ActivityDrawer`), so the two can never drift.
+ * ActivityRailBody — everything inside the rail, shared verbatim by the docked
+ * `xl+` rail (`AgentRail`) and the below-`xl` drawer (`ActivityDrawer`), so the
+ * two can never drift.
  *
- *   • RailHeader  — status, Filter (who / what), Failures only, pause, ⋯ menu
- *   • RailFeed    — folded, plain-language event rows
- *   • "N new ↑"   — while paused or scrolled down, what you're not seeing yet
- *   • RailFooter  — "Open full log in Monitor →"
+ *   • RailHeader  — the Inbox | Activity tabs, pause, ⋯ menu, collapse
+ *   • Inbox tab   — `InboxPanel`: the held calls waiting on the viewer
+ *   • Activity tab:
+ *       – RailActivityFilters — status, Filter (who / what), Failures only
+ *       – RailFeed    — folded, plain-language event rows
+ *       – "N new ↑"   — while paused or scrolled down, what you're not seeing yet
+ *       – RailFooter  — "Open full log in Monitor →"
  *
- * All of the view state — who, what, Failures only, pause — lives in the
- * stream provider: ONE set of choices, the user's, for both surfaces and every
- * page — navigating never changes it. On an agent's page the Filter offers
- * "Only this agent" as a one-click shortcut instead of switching by itself.
+ * The tab is remembered (`useRailView`) and shared by both surfaces. All of the
+ * Activity view state — who, what, Failures only, pause — lives in the stream
+ * provider: ONE set of choices, the user's, for both surfaces and every page —
+ * navigating never changes it. On an agent's page the Filter offers "Only this
+ * agent" as a one-click shortcut instead of switching by itself.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowUp } from 'lucide-react';
@@ -21,8 +25,12 @@ import { toast } from '@/shared/ui';
 import { RailFeed, RailForbidden, passesFeedFilters } from '@/shared/app/rail/RailFeed';
 import { RailFilter, type ActorOption } from '@/shared/app/rail/RailFilter';
 import { RailFooter } from '@/shared/app/rail/RailFooter';
-import { RailHeader } from '@/shared/app/rail/RailHeader';
+import { RailActivityFilters, RailHeader } from '@/shared/app/rail/RailHeader';
+import { InboxPanel } from '@/shared/app/rail/InboxPanel';
+import { railPanelId, railTabId } from '@/shared/app/rail/RailTabs';
+import { useRailView } from '@/shared/app/rail/railPreferences';
 import { useRouteAgentId } from '@/shared/app/rail/useRouteAgentId';
+import { usePendingApprovalsCount } from '@/shared/approvals';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import {
 	buildTraceBundle,
@@ -104,6 +112,9 @@ export function ActivityRailBody({
 	} = useScopedActivity();
 	const navigate = useNavigate();
 	const reduce = useReducedMotion();
+	const baseId = useId();
+	const { tab, setTab } = useRailView();
+	const inbox = usePendingApprovalsCount();
 	const routeAgent = useRouteAgentId();
 	const directory = useActorDirectory([
 		routeAgent,
@@ -217,86 +228,118 @@ export function ActivityRailBody({
 	return (
 		<>
 			<RailHeader
+				baseId={baseId}
+				tab={tab}
+				onTabChange={setTab}
+				inboxCount={inbox.count}
+				inboxAtLeast={inbox.atLeast}
 				variant={variant}
 				status={status}
 				paused={paused}
 				onTogglePause={() => setPaused(!paused)}
-				filter={
-					<RailFilter
-						value={scopeToValue(scope)}
-						options={actorOptions}
-						totalCount={events.length}
-						onChange={(v) => setScope(valueToScope(v))}
-						categories={categories}
-						onCategoriesChange={setCategories}
-						suggestion={suggestion}
-					/>
-				}
-				failuresOnly={failuresOnly}
-				onToggleFailuresOnly={() => setFailuresOnly(!failuresOnly)}
-				failureCount={failureCount}
 				onLoadOlder={() => void loadOlderEvents()}
 				canLoadOlder={canLoadOlder}
 				loadingOlder={loadingOlder}
 				onExportTraceBundle={handleExportTraceBundle}
 				onCollapse={onCollapse}
 			/>
-			<div className="relative min-h-0 flex-1">
-				<AnimatePresence>
-					{newCount > 0 && (
-						<motion.button
-							type="button"
-							onClick={showNew}
-							initial={reduce ? false : { opacity: 0, y: -8, scale: 0.94 }}
-							animate={{ opacity: 1, y: 0, scale: 1 }}
-							exit={reduce ? undefined : { opacity: 0, y: -8, scale: 0.94 }}
-							transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
-							style={{ x: '-50%' }}
-							className="bg-primary text-primary-foreground absolute top-2 left-1/2 z-20 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-md"
-						>
-							<ArrowUp className="h-3 w-3" aria-hidden="true" />
-							<span key={newCount} className="animate-pop inline-block tabular-nums">
-								{newCount}
-							</span>
-							new
-							{paused && <span className="sr-only"> — resume the live feed</span>}
-						</motion.button>
-					)}
-				</AnimatePresence>
+			{tab === 'inbox' ? (
 				<div
-					ref={logRef}
-					onScroll={handleScroll}
-					className="h-full overflow-y-auto px-2 py-2"
-					role="log"
-					aria-live="polite"
-					aria-relevant="additions"
-					aria-label="Activity feed"
+					role="tabpanel"
+					id={railPanelId(baseId, 'inbox')}
+					aria-labelledby={railTabId(baseId, 'inbox')}
+					className="flex min-h-0 flex-1 flex-col"
 				>
-					{status === 'forbidden' ? (
-						<RailForbidden />
-					) : (
-						<RailFeed
-							events={visible}
-							filters={filters}
-							resolveActor={resolveActor}
-							onAction={handleAction}
-							onNavigate={go}
-							scopedTo={
-								scope
-									? {
-											label:
-												actorOptions.find(
-													(o) => o.value === scopeToValue(scope),
-												)?.label ?? scope.actorId,
-											onClear: () => setScope(null),
-										}
-									: undefined
-							}
-						/>
-					)}
+					<InboxPanel onNavigated={onNavigated} />
 				</div>
-			</div>
-			<RailFooter scope={scope} onNavigate={onNavigated} />
+			) : (
+				<div
+					role="tabpanel"
+					id={railPanelId(baseId, 'activity')}
+					aria-labelledby={railTabId(baseId, 'activity')}
+					className="flex min-h-0 flex-1 flex-col"
+				>
+					<RailActivityFilters
+						status={status}
+						paused={paused}
+						filter={
+							<RailFilter
+								value={scopeToValue(scope)}
+								options={actorOptions}
+								totalCount={events.length}
+								onChange={(v) => setScope(valueToScope(v))}
+								categories={categories}
+								onCategoriesChange={setCategories}
+								suggestion={suggestion}
+							/>
+						}
+						failuresOnly={failuresOnly}
+						onToggleFailuresOnly={() => setFailuresOnly(!failuresOnly)}
+						failureCount={failureCount}
+					/>
+					<div className="relative min-h-0 flex-1">
+						<AnimatePresence>
+							{newCount > 0 && (
+								<motion.button
+									type="button"
+									onClick={showNew}
+									initial={reduce ? false : { opacity: 0, y: -8, scale: 0.94 }}
+									animate={{ opacity: 1, y: 0, scale: 1 }}
+									exit={reduce ? undefined : { opacity: 0, y: -8, scale: 0.94 }}
+									transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+									style={{ x: '-50%' }}
+									className="bg-primary text-primary-foreground absolute top-2 left-1/2 z-20 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-md"
+								>
+									<ArrowUp className="h-3 w-3" aria-hidden="true" />
+									<span
+										key={newCount}
+										className="animate-pop inline-block tabular-nums"
+									>
+										{newCount}
+									</span>
+									new
+									{paused && (
+										<span className="sr-only"> — resume the live feed</span>
+									)}
+								</motion.button>
+							)}
+						</AnimatePresence>
+						<div
+							ref={logRef}
+							onScroll={handleScroll}
+							className="h-full overflow-y-auto px-2 py-2"
+							role="log"
+							aria-live="polite"
+							aria-relevant="additions"
+							aria-label="Activity feed"
+						>
+							{status === 'forbidden' ? (
+								<RailForbidden />
+							) : (
+								<RailFeed
+									events={visible}
+									filters={filters}
+									resolveActor={resolveActor}
+									onAction={handleAction}
+									onNavigate={go}
+									scopedTo={
+										scope
+											? {
+													label:
+														actorOptions.find(
+															(o) => o.value === scopeToValue(scope),
+														)?.label ?? scope.actorId,
+													onClear: () => setScope(null),
+												}
+											: undefined
+									}
+								/>
+							)}
+						</div>
+					</div>
+					<RailFooter scope={scope} onNavigate={onNavigated} />
+				</div>
+			)}
 		</>
 	);
 }

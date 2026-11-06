@@ -10,8 +10,8 @@ import {
 	toCallStatus,
 	type CallStatusValue,
 	type CallStep,
-} from '@/modules/agents/lib/approvalState';
-import { ReviewPanel, ReviewSection } from '@/modules/agents/components/approvals/ReviewLayout';
+} from '@/shared/approvals/approvalState';
+import { ReviewPanel, ReviewSection } from '@/shared/approvals/review/ReviewLayout';
 
 /** The last path segment of a HAL link (`/executions/exec_1` → `exec_1`). */
 function idFromLink(link: string | null | undefined): string | null {

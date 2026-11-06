@@ -129,12 +129,14 @@ function Harness({
 	filter = '',
 	agents = FLEET,
 	incomplete,
+	waitingCounts,
 }: {
 	initial?: string;
 	onSelect?: (id: string) => void;
 	filter?: string;
 	agents?: AgentEntity[];
 	incomplete?: boolean;
+	waitingCounts?: ReadonlyMap<string, number>;
 }) {
 	const [selected, setSelected] = useState<string | null>(initial);
 	// Mirror production: FlatAgentsSection wraps the strip in the fleet-wide
@@ -152,6 +154,7 @@ function Harness({
 				apiCounts={API_COUNTS}
 				filter={filter}
 				incomplete={incomplete}
+				waitingCounts={waitingCounts}
 			/>
 			<button type="button">elsewhere</button>
 		</AgentInitialsProvider>
@@ -383,6 +386,19 @@ describe('AgentStrip', () => {
 		expect(card).toHaveTextContent('Click to switch');
 		// No native title anywhere on the strip.
 		expect(screen.getByTestId('agent-strip').querySelector('[title]')).toBeNull();
+	});
+
+	it('names the calls waiting for the viewer on the hover card, and only then', async () => {
+		renderStrip({ waitingCounts: new Map([['bravo', 3]]) });
+		act(() => screen.getByRole('tab', { name: /bravo/ }).focus());
+		const card = within(await screen.findByRole('tooltip')).getByTestId('agent-hover-card');
+		expect(card).toHaveTextContent(/Waiting for you\s*3/);
+		expect(within(card).getByText('Waiting for you')).toHaveClass('text-warning');
+		act(() => screen.getByRole('button', { name: 'elsewhere' }).focus());
+		act(() => screen.getByRole('tab', { name: /alpha/ }).focus());
+		const quiet = within(await screen.findByRole('tooltip')).getByTestId('agent-hover-card');
+		expect(quiet).toHaveTextContent('alpha');
+		expect(quiet).not.toHaveTextContent('Waiting for you');
 	});
 
 	it('moves focus with the arrows and switches on Enter', async () => {

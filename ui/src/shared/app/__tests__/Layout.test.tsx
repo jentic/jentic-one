@@ -15,6 +15,7 @@ import { isNavItemActive, navItems, sortedNavItems } from '@/shared/app/nav';
 import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
 import { clearAllToasts, toast } from '@/shared/ui/toastStore';
 import { resetApprovalsStore } from '@/modules/agents/mocks/approvalsHandlers';
+import { RAIL_COLLAPSED_STORAGE_KEY } from '@/shared/lib/agentStream';
 
 /**
  * The Layout renders behind the AuthGuard, so it always has a user. These
@@ -171,6 +172,25 @@ describe('toast region', () => {
 		expect(rect.left).toBeCloseTo(16, 0);
 		// Measured by width: the panel may still be sliding in.
 		expect(rect.right).toBeLessThan(window.innerWidth - panel.offsetWidth);
+	});
+
+	it('keeps the attention toast bottom-right beside the strip, clear of the app toasts', async () => {
+		// The default mock store holds one pending held call; the rail is collapsed.
+		resetApprovalsStore();
+		window.sessionStorage.clear();
+		window.localStorage.removeItem(RAIL_COLLAPSED_STORAGE_KEY);
+		await page.viewport(1440, 900);
+		renderShell('/agents');
+		const attention = await screen.findByTestId('inbox-toast');
+		await waitFor(() => expect(attention).toBeVisible());
+		expect(attention).toHaveTextContent('1 call is waiting for your approval');
+
+		const rect = await showToast();
+		const box = attention.getBoundingClientRect();
+		// The 40px strip plus a 12px gap.
+		expect(window.innerWidth - box.right).toBeCloseTo(52, 0);
+		expect(window.innerHeight - box.bottom).toBeLessThan(40);
+		expect(rect.right).toBeLessThan(box.left);
 	});
 
 	it('drops toasts under the header when a phone-width panel leaves no room beside it', async () => {

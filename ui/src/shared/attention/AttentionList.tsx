@@ -5,25 +5,34 @@
  *
  * Items are grouped by what they ask of you:
  *
+ *   Waiting for you — held calls, one per call, oldest first; each Review
+ *                opens the call's review pop-up on the current page. The menu
+ *                lists the first few and links the rest to the rail's Inbox.
  *   Alerts     — recent failures and warnings that need a look (view)
  *   Approvals  — agents and OAuth clients waiting to be let in, and agents
- *                waiting on an account connection or a held call (approve / review)
+ *                waiting on an account connection (approve / review)
  *   Setup      — credential sign-ins nobody finished
  *
  * The cheap, reversible verb (approve an agent) runs inline; anything that
  * needs context links to where it is resolved. Every verb is permission-gated so
  * a row never offers a call the server refuses: Approve needs `agents:write`
  * (the row still links to the agent for anyone else), and "Finish setup" needs
- * `credentials:write`.
+ * `credentials:write`. A held call's Review needs no gate: the server lists only
+ * the calls the viewer may decide.
  */
 import { type ComponentType } from 'react';
-import { AlertTriangle, Bot, CheckSquare, KeyRound, PlugZap, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Bot, KeyRound, PlugZap, ShieldQuestion } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { UserText } from '@/shared/ui/UserText';
 import { Button } from '@/shared/ui/Button';
+import { InlineAction } from '@/shared/ui/InlineAction';
 import { toast } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
+import { useNow } from '@/shared/app/rail/useNow';
+import { useReviewLinks } from '@/shared/approvals';
 import { useApproveAgent } from '@/shared/attention/actions';
+import { ATTENTION_TILE_CLASS } from '@/shared/approvals/attentionTone';
+import { expiresIn, waitingSince } from '@/shared/approvals/heldCallCopy';
 import { AGENTS_WRITE, CREDENTIALS_WRITE, useCanAccess } from '@/shared/auth/useCanAccess';
 import type { AttentionItem, AttentionKind } from '@/shared/attention/useAttentionItems';
 import { cn, timeAgo } from '@/shared/lib/utils';
@@ -32,29 +41,33 @@ const KIND_ICON: Record<AttentionKind, ComponentType<{ className?: string }>> = 
 	agent: Bot,
 	oauth_client: ShieldQuestion,
 	connect_request: PlugZap,
-	held_execution: CheckSquare,
+	held_execution: ShieldQuestion,
 	credential: KeyRound,
 	event: AlertTriangle,
 };
 
-type Group = 'alerts' | 'approvals' | 'setup';
+type Group = 'waiting' | 'alerts' | 'approvals' | 'setup';
 
 const GROUP_OF: Record<AttentionKind, Group> = {
 	event: 'alerts',
 	agent: 'approvals',
 	oauth_client: 'approvals',
 	connect_request: 'approvals',
-	held_execution: 'approvals',
+	held_execution: 'waiting',
 	credential: 'setup',
 };
 
 const GROUP_LABEL: Record<Group, string> = {
+	waiting: 'Waiting for you',
 	alerts: 'Alerts',
 	approvals: 'Approvals',
 	setup: 'Setup',
 };
 
-const GROUP_ORDER: Group[] = ['alerts', 'approvals', 'setup'];
+const GROUP_ORDER: Group[] = ['waiting', 'alerts', 'approvals', 'setup'];
+
+/** Held calls the menu lists before it points at the rail's Inbox for the rest. */
+const MENU_WAITING_LIMIT = 5;
 
 export type AttentionListProps = {
 	items: AttentionItem[];
@@ -64,10 +77,14 @@ export type AttentionListProps = {
 	onNavigate?: () => void;
 	/** Marks the rows this viewer hasn't read yet (the menu's own read state). */
 	isUnread?: (itemKey: string) => boolean;
+	/** Opens the rail's Inbox ("See all N in the inbox", menu only). */
+	onOpenInbox?: () => void;
 };
 
 /** Group a pre-sorted list by what it asks of you, preserving order within a group. */
-function groupItems(items: AttentionItem[]): Array<{ label: string; items: AttentionItem[] }> {
+function groupItems(
+	items: AttentionItem[],
+): Array<{ group: Group; label: string; items: AttentionItem[] }> {
 	const groups = new Map<Group, AttentionItem[]>();
 	for (const item of items) {
 		const group = GROUP_OF[item.kind];
@@ -76,9 +93,15 @@ function groupItems(items: AttentionItem[]): Array<{ label: string; items: Atten
 		groups.set(group, list);
 	}
 	return GROUP_ORDER.filter((g) => groups.has(g)).map((g) => ({
+		group: g,
 		label: GROUP_LABEL[g],
-		items: groups.get(g)!,
+		items: g === 'waiting' ? oldestFirst(groups.get(g)!) : groups.get(g)!,
 	}));
+}
+
+/** Held calls read oldest first: the one nearest its expiry leads. */
+function oldestFirst(items: AttentionItem[]): AttentionItem[] {
+	return [...items].sort((a, b) => Date.parse(a.since) - Date.parse(b.since));
 }
 
 export function AttentionList({
@@ -86,34 +109,57 @@ export function AttentionList({
 	variant = 'page',
 	onNavigate,
 	isUnread,
+	onOpenInbox,
 }: AttentionListProps) {
 	const groups = groupItems(items);
 	return (
 		<div className="divide-hairline divide-y">
-			{groups.map((group) => (
-				<section key={group.label} aria-label={group.label}>
-					<h3
-						className={cn(
-							'text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase',
-							variant === 'menu' ? 'px-3 pt-2.5 pb-1' : 'px-5 pt-3 pb-1',
-						)}
-					>
-						{group.label}
-						<span className="ml-1.5 font-mono tabular-nums">{group.items.length}</span>
-					</h3>
-					<ul className="divide-hairline-row divide-y" aria-label={group.label}>
-						{group.items.map((item) => (
-							<AttentionRow
-								key={item.key}
-								item={item}
-								variant={variant}
-								onNavigate={onNavigate}
-								unread={isUnread?.(item.key) ?? false}
-							/>
-						))}
-					</ul>
-				</section>
-			))}
+			{groups.map((group) => {
+				// The menu keeps to the first few held calls; the rail's Inbox
+				// lists every one.
+				const capped = variant === 'menu' && group.group === 'waiting';
+				const shown = capped ? group.items.slice(0, MENU_WAITING_LIMIT) : group.items;
+				const hidden = group.items.length - shown.length;
+				return (
+					<section key={group.label} aria-label={group.label}>
+						<h3
+							className={cn(
+								'text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase',
+								variant === 'menu' ? 'px-3 pt-2.5 pb-1' : 'px-5 pt-3 pb-1',
+							)}
+						>
+							{group.label}
+							<span className="ml-1.5 font-mono tabular-nums">
+								{group.items.length}
+							</span>
+						</h3>
+						<ul className="divide-hairline-row divide-y" aria-label={group.label}>
+							{shown.map((item) => (
+								<AttentionRow
+									key={item.key}
+									item={item}
+									variant={variant}
+									onNavigate={onNavigate}
+									unread={isUnread?.(item.key) ?? false}
+								/>
+							))}
+							{hidden > 0 && onOpenInbox && (
+								<li className="px-3 py-2">
+									<InlineAction
+										className="text-primary -mx-1.5 px-1.5 text-xs font-semibold"
+										onClick={() => {
+											onNavigate?.();
+											onOpenInbox();
+										}}
+									>
+										See all {group.items.length} in the inbox
+									</InlineAction>
+								</li>
+							)}
+						</ul>
+					</section>
+				);
+			})}
 		</div>
 	);
 }
@@ -138,11 +184,13 @@ function AttentionRow({
 			className={cn(
 				'flex shrink-0 items-center justify-center rounded-md',
 				menu ? 'h-7 w-7' : 'h-8 w-8',
-				urgent
-					? 'bg-danger/10 text-danger'
-					: item.urgency === 2
-						? 'bg-warning/10 text-warning'
-						: 'bg-surface-field text-foreground-sub',
+				item.kind === 'held_execution'
+					? ATTENTION_TILE_CLASS
+					: urgent
+						? 'bg-danger/10 text-danger'
+						: item.urgency === 2
+							? 'bg-warning/10 text-warning'
+							: 'bg-surface-field text-foreground-sub',
 			)}
 		>
 			<Icon className={menu ? 'h-3.5 w-3.5' : 'h-4 w-4'} aria-hidden="true" />
@@ -165,11 +213,17 @@ function AttentionRow({
 						<UserText>{item.title}</UserText>
 					</p>
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">
-						<span title={item.since}>{timeAgo(item.since)}</span>
-						{item.detail && (
+						{item.heldCall ? (
+							<HeldCallMeta since={item.since} expiresAt={item.heldCall.expires_at} />
+						) : (
 							<>
-								{' · '}
-								<UserText>{item.detail}</UserText>
+								<span title={item.since}>{timeAgo(item.since)}</span>
+								{item.detail && (
+									<>
+										{' · '}
+										<UserText>{item.detail}</UserText>
+									</>
+								)}
 							</>
 						)}
 					</p>
@@ -188,10 +242,16 @@ function AttentionRow({
 				<p className="text-foreground-name truncate text-sm font-semibold">
 					<UserText>{item.title}</UserText>
 				</p>
-				{item.detail && (
+				{item.heldCall ? (
 					<p className="text-muted-foreground truncate text-xs">
-						<UserText>{item.detail}</UserText>
+						<HeldCallMeta since={item.since} expiresAt={item.heldCall.expires_at} />
 					</p>
+				) : (
+					item.detail && (
+						<p className="text-muted-foreground truncate text-xs">
+							<UserText>{item.detail}</UserText>
+						</p>
+					)
 				)}
 			</div>
 			<span
@@ -220,9 +280,12 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 			) : null;
 		case 'event':
 			return <ReviewLink href={item.href} label="View" onNavigate={onNavigate} />;
+		case 'held_execution':
+			return item.heldCall ? (
+				<HeldCallReview heldId={item.heldCall.id} onNavigate={onNavigate} />
+			) : null;
 		case 'oauth_client':
 		case 'connect_request':
-		case 'held_execution':
 			return <ReviewLink href={item.href} label="Review" onNavigate={onNavigate} />;
 		case 'credential':
 			// The inventory is a sheet on the Agents page; there is no per-credential route.
@@ -231,6 +294,38 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 			// list as the standing fact it is, for whoever can act on it.
 			return <FinishCredentialSetupLink onNavigate={onNavigate} />;
 	}
+}
+
+/** "5m ago · expires in 23 h" — how long a held call has waited, and how long it has left. */
+function HeldCallMeta({ since, expiresAt }: { since: string; expiresAt: string }) {
+	const now = useNow();
+	return (
+		<>
+			<span title={since}>{waitingSince(since, now)}</span>
+			{' · '}
+			<span title={expiresAt}>{expiresIn(expiresAt, now)}</span>
+		</>
+	);
+}
+
+/**
+ * Review for a held call: opens its review pop-up over the current page
+ * (`?review=`), after the menu closes.
+ */
+function HeldCallReview({ heldId, onNavigate }: { heldId: string; onNavigate?: () => void }) {
+	const { openReview } = useReviewLinks();
+	return (
+		<Button
+			variant="tonal"
+			size="xs"
+			onClick={() => {
+				onNavigate?.();
+				openReview(heldId);
+			}}
+		>
+			Review
+		</Button>
+	);
 }
 
 /** "Finish setup" for an unfinished OAuth sign-in, shown only to a caller who

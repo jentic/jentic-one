@@ -1,11 +1,14 @@
-import { useRef } from 'react';
-import { useLocation, Outlet } from 'react-router';
+import { useEffect, useRef } from 'react';
+import { useLocation, useNavigate, useSearchParams, Outlet } from 'react-router';
 import { BottomNavbar } from '@/shared/app/BottomNavbar';
 import { TopNavbar } from '@/shared/app/TopNavbar';
 import { UpdateBanner } from '@/shared/app/UpdateBanner';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
+import { InboxToast } from '@/shared/app/rail/InboxToast';
 import { ShellActivityEffects, isRailHiddenOn } from '@/shared/app/rail/ShellActivityEffects';
 import { ToastRegion } from '@/shared/app/ToastRegion';
+import { ApprovalReviewHost, INBOX_PARAM } from '@/shared/approvals';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useShellNavigation } from '@/shared/app/shellNavigation';
 import { useLinkViewTransitions } from '@/shared/app/viewTransitions';
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
@@ -25,7 +28,9 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  *    TopNavbar. Not mounted on Monitor, whose Live activity panel already IS the
  *    activity stream (`isRailHiddenOn`),
  *  - the `ToastRegion`, bottom-right beside the rail, an open sheet or a
- *    page's docked side column (`useReportRightDock`).
+ *    page's docked side column (`useReportRightDock`),
+ *  - the held-call attention toast beside the rail (`InboxToast`) and the
+ *    review pop-up any page opens with `?review=` (`ApprovalReviewHost`).
  *
  * The shell is viewport-tall and never scrolls itself. Below the fixed navbar
  * (`pt-12` clears it) is a flex row: `<main>` takes the remaining width
@@ -60,6 +65,15 @@ export function Layout() {
 	const showRail = !isRailHiddenOn(location.pathname);
 	// The rail's column is `hidden` below `xl`, where it measures 0 and takes no room.
 	useCoversRightEdge(railRef, showRail);
+	// `?inbox=1` on a page without the rail: nothing here answers it, so the
+	// Agents page's rail does, as the bell's "See all" does from such a page.
+	const [params] = useSearchParams();
+	const navigate = useNavigate();
+	const inboxAsked = params.has(INBOX_PARAM);
+	useEffect(() => {
+		if (showRail || !inboxAsked) return;
+		navigate(ROUTE_PATHS.approvalsInbox(), { replace: true });
+	}, [showRail, inboxAsked, navigate]);
 	useLinkViewTransitions();
 
 	return (
@@ -99,6 +113,20 @@ export function Layout() {
 
 				<BottomNavbar />
 				<ToastRegion />
+				{/* Behind its own boundary: a bad row can't take the shell down with it. */}
+				{showRail && (
+					<ErrorBoundary
+						resetKey={location.key}
+						fallback={
+							<span role="status" className="sr-only">
+								The waiting-calls notice couldn&apos;t be shown.
+							</span>
+						}
+					>
+						<InboxToast />
+					</ErrorBoundary>
+				)}
+				<ApprovalReviewHost />
 			</div>
 		</AgentStreamProvider>
 	);
