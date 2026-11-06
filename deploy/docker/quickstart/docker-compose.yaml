@@ -112,9 +112,15 @@ services:
     command: ["python", "-m", "jentic_one.migrations.run"]
     restart: "no"
 
-  # Control plane: UI + APIs.
+  # Control plane: UI + APIs, and the MCP endpoint at /mcp.
   app:
     <<: *common
+    environment:
+      <<: *env
+      JENTIC__SERVER__MCP__ENABLED: "true"
+      # MCP execute calls go to the broker over the compose network. Not in
+      # config/quickstart.env: its `docker run` containers share no network.
+      JENTIC__SERVER__MCP__BROKER_URL: http://broker:8000
     depends_on:
       migrate: { condition: service_completed_successfully }
     ports: ["127.0.0.1:8000:8000"]
