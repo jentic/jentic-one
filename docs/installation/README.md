@@ -2,8 +2,8 @@
 
 Production installs run from released artifacts only: the published container image and the two Go CLI binaries. Nothing is built from source on the target hosts. Outbound internet access is needed to fetch and verify the artifacts; at runtime the defaults make two low-volume outbound calls, each with a disable knob (see the table below) — with those off, an install inside your network needs no outbound access.
 
-> Evaluating first? The five-minute SQLite trial — no Postgres, four
-> `docker run`s — is the [README quickstart](../../README.md#quickstart).
+> Evaluating first? The five-minute SQLite trial — no Postgres, one compose
+> file — is the [README quickstart](../../README.md#quickstart).
 > This section is the production path.
 
 ## Outbound connections

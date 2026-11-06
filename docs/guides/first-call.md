@@ -21,8 +21,8 @@ is the fastest local trial. Everything below assumes the app
 
 Open `/app/setup` in the web UI and create the first administrator; the page
 redirects to login once the account exists. This account is the operator: it
-imports APIs, stores credentials, and approves agents. Already created your
-admin via the README quickstart's `create-admin`? Skip to step 2.
+imports APIs, stores credentials, and approves agents. Already created it
+after the README quickstart? Skip to step 2.
 
 From the terminal instead: `jenticctl setup` creates the account;
 `jenticctl wizard` sequences this whole page into one guided flow.

@@ -423,13 +423,15 @@ Platform security event thresholds.
 
 ## `telemetry`
 
-Anonymous product-telemetry settings.
+Anonymous product telemetry. Off by default for hand-written configs, but the shipped install paths (such as the quickstarts) may turn it on.
 
-Defaults to **OFF**: an instance whose config omits this block (non-onboarded or hand-rolled) sends nothing. The onboarding CLI writes `enabled` explicitly (a yes-default `[Y]/n` prompt), which is where the on-by-default install experience comes from. `instance_id` seeds the durable admin-DB identity row on first startup for opted-in instances. `host_os` is the operator's OS family, stamped by the CLI at install time so a Docker-run instance reports the host's OS rather than the container's; sent once per boot, on the `instance_booted` event.
+To opt out, set `telemetry.enabled` to `false` in the config, or the environment variable `JENTIC__TELEMETRY__ENABLED=false` (for example, in a Docker compose file).
+
+Events carry only a fixed event name (such as `instance_booted`, `agent_created` or `broker_execution`), closed-enum tags, the actor type and a timestamp, plus a random instance id and the app version. No credentials, request data or personal data are sent. The full event list is `TelemetryEventName` in `src/jentic_one/shared/telemetry/events.py`.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `telemetry.enabled` | boolean | `false` | `JENTIC__TELEMETRY__ENABLED` | Send anonymous product telemetry. Off when the block is omitted; the onboarding CLI writes it explicitly. |
+| `telemetry.enabled` | boolean | `false` | `JENTIC__TELEMETRY__ENABLED` | Send anonymous product telemetry. Off when unset; the shipped install paths may set it to true. Set false to opt out. |
 | `telemetry.instance_id` | string \| null | `null` | `JENTIC__TELEMETRY__INSTANCE_ID` | Opaque instance id reported with telemetry (at most 64 characters). When set it is authoritative and overwrites the id stored in the admin database; unset, a random UUID is generated on first startup and kept. |
 | `telemetry.host_os` | string \| null | `null` | `JENTIC__TELEMETRY__HOST_OS` | Host OS family stamped by the onboarding CLI, so an instance running in Docker reports the operator's OS rather than the container's Linux. Unset falls back to runtime detection; unrecognised values are reported as `other`. Sent once per boot, on the `instance_booted` event. |
 | `telemetry.endpoint` | string | `"https://api.jentic.com/api/v1"` | `JENTIC__TELEMETRY__ENDPOINT` |  |
