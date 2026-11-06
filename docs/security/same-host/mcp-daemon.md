@@ -8,7 +8,7 @@ run under a dedicated service user, agent runtimes hold **no key material at
 all**, and the OS itself decides who may act as the context.
 
 This page is the daemon's security model. For the general ladder and the
-stdio-based recipes (sudo shim, container entry), see
+stdio-based recipes (isolated instance, container entry), see
 [mcp-same-host-hardening.md](mcp-same-host-hardening.md); ready-made systemd
 and launchd templates live in
 [`deploy/mcp-daemon/`](../../../deploy/mcp-daemon/README.md).
@@ -123,7 +123,6 @@ A typical runtime entry:
 Within the allowed uid set there is no further discrimination: any process
 running as an allowed desktop uid may use the daemon — impersonation
 *within* the audited channel, bounded by the daemon's pinned context and the
-agent's server-side scopes. That is the same residual as the sudo-shim
-recipe, with the same compensations (attribution, scoping, revocability) —
-and strictly less exposure than plain stdio, where the runtime process
-itself holds the key files.
+agent's server-side scopes. The compensations are attribution, scoping, and
+revocability — and the exposure is strictly less than plain stdio, where the
+runtime process itself holds the key files.

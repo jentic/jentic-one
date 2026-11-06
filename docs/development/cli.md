@@ -79,7 +79,7 @@ detail):
 | `internal/agentkey` | The agent's Ed25519 identity key: generation, storage, assertion signing. |
 | `internal/config` | Filesystem paths (XDG layout) and default settings. |
 | `internal/install` | The `jenticctl install` onboarding wizard. |
-| `internal/localagent` | OS-level primitives behind `jentic run` — see [its README](../../cli/internal/localagent/README.md). |
+| `internal/localagent` | Teardown primitives `jentic reset` uses for agent accounts an earlier release created — see [its README](../../cli/internal/localagent/README.md). |
 | `internal/mcpcfg` | Writing the `jentic mcp` server entry into supported agent configs. |
 | `internal/skillgen` | Rendering the canonical agent skill. |
 | `internal/serverinfo`, `internal/proc`, `internal/update`, `internal/theme` | Server probing, process helpers, `jenticctl update`, colour theme. |

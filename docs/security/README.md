@@ -31,8 +31,7 @@ thing to understand before you point Jentic One at real credentials.
 
 The same-host case is worked through in detail —
 the [attack paths](same-host/threat-model.md) (AP-1…AP-4) and the
-[menu of mitigations](same-host/README.md), including the CLI's shipped
-`jentic run` isolation.
+[menu of mitigations](same-host/README.md).
 
 ## Two independent decisions
 
@@ -92,7 +91,7 @@ you store.
 | Tier | Who it's for | Posture | Residual risk |
 |---|---|---|---|
 | **T0 — Local, same user** | Trying it out | Jentic One + agent run as your user on your laptop | A compromised or prompt-injected agent can read the key/DB. **Do not store real high-value credentials.** |
-| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: the CLI's own **`jentic run`** (a dedicated Unix user + per-session confinement; see [same-host/](same-host/README.md)), or the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches — defense-in-depth, not a hard wall. Containerising the agent is the strongest local sandboxing option. `jentic run` adds no egress control and shares the host kernel. |
+| **T1 — Sandbox the agent** | Local dev with some real creds | Jentic One still local, but the agent is isolated: in a container, or in the agent's built-in OS sandbox with **network default-deny**, allowlisting only Jentic One's address, and unable to read Jentic One's files (provided they are not mounted in the agent's container) | Built-in agent sandboxes filter by hostname without TLS inspection and have escape hatches — defense-in-depth, not a hard wall. Containerising the agent is the strongest local sandboxing option. |
 | **T2 — Separate users on one host** | Serious local use | Jentic One runs under a **dedicated non-root user** (or rootless container) so its key/DB aren't readable by the agent's user; the agent runs in a container with default-deny egress and reaches Jentic One over loopback/HTTP | Shared kernel; and isolating the instance closes AP-1/AP-2 only — the operator's browser still runs next to the agent, so the operator-browser path (AP-3) stays open (see [same-host/](same-host/README.md)) |
 | **T3 — Separate host / private network** *(recommended for real use)* | Teams / production | Jentic One + database on a **separate host/VM in a private network**, reachable only over that private network (VPN / private DNS / authenticated reverse proxy). Provisioned agents/services run inside the network; operators use the CLI over the VPN. The agent never shares a machine with the key store | Standard cloud hardening applies |
 | **T4 — Strong isolation** | Untrusted agents / high-value creds | Agent in a **microVM** (e.g. Firecracker) or **gVisor** sandbox; Jentic One in a private subnet with restrictive security groups and default-deny egress; clients reach it only over private networking | Highest ops cost, smallest attack surface |
@@ -190,11 +189,6 @@ sandbox that denies network egress by default and only allows Jentic One's
 address, and that cannot read Jentic One's key files. Options, lightest to
 strongest:
 
-- **First-party: `jentic run`** — the CLI launches a coding agent as its
-  **own unprivileged Unix user**, confined per session (`sandbox-exec` /
-  `bwrap`) with on-demand directory grants. Design:
-  [same-host/](same-host/README.md); operator guide:
-  [`guides/local-agent.md`](../guides/local-agent.md).
 - **Built-in agent sandboxes** — Claude Code
   ([sandboxing](https://code.claude.com/docs/en/sandboxing),
   [`sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime)),
@@ -213,6 +207,14 @@ strongest:
 - **Container / devcontainer** with a default-deny egress firewall, optionally
   under [gVisor](https://gvisor.dev/); in Kubernetes, a default-deny egress
   [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
+  To connect a CLI or skill agent from inside the container, install `jentic`
+  in the image and register from inside it with both URLs: a non-loopback
+  address doesn't seed the broker URL, so pass it explicitly —
+  `jentic setup --url http://host.docker.internal:8000 --broker-url http://host.docker.internal:8100`.
+  Keep the container's `~/.config/jentic` in its own named volume; never
+  bind-mount your host's `~/.config/jentic` or `~/.jentic` into it.
+  [MCP hardening, Recipe 2](same-host/mcp-same-host-hardening.md#recipe-2--container-entry)
+  shows a minimal image.
 - **Separate VM / microVM** — [Firecracker](https://firecracker-microvm.github.io/)
   gives each workload its own guest kernel.
 
@@ -224,8 +226,7 @@ protecting the key at rest.
 If an agent runtime spawns the local `jentic mcp` server on the same
 host as the instance, see
 [Hardening same-host MCP setups](same-host/mcp-same-host-hardening.md)
-for MCP-entry-shaped recipes (isolated instance, sudo-shim with a per-agent
-service user, container entry).
+for MCP-entry-shaped recipes (isolated instance, container entry).
 
 ## Agent access credentials
 

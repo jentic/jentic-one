@@ -95,7 +95,7 @@ curl -fsSLO "${BASE}/jenticctl_${VER}_${OS}_${ARCH}.tar.gz"   # admin host only
 | macOS (darwin) | amd64 / arm64 | ✅ | ✅ |
 | Windows | amd64 / arm64 (arm64 untested) | ✅ `jentic_<ver>_windows_<arch>.zip` (`jentic.exe`) | ❌ use WSL |
 
-The full component-by-platform picture (server, installer, confinement) is in
+The full component-by-platform picture (server, installer, CLIs) is in
 [platform-support.md](platform-support.md).
 
 ## Verify
@@ -137,9 +137,8 @@ jentic doctor   # sanity check
 
 On Windows: unzip, put `jentic.exe` on `PATH`, run `jentic doctor`.
 `jenticctl` is unsupported on native Windows — use WSL2 for the server side.
-`jentic run` (the local-agent sandbox) is unsupported on native Windows *and*
-untested under WSL2 — the [platform matrix](platform-support.md) is the
-authority on what runs where.
+The [platform matrix](platform-support.md) is the authority on what runs
+where.
 
 ## After installing
 

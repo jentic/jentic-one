@@ -76,9 +76,8 @@ forwarding above — no WSL needed on the agent side.
 
 ## Caveats
 
-- **`jentic run` (local-agent confinement) is unavailable** on Windows —
-  the confinement layer needs macOS `sandbox-exec` or Linux `bwrap`. Run
-  coding agents on a separate machine from the instance, or accept the
+- Run coding agents on a separate machine from the instance (or in a
+  container), or accept the
   [same-host risks](../security/same-host/README.md).
 - Windows **arm64** binaries are built but not smoke-tested in CI.
 - The full support matrix, including what CI actually tests, is in

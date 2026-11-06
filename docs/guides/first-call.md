@@ -14,8 +14,8 @@ is the fastest local trial. Everything below assumes the app
 > the same OS user can read the credential database and encryption key off disk,
 > whatever the API-level controls allow. Read the
 > [security hardening guide](../security/README.md) before pointing an instance
-> at a real credential — or use [`jentic run`](local-agent.md) to isolate a local
-> coding agent behind its own Unix user.
+> at a real credential, and the [same-host options](../security/same-host/README.md)
+> for isolating a local coding agent.
 
 ## 1. Create your admin account *(operator, one-time)*
 
@@ -45,8 +45,7 @@ files a dynamic client registration, then **waits for an operator to approve
 the agent** — approve it in the UI at `/app`. Re-running is idempotent.
 
 Setting up a local *coding* agent (Claude Code, Cursor, …)? `jentic setup` does
-identity + skills + isolation in one flow — see
-[Local coding agents](local-agent.md). All the ways an agent can connect
+identity + skills + MCP entry in one flow. All the ways an agent can connect
 (CLI + skill, MCP over stdio or HTTP, raw HTTP):
 [Connecting an agent](connecting-agents.md).
 

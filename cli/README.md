@@ -25,7 +25,7 @@ in the app at `/app/docs`).
 | `jentic` | **Identity & access** | `register` · `setup` · `logout` · `whoami` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `whoami` to see your identity/permissions/bindings as the control plane does. |
 | `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` · `connect` · `access` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry. `endpoints` prints the platform's endpoint + permission reference; `credentials` lists the credentials the control plane holds; `connect <vendor>` starts a connect session a human approves; `access` shows and changes what your credential bindings let you do. |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `executions` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their contract, and call them through the broker. `executions` follows held calls awaiting human approval; `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route. |
-| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` · `mcp` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check; `mcp` serves Jentic tools to a local MCP client. Flow + examples: [`docs/guides/local-agent.md`](../docs/guides/local-agent.md). |
+| `jentic` | **Local agent client** | `skill` · `reset` · `doctor` · `mcp` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `reset` wipes local state (and removes any agent account an older release left behind); `doctor` is the agent-side read-only self-check; `mcp` serves Jentic tools to a local MCP client. Flow + examples: [`docs/guides/connecting-agents.md`](../docs/guides/connecting-agents.md). |
 | `jentic` | **Administration** | `admin` · `theme` | `admin config providers` manages the platform's credential-provider configuration; `theme` sets the persisted color theme. |
 
 ## Install
@@ -40,8 +40,8 @@ The one-liner installs both binaries (verified download, or a from-source
 build when no release asset matches) and flows straight into the
 `jenticctl install` wizard. Manual download, signature verification, the
 installer's environment knobs, and air-gapped installs are in
-**[Installing the CLIs](../docs/installation/cli.md)**. `jenticctl` and
-`jentic run` are not supported on native Windows — use WSL
+**[Installing the CLIs](../docs/installation/cli.md)**. `jenticctl` is
+not supported on native Windows — use WSL
 ([platform support](../docs/installation/platform-support.md)).
 
 ## Quick start
@@ -62,7 +62,7 @@ jentic register --url https://jentic.example.com --broker-url https://broker.jen
 
 Setting up a local **coding agent**? Run `jentic setup` instead of
 `jentic register` — it registers the agent *plus* installs the agent skills and
-offers an isolated account ([local-agent guide](../docs/guides/local-agent.md)).
+MCP entry ([connect an agent](../docs/guides/connecting-agents.md)).
 
 `register` creates the environment, identity, and context, registers the key,
 prints the console approval link, waits for an operator to approve, and mints a
@@ -170,7 +170,7 @@ The `jentic` agent CLI stores its state per the XDG Base Directory spec:
 
 ```
 ~/.config/jentic/config.yaml         # environments, identities, contexts, active_context, theme
-~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants
+~/.config/jentic/agent-account.yaml  # record of an agent account an earlier release created (read by `jentic reset`)
 ~/.local/state/jentic/               # per-identity key material and cached tokens (0600)
 ~/.cache/jentic/                     # disposable caches
 ```
@@ -209,7 +209,8 @@ follows the platform's native cache dir.
     cannot be removed, uninstall still finishes, reports it, and exits
     non-zero.
 - The agent identity (the XDG directories) survives `uninstall`; `jentic reset`
-  removes it.
+  removes it. A local agent account an older release created (Unix user, ACLs,
+  sudoers entry) is also left by `uninstall` and removed by `jentic reset`.
 
 ## Legacy `~/.jentic` profiles
 

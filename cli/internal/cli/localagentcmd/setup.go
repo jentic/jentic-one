@@ -9,8 +9,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
-	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
-	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -77,13 +75,13 @@ func NewSetupCmd(app *cmdcore.App) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
+		Short: "Set up a new local agent (identity + skills) — start here if you're a person",
 		Long: "setup takes a fresh machine from nothing to ready: it connects this\n" +
 			"machine to a Jentic install (creating the environment, identity and context\n" +
 			"if needed), registers the agent (Dynamic Client Registration), prints an\n" +
 			"approval link and waits for a human to approve it, mints and saves tokens,\n" +
 			"and generates the Jentic CLI-usage skill into your agent runtime's native\n" +
-			"layout. It also offers to isolate the coding agent behind its own Unix user.\n\n" +
+			"layout, plus the `jentic mcp` server entry for each detected MCP runtime.\n\n" +
 			"It is a thin orchestration of `jentic register` and `jentic skill`: nothing\n" +
 			"here you can't do by hand, just sequenced so you can start playing right\n" +
 			"away. Re-running refreshes everything idempotently.",
@@ -187,33 +185,6 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 		return a.setupDryRun(ctx, st, targets, env, opts)
 	}
 
-	// After the operator is chosen, offer to isolate it behind a dedicated Unix
-	// user (the true credential boundary). This is asked BEFORE any registration
-	// side effect and BEFORE any sudo, so declining costs nothing and leaves no
-	// half-provisioned state. It is shared with `jenticctl wizard`, which reaches
-	// it through this same setup flow. The identity itself stays in the
-	// operator's XDG store; `jentic run` exports the active context's material
-	// into the agent's home at launch.
-	var setup agentSetup
-	if !opts.skipSkill {
-		// Interactivity for the sudo gate matches the skill picker's own rule
-		// (!yes && prompt.Promptable()), not opts.interactive — the wizard deliberately
-		// leaves opts.interactive false (it owns the URL prompt) while the
-		// user is very much at a terminal.
-		agentInteractive := !opts.yes && prompt.Promptable()
-		s, err := a.setupAgentUser(ctx, operatorNames(targetAdapters(targets)), agentInteractive)
-		if err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				fmt.Fprintln(a.Out, theme.Dim.Render("Agent-user setup cancelled."))
-			} else {
-				// Isolation is best-effort: a failure here must not block the
-				// identity/skill provisioning the operator came for.
-				fmt.Fprintln(a.Out, theme.Warnf("agent-user setup skipped: %v", err))
-			}
-		}
-		setup = s
-	}
-
 	// Step 1+2: register and wait for approval via the shared flow.
 	var installURL string
 	identity := opts.name
@@ -251,12 +222,9 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 		}
 
 		// Step 4: write the MCP server entry per detected runtime (2-E3) —
-		// absolute stable binary path, --context pinned — then offer the
-		// optional isolation step (container / sudo-shim). Both best-effort:
-		// registration failures are reported per runtime and isolation never
-		// blocks the non-isolated flow.
-		outcomes := a.registerMCPEntries(ctx, targets, false).outcomes
-		a.offerMCPIsolation(ctx, outcomes, !opts.yes && prompt.Promptable())
+		// absolute stable binary path, --context pinned. Best-effort:
+		// registration failures are reported per runtime.
+		a.registerMCPEntries(ctx, targets, false)
 	}
 
 	fmt.Fprintln(a.Out)
@@ -267,17 +235,6 @@ func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
 	}
 	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Try:"), theme.Command.Render("jentic catalog"))
 
-	// If we created a dedicated agent account, offer to start a session in the
-	// agent's home right now — the operator has just seen the summary and the
-	// natural next step is `cd <home>; jentic run <agent>`. Accepting runs it;
-	// declining leaves the printed command for later. Only when interactive and
-	// a real account exists.
-	agentInteractive := !opts.yes && prompt.Promptable()
-	if setup.created && setup.agentUser != "" && agentInteractive {
-		if err := a.offerAgentSession(ctx, setup); err != nil && !errors.Is(err, huh.ErrUserAborted) {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -311,39 +268,4 @@ func valueOrPlaceholder(s, placeholder string) string {
 		return placeholder
 	}
 	return s
-}
-
-// offerAgentSession asks whether to start a session in the freshly-isolated
-// agent's home and, on yes, launches it (equivalent to `cd <home>; jentic run
-// <agent>`). The launch runs the agent under its own user in a login shell, so
-// the operator lands straight in the isolated session. Declining is a no-op — the
-// copy-paste command was already printed by the agent-user setup step.
-func (a *Cmd) offerAgentSession(ctx context.Context, setup agentSetup) error {
-	homeDir := setup.homeDir
-	launch := fmt.Sprintf("cd %s; jentic run %s", homeDir, setup.agentID)
-
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("Start a session in the agent's home now? This runs:"))
-	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(launch))
-
-	start := true
-	if err := prompt.RunConfirm(huh.NewConfirm().
-		Title("Start a session in the agent's home now?").
-		Description("Launches the agent as its own user, in " + homeDir + ".").
-		Affirmative("Yes, start it").
-		Negative("Not now").
-		Value(&start)); err != nil {
-		return err
-	}
-	if !start {
-		fmt.Fprintln(a.Out, theme.Dim.Render("Not started. Run the command above whenever you're ready."))
-		return nil
-	}
-
-	// Launch in the agent's own home (dir "" → login shell starts in $HOME).
-	// No working-dir grant is involved here, but the launch still loads the
-	// recorded grants to build the confinement profile and hands the active
-	// context's credentials to the agent's own store first.
-	desc, _ := localagent.Lookup(setup.agentID)
-	return a.launchIsolated(ctx, setup.agentUser, desc.Binary, "", nil)
 }

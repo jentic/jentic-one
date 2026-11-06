@@ -1,10 +1,8 @@
 # The same-host threat model
 
-> **Status:** the canonical problem statement. This captures the *problem* —
-> the state before any isolation work — and the attack-path codes (AP-1…AP-4)
-> the design docs cite. The shipped design that responds to it lives in the
-> sibling docs (see the [directory README](README.md)), and the menu of other
-> mitigations is indexed there too.
+> **Status:** the canonical problem statement: the same-user posture and the
+> attack-path codes (AP-1…AP-4) the other same-host docs cite. The menu of
+> mitigations is indexed in the [directory README](README.md).
 
 ## The problem in one sentence
 
@@ -38,7 +36,7 @@ the operator's tab."
 
 There are two structurally different moves, and they are **not** equally powerful:
 
-- **Isolate the *agent*** (own OS user or container) — the agent can't reach
+- **Isolate the *agent*** (container, VM, or another machine) — the agent can't reach
   `~/.jentic`, the DB, *or* the operator's browser profile. Closes AP-1
   through AP-3 outright. It cannot close AP-4 (the agent's *own* key or token
   reused off-host): the agent must read its own credentials. AP-4 is only
@@ -48,9 +46,7 @@ There are two structurally different moves, and they are **not** equally powerfu
   new tokens until the agent is disabled or archived, or its JWKS is replaced
   (revoking its API key does not stop it). `jenticctl install` binds the
   instance to `127.0.0.1` by default; the server's own default bind is `0.0.0.0`, and any exposure
-  beyond loopback widens AP-4 (see the
-  [residual risks](local-agent-isolation.md#what-this-model-does-not-protect--residual-risks)). This is the
-  real fix.
+  beyond loopback widens AP-4. This is the real fix.
 - **Isolate *Jentic One*** (own user / separate host) — closes AP-1/AP-2, but the
   operator's browser still runs next to the agent, so **AP-3 stays open** (a
   WebAuthn step-up on dangerous mutations could close that, but no such step-up
@@ -69,7 +65,5 @@ possible future hardening that does **not** exist in the product today: DPoP,
 a WebAuthn step-up, a same-host posture banner, a reveal-never arch test. All
 worth doing; none closes a structural gap on its own.
 
-The concrete design that responds to this analysis —
-[`local-agent-isolation.md`](local-agent-isolation.md) and
-[`filesystem-access-model.md`](filesystem-access-model.md) — lives alongside this
-file; the [directory README](README.md) indexes every option.
+The [directory README](README.md) indexes the concrete options that respond to
+this analysis.
