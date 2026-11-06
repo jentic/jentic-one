@@ -44,13 +44,12 @@ before an agent touches production credentials.
 
 ## Quickstart
 
-The open-source build is the real product — same code and security model as every other install.
-Linux and macOS; on Windows use the [Windows guide](docs/installation/windows.md).
+On Windows, use the [Windows guide](docs/installation/windows.md).
 
 ### Self-hosted (Docker)
 
-Run the control plane and broker as one stack, on SQLite. This is a trial setup — don't point it at a
-real credential. **Back up `~/.jentic/enc-key`**: it holds the key that encrypts stored credentials.
+Run the control plane and broker as one stack, on SQLite. Run your agents in a separate environment
+from the stack (a different machine, VM or user), with access to it only over HTTP. **Back up `~/.jentic/enc-key`**: it holds the key that encrypts stored credentials.
 
 ```bash
 # Download the quickstart compose file
@@ -58,9 +57,6 @@ curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/dock
 
 # Start the stack. Open the webapp at http://127.0.0.1:8000 (or your configured url) once it returns
 docker compose up -d --wait
-
-# Install the jentic (agent) and jenticctl (operator) CLIs on this machine
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/clis/install.sh | sh
 ```
 
 <details>
@@ -107,13 +103,23 @@ The quickstart turns on anonymous telemetry. To opt out, set `JENTIC__TELEMETRY_
 
 ### Connect your agent
 
-Install the CLI on the machine where your agent runs, then connect it:
+On the machine where your agent runs
+
+#### Install the CLIs
 
 ```bash
 brew install --cask jentic/tap/jentic    # macOS / Linux
 winget install Jentic.Jentic             # Windows
 
-jentic setup --url http://127.0.0.1:8000   # registers the agent and installs its skill; approve it in the UI
+# Or install directly from GitHub
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/clis/install.sh | sh
+```
+
+#### Register your agent
+
+```bash
+JENTIC_ONE_URL=http://127.0.0.1:8000   # where your Jentic One web app is running
+jentic setup --url "$JENTIC_ONE_URL"   # registers the agent and installs its skill; approve it in the UI
 ```
 
 Agents that call Jentic One over plain HTTP or the hosted MCP endpoint don't need the CLI — see
