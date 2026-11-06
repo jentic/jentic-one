@@ -47,7 +47,9 @@ func newUpdateCmd(app *app) *cobra.Command {
 			"failed stack half refreshes only the stack.\n\n" +
 			"A Homebrew-installed CLI is never swapped in place: the CLI half runs\n" +
 			"`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n" +
-			"(--ref cannot pin a Homebrew-managed CLI).",
+			"(--ref cannot pin a Homebrew-managed CLI). A CLI installed from the\n" +
+			".deb / .rpm / .apk packages is not swapped either: update it with the\n" +
+			"package manager, or pass --stack-only.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.updateE(cmd.Context(), opts)
@@ -77,6 +79,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		return err
 	}
 	brewManaged := isBrewManaged(ctlTarget)
+	pkgManaged := isSystemPackageManaged(ctlTarget)
 	// brew upgrades the CLI out-of-band, so a recorded cli_version can lag the
 	// binary brew installed; the running binary's stamped version is the truth.
 	if brewManaged && isStampedVersion(version) {
@@ -103,6 +106,9 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	}
 	if brewManaged {
 		fmt.Fprintln(a.Out, theme.Field("managed by", "Homebrew — CLI updates delegate to `"+update.BrewUpgradeCommand+"`"))
+	}
+	if pkgManaged {
+		fmt.Fprintln(a.Out, theme.Field("managed by", "system package (.deb / .rpm / .apk) — update the CLI with your package manager"))
 	}
 
 	// Resolve the update target. By default we track the latest release tag; an
@@ -229,6 +235,16 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  CLI already at the latest release; updating the stack only."))
 	}
 
+	// A CLI installed by a system package is never swapped by us: overwriting
+	// /usr/bin behind dpkg/rpm/apk leaves the package database describing a file
+	// that no longer exists, and the next package upgrade clobbers the swap.
+	// There is no package repository to delegate to (unlike brew), so the CLI
+	// half is refused with the manual step; the stack half stays reachable.
+	if pkgManaged && doCLI {
+		return fmt.Errorf("the CLI at %s is installed by a system package; %s (use --stack-only to refresh just the stack)",
+			ctlTarget, update.SystemPackageUpgradeHint)
+	}
+
 	if !opts.yes {
 		ok, err := confirmApply(doCLI, doStack, brewManaged, repo, ref)
 		if err != nil {
@@ -313,22 +329,23 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 // binaries, or a Docker daemon. Tests that swap these globals must not run
 // with t.Parallel().
 var (
-	latestReleaseTag     = update.LatestReleaseTag
-	swapCLI              = (*app).updateCLI
-	acquireCLI           = (*app).acquireCLIBinaries
-	upgradeBrewCLI       = (*app).brewUpgradeCLI
-	brewUpgrade          = update.BrewUpgrade
-	brewCaskVersion      = update.BrewCaskVersion
-	isBrewManaged        = update.BrewManaged
-	refreshSkills        = (*app).refreshSkillsAfterUpdate
-	rebuildStack         = (*app).updateStack
-	foreignPortHolders   = install.ForeignPortHolders
-	buildStackImages     = install.BuildPlan.BuildImages
-	pullAppImage         = install.PullAppImage
-	runComposeMigrations = install.RunComposeMigrations
-	ensureUv             = install.EnsureUv
-	buildLocalStack      = install.BuildPlan.Execute
-	runLocalMigrations   = install.RunMigrations
+	latestReleaseTag       = update.LatestReleaseTag
+	swapCLI                = (*app).updateCLI
+	acquireCLI             = (*app).acquireCLIBinaries
+	upgradeBrewCLI         = (*app).brewUpgradeCLI
+	brewUpgrade            = update.BrewUpgrade
+	brewCaskVersion        = update.BrewCaskVersion
+	isBrewManaged          = update.BrewManaged
+	isSystemPackageManaged = update.SystemPackageManaged
+	refreshSkills          = (*app).refreshSkillsAfterUpdate
+	rebuildStack           = (*app).updateStack
+	foreignPortHolders     = install.ForeignPortHolders
+	buildStackImages       = install.BuildPlan.BuildImages
+	pullAppImage           = install.PullAppImage
+	runComposeMigrations   = install.RunComposeMigrations
+	ensureUv               = install.EnsureUv
+	buildLocalStack        = install.BuildPlan.Execute
+	runLocalMigrations     = install.RunMigrations
 )
 
 // preflightDockerStack checks what the Docker stack rebuild needs before any

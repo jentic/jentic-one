@@ -2515,7 +2515,9 @@ failed stack half refreshes only the stack.
 
 A Homebrew-installed CLI is never swapped in place: the CLI half runs
 `brew upgrade jentic` instead, so brew's bookkeeping stays consistent
-(--ref cannot pin a Homebrew-managed CLI).
+(--ref cannot pin a Homebrew-managed CLI). A CLI installed from the
+.deb / .rpm / .apk packages is not swapped either: update it with the
+package manager, or pass --stack-only.
 ```
 
 **Flags**

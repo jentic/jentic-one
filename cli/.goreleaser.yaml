@@ -192,6 +192,39 @@ scoops:
       name: scoop-bucket
       token: '{{ envOrDefault "SCOOP_BUCKET_TOKEN" "" }}'
 
+# Native Linux packages (.deb / .rpm / .apk) attached to the GitHub Release, one
+# package per binary — mirroring the per-binary archives, so an agent host can
+# install `jentic` alone:
+#   sudo apt install ./jentic_<ver>_linux_amd64.deb                  # Debian / Ubuntu
+#   sudo dnf install ./jentic_<ver>_linux_amd64.rpm                  # Fedora / RHEL
+#   sudo apk add --allow-untrusted ./jentic_<ver>_linux_amd64.apk    # Alpine
+# No package repository: there is nothing to provision and nothing to skip, so
+# these ship on every release. Their hashes land in checksums.txt, which the
+# cosign signature above covers. Binaries install to /usr/bin, a location
+# `jenticctl update` treats as package-owned and never swaps in place
+# (cli/internal/update/syspkg.go).
+nfpms:
+  - id: jentic
+    package_name: jentic
+    ids: [jentic]
+    formats: [deb, rpm, apk]
+    vendor: Jentic
+    homepage: https://jentic.com
+    maintainer: Jentic <compliance@jentic.com>
+    description: "Jentic One agent CLI — search, inspect and execute governed API calls through the broker"
+    license: Apache-2.0
+    bindir: /usr/bin
+  - id: jenticctl
+    package_name: jenticctl
+    ids: [jenticctl]
+    formats: [deb, rpm, apk]
+    vendor: Jentic
+    homepage: https://jentic.com
+    maintainer: Jentic <compliance@jentic.com>
+    description: "Jentic One operator CLI — install, lifecycle and admin for a Jentic One stack"
+    license: Apache-2.0
+    bindir: /usr/bin
+
 release:
   github:
     owner: jentic
