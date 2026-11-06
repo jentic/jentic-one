@@ -112,33 +112,43 @@ services:
     command: ["python", "-m", "jentic_one.migrations.run"]
     restart: "no"
 
-  # Control plane: UI + APIs, and the MCP endpoint at /mcp.
+  # Control plane: UI + APIs, and the MCP endpoint at /mcp. It also publishes
+  # the broker's port, since the broker runs in this container's network.
   app:
     <<: *common
     environment:
       <<: *env
+      # MCP execute calls reach the broker on 127.0.0.1:8100 (the default
+      # broker URL) through the shared network; a bearer is only sent over
+      # plain http to loopback. Not in config/quickstart.env: its `docker run`
+      # containers share no network.
       JENTIC__SERVER__MCP__ENABLED: "true"
-      # MCP execute calls go to the broker over the compose network. Not in
-      # config/quickstart.env: its `docker run` containers share no network.
-      JENTIC__SERVER__MCP__BROKER_URL: http://broker:8000
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:8000:8000", "127.0.0.1:8100:8100"]
     restart: unless-stopped
     healthcheck: *healthcheck
 
   # Data plane: agents call this. The broker must run as the sole surface of
-  # its process, so it is its own service.
+  # its process, so it is its own service, sharing the app's network and
+  # listening on 8100. `restart: true` restarts it with `docker compose
+  # restart app`. If the app instead crashes and Docker restarts it, the broker
+  # loses that network (while still reporting healthy): run
+  # `docker compose restart broker`.
   broker:
     <<: *common
     environment:
       <<: *env
       JENTIC__APPS: broker
+      JENTIC__SERVER__PORT: "8100"
+    network_mode: "service:app"
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["127.0.0.1:8100:8000"]
+      app: { condition: service_started, restart: true }
     restart: unless-stopped
-    healthcheck: *healthcheck
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
 
 volumes:
   jentic-data:
