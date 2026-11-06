@@ -106,7 +106,11 @@ Service-level settings (immutable after boot).
 
 ## `worker`
 
-Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever. A handler that raises `NonRetryableJobError` (a failure no retry can change, such as an import whose spec fails validation) fails the job on that attempt instead. Each claim is a single atomic `UPDATE` (`FOR UPDATE SKIP LOCKED` on Postgres, a serialised write transaction on SQLite), so any number of worker loops — across processes or replicas, each running up to `concurrency` jobs — can poll the same queue without double-claiming a job.
+Background job-worker durability knobs.
+
+The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever. A handler that raises `NonRetryableJobError` (a failure no retry can change, such as an import whose spec fails validation) fails the job on that attempt instead.
+
+Each claim is a single atomic `UPDATE` (`FOR UPDATE SKIP LOCKED` on Postgres, a serialised write transaction on SQLite), so any number of worker loops — across processes or replicas, each running up to `concurrency` jobs — can poll the same queue without double-claiming a job.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -293,7 +297,11 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration. `egress` is the allowlist for the platform's outbound OAuth and credential calls. Each `control.egress` key left unset takes its value from the matching `broker.egress` key. The policy is read by whichever process makes the call: the control surface for credential and OAuth app writes, the connect-session confirm, code exchange, device authorization and the identity probe, and the broker surface for the token refresh it runs before injecting a credential. With one process per surface, set `control.egress` (and the `broker.egress` keys it inherits) identically on both. Unknown subkeys of `control:` are ignored, so a section written for another release keeps validating; `control.egress` rejects unknown keys so a mistyped allowlist key fails at startup instead of silently allowing less.
+Control surface configuration.
+
+`egress` is the allowlist for the platform's outbound OAuth and credential calls. Each `control.egress` key left unset takes its value from the matching `broker.egress` key. The policy is read by whichever process makes the call: the control surface for credential and OAuth app writes, the connect-session confirm, code exchange, device authorization and the identity probe, and the broker surface for the token refresh it runs before injecting a credential. With one process per surface, set `control.egress` (and the `broker.egress` keys it inherits) identically on both.
+
+Unknown subkeys of `control:` are ignored, so a section written for another release keeps validating; `control.egress` rejects unknown keys so a mistyped allowlist key fails at startup instead of silently allowing less.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -390,7 +398,9 @@ Top-level vendor auth registry.
 
 ## `search`
 
-Search configuration. The built-in mode is "lexical" (BM25 on SQLite, native full-text on PostgreSQL). `search_mode` is validated against the registered SearchStrategy set at resolve time (`resolve_strategy`), so an unknown mode fails loudly with the available modes for the active dialect rather than at config load. Additional modes (e.g. "semantic", "vector") can be registered via `register_strategy` without editing this schema.
+Search configuration.
+
+The built-in mode is "lexical" (BM25 on SQLite, native full-text on PostgreSQL). `search_mode` is validated against the registered SearchStrategy set at resolve time (`resolve_strategy`), so an unknown mode fails loudly with the available modes for the active dialect rather than at config load. Additional modes (e.g. "semantic", "vector") can be registered via `register_strategy` without editing this schema.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -413,7 +423,9 @@ Platform security event thresholds.
 
 ## `telemetry`
 
-Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose config omits this block (non-onboarded or hand-rolled) sends nothing. The onboarding CLI writes `enabled` explicitly (a yes-default `[Y]/n` prompt), which is where the on-by-default install experience comes from. `instance_id` seeds the durable admin-DB identity row on first startup for opted-in instances. `host_os` is the operator's OS family, stamped by the CLI at install time so a Docker-run instance reports the host's OS rather than the container's; sent once per boot, on the `instance_booted` event.
+Anonymous product-telemetry settings.
+
+Defaults to **OFF**: an instance whose config omits this block (non-onboarded or hand-rolled) sends nothing. The onboarding CLI writes `enabled` explicitly (a yes-default `[Y]/n` prompt), which is where the on-by-default install experience comes from. `instance_id` seeds the durable admin-DB identity row on first startup for opted-in instances. `host_os` is the operator's OS family, stamped by the CLI at install time so a Docker-run instance reports the host's OS rather than the container's; sent once per boot, on the `instance_booted` event.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -428,7 +440,11 @@ Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose con
 
 ## `release_check`
 
-"Update available" check for the running jentic-one build itself. Powers `GET /system/version`: the backend asks GitHub for the newest published release of `repo` and compares it against the running build so the web console can surface an "update available" banner (and the user menu can always show the current version). This covers *jentic-one's own* release; `CatalogConfig` tracks the public *API catalog* instead. Runs only on a `local` backend (a self-hosted install the operator can actually update); the hosted platform (`server.backend == "remote"`) skips it. The result is cached in-process for `cache_ttl_seconds` (fetch-on-read, no background job), so at most one GitHub request happens per TTL regardless of how many clients poll. Every failure degrades to "latest unknown" (no banner) rather than erroring — the version probe must never break the app.
+"Update available" check for the running jentic-one build itself.
+
+Powers `GET /system/version`: the backend asks GitHub for the newest published release of `repo` and compares it against the running build so the web console can surface an "update available" banner (and the user menu can always show the current version). This covers *jentic-one's own* release; `CatalogConfig` tracks the public *API catalog* instead.
+
+Runs only on a `local` backend (a self-hosted install the operator can actually update); the hosted platform (`server.backend == "remote"`) skips it. The result is cached in-process for `cache_ttl_seconds` (fetch-on-read, no background job), so at most one GitHub request happens per TTL regardless of how many clients poll. Every failure degrades to "latest unknown" (no banner) rather than erroring — the version probe must never break the app.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -438,7 +454,11 @@ Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose con
 
 ## `entitlement`
 
-AWS Marketplace license gate for the Marketplace-listed deployment. Powers the entitlement checker (`integrations/aws_marketplace`): on startup, and every `refresh_interval_seconds` after, the process asks AWS whether this deployment's Marketplace subscription is still active, and locks the HTTP surface (503, health excepted) when it definitively is not. Defaults to **OFF**: a non-Marketplace install that omits this block wires nothing and never makes an AWS call. Failure posture: an *unreachable* or *erroring* AWS API is never grounds for lockout by itself — the last definitive verdict holds for `grace_period_seconds` before the gate fails closed. Only an explicit "not entitled" answer from AWS locks out immediately.
+AWS Marketplace license gate for the Marketplace-listed deployment.
+
+Powers the entitlement checker (`integrations/aws_marketplace`): on startup, and every `refresh_interval_seconds` after, the process asks AWS whether this deployment's Marketplace subscription is still active, and locks the HTTP surface (503, health excepted) when it definitively is not. Defaults to **OFF**: a non-Marketplace install that omits this block wires nothing and never makes an AWS call.
+
+Failure posture: an *unreachable* or *erroring* AWS API is never grounds for lockout by itself — the last definitive verdict holds for `grace_period_seconds` before the gate fails closed. Only an explicit "not entitled" answer from AWS locks out immediately.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -454,7 +474,9 @@ AWS Marketplace license gate for the Marketplace-listed deployment. Powers the e
 
 ## `held_executions`
 
-Require-approval holds: held execution jobs awaiting a human reviewer. An execute call matching a permission rule with `effect="require-approval"` is enqueued as a `held` job with a `pending` approval; a reviewer (the agent's owner or an `org:admin`) approves or denies it, or it expires.
+Require-approval holds: held execution jobs awaiting a human reviewer.
+
+An execute call matching a permission rule with `effect="require-approval"` is enqueued as a `held` job with a `pending` approval; a reviewer (the agent's owner or an `org:admin`) approves or denies it, or it expires.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -472,7 +494,9 @@ Surfaces this process serves: any of `registry`, `admin`, `control`, `auth`, or 
 
 ## `state`
 
-The process's shared-state backend (top-level `state:` section). One backend per process holds the rate-limit buckets, circuit-breaker counters, `Idempotency-Key` records, the auth surface's single-use markers, the broker's auth-failure counters and the MCP session-event dedupe of every surface the process serves.
+The process's shared-state backend (top-level `state:` section).
+
+One backend per process holds the rate-limit buckets, circuit-breaker counters, `Idempotency-Key` records, the auth surface's single-use markers, the broker's auth-failure counters and the MCP session-event dedupe of every surface the process serves.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
