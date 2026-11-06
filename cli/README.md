@@ -32,7 +32,7 @@ in the app at `/app/docs`).
 
 ```bash
 brew install --cask jentic/tap/jentic   # macOS / Linux — both binaries
-winget install Jentic.Jentic            # Windows — jentic only (or Scoop)
+scoop install jentic                    # Windows — jentic only; add the bucket first, see docs/installation/windows.md
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
 
