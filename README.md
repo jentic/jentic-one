@@ -44,16 +44,17 @@ before an agent touches production credentials.
 
 # Quickstart
 
-- On Windows, use the [Windows guide](docs/installation/windows.md). For other deployment methods, see
+Sets up a self-hosted Jentic One instance on your machine with Docker. Run your agents in a separate environment from the
+stack (a different machine, VM or user), and connect them over HTTP or MCP. An encryption key for
+your credentials is written to `~/.jentic/enc-key` by default.
+
+- For Windows, use the [Windows guide](docs/installation/windows.md). For other deployment methods, see
   [Alternative deployments](#alternative-deployments).
 - By default, the quickstart enables anonymous telemetry. For more information and how to opt out,
   see [Telemetry](docs/reference/config.md#telemetry).
 - Something failed? See [Troubleshooting](docs/operations/troubleshooting.md).
 
-## Self-hosted (Docker)
-
-Run the control plane and broker as one stack, on SQLite. Run your agents in a separate environment
-from the stack (a different machine, VM or user), with access to it only over HTTP. **Back up `~/.jentic/enc-key`**: it holds the key that encrypts stored credentials.
+## Start the instance
 
 ```bash
 # Download the quickstart compose file
@@ -65,7 +66,7 @@ docker compose up -d --wait
 
 ## Connect your agent
 
-On the machine where your agent runs
+Run these on the machine where your agent runs. For MCP setup, see [Connecting agents over MCP](docs/guides/mcp-http-endpoint.md).
 
 ### Install the CLIs
 
@@ -84,9 +85,7 @@ JENTIC_ONE_URL=http://127.0.0.1:8000   # where your Jentic One web app is runnin
 jentic setup --url "$JENTIC_ONE_URL"   # registers the agent and installs its skill; approve it in the UI
 ```
 
-Agents that call Jentic One over plain HTTP or the hosted MCP endpoint don't need the CLI — see
-[Connecting agents](docs/guides/connecting-agents.md). Next:
-[make your first brokered call](docs/guides/first-call.md).
+Next: [make your first brokered call](docs/guides/first-call.md).
 
 ## Alternative deployments
 
