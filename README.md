@@ -66,7 +66,7 @@ docker compose up -d --wait
 
 ## Connect your agent
 
-Run these on the machine where your agent runs. For MCP setup, see [Connecting agents over MCP](docs/guides/mcp-http-endpoint.md).
+Run these on the machine where your agent runs. For MCP setup, see [Setting up your MCP client](docs/guides/mcp-http-endpoint.md#setting-up-your-mcp-client).
 
 ### Install the CLIs
 
