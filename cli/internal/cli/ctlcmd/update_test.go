@@ -1391,3 +1391,55 @@ func TestTailBufferKeepsTail(t *testing.T) {
 		t.Errorf("tail buffer len=%d, suffix kept=%v", len(got), strings.HasSuffix(got, "port is already allocated"))
 	}
 }
+
+// stubSystemPackage makes the install look owned by a .deb / .rpm / .apk.
+func stubSystemPackage(t *testing.T) {
+	t.Helper()
+	orig := isSystemPackageManaged
+	t.Cleanup(func() { isSystemPackageManaged = orig })
+	isSystemPackageManaged = func(string) bool { return true }
+}
+
+// TestUpdateSystemPackageNeverSwapsCLI pins that a package-installed CLI is
+// never swapped in place: the CLI half is refused before anything runs, while
+// --stack-only and a stack-only lag still refresh the stack.
+func TestUpdateSystemPackageNeverSwapsCLI(t *testing.T) {
+	tests := []struct {
+		name           string
+		cliVersion     string
+		opts           updateOptions
+		wantErr        bool
+		wantStackBuild int
+	}{
+		{"CLI behind: refused", "v0.26.0", updateOptions{yes: true}, true, 0},
+		{"CLI behind, --cli-only: refused", "v0.26.0", updateOptions{yes: true, cliOnly: true}, true, 0},
+		{"CLI behind, --stack-only: stack refreshed", "v0.26.0", updateOptions{yes: true, stackOnly: true}, false, 1},
+		{"CLI current, stack behind: stack refreshed", "v0.28.0", updateOptions{yes: true}, false, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := testApp(t)
+			saveManifest(t, a, config.ModeLocal, tt.cliVersion, "v0.26.0")
+			f := stubUpdateFlow(t, "v0.28.0")
+			stubSystemPackage(t)
+
+			opts := tt.opts
+			err := a.updateE(context.Background(), &opts)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "installed by a system package") {
+				t.Errorf("refusal does not name the system package: %v", err)
+			}
+			if len(f.cliSwaps) != 0 {
+				t.Errorf("in-place CLI swaps = %v, want none", f.cliSwaps)
+			}
+			if len(f.stackBuilds) != tt.wantStackBuild {
+				t.Errorf("stack builds = %v, want %d", f.stackBuilds, tt.wantStackBuild)
+			}
+			if out := a.Out.(*bytes.Buffer).String(); !strings.Contains(out, "system package") {
+				t.Errorf("status does not report the package manager:\n%s", out)
+			}
+		})
+	}
+}
