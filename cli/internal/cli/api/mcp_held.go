@@ -57,17 +57,29 @@ const (
 	frontDoorHeldResult     = "held_result"
 )
 
-// heldAgentDirective is the held 202 envelope's agent_directive. Kept
-// byte-identical with HELD_AGENT_DIRECTIVE in src/jentic_one/shared/jobs/hold.py.
-const heldAgentDirective = "This call needs human approval. Most important: show the user the review_url, " +
-	"since they cannot approve it without that link, and end your turn so they see it. " +
-	"Before you end your turn, if you can, call explain_held_call once with " +
-	"held_execution_id and one or two sentences on why you are making this call; the " +
-	"reviewer sees it next to the request. " +
-	"Do not call get_execution_result until the user replies; then call it once with " +
-	"held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is " +
-	"still held, show the user the review_url again and end your turn again. Do not " +
-	"re-send the call."
+// The held directive's parts, kept byte-identical with _HELD_SHOW_LINK,
+// _HELD_ASK_REASON and _HELD_THEN_POLL in src/jentic_one/shared/jobs/hold.py.
+const (
+	heldShowLink = "This call needs human approval. Most important: show the user the review_url, " +
+		"since they cannot approve it without that link, and end your turn so they see it. "
+	heldAskReason = "Before you end your turn, if you can, call explain_held_call once with " +
+		"held_execution_id and one or two sentences on why you are making this call (over " +
+		"plain HTTP, POST a JSON body with a reason field to _links.explain instead); the " +
+		"reviewer sees it next to the request. "
+	heldThenPoll = "Do not call get_execution_result until the user replies; then call it once with " +
+		"held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is " +
+		"still held, show the user the review_url again and end your turn again. Do not " +
+		"re-send the call."
+)
+
+// heldAgentDirective is the held 202 envelope's agent_directive (Python:
+// HELD_AGENT_DIRECTIVE).
+const heldAgentDirective = heldShowLink + heldAskReason + heldThenPoll
+
+// heldExplainedAgentDirective is the same for a held call the agent already
+// explained: the reason is given once, so it is not asked again (Python:
+// HELD_EXPLAINED_AGENT_DIRECTIVE).
+const heldExplainedAgentDirective = heldShowLink + heldThenPoll
 
 // stillHeldAgentDirective is a held poll payload's agent_directive while the
 // call has not finished. Kept byte-identical with STILL_HELD_AGENT_DIRECTIVE
@@ -225,6 +237,13 @@ func (s *mcpServer) resumeHeld(ctx context.Context, req *mcp.CallToolRequest, ag
 	if terminal := s.heldShortWait(ctx, st.HeldExecutionID); terminal != nil {
 		return s.result(ctx, terminal), nil
 	}
+	// The sealed state predates any reason: once the agent has explained the
+	// call, it is not asked again and the explain link is gone, as on the
+	// broker's 202 for a retry that joins an explained call.
+	directive, links := heldAgentDirective, linksOrEmpty(st.Links)
+	if s.heldExplained(ctx, st.HeldExecutionID) {
+		directive, links = heldExplainedAgentDirective, withoutExplainLink(links)
+	}
 	return s.result(ctx, map[string]any{
 		"schema_version": mcpSchemaVersion,
 		"status":         202,
@@ -234,10 +253,38 @@ func (s *mcpServer) resumeHeld(ctx context.Context, req *mcp.CallToolRequest, ag
 			"held_execution_id": st.HeldExecutionID,
 			"review_url":        st.ReviewURL,
 			"expires_at":        st.ExpiresAt,
-			"agent_directive":   heldAgentDirective,
-			"_links":            linksOrEmpty(st.Links),
+			"agent_directive":   directive,
+			"_links":            links,
 		},
 	}), nil
+}
+
+// heldExplained reports whether the held execution already carries the
+// agent's reason. A failed read reports false: the agent is asked, and an
+// explain then answers that the call is already explained.
+func (s *mcpServer) heldExplained(ctx context.Context, heldExecutionID string) bool {
+	cctx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+	defer cancel()
+	client, err := s.app.controlClient(cctx)
+	if err != nil {
+		return false
+	}
+	resp, err := client.GetHeldExecutionWithResponse(cctx, heldExecutionID)
+	if err != nil || resp.JSON200 == nil {
+		return false
+	}
+	return deref(resp.JSON200.AgentReason) != ""
+}
+
+// withoutExplainLink is a copy of a held envelope's links with explain set
+// to null, the broker's shape once the call is explained.
+func withoutExplainLink(links map[string]any) map[string]any {
+	out := make(map[string]any, len(links)+1)
+	for k, v := range links {
+		out[k] = v
+	}
+	out["explain"] = nil
+	return out
 }
 
 // linksOrEmpty is a held envelope's _links, never null.

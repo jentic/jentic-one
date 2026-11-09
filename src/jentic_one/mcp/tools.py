@@ -152,6 +152,7 @@ from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import (
     EXPLAINED_AGENT_DIRECTIVE,
     HELD_AGENT_DIRECTIVE,
+    HELD_EXPLAINED_AGENT_DIRECTIVE,
     STILL_HELD_AGENT_DIRECTIVE,
     review_page_path,
 )
@@ -219,7 +220,7 @@ def invalid_params(message: str) -> MCPError:
 @dataclass(frozen=True)
 class ParamSpec:
     name: str
-    kind: str  # "string" | "int" | "object" | "json" | "string_list"
+    kind: str  # "string" | "text" | "int" | "object" | "json" | "string_list"
     aliases: tuple[str, ...] = ()
 
 
@@ -246,6 +247,12 @@ def normalize_tool_args(arguments: dict[str, Any] | None, specs: list[ParamSpec]
 
 
 def _coerce(spec: ParamSpec, value: Any) -> Any:
+    # "text" is free prose a person reads (explain_held_call's reason): only a
+    # JSON string is accepted, so a number never becomes text nobody wrote.
+    if spec.kind == "text":
+        if isinstance(value, str):
+            return value
+        raise invalid_params(f'parameter "{spec.name}": expected a string')
     if spec.kind == "string":
         if isinstance(value, str):
             return value
@@ -1218,8 +1225,24 @@ async def _resume_held(env: CallEnv, token: str) -> ToolCallResult:
     terminal = await approvals.short_wait(_held_poller(env), state["held_execution_id"])
     if terminal is not None:
         return tool_result(env.ctx, terminal)
-    envelope = approvals.envelope_from_state(state, HELD_AGENT_DIRECTIVE)
+    # The sealed state predates any reason: once the agent has explained the
+    # call, it is not asked again and the explain link is gone, as on the
+    # broker's 202 for a retry that joins an explained call.
+    if await _held_explained(env, state["held_execution_id"]):
+        envelope = approvals.envelope_from_state(state, HELD_EXPLAINED_AGENT_DIRECTIVE)
+        envelope["_links"] = {**envelope["_links"], "explain": None}
+    else:
+        envelope = approvals.envelope_from_state(state, HELD_AGENT_DIRECTIVE)
     return tool_result(env.ctx, approvals.held_result_payload(envelope))
+
+
+async def _held_explained(env: CallEnv, held_execution_id: str) -> bool:
+    """Whether the held execution already carries the agent's reason (Go: ``heldExplained``)."""
+    try:
+        view = await HeldExecutionService(env.ctx).get(held_execution_id, identity=env.identity)
+    except HeldExecutionNotFoundError:
+        return False
+    return view.agent_reason is not None
 
 
 def _poller(env: CallEnv) -> Callable[[str], Awaitable[dict[str, Any]]]:
@@ -1318,7 +1341,7 @@ async def _poll_until_finished(
 
 _EXPLAIN_HELD_CALL_PARAMS = [
     ParamSpec("held_execution_id", "string", ("held_execution",)),
-    ParamSpec("reason", "string"),
+    ParamSpec("reason", "text"),
 ]
 
 

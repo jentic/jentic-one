@@ -426,7 +426,7 @@
                     "withdraw": "https://control.your-instance.example/executions/holds/held_abc123:withdraw"
                   },
                   "agent_directive": {
-                    "human_readable_instruction": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Before you end your turn, if you can, call explain_held_call once with held_execution_id and one or two sentences on why you are making this call; the reviewer sees it next to the request. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
+                    "human_readable_instruction": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Before you end your turn, if you can, call explain_held_call once with held_execution_id and one or two sentences on why you are making this call (over plain HTTP, POST a JSON body with a reason field to _links.explain instead); the reviewer sees it next to the request. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
                     "parameters": {
                       "held_execution_id": "held_abc123",
                       "review_url": "https://your-instance.example/app/agents/approvals/held_abc123"

@@ -69,7 +69,8 @@ _HELD_SHOW_LINK = (
 )
 _HELD_ASK_REASON = (
     "Before you end your turn, if you can, call explain_held_call once with "
-    "held_execution_id and one or two sentences on why you are making this call; the "
+    "held_execution_id and one or two sentences on why you are making this call (over "
+    "plain HTTP, POST a JSON body with a reason field to _links.explain instead); the "
     "reviewer sees it next to the request. "
 )
 _HELD_THEN_POLL = (

@@ -129,6 +129,21 @@ func TestMCPExplainHeldCall_ABlankReasonSendsNothing(t *testing.T) {
 	}
 }
 
+func TestMCPExplainHeldCall_ANonStringReasonIsInvalidParams(t *testing.T) {
+	srv, _, calls := explainServer(t, http.StatusOK, explainedHeldBody)
+	s := heldTestServer(t)
+	for _, reason := range []string{`123`, `4.5`, `true`, `["why"]`, `{"text":"why"}`} {
+		_, err := s.handleExplainHeldCall(activeCtx(srv.URL), callToolRequest("explain_held_call",
+			`{"held_execution_id": "held_x", "reason": `+reason+`}`))
+		if err == nil || !strings.Contains(err.Error(), `parameter "reason": expected a string`) {
+			t.Errorf("reason %s: err = %v, want an invalid-params error", reason, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Errorf("a non-string reason must not reach the control plane")
+	}
+}
+
 func TestMCPExplainHeldCall_RequiresTheHeldExecutionID(t *testing.T) {
 	s := heldTestServer(t)
 	if _, err := s.handleExplainHeldCall(activeCtx("http://127.0.0.1:1"),

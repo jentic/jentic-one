@@ -184,7 +184,7 @@ func (a *app) executionsExplainE(cmd *cobra.Command, heldExecutionID, reason str
 }
 
 // explainHeldCallParams are explain_held_call's arguments.
-var explainHeldCallParams = []paramSpec{heldExecutionIDSpec, {name: "reason", kind: paramString}}
+var explainHeldCallParams = []paramSpec{heldExecutionIDSpec, {name: "reason", kind: paramText}}
 
 var explainHeldCallSchema = map[string]any{
 	"type":     "object",

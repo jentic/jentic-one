@@ -13,6 +13,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,6 +24,10 @@ type paramKind int
 
 const (
 	paramString paramKind = iota
+	// paramText is free prose a person reads (explain_held_call's reason):
+	// only a JSON string is accepted, so a number never becomes text nobody
+	// wrote. paramString's lenient shapes are for ids and names.
+	paramText
 	paramStringList
 	paramInt
 	paramObject
@@ -115,6 +120,11 @@ func coerceParam(v any, kind paramKind) (any, error) {
 	switch kind {
 	case paramString:
 		return coerceString(v)
+	case paramText:
+		if t, ok := v.(string); ok {
+			return t, nil
+		}
+		return nil, errors.New("expected a string")
 	case paramStringList:
 		return coerceStringList(v)
 	case paramInt:

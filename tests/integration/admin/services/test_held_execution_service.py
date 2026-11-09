@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from mcp.shared.exceptions import MCPError
 from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.agent_explanations import AgentExplanation
@@ -50,6 +51,7 @@ from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.admin.services.schemas.held_executions import DecideInput
 from jentic_one.admin.web.app import create_app
+from jentic_one.mcp import tools as mcp_tools
 from jentic_one.mcp.envelopes import ToolError
 from jentic_one.mcp.tools import CallEnv, handle_explain_held_call
 from jentic_one.shared.auth.identity import Identity
@@ -1386,6 +1388,41 @@ async def test_an_explain_waits_for_a_settlement_in_flight_and_then_refuses(
             .all()
         )
     assert rows == [] and events == []
+
+
+@pytest.mark.parametrize("reason", [123, 4.5, True, ["why"], {"text": "why"}])
+async def test_mcp_explain_held_call_refuses_a_reason_that_is_not_a_string_like_the_route(
+    integration_context: Context, actors: _Actors, reason: object
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    with pytest.raises(MCPError, match='parameter "reason": expected a string'):
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.agent), {"held_execution_id": hold.approval_id, "reason": reason}
+        )
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(
+            f"/executions/holds/{hold.approval_id}:explain", json={"reason": reason}
+        )
+    assert resp.status_code == 422
+    assert (
+        await HeldExecutionService(ctx).get(hold.approval_id, identity=actors.owner)
+    ).agent_reason is None
+
+
+async def test_the_mcp_resume_lookup_sees_the_reason_only_once_the_agent_explained(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """``_held_explained`` decides whether a URL-elicitation retry asks for a reason again."""
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    env = _mcp_env(ctx, actors.agent)
+    assert await mcp_tools._held_explained(env, hold.approval_id) is False
+    await handle_explain_held_call(env, {"held_execution_id": hold.approval_id, "reason": _REASON})
+    assert await mcp_tools._held_explained(env, hold.approval_id) is True
+    # Another agent cannot see the call, so for it nothing is explained.
+    other = _mcp_env(ctx, actors.ownerless_agent)
+    assert await mcp_tools._held_explained(other, hold.approval_id) is False
 
 
 async def test_mcp_explain_held_call_refuses_an_over_long_reason_like_the_route(
