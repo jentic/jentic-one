@@ -3,18 +3,26 @@ exit: 3
 {
   "body": {
     "_links": {
+      "explain": "https://console.example/executions/holds/held_held1:explain",
       "result": "https://console.example/executions/holds/held_held1/result",
       "self": "https://console.example/executions/holds/held_held1",
       "withdraw": "https://console.example/executions/holds/held_held1:withdraw"
     },
-    "agent_directive": "This call needs human approval.",
+    "agent_directive": {
+      "human_readable_instruction": "This call needs human approval.",
+      "parameters": {
+        "held_execution_id": "held_held1",
+        "review_url": "https://console.example/app/agents/approvals/held_held1"
+      },
+      "strategy": "prompt_human"
+    },
     "expires_at": "2026-10-10T12:00:00Z",
     "held_execution_id": "held_held1",
     "review_url": "https://console.example/app/agents/approvals/held_held1",
     "status": "held"
   },
   "headers": {
-    "Content-Length": "425",
+    "Content-Length": "673",
     "Content-Type": "application/json",
     "Preference-Applied": "respond-async"
   },

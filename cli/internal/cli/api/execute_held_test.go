@@ -21,11 +21,19 @@ const heldBody = `{
 	"held_execution_id": "held_held1",
 	"review_url": "http://ui.local/app/agents/approvals/held_held1",
 	"expires_at": "2026-10-10T12:00:00Z",
-	"agent_directive": "This call needs human approval.",
+	"agent_directive": {
+		"strategy": "prompt_human",
+		"parameters": {
+			"held_execution_id": "held_held1",
+			"review_url": "http://ui.local/app/agents/approvals/held_held1"
+		},
+		"human_readable_instruction": "This call needs human approval."
+	},
 	"_links": {
 		"self": "http://ui.local/executions/holds/held_held1",
 		"result": "http://ui.local/executions/holds/held_held1/result",
-		"withdraw": "http://ui.local/executions/holds/held_held1:withdraw"
+		"withdraw": "http://ui.local/executions/holds/held_held1:withdraw",
+		"explain": "http://ui.local/executions/holds/held_held1:explain"
 	}
 }`
 
