@@ -15,8 +15,6 @@ Connect agents:
 - [Connect an agent](connecting-agents.md) — the four integration paths
   (skill, MCP stdio, MCP over HTTP, plain HTTP), and how self-hosted differs
   from the Jentic cloud platform.
-- [Run coding agents in isolation](local-agent.md) — `jentic run` and the
-  local-agent sandbox.
 - [Serve MCP over HTTP](mcp-http-endpoint.md) — the optional hosted `/mcp`
   endpoint.
 - [Executions requiring approval](executions-requiring-approval.md) — Ask
@@ -24,6 +22,9 @@ Connect agents:
 
 Operate the catalog:
 
+- [Import APIs](importing-apis.md) — from the public catalog (UI, CLI, MCP,
+  HTTP) or your own OpenAPI description; server-URL resolution, revisions
+  and promote, and import troubleshooting.
 - [Fix a spec with an overlay](overlays.md) — patching an imported API
   description without forking it.
 - [How credential resolution works](credentials-and-toolkits.md) — how

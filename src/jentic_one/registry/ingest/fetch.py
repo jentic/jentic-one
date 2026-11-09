@@ -53,7 +53,7 @@ class InlineSource(BaseModel):
     #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
     #: confirmed overlay. Set only by the scope-checked enqueue path.
     supersede_active: bool = False
-    #: Operator approval for a server-host change (``credentials:write``): lets a
+    #: Approval for a server-host change (``org:admin``): lets a
     #: catalog re-import that changes the API's server hosts become current even
     #: when the API has bound credentials. Server-set only, by the scope-checked
     #: ``CatalogService.import_entry``; no client ingest schema exposes it.
@@ -84,7 +84,7 @@ class UrlSource(BaseModel):
     #: confirmed overlay (the current revision is then overlay-origin, so the stage must
     #: archive every active revision). Set only by the scope-checked enqueue path.
     supersede_active: bool = False
-    #: Operator approval for a server-host change (``credentials:write``): lets a
+    #: Approval for a server-host change (``org:admin``): lets a
     #: catalog re-import that changes the API's server hosts become current even
     #: when the API has bound credentials. Server-set only, by the scope-checked
     #: ``CatalogService.import_entry``; no client ingest schema exposes it.

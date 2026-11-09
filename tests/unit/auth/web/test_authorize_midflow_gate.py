@@ -29,7 +29,7 @@ from jentic_one.auth.web.flow import (
     mint_idp_browser_binding,
     sign_payload,
 )
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -62,7 +62,10 @@ def _client_view(*, active: bool = True, approval_status: str = "approved") -> O
 
 def _make_app() -> tuple[TestClient, MemoryStateBackend]:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
 
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(
@@ -135,7 +138,7 @@ def _seed_consent_handle(backend: MemoryStateBackend, handle: str = _HANDLE) -> 
         (False, "approved"),
     ],
 )
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_callback_rejects_client_gated_mid_flow(
     mock_client_svc_cls: MagicMock,
@@ -181,7 +184,7 @@ def test_callback_rejects_client_gated_mid_flow(
         (False, "approved"),
     ],
 )
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_consent_submit_rejects_client_gated_mid_flow(
     mock_client_svc_cls: MagicMock,
@@ -214,7 +217,7 @@ def test_consent_submit_rejects_client_gated_mid_flow(
     mock_authorize_svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_consent_submit_approved_client_still_mints_code(
     mock_client_svc_cls: MagicMock,

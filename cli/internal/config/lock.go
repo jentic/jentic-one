@@ -14,7 +14,7 @@ const configLockName = ".config.lock"
 // lockConfig takes an exclusive advisory lock on the sidecar lock file in the
 // config directory, returning an unlock function the caller MUST defer. The lock
 // is process-wide advisory: it coordinates concurrent jentic invocations that
-// route their config writes through Mutate, so two `jentic run` grants can't
+// route their config writes through Mutate, so two concurrent writers can't
 // interleave a read-modify-write and lose one another's change. It is best-effort
 // against a hand-run editor (advisory locks don't stop a writer that ignores
 // them), which is why Save is also atomic. The lock is released automatically if

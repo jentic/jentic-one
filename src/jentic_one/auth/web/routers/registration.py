@@ -22,6 +22,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.openapi_responses import problem
 
 router = APIRouter()
 
@@ -40,6 +41,7 @@ def _extract_rat(request: Request) -> str:
 
 @router.post(
     "/register",
+    summary="Register an agent client",
     status_code=201,
     # RFC 7591 §3.2.1: optional response members without a value (claim_token
     # on the OSS single-user default — no claim-token minter installed) are
@@ -62,7 +64,7 @@ async def register_endpoint(
     )
 
 
-@router.get("/register/{agent_id}")
+@router.get("/register/{agent_id}", summary="Poll an agent registration's status")
 async def poll_status_endpoint(
     agent_id: Annotated[
         str,
@@ -83,7 +85,17 @@ async def poll_status_endpoint(
     )
 
 
-@router.put("/register/{agent_id}")
+@router.put(
+    "/register/{agent_id}",
+    summary="Update a client registration (unsupported)",
+    responses={
+        403: problem(
+            "Client update is not supported. This endpoint exists to refuse the RFC 7592 "
+            "update call, so it has no success response: every request answers 403 and "
+            "nothing is changed. Re-register instead."
+        )
+    },
+)
 async def update_registration_endpoint(
     agent_id: Annotated[
         str,
@@ -98,7 +110,17 @@ async def update_registration_endpoint(
     raise OperationNotSupportedError("client update is not supported")
 
 
-@router.delete("/register/{agent_id}")
+@router.delete(
+    "/register/{agent_id}",
+    summary="Delete a client registration (unsupported)",
+    responses={
+        403: problem(
+            "Client deletion is not supported. This endpoint exists to refuse the RFC 7592 "
+            "delete call, so it has no success response: every request answers 403 and the "
+            "registration remains. Archive the agent instead."
+        )
+    },
+)
 async def delete_registration_endpoint(
     agent_id: Annotated[
         str,

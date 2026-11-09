@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Awaiting agent approval | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+    <style>/*
+ * auth.css — shared visual theme for the server-rendered auth pages
+ * (/login, /oauth/consent, the no-agents empty state; the approval-pending
+ * page joins in a follow-up PR).
+ *
+ * TOKEN SOURCE OF TRUTH: ui/src/index.css. The HSL triplets below are
+ * hand-derived from the SPA palette; tests/unit/auth/web/test_theme_tokens.py
+ * fails if they drift. Format matches the SPA: `H S% L%` triplets consumed
+ * via hsl(var(--token)) so opacity modifiers work. Like the SPA, the theme
+ * is DARK-ONLY (the platform ships no light theme — Manuel, 2026-09-08):
+ * one unconditional palette, no prefers-color-scheme split.
+ *
+ * SECURITY: this file is a static constant inlined into every auth page's
+ * style block. It must never carry request- or row-derived data, external
+ * fetches (import rules or remote url() sources), or a left-angle-bracket
+ * byte (which could close the style element). The drift-guard test pins all
+ * three properties, keeping the block hashable for a future strict CSP
+ * (style-src 'sha256-…').
+ */
+
+:root {
+	/* Primary scale — ui/src/index.css `:root` (higher = darker). Only the
+	   steps the dark-only mappings below consume are mirrored here; add a
+	   step (and its drift-guard entry) when a new page needs it. */
+	--primary-100: 189 15% 91%; /* #E4EAEB */
+	--primary-300: 183 29% 72%; /* #A3CACC */
+	--primary-700: 186 28% 26%; /* #305256 */
+	--primary-850: 192 38% 16%; /* #193238 */
+	--primary-900: 192 36% 13%; /* #162629 */
+	--primary-950: 192 35% 8%; /* #0E1A1D */
+
+	/* Accents — same source. */
+	--accent-green: 162 66% 62%; /* #5EDEB9 */
+
+	--radius: 0.75rem;
+
+	/* Semantic mappings — dark-only, exactly the SPA's assignments
+	   (ui/src/index.css `:root`; the SPA has no light theme and no
+	   prefers-color-scheme/data-theme switch — decision: dark-only,
+	   Manuel 2026-09-08): bg primary-950, card primary-900, borders
+	   primary-700, primary action primary-300 on primary-950 text. */
+	--page-bg: var(--primary-950);
+	--card-bg: var(--primary-900);
+	--card-border: var(--primary-700);
+	--fg: 0 0% 100%;
+	--fg-muted: var(--primary-300);
+	--fg-label: var(--primary-100);
+	--inset-bg: var(--primary-850);
+	--inset-border: var(--primary-700);
+	--input-bg: var(--primary-950);
+	--input-border: var(--primary-700);
+	--input-border-focus: var(--primary-300);
+	--ring: var(--primary-300);
+	--btn-primary-bg: var(--primary-300);
+	--btn-primary-bg-hover: var(--primary-100);
+	--btn-primary-fg: var(--primary-950);
+	--btn-secondary-bg: var(--primary-900);
+	--btn-secondary-bg-hover: var(--primary-850);
+	--btn-secondary-fg: 0 0% 100%;
+	--btn-secondary-border: var(--primary-700);
+	--brand-fg: 0 0% 100%;
+	--badge-fg: var(--primary-300);
+	--app-name-fg: var(--primary-300);
+	--error-bg: 13 60% 18%;
+	--error-fg: 358 64% 80%;
+	--check-bg: var(--accent-green);
+	--elevation-card: 0 1px 2px 0 hsl(var(--primary-950) / 0.4);
+	color-scheme: dark;
+}
+
+/* ---- shell ---- */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+	font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+	background: hsl(var(--page-bg));
+	color: hsl(var(--fg));
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	-webkit-font-smoothing: antialiased;
+}
+.card {
+	background: hsl(var(--card-bg));
+	border: 1px solid hsl(var(--card-border));
+	border-radius: var(--radius);
+	box-shadow: var(--elevation-card);
+	max-width: 400px;
+	width: 100%;
+	padding: 32px;
+}
+.card--wide { max-width: 440px; }
+
+/* ---- brand header (inline SVG logo + "One" badge, mirrors JenticLogo) ---- */
+
+.logo {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	margin-bottom: 24px;
+	color: hsl(var(--brand-fg));
+}
+.logo svg { display: block; }
+.brand-badge {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	border-radius: 6px;
+	padding: 3px 6px;
+	font-family: 'Geist Mono', ui-monospace, monospace;
+	font-size: 10px;
+	line-height: 1;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: hsl(var(--badge-fg));
+	background: hsl(var(--badge-fg) / 0.1);
+	box-shadow: inset 0 0 0 1px hsl(var(--badge-fg) / 0.2);
+}
+
+/* ---- typography ---- */
+
+h1 {
+	font-family: 'Sora', sans-serif;
+	font-size: 17px;
+	font-weight: 600;
+	margin-bottom: 8px;
+	color: hsl(var(--fg));
+	text-align: center;
+	line-height: 1.4;
+}
+.app-name { color: hsl(var(--app-name-fg)); font-weight: 700; }
+.description {
+	color: hsl(var(--fg-muted));
+	font-size: 14px;
+	margin-bottom: 24px;
+	line-height: 1.5;
+	text-align: center;
+}
+.footer {
+	text-align: center;
+	margin-top: 20px;
+	font-size: 12px;
+	color: hsl(var(--fg-muted));
+}
+.footer a { color: hsl(var(--app-name-fg)); text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+
+/* ---- insets: signed-in chip, permissions panel, origin pill, errors ---- */
+
+.user-info {
+	text-align: center;
+	margin-bottom: 20px;
+	padding: 12px;
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+}
+.user-info .label {
+	font-size: 11px;
+	color: hsl(var(--fg-muted));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 4px;
+}
+.user-info .email { font-size: 14px; color: hsl(var(--fg)); font-weight: 600; }
+.origin {
+	text-align: center;
+	font-size: 13px;
+	font-weight: 700;
+	color: hsl(var(--fg));
+	background: hsl(var(--inset-bg));
+	border: 1px solid hsl(var(--inset-border));
+	border-radius: 6px;
+	padding: 6px 10px;
+	margin: 8px auto 12px;
+	display: table;
+	max-width: 100%;
+	word-break: break-all;
+}
+.error {
+	background: hsl(var(--error-bg));
+	color: hsl(var(--error-fg));
+	border-radius: 8px;
+	font-size: 14px;
+	padding: 10px 14px;
+	margin-bottom: 16px;
+	text-align: center;
+}
+.panel {
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+	padding: 16px;
+	margin-bottom: 16px;
+}
+.session-panel {
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+	padding: 16px;
+	margin-bottom: 16px;
+	text-align: center;
+}
+/* Session-panel internals — pre-shipped for PR #1300's continue-as offer
+   (label / bold email / primary Continue button / "use a different
+   account" alt link) so its rebase onto this theme stays mechanical. */
+.session-panel .label {
+	font-size: 11px;
+	color: hsl(var(--fg-muted));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 4px;
+}
+.session-panel .email {
+	font-size: 14px;
+	color: hsl(var(--fg));
+	font-weight: 600;
+	margin-bottom: 12px;
+	word-break: break-all;
+}
+.session-panel button {
+	width: 100%;
+	background: hsl(var(--btn-primary-bg));
+	color: hsl(var(--btn-primary-fg));
+}
+.session-panel button:hover { background: hsl(var(--btn-primary-bg-hover)); }
+.session-panel .alt {
+	display: block;
+	margin-top: 10px;
+	font-size: 12px;
+	color: hsl(var(--app-name-fg));
+	text-decoration: none;
+}
+.session-panel .alt:hover { text-decoration: underline; }
+.status-line { text-align: center; font-size: 13px; color: hsl(var(--fg-muted)); }
+
+/* ---- awaiting-agent-approval page (P4 hybrid): panel copy + link row ---- */
+
+.panel p {
+	color: hsl(var(--fg-label));
+	font-size: 13px;
+	line-height: 1.5;
+	margin-bottom: 10px;
+}
+.copy-row { display: flex; gap: 8px; }
+.copy-row input {
+	flex: 1;
+	min-width: 0;
+	padding: 8px 10px;
+	border: 1px solid hsl(var(--input-border));
+	border-radius: 6px;
+	font-family: 'Nunito Sans', sans-serif;
+	font-size: 12px;
+	color: hsl(var(--fg-muted));
+	background: hsl(var(--input-bg));
+}
+button.copy {
+	background: hsl(var(--btn-secondary-bg));
+	color: hsl(var(--btn-secondary-fg));
+	border: 1px solid hsl(var(--btn-secondary-border));
+}
+button.copy:hover { background: hsl(var(--btn-secondary-bg-hover)); }
+
+/* ---- permissions list (user consent) ---- */
+
+.permissions {
+	background: hsl(var(--inset-bg));
+	border-radius: 8px;
+	padding: 16px;
+	margin-bottom: 24px;
+}
+.permissions h2 {
+	font-family: 'Sora', sans-serif;
+	font-size: 12px;
+	font-weight: 600;
+	color: hsl(var(--fg-label));
+	margin-bottom: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+.permissions ul { list-style: none; font-size: 14px; color: hsl(var(--fg-label)); }
+.permissions li {
+	padding: 8px 0;
+	display: flex;
+	align-items: center;
+	border-bottom: 1px solid hsl(var(--inset-border));
+}
+.permissions li:last-child { border-bottom: none; }
+.permissions li::before {
+	content: "";
+	width: 18px;
+	height: 18px;
+	background: hsl(var(--check-bg));
+	border-radius: 50%;
+	margin-right: 12px;
+	flex-shrink: 0;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E");
+	background-size: 12px;
+	background-repeat: no-repeat;
+	background-position: center;
+}
+
+/* ---- agent picker (agent consent) ---- */
+
+.agents { margin-bottom: 20px; }
+.agents h2 {
+	font-family: 'Sora', sans-serif;
+	font-size: 12px;
+	font-weight: 600;
+	color: hsl(var(--fg-label));
+	margin-bottom: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+.agent {
+	display: block;
+	border: 1px solid hsl(var(--input-border));
+	border-radius: 8px;
+	padding: 12px 14px;
+	margin-bottom: 10px;
+	cursor: pointer;
+	transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.agent:hover { border-color: hsl(var(--input-border-focus)); }
+.agent:has(input:checked) {
+	border-color: hsl(var(--ring));
+	background: hsl(var(--inset-bg));
+}
+.agent input[type="radio"] { accent-color: hsl(var(--ring)); }
+.agent-header { display: flex; align-items: center; gap: 10px; }
+.agent-name { font-size: 14px; font-weight: 700; color: hsl(var(--fg)); }
+.agent-scopes {
+	list-style: none;
+	margin-top: 8px;
+	font-size: 13px;
+	color: hsl(var(--fg-label));
+}
+.agent-scopes li { padding: 3px 0; }
+.agent-scopes li.granted::before {
+	content: "";
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	background: hsl(var(--check-bg));
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: -2px;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230E1A1D'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E");
+	background-size: 10px;
+	background-repeat: no-repeat;
+	background-position: center;
+}
+.agent-scopes li.lacking { color: hsl(var(--fg-muted) / 0.7); }
+.agent-scopes li.lacking::before {
+	content: "";
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	background: hsl(var(--inset-border));
+	border-radius: 50%;
+	margin-right: 8px;
+	vertical-align: -2px;
+}
+
+/* ---- forms ---- */
+
+.field-label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: hsl(var(--fg-label));
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 6px;
+}
+input[type="email"], input[type="password"], input[type="text"] {
+	width: 100%;
+	padding: 12px 14px;
+	background: hsl(var(--input-bg));
+	border: 1px solid hsl(var(--input-border));
+	border-radius: 8px;
+	font-family: 'Nunito Sans', sans-serif;
+	font-size: 14px;
+	color: hsl(var(--fg));
+	margin-bottom: 16px;
+}
+input:focus {
+	outline: none;
+	border-color: hsl(var(--input-border-focus));
+	box-shadow: 0 0 0 3px hsl(var(--ring) / 0.25);
+}
+
+/* ---- buttons ---- */
+
+button {
+	padding: 12px 20px;
+	border-radius: 8px;
+	font-family: 'Nunito Sans', sans-serif;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	border: none;
+	transition: all 0.2s;
+}
+button:disabled { opacity: 0.6; cursor: default; }
+button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.buttons { display: flex; gap: 12px; }
+.buttons button, .buttons .form-slot { flex: 1; }
+.form-slot { display: flex; }
+.form-slot button { width: 100%; }
+button.primary, .approve {
+	background: hsl(var(--btn-primary-bg));
+	color: hsl(var(--btn-primary-fg));
+}
+button.primary:hover, .approve:hover { background: hsl(var(--btn-primary-bg-hover)); }
+.deny {
+	background: hsl(var(--btn-secondary-bg));
+	color: hsl(var(--btn-secondary-fg));
+	border: 1px solid hsl(var(--btn-secondary-border));
+}
+.deny:hover { background: hsl(var(--btn-secondary-bg-hover)); }
+button.block { width: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after { transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo"><svg xmlns="http://www.w3.org/2000/svg" width="103" height="26" viewBox="21.5 25.4 265.8 66.8" fill="currentColor" aria-hidden="true" focusable="false"><path d="M94.04,26.63c-2.28-.32-4.91,2.9-7.17,8.67-2.61,6.68-5.26,13.38-8.06,19.87l-.03.06-1.57,3.69h0s-.05.13-.05.13c-1.16,2.74-5,11.78-6.24,14.68-.82,1.94-1.7,3.8-2.65,5.59,0,0,0,0,0,.01h0s-.01.02-.02.03c-.65,1.24-1.37,2.39-2.15,3.4-5.36,6.93-12.54,8.78-17.79,9.07-7.89.13-18.36-3.07-22.73-14.86-2.07-5.36-2.58-11.83-2.41-18.05h36.34s-1.47,3.37-1.47,3.37l-.3.69-3.06.08c-2.66.07-5.24.04-7.93.16-2.38.11-4.62-.08-6.49,2.04-.74.84-1.23,1.86-1.49,2.95-.35,1.51-.15,2.63.59,4.45,1.52,3.38,4.63,5.4,8.33,5.4.11,0,.23,0,.34,0,2.09-.07,4.28-.8,6.08-2.14,1.59-1.19,2.78-3.02,3.71-5.05l2.33-5.85,14.87-35.07h0s0-.01,0-.01c.38-.96.76-1.92,1.14-2.88,0-.01,0-.02.01-.03.68-1.66,1.45-1.67,1.46-1.67,0,0,2.45-.61,7.67-.61,4.68,0,7.92.42,8.06.51.13.09.66.16.65,1.39Z" fill="currentColor" stroke="none"/><path d="M104.8,58.91h-.03l-1.96-6.2-.02-.06-2.06-6.51h0s-3.83-12.16-3.83-12.16c-.72-2.15-1.34-4.39-3.11-4.01-3.1.68-4.9,5.86-6.39,9.94-.36.97-.73,2.03-.93,3.16l.47.58,12.4,15.26.14.17h-16.88l-2.38-.02-.02.05-1.41,3.24-.3.7h27.65l-1.33-4.14ZM100.71,61.78h0s.01,0,.01,0h-.01Z" fill="currentColor" stroke="none"/><path d="M249.95,49.65c-1.6,0-2.79-.42-3.55-1.26-.77-.84-1.15-1.9-1.15-3.18s.38-2.39,1.15-3.23c.77-.84,1.95-1.26,3.55-1.26s2.79.42,3.55,1.26c.77.84,1.15,1.91,1.15,3.23s-.38,2.34-1.15,3.18c-.77.84-1.95,1.26-3.55,1.26Z" fill="currentColor" stroke="none"/><path d="M177.07,53.63c-2.15-1.41-4.8-2.11-7.93-2.11-2.39,0-4.51.42-6.38,1.26-1.87.84-3.44,1.97-4.7,3.39-1.26,1.42-2.23,3.04-2.88,4.83-.66,1.8-.99,3.68-.99,5.63v1.07c0,1.89.33,3.73.99,5.53.66,1.8,1.63,3.43,2.91,4.89,1.28,1.46,2.87,2.62,4.78,3.47,1.9.85,4.1,1.28,6.6,1.28s4.63-.44,6.52-1.31c1.89-.87,3.45-2.07,4.7-3.61,1.25-1.53,2.08-3.28,2.51-5.23h-7.85c-.36.89-1.03,1.64-2.03,2.24-1,.61-2.28.91-3.85.91-1.71,0-3.1-.36-4.17-1.07-1.07-.71-1.85-1.72-2.35-3.02-.28-.72-.47-1.52-.6-2.38h21.37v-2.88c0-2.67-.57-5.14-1.71-7.4-1.14-2.26-2.79-4.09-4.94-5.5ZM162.99,62.44c.53-1.3,1.32-2.28,2.35-2.94,1.03-.66,2.3-.99,3.79-.99s2.68.33,3.66.99c.98.66,1.71,1.6,2.19,2.83.26.66.44,1.4.56,2.22h-13.14c.13-.77.33-1.48.59-2.11Z" fill="currentColor" stroke="none"/><path d="M205.34,51.62h-.37c-2.24,0-4.15.5-5.71,1.5-1.57,1-2.73,2.49-3.5,4.49-.27.71-.49,1.48-.67,2.31v-7.39h-6.84v29.27h8.6v-17.04c0-1.64.49-2.95,1.47-3.95.98-1,2.27-1.5,3.87-1.5s2.8.49,3.71,1.47c.91.98,1.36,2.25,1.36,3.82v17.2h8.6v-16.72c0-4.52-.9-7.9-2.7-10.12-1.8-2.22-4.41-3.34-7.82-3.34Z" fill="currentColor" stroke="none"/><path d="M230.93,44.63h-7.96l-.02,7.9h-4.47v6.3h4.46l-.02,11.54c0,2.96.43,5.3,1.28,7.02.85,1.73,2.19,2.96,4.01,3.71,1.82.75,4.2,1.12,7.16,1.12h4.11v-7.26h-4.33c-1.35,0-2.4-.36-3.12-1.09-.73-.73-1.09-1.79-1.09-3.18v-11.86h8.55v-6.3h-8.55v-7.9Z" fill="currentColor" stroke="none"/><path d="M255.18,52.53 246.58,52.53 246.58,52.53 244.75,52.53 242.72,58.86 246.58,58.86 246.58,81.8 255.18,81.8 255.18,58.89 255.18,58.89 255.18,52.53 255.18,52.53 255.18,52.53" fill="currentColor" stroke="none"/><path d="M279.79,70.64c-.14.96-.45,1.81-.91,2.54-.46.73-1.09,1.3-1.9,1.71-.8.41-1.77.61-2.91.61-1.53,0-2.77-.35-3.71-1.04-.94-.69-1.63-1.67-2.06-2.94-.43-1.26-.64-2.68-.64-4.25,0-1.67.23-3.14.69-4.41.46-1.26,1.17-2.25,2.11-2.96.94-.71,2.13-1.07,3.55-1.07,1.67,0,2.97.45,3.9,1.36.93.91,1.46,2.04,1.6,3.39h8.38c-.14-2.38-.82-4.49-2.03-6.3-1.21-1.82-2.83-3.23-4.86-4.25-2.03-1.01-4.36-1.52-7-1.52-2.42,0-4.57.41-6.44,1.23-1.87.82-3.44,1.94-4.7,3.36-1.26,1.42-2.22,3.05-2.86,4.89-.64,1.83-.96,3.75-.96,5.74v1.01c0,1.92.31,3.78.93,5.58.62,1.8,1.56,3.41,2.8,4.83,1.25,1.42,2.79,2.56,4.65,3.42,1.85.85,4.06,1.28,6.62,1.28s4.98-.52,7.05-1.55c2.06-1.03,3.72-2.47,4.97-4.3,1.25-1.83,1.92-3.96,2.03-6.38h-8.33Z" fill="currentColor" stroke="none"/><path d="M131.94,42.2l-2.54,7.93h11.36l.18.13c.32.23.43.45.43.83,0,2.45-.03,4.94-.06,7.14-.04,3.04-.09,6.48-.03,9.76v.08c-.42,4.55-4.35,7-7.83,7-2.79,0-5.14-1.52-6.28-4.08-1.23-2.75-.34-5.18.58-6.99l.4-.78h-8.57l-.14.34c-1.35,3.39-1.32,7.17.1,10.64,1.53,3.76,4.56,6.73,8.31,8.15,1.82.69,3.71,1.04,5.61,1.04,4.1,0,8.07-1.61,11.18-4.52,3.14-2.94,5.04-6.9,5.34-11.15v-.02s0-25.5,0-25.5h-18.01Z" fill="currentColor" stroke="none"/></svg><span class="brand-badge">One</span></div>
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">o&#x27;brien@example.com</div>
+        </div>
+        <h1>Your agent <span class="app-name">pending &lt;bot&gt;</span> is awaiting
+            administrator approval</h1>
+        <p class="description">
+            This page checks automatically and continues the connection to
+            <span class="app-name">Evil &lt;App&gt; &amp; &quot;Co&quot;</span> as soon as an
+            administrator approves your agent.
+        </p>
+        <div class="panel">
+            <p>Ask your Jentic One admin to approve
+                <span class="app-name">pending &lt;bot&gt;</span> on the Agents page:</p>
+            <div class="copy-row">
+                <input id="agents-link" readonly value="https://auth.example.com/app/agents">
+                <button type="button" class="copy" id="copy-link">Copy</button>
+            </div>
+        </div>
+        <div class="status-line" id="agent-approval-status">Waiting for approval&hellip;</div>
+    </div>
+    <script id="agent-approval-config" type="application/json">{"status_url": "/oauth/consent/agent/status?st=<SIGNED>", "continue_url": "/oauth/consent?ch=handle-golden", "poll_ms": 5000}</script>
+    <script>
+(function () {
+    "use strict";
+    var cfg = JSON.parse(
+        document.getElementById("agent-approval-config").textContent);
+    var statusEl = document.getElementById("agent-approval-status");
+    var settled = false;
+
+    function onStatus(status) {
+        if (settled) { return; }
+        if (status === "approved") {
+            settled = true;
+            statusEl.textContent = "Approved — continuing…";
+            // Re-enter the consent page: the handle re-validates server-side
+            // and the newly-active agent renders pre-selected.
+            window.location.replace(cfg.continue_url);
+        } else if (status === "denied") {
+            settled = true;
+            statusEl.textContent =
+                "An administrator denied this agent. " +
+                "You can close this page.";
+        }
+    }
+
+    // Poll cadence: cfg.poll_ms steady-state. A 429 backs off to the
+    // server's Retry-After hint (or doubles the cadence when absent),
+    // clamped to [cfg.poll_ms, 60 s]; any non-429 answer resets it.
+    var pollDelay = cfg.poll_ms;
+    function schedule() {
+        if (!settled) { window.setTimeout(poll, pollDelay); }
+    }
+    function poll() {
+        if (settled) { return; }
+        fetch(cfg.status_url, { headers: { Accept: "application/json" } })
+            .then(function (resp) {
+                if (resp.status === 400) {
+                    settled = true;
+                    statusEl.textContent =
+                        "This page has expired. Retry the connection " +
+                        "from your application.";
+                    return null;
+                }
+                if (resp.status === 429) {
+                    var retryAfter = parseInt(resp.headers.get("Retry-After"), 10);
+                    var hinted = isNaN(retryAfter) ? 0 : retryAfter * 1000;
+                    pollDelay = Math.min(
+                        Math.max(hinted, pollDelay * 2, cfg.poll_ms), 60000);
+                    return null;
+                }
+                pollDelay = cfg.poll_ms;
+                return resp.ok ? resp.json() : null;
+            })
+            .then(function (body) {
+                if (body && body.status) { onStatus(body.status); }
+                schedule();
+            })
+            .catch(function () { schedule(); });
+    }
+    poll();
+
+    document.getElementById("copy-link").addEventListener("click", function () {
+        var input = document.getElementById("agents-link");
+        input.select();
+        var self = this;
+        try {
+            navigator.clipboard.writeText(input.value).then(function () {
+                self.textContent = "Copied";
+            });
+        } catch (e) {
+            document.execCommand("copy");
+            self.textContent = "Copied";
+        }
+    });
+})();
+</script>
+</body>
+</html>

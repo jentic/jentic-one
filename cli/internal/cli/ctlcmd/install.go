@@ -616,7 +616,7 @@ func (a *app) recordManifest(draft *install.Draft) {
 
 // writeCLIConfig points the `jentic` CLI at the freshly installed local stack by
 // persisting the control-plane base URL and the local broker target into
-// ~/.jentic/config.yaml. Without this, `jentic execute` / `jentic run` fall back
+// ~/.jentic/config.yaml. Without this, `jentic execute` and friends fall back
 // to the built-in defaults (https://127.0.0.1:8100), which may not match this
 // install's broker scheme/port. Existing values are preserved (so a re-install or a
 // hand-edited config is not clobbered); only unset fields are filled in. A

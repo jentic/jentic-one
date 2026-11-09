@@ -33,9 +33,9 @@ const (
 	RuntimeCodex         Runtime = "codex"
 )
 
-// SupportedRuntimes enumerates every runtime an MCP entry (and thus a
-// `_jentic-<runtime>` service account) can exist for — the closed set
-// `jentic reset` surveys when tearing isolation down.
+// SupportedRuntimes enumerates every runtime an MCP entry can exist for — also
+// the closed set of `_jentic-<runtime>` service accounts `jentic reset` and
+// doctor survey for leftovers.
 func SupportedRuntimes() []Runtime {
 	return []Runtime{RuntimeCursor, RuntimeClaudeDesktop, RuntimeClaudeCode, RuntimeCodex}
 }
@@ -67,61 +67,27 @@ const ServerName = "jentic"
 // Entry is the runtime-agnostic MCP server entry: the command to spawn and
 // its argv. Every writer renders this into its runtime's native shape.
 type Entry struct {
-	// Command is the absolute path of the executable the runtime spawns
-	// (the stable jentic binary path, or "sudo"/"docker" for the isolated
-	// variants).
+	// Command is the absolute path of the executable the runtime spawns: the
+	// stable jentic binary path (or "sudo" in a sudo-shim entry an older
+	// release's isolation step wrote).
 	Command string
 	// Args is the argv after Command. For the plain entry this is exactly
 	// ["mcp", "--context", <name>].
 	Args []string
 }
 
-// PlainEntry is the standard (non-isolated) entry: the stable absolute binary
-// path running `mcp --context <name>`. contextName is expected to satisfy the
-// config-name charset (client/config.ValidName); callers validate before
-// building privileged variants.
+// PlainEntry is the entry this CLI writes: the stable absolute binary path
+// running `mcp --context <name>`. contextName is expected to satisfy the
+// config-name charset (client/config.ValidName).
 func PlainEntry(binPath, contextName string) Entry {
 	return Entry{Command: binPath, Args: []string{"mcp", "--context", contextName}}
 }
 
-// SudoShimEntry is the §3.7.5 rung-2 isolated entry: the runtime spawns
-// `sudo -n -H -u <serviceUser> /abs/jentic mcp --context <name>`. sudo
-// inherits stdin/stdout so the JSON-RPC pipe survives; `-n` because a GUI
-// spawn can never answer a password prompt (the matching argv-pinned NOPASSWD
-// sudoers line makes the prompt unnecessary); `-H` because macOS's stock
-// sudoers ships `Defaults env_keep += "HOME MAIL"`, so without it a
-// GUI-spawned shim keeps HOME pointing at the OPERATOR's home and the
-// isolated server resolves its XDG config against a tree the service uid
-// cannot (and must not) read. Option flags do not participate in sudoers
-// command matching, so the argv-pinned rule is unaffected. The argv after the
-// service user is EXACTLY the command the sudoers rule pins, so the entry
-// cannot be replayed with a different context.
-func SudoShimEntry(serviceUser, binPath, contextName string) Entry {
-	return Entry{
-		Command: "sudo",
-		Args:    append([]string{"-n", "-H", "-u", serviceUser}, McpArgv(binPath, contextName)...),
-	}
-}
-
-// McpArgv is the exact argv (command first) the sudo shim runs and the
-// sudoers rule pins: `/abs/jentic mcp --context <name>`. One source of truth
-// so the entry and the rule can never drift apart.
-func McpArgv(binPath, contextName string) []string {
-	return []string{binPath, "mcp", "--context", contextName}
-}
-
-// The container-isolation entry variant was deliberately DEMOTED to the
-// documented manual recipe (docs/security/same-host/mcp-same-host-hardening.md,
-// Recipe 3): no published CLI image exists yet (2-E4 owns publishing one),
-// and an automated rewrite would need volume provisioning + a smoke-spawn to
-// honour the invariant that a failed isolation keeps the working
-// non-isolated entry. The isolation step points docker-equipped operators at
-// the recipe instead of rewriting anything.
-
 // PinnedBinary returns the absolute jentic binary path a written entry
 // actually spawns: the entry's own command for a plain entry, or the pinned
-// argv's binary for a sudo-shim entry (the first argument after the sudo
-// flags, i.e. the element preceding the "mcp" subcommand). Empty when the
+// argv's binary for a sudo-shim entry left by an older release (the first
+// argument after the sudo flags, i.e. the element preceding the "mcp"
+// subcommand). Empty when the
 // entry does not look like one of ours — doctor uses this to probe the
 // binary the ENTRY names rather than whatever `jentic` resolves on PATH.
 func (e Entry) PinnedBinary() string {

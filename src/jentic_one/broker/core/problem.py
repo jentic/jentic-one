@@ -78,7 +78,7 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     RateLimitExceededError: 429,
     CredentialNotProvisionedError: 424,
     CredentialUndecryptableError: 424,
-    CredentialNeedsReconnectError: 401,
+    CredentialNeedsReconnectError: 424,
     CredentialRefreshTransientError: 502,
     UpstreamTimeoutError: 504,
     UpstreamTransportError: 502,

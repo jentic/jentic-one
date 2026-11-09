@@ -217,6 +217,13 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami",
 		},
 		{
+			// A rules denial is change-shaped: the directive carries the edit
+			// to ask for, so the pointer names the tool that asks instead of
+			// dead-ending on an identity the agent already knows.
+			"action_denied_with_edit", http.StatusForbidden,
+			`{"type":"action_denied","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"edit":{"credential_id":"cred_1","suggested_rules":[{"effect":"allow","methods":["POST"],"path":"/v1/pets","match_mode":"exact"}]},"suggested_command":"jentic access edit cred_1"},"human_readable_instruction":"Ask for the rule with request_access_change."}}`, "request_access_change",
+		},
+		{
 			"credential_identity_mismatch", http.StatusForbidden,
 			`{"type":"credential_identity_mismatch","detail":"denied"}`, "whoami",
 		},

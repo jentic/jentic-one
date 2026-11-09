@@ -16,6 +16,7 @@ import {
 import { useCallback, useMemo } from 'react';
 import {
 	amendConnectSession,
+	rebaseConnectSession,
 	bindCredentialToAgentBlocked,
 	getBindingAccess,
 	getPermissionRuleSet,
@@ -218,6 +219,25 @@ export function useStartIntegrationConnect() {
 }
 
 /**
+ * Bring an open edit up to date with its binding. Reads report ``stale`` and
+ * write nothing, so the client asks for the rebase: on opening a review the
+ * caller can approve, and from the changed-request banner while it is open.
+ * It is a write against the connect bucket, so never on a bystander's read.
+ */
+export function useRebaseConnectSession(sessionId: string, pollToken?: string) {
+	const client = useQueryClient();
+	return useMutation<AmendedSession, Error, void>({
+		mutationFn: () => rebaseConnectSession(sessionId, pollToken),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ['integrations', 'session', sessionId] });
+			void client.invalidateQueries({
+				queryKey: ['integrations', 'session-revisions', sessionId],
+			});
+		},
+	});
+}
+
+/**
  * A reviewer's change to a request's rules (or an edit's scopes), saved as a
  * revision of the request. The review and its history are re-read so the new
  * revision shows as the one to approve.
@@ -320,8 +340,20 @@ export function invalidateEditSurfaces(
 	edit: {
 		binding: { agent_id: string; credential_id: string };
 		other_bound_agents: { agent_id: string }[];
+		other_bound_agents_truncated?: boolean;
 	},
 ): Promise<unknown> {
+	// The named agents are a capped list, so past the cap naming them one by
+	// one leaves the rest serving access the change has already altered. When
+	// the review says there are more, drop the agent slices wholesale.
+	if (edit.other_bound_agents_truncated) {
+		return Promise.all([
+			client.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot }),
+			client.invalidateQueries({
+				queryKey: credentialKeys.agents(edit.binding.credential_id),
+			}),
+		]);
+	}
 	return Promise.all([
 		invalidateBindingSurfaces(client, edit.binding.credential_id, [
 			edit.binding.agent_id,

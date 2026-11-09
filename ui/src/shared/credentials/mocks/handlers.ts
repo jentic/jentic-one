@@ -439,6 +439,8 @@ export interface MockConnectSession {
 	revision?: { id: string; number: number };
 	/** When a human last rejected this agent's ask for the same target (the review shows it). */
 	last_rejected_at?: string | null;
+	/** The binding moved since an edit was opened; `:rebase` clears it. */
+	stale?: boolean;
 }
 
 type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected' | 'applied';
@@ -741,6 +743,7 @@ const connectSessionsHandlers = [
 			revision: gated.edit?.revision ?? createRevision(gated),
 			edit: gated.edit ?? null,
 			last_rejected_at: gated.last_rejected_at ?? null,
+			stale: gated.stale ?? false,
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,
@@ -758,6 +761,22 @@ const connectSessionsHandlers = [
 	}),
 
 	// An edit's reviewer changing the request: a new revision recorded as theirs.
+	// Bringing a stale edit up to date: a new revision, and no longer stale.
+	http.post('/connect-sessions/:sessionId\\:rebase', ({ params, request }) => {
+		const gated = gateSession(params.sessionId, request.url);
+		if (!isMockSession(gated)) return gated;
+		const edit = gated.edit;
+		if (!edit) return new HttpResponse(null, { status: 400 });
+		const number = edit.revision.number + 1;
+		gated.stale = false;
+		gated.edit = { ...edit, revision: { id: `csr_${gated.session_id}_${number}`, number } };
+		return HttpResponse.json({
+			session_id: gated.session_id,
+			revision_id: gated.edit.revision.id,
+			revision_number: number,
+		});
+	}),
+
 	http.post('/connect-sessions/:sessionId\\:amend', async ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
@@ -814,24 +833,37 @@ const connectSessionsHandlers = [
 		});
 	}),
 
+	// Paged like the route: the client asks for one page at a time and follows
+	// `next_cursor`, so a mock that always answers `has_more: false` leaves
+	// that loop unexercised — which is how the client came to discard it.
 	http.get('/connect-sessions/:sessionId/revisions', ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
 		const current = gated.edit?.revision ?? createRevision(gated);
-		return HttpResponse.json({
-			data: gated.revisions ?? [
-				{
-					id: current.id,
-					number: current.number,
-					created_by: gated.requested_by_actor_id,
-					created_at: gated.created_at,
-					proposal: {},
-					result: gated.edit?.result ?? {
-						rules: gated.requested_permission_rules,
-						scopes: gated.requested_scopes,
-					},
+		const all = gated.revisions ?? [
+			{
+				id: current.id,
+				number: current.number,
+				created_by: gated.requested_by_actor_id,
+				created_at: gated.created_at,
+				proposal: {},
+				result: gated.edit?.result ?? {
+					rules: gated.requested_permission_rules,
+					scopes: gated.requested_scopes,
 				},
-			],
+			},
+		];
+		const url = new URL(request.url);
+		const limit = Number(url.searchParams.get('limit') ?? 50);
+		const cursor = url.searchParams.get('cursor');
+		const after = cursor ? all.findIndex((r) => r.id === atob(cursor)) + 1 : 0;
+		const page = all.slice(after, after + limit);
+		const has_more = after + page.length < all.length;
+		return HttpResponse.json({
+			limit,
+			has_more,
+			next_cursor: has_more && page.length > 0 ? btoa(page[page.length - 1].id) : null,
+			data: page,
 		});
 	}),
 

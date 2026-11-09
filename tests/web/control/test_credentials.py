@@ -1897,8 +1897,16 @@ def test_edit_connection_apply_and_conflicts(
     assert (resp.json()["status"], resp.json()["challenge"]) == ("applied", None)
     assert [r["path"] for r in cred_writer_client.get(base).json()["data"]] == ["/v1/send"]
 
-    # The open request's rule is gone: it's conflicted until resolved.
+    # The open request's rule is gone. The read says the request is stale and
+    # writes nothing; :rebase resolves it onto the binding as it is now, and
+    # the part that no longer fits comes back as a conflict.
+    stale = cred_writer_client.get(f"/connect-sessions/{open_id}").json()
+    assert stale["stale"] is True and stale["edit"]["conflicts"] == []
+    rebased = cred_writer_client.post(f"/connect-sessions/{open_id}:rebase")
+    assert rebased.status_code == 200, rebased.text
     review = cred_writer_client.get(f"/connect-sessions/{open_id}").json()
+    assert review["stale"] is False
+    assert review["revision"]["id"] == rebased.json()["revision_id"]
     assert review["edit"]["conflicts"] == [{"kind": "missing_rule", "rule_id": rule_id}]
     confirm = {
         "kind": "edit",

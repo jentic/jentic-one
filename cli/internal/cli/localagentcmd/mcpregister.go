@@ -137,7 +137,7 @@ func emptyMCPReport() *mcpReport {
 }
 
 // mcpRegistration is what registerMCPEntries did: the successful outcomes
-// (setup's isolation step acts on them) plus the per-runtime report.
+// plus the per-runtime report.
 type mcpRegistration struct {
 	outcomes      []mcpcfg.Outcome
 	results       []mcpResult

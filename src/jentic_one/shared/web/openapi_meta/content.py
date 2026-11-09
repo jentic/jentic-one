@@ -93,8 +93,19 @@ Today the platform ships a local username + password identity
 provider for human users, alongside agent identity (Dynamic Client
 Registration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects
 `Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`
-token) except `GET /health`, `POST /auth/login`,
-`POST /users:create-admin`, and `POST /users:redeem-invite`.
+token).
+
+Every operation declares its own `security`, so read that rather
+than any list here. An operation declaring `security: []` needs no
+platform bearer token, which covers three kinds: liveness and
+identity probes (`GET /health`, `GET /instance`); the endpoints a
+caller reaches before it holds a token (`POST /auth/login`,
+`POST /users:create-admin`, `POST /users:redeem-invite`); and the
+OAuth and registration endpoints that authenticate by a different
+credential entirely — a grant, a client assertion or an RFC 7592
+registration access token — rather than by `BearerAuth`. The last
+group is not open: `security: []` there means "not a platform
+bearer token", not "no credential required".
 Human tokens are issued by `POST /auth/login` with a fixed 1-hour
 TTL and can be re-minted before expiry via `POST /auth/refresh`
 (sliding session, bounded by an absolute window —
@@ -156,13 +167,17 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   responses still use `_links` where it carries non-trivial
   information (e.g. `Job._links.result`, `AsyncQueuedResponse._links.self`,
   `Event._links`).
-- **Authentication.** All operations require `Authorization:
+- **Authentication.** Operations require `Authorization:
   Bearer <token>` — an opaque access token (prefixed `at_`, not a
   JWT), obtained from `POST /oauth/token` (see `BearerAuth` for the
-  per-actor grants) — except the unauthenticated
-  `GET /health`, `POST /auth/login`, `POST /users:create-admin`,
-  and `POST /users:redeem-invite`. See the `Users` tag for the
-  first-run setup and invite-redemption flows.
+  per-actor grants) — unless the operation declares `security: []`,
+  which each one does explicitly. Those are the probes, the
+  pre-token endpoints (`POST /auth/login`,
+  `POST /users:create-admin`, `POST /users:redeem-invite`), and the
+  OAuth and agent-registration endpoints that authenticate by a
+  grant, client assertion or registration access token instead.
+  Read the operation's own `security`, not this paragraph. See the
+  `Users` tag for the first-run setup and invite-redemption flows.
 - **Header namespace.** All Jentic-specific HTTP headers — request
   and response, broker and control-plane — live under the
   `Jentic-*` namespace **without** the legacy `X-` prefix
@@ -171,9 +186,12 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   response belongs to the upstream API. Standard headers
   (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,
   `traceparent`, `tracestate`) keep their RFC names.
-- **Append-only audit.** Admin / Audit records are never mutated
-  after the fact; retention is enforced via purge policy, not
-  edit.
+- **Append-only audit.** Audit entries, execution records and events
+  are never mutated after the fact. They — and finished jobs and their
+  results — are kept indefinitely: there is no API or setting to prune
+  them yet, so trim them at the database level. Approved-execution
+  results are the exception: they expire after
+  `held_executions.result_retention_seconds`.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
   from it. To walk the executions you can see under one logical request, use
@@ -190,7 +208,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   `revision_id` from the revision list). `revision_id` is an unprefixed UUID;
   the header also accepts the equivalent `rev_<revision_id without hyphens>`
   label, a header-only encoding rather than a resource ID. Control-plane
-  reads (`Search`, `Inspect`, `Lookup`) accept matching `revision_id` / `revision_pins`
+  reads (`Search`, `Inspect`) accept matching `revision_id` / `revision_pins`
   parameters so dashboards can preview an unpromoted revision
   before flipping `:promote`.
 - **ID prefixes.** Resource identifiers use a stable short prefix.

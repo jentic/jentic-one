@@ -103,34 +103,21 @@ try {
   Pass "jenticctl doctor --json parses"
 
   # 6. OPS-22 degrade paths — assert "sane error / clean no-op", not a crash, for
-  #    the two OS-sensitive lifecycle commands whose behavior forks by GOOS. On
-  #    native Windows `os.Process.Signal` supports only Kill, so this is exactly
-  #    where OPS-20's SIGTERM/Signal(0) bug would surface; the go-test leg covers
-  #    the unit contract, and these assert the end-to-end CLI behavior offline.
+  #    OS-sensitive lifecycle commands whose behavior forks by GOOS. On native
+  #    Windows `os.Process.Signal` supports only Kill, so this is exactly where
+  #    OPS-20's SIGTERM/Signal(0) bug would surface; the go-test leg covers the
+  #    unit contract, and these assert the end-to-end CLI behavior offline.
   #
-  # 6a. `jentic run <agent>` on a home with no isolated agent user takes the
-  #     same-user launcher path; it must terminate GRACEFULLY (non-zero, rendered
-  #     error) rather than panic or hang, whether or not the agent binary is
-  #     present. `run` is fenced in agent mode, so force human mode for this only.
+  # 6a. `jentic run` is not a command: it must fail as an unknown command (a
+  #     rendered error, non-zero exit), never launch anything. Force human mode
+  #     so the check is about the command tree, not agent-mode fencing.
   $env:JENTIC_MODE = 'human'
   $r = & $jentic 'run' 'claude' '--yes' 2>&1 | Out-String
   $rc = $LASTEXITCODE
   $env:JENTIC_MODE = 'agent'
-  if ($rc -eq 0) { Fail "jentic run claude exit=0 offline, want a graceful non-zero`n$r" }
-  if ($r -match 'panic') { Fail "jentic run claude crashed (panic)`n$r" }
-  # WIN-3: the failure must be a RENDERED, fail-closed CodedError — never a silent
-  # UNCONFINED session or an incidental crash. On a scratch home with no isolated
-  # agent user, `run` takes the same-user launcher path and resolves the agent
-  # binary FIRST, so on CI (no `claude` on PATH) the graceful error is
-  # binary-missing; when an agent user IS present it is instead the WSL-only
-  # confinement guard. Accept EITHER — both prove `run` degrades cleanly on
-  # native Windows rather than dropping into an unconfined session.
-  $confinement = 'CONFINEMENT_UNAVAILABLE|not supported on windows|isn''t available on this machine|confined agent sessions aren''t available'
-  $binaryMissing = 'is not installed or not on your PATH'
-  if ($r -notmatch $confinement -and $r -notmatch $binaryMissing) {
-    Fail "jentic run claude did not surface a graceful confinement/binary-missing error`n$r"
-  }
-  Pass "jentic run claude degrades cleanly (exit $rc, rendered error, no crash)"
+  if ($rc -eq 0) { Fail "jentic run claude exit=0, want unknown-command non-zero`n$r" }
+  if ($r -notmatch 'unknown command "run"') { Fail "jentic run is not reported as an unknown command`n$r" }
+  Pass "jentic run is an unknown command (exit $rc)"
 
   # 6b. `jenticctl stop` on a scratch home (no compose file, no PID file) must
   #     report "nothing to stop" and exit 0 — the assertion OPS-20 would have

@@ -22,25 +22,25 @@ Agents are the only machine identity. Headless integrations (CI jobs, cron
 runners, scripts) register as an agent and authenticate with its `jak_` API
 key.
 
-Two former actor kinds are retired (see the
-[release runbook](../development/releasing.md)):
+Two former actor kinds are retired (upgrade steps: the
+[0.41 upgrade notes](../operations/upgrade-notes.md#0410)):
 
-- **`service_account`** — removed in theme 8. The migration converted each
+- **`service_account`** — retired in 0.40. The migration converted each
   service account into a successor agent, carrying over its grants and
-  bindings. In 0.41 (theme-8 Phase 4) the service-account tables are dropped
-  and **`sak_` keys stop working**: every surface answers a `sak_` key with a
+  bindings. From 0.41 the service-account tables are dropped and **`sak_`
+  keys are refused**: every surface answers a `sak_` key with a
   401 whose detail says service-account keys were retired and to mint a
   `jak_` key for the successor agent (an INFO `retired_service_account_key_refused`
   log line names that agent). No new `sak_` keys are issued; the
   `/service-accounts` API, `POST /oauth/mint`, and the `client_credentials`
-  grant are gone. `service_account` is no longer an `ActorType` value.
+  grant do not exist. `service_account` is not an `ActorType` value.
   Leftover `service_account` token rows fail closed on every path, and
   historical `sva_` ids in audit and event rows are labelled, never
   resolved.
 - **`toolkit`** — on 0.40.x a startup migration turned each `jntc_live_`
-  toolkit key into a successor agent (it minted a service account before
-  theme 8, and those service accounts migrate like any other). The toolkit
-  tables are dropped in 0.41 (theme-5 Phase 6b); a retired plaintext keeps
+  toolkit key into a successor agent (older releases minted a service
+  account instead, and those service accounts migrate like any other). The
+  toolkit tables are dropped from 0.41; a retired plaintext keeps
   authenticating as its successor agent through the migrated digest, until
   no earlier than 2026-12-01.
 

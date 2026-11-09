@@ -385,6 +385,22 @@ class EditOpenError(PointsAtAccessError):
         self.session_id = session_id
 
 
+class TooManyRevisionsError(ConnectSessionServiceError):
+    """The session holds as many revisions as it may, so it cannot change again.
+
+    Only a human decision moves it from here: a fresh ask for the same binding
+    is refused while this one is open, so the message says what is true of the
+    session and leaves the next step to the surface that renders it.
+    """
+
+    def __init__(self, session_id: str, limit: int) -> None:
+        super().__init__(
+            f"this request has been changed {limit} times, as many as one request holds"
+        )
+        self.session_id = session_id
+        self.limit = limit
+
+
 class RevisionChangedError(ConnectSessionServiceError):
     """The confirm names a revision that is no longer the session's current one."""
 

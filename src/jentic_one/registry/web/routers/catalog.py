@@ -66,7 +66,12 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
     )
 
 
-@router.get("/catalog", response_model=CatalogListResponse, response_model_by_alias=True)
+@router.get(
+    "/catalog",
+    summary="List catalog entries",
+    response_model=CatalogListResponse,
+    response_model_by_alias=True,
+)
 async def list_catalog(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
@@ -164,6 +169,7 @@ async def list_catalog(
 
 @router.get(
     "/catalog/{api_id:path}/operations",
+    summary="Preview a catalog entry's operations",
     response_model=OperationPreviewListResponse,
     response_model_by_alias=True,
 )
@@ -250,7 +256,10 @@ async def preview_catalog_operations(
 
 
 @router.get(
-    "/catalog/{api_id:path}", response_model=CatalogEntryResponse, response_model_by_alias=True
+    "/catalog/{api_id:path}",
+    summary="Get a catalog entry",
+    response_model=CatalogEntryResponse,
+    response_model_by_alias=True,
 )
 async def get_catalog_entry(
     request: Request,
@@ -272,7 +281,12 @@ async def get_catalog_entry(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.post("/catalog:refresh", status_code=200, response_model=CatalogRefreshResponse)
+@router.post(
+    "/catalog:refresh",
+    summary="Refresh the catalog cache",
+    status_code=200,
+    response_model=CatalogRefreshResponse,
+)
 async def refresh_catalog(
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     svc: CatalogService = Depends(get_catalog_service),
@@ -289,6 +303,7 @@ async def refresh_catalog(
 
 @router.post(
     "/catalog/{api_id:path}:import",
+    summary="Import a catalog entry",
     status_code=202,
     response_model=ApiImportResponse,
     response_model_by_alias=True,
@@ -319,6 +334,7 @@ async def import_catalog_entry(
 
 @router.post(
     "/catalog/{api_id:path}:snooze",
+    summary="Snooze a catalog entry's update notice",
     status_code=204,
     responses=conflict("The catalog entry has no outstanding update to snooze."),
 )
@@ -348,7 +364,11 @@ async def snooze_catalog_entry(
     return Response(status_code=204)
 
 
-@router.post("/catalog/{api_id:path}:unsnooze", status_code=204)
+@router.post(
+    "/catalog/{api_id:path}:unsnooze",
+    summary="Clear a catalog entry's snooze",
+    status_code=204,
+)
 async def unsnooze_catalog_entry(
     api_id: Annotated[
         str,

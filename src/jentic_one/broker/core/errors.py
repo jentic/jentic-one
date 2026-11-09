@@ -176,7 +176,18 @@ class CredentialUndecryptableError(BrokerError):
 
 
 class CredentialNeedsReconnectError(BrokerError):
-    """The OAuth2 grant was revoked/disconnected — the caller must reconnect (401)."""
+    """The stored OAuth2 grant was revoked/disconnected — it must be reconnected (424).
+
+    Same class as :class:`CredentialNotProvisionedError` and
+    :class:`CredentialUndecryptableError`, and the same status: the request is
+    fine and **the caller's own bearer token is valid** — a stored dependency
+    is unusable, because the upstream provider revoked the grant the broker
+    refreshes against. A 424 says exactly that. A 401 would instead tell every
+    HTTP client and SDK to re-authenticate *itself*, which can never clear this
+    condition: the caller would re-mint a token that was never the problem,
+    retry, and fail identically. The ``prompt_human`` directive names the real
+    remedy — reconnect the stored credential.
+    """
 
 
 class CredentialRefreshTransientError(BrokerError):

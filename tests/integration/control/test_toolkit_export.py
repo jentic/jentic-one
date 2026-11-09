@@ -11,7 +11,7 @@ control to ``e1a2b3c4d5f6``, admin to ``3e7a91c4b2d8``, the last revisions
 0.40.x knows. The admin leg starts from a modelled pre-drop snapshot: the
 theme-8 Phase-4 drop ``e2f3a4b5c6d7`` is irreversible, so a real 0.41 rollback
 past it restores both databases from their snapshots instead (see
-docs/development/releasing.md). All
+docs/operations/upgrade-notes.md). All
 legacy-table access is raw SQL: the ORM models are gone, which is the point
 of the migration-independent repository.
 """
@@ -39,10 +39,10 @@ from tests.integration.service_account_schema import restore_pre_sa_drop_admin
 
 pytestmark = pytest.mark.integration
 
-#: The rollback targets (docs/development/releasing.md, "Rollback (Phase 6b →
-#: 6a)"): the last control/admin revisions the previous release ships. Below
-#: every 0.41 revision, including the drops and their evidence/backfill
-#: companions (control f2b3c4d5e6a7, admin c0e1f2a3b4c5).
+#: The rollback targets (docs/operations/upgrade-notes.md, 0.41.0): the last
+#: control/admin revisions the previous release ships. Below every 0.41
+#: revision, including the drops and their evidence/backfill companions
+#: (control f2b3c4d5e6a7, admin c0e1f2a3b4c5).
 _CONTROL_PRE_DROP = "e1a2b3c4d5f6"  # pragma: allowlist secret
 _ADMIN_PRE_DROP = "3e7a91c4b2d8"  # pragma: allowlist secret
 

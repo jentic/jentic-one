@@ -2,8 +2,7 @@
 
 The local `jentic mcp` stdio server is spawned by the agent runtime
 itself: a GUI runtime (Claude Desktop, Cursor, …) starts the process as the
-**desktop user**, and there is no seam to interpose a different Unix user the
-way `jentic run` does for agents the CLI launches. When the Jentic One
+**desktop user**. When the Jentic One
 instance runs on the **same host**, that default has two consequences:
 
 - The MCP server process — and the context's key/token files it reads — run
@@ -25,7 +24,7 @@ Two things to keep straight before choosing a recipe:
   shape: a command to spawn.
 
 Pick the lowest rung that matches the sensitivity of the credentials your
-instance holds (the general tier ladder is in [security.md](../README.md)).
+instance holds (the general tier ladder is in [Security overview](../README.md)).
 
 ## Recipe 1 — isolate the instance
 
@@ -46,102 +45,9 @@ With any of these, the desktop side still holds the *agent's own* signing
 key; recipes 2 and 3 move that behind a boundary too (of differing strength
 — see each recipe's residual risk).
 
-## Recipe 2 — sudo-shim entry with a per-agent service user
+## Recipe 2 — container entry
 
-Run the MCP server (and its key/token files) under a dedicated service user,
-and let the agent runtime spawn it through an argv-pinned `sudo` line. `sudo`
-inherits stdin/stdout, so the JSON-RPC pipe survives the user switch; the
-desktop side is left holding only a disposable spawn line, while the process
-and the context's key/token files live under the service user, unreadable by
-the desktop user. macOS/Linux only; this is a manual recipe today — a later
-release automates it as an optional `jentic setup` isolation step.
-
-1. **Create one service user per agent identity/runtime** (`_jentic-claude`,
-   `_jentic-cursor`, …) — *not* a shared catch-all user, which would
-   co-locate every runtime's keys and recreate the shared-key failure mode
-   that one-agent-per-runtime exists to kill. One runtime ↔ one agent ↔ one
-   context ↔ one uid ↔ one sudoers line; revoking a runtime = disable the
-   agent + delete the user. Service-account hygiene: system-uid range, `_`
-   prefix (the macOS convention), no login shell, state under the service
-   user's own `0700` home. Never use setuid wrappers.
-2. **Register the agent under the service user** (your operator runs
-   `sudo -u _jentic-claude jentic register --url <install URL> --env local
-   --name claude` and approves it), so the context and key files are
-   created in the service user's own config dir. Pass `--env`/`--name`
-   explicitly so the derived context name is predictable; a remote install
-   also needs `--broker-url`.
-3. **Rename the derived context** (run as the service user). Registration
-   derives the context name as `<env>-<name>` (here `local-claude`; env
-   defaults to the first DNS label of the install URL and name to the
-   hostname) — it never creates a context named `claude` on its own.
-   Rename it so the sudoers pin and MCP entry below can use the short
-   name:
-
-   ```
-   sudo -u _jentic-claude jentic context rename local-claude claude
-   ```
-
-4. **Install an argv-pinned NOPASSWD sudoers line** (via `visudo -f
-   /etc/sudoers.d/jentic-claude`):
-
-   ```
-   yourdesktopuser ALL=(_jentic-claude) NOPASSWD: /usr/local/libexec/jentic/jentic mcp --context claude
-   ```
-
-   One source user → one target user → the exact `jentic mcp --context
-   <name>` argv. `sudo` matches the full argv, so the entry cannot be
-   replayed with a different context or subcommand.
-
-   The pinned binary must be a root-owned file (`root:wheel` / `root:root`,
-   `0755`) whose every parent directory is root-owned and not group- or
-   world-writable — never a path your desktop user can write, such as a
-   Homebrew prefix or `~/.local/bin`. The automated `jentic setup` isolation
-   step installs such a copy at `/usr/local/libexec/jentic/jentic` (refreshed
-   whenever a re-run finds your `jentic` has changed) and pins that path,
-   replacing any earlier line for the same desktop user and service account;
-   `jentic reset` removes it. `jenticctl doctor` warns when an isolated entry
-   still pins another binary or the copy is missing or out of date — re-run
-   `jentic setup` and accept isolation to fix it.
-
-   The install refuses a tree it cannot trust rather than falling back
-   elsewhere. Stock macOS, Fedora, Ubuntu and Debian 10+ ship `/usr/local`
-   as `root` `0755`, which passes. Two setups do not: a Debian system still
-   using the legacy `staff`-writable `/usr/local` (`root:staff 2775`, kept
-   on hosts upgraded from Debian 9 or earlier, or opted into via
-   `/etc/staff-group-for-usr-local`), and a Mac whose `/usr/local` (or
-   `/usr/local/libexec`) was handed to your user by an old Homebrew install.
-   Restore `root` ownership and `0755` on the reported directory (for
-   example `sudo chown root:root /usr/local && sudo chmod 0755 /usr/local`
-   on Debian, `root:wheel` on macOS), then re-run `jentic setup`. A symlinked
-   `/usr/local` (as on Fedora Atomic desktops) is also refused.
-5. **Point the MCP entry at the shim** (`-n` because GUI spawns cannot answer
-   prompts):
-
-   ```json
-   {
-     "command": "sudo",
-     "args": ["-n", "-u", "_jentic-claude",
-              "/usr/local/libexec/jentic/jentic", "mcp", "--context", "claude"]
-   }
-   ```
-
-**Env boundary (by design):** `sudo`'s default `env_reset` means environment
-variables do **not** cross into the service user. The MCP entry's `env`
-block, `$JENTIC_CONTEXT`, and the file-less overrides
-(`JENTIC_BASE_URL`/`JENTIC_BEARER_TOKEN`) are all incompatible with the
-sudo-shim entry — the context comes from the pinned argv and the config from
-the service user's own files. An orchestrator-set `$JENTIC_SESSION_ID` does
-not cross either, so under the shim the server's own per-process session UUID
-is always the session key. **Never add `env_keep` for `JENTIC_*`** — an
-env-writable desktop user could otherwise re-point the isolated server at
-another instance or token and defeat the boundary.
-
-Residual risk: any process running as the desktop user can invoke the shim —
-impersonation *within* the audited channel, bounded by the entry's pinned
-context and the agent's server-side scopes. Key exfiltration is blocked: the
-desktop-user side never holds long-lived key material.
-
-## Recipe 3 — container entry
+> CLI releases up to 0.44 refer to this recipe as "Recipe 3".
 
 Where Docker Desktop is available (including Windows), spawn the MCP server
 in a container instead — the MCP ecosystem's mainstream isolation pattern.
@@ -231,17 +137,17 @@ Residual risk: this rung's boundary is only as strong as access to the
 Docker daemon — which the desktop user necessarily holds, since the MCP
 entry itself runs `docker`. Any desktop-user process that can reach the
 daemon can mount the named volume (`docker run -v jentic-mcp-claude:/x …`)
-and read the key files, so unlike Recipe 2 the ladder invariant — the
+and read the key files, so unlike Recipe 3 the ladder invariant — the
 desktop-user side never holds long-lived key material — does **not** hold
 here against daemon-capable processes. What the rung buys is convenience,
 containment of the *server* (read-only rootfs, dropped capabilities,
 narrowed egress), and protection against casual file reads — not key
-exfiltration by a shell-capable agent. Recipe 3 is the convenient rung
+exfiltration by a shell-capable agent. Recipe 2 is the convenient rung
 where Docker Desktop exists (and the only one on Windows); on isolation
-strength, Recipe 2's uid boundary is the stronger of the two, and the
-sudo-shim also serves docker-less machines.
+strength, Recipe 3's uid boundary is the stronger of the two, and it also
+serves docker-less machines.
 
-## Recipe 4 — isolated local daemon (`jentic mcp --http`)
+## Recipe 3 — isolated local daemon (`jentic mcp --http`)
 
 The top rung replaces per-runtime stdio processes with one socket-activated
 daemon under a dedicated service user, reached through the credential-less
@@ -255,7 +161,7 @@ the daemon's unix socket is the boundary. It has its own page,
 
 | Setup | Recommendation |
 |---|---|
-| Instance on another host / VPC | Recipe 1 (remote) already covers the instance files; add 2, 3 or 4 if the agent's own key must move off the desktop uid |
-| Same host, Docker available | Recipe 1 (containerized instance) + Recipe 3 for convenience — but Recipe 3's key boundary yields to Docker-daemon access (see its residual risk); pick Recipe 2 or 4 where key exfiltration is the concern |
-| Same host, no Docker (macOS/Linux) | Recipe 1 (different OS user) + Recipe 2, or Recipe 4 for a spawn-free entry with the same uid boundary |
+| Instance on another host / VPC | Recipe 1 (remote) already covers the instance files; add 2 or 3 if the agent's own key must move off the desktop uid |
+| Same host, Docker available | Recipe 1 (containerized instance) + Recipe 2 for convenience — but Recipe 2's key boundary yields to Docker-daemon access (see its residual risk); pick Recipe 3 where key exfiltration is the concern |
+| Same host, no Docker (macOS/Linux) | Recipe 1 (different OS user) + Recipe 3 for a spawn-free entry behind a uid boundary |
 | Trying it out, low-value credentials | Plain stdio entry — the supported default |

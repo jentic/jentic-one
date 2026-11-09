@@ -133,12 +133,11 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 		return res, fmt.Errorf("reading legacy config: %w", err)
 	}
 
-	// Adopt the legacy agent-account record (and same-user notice flag) into the
-	// XDG agent state. `jentic run` and `jentic reset` fall back to reading the
-	// legacy record and adopt it lazily on their first write; doing it here too
-	// means an explicit migrate leaves NO localagent state in ~/.jentic at all.
-	// MutateAgentState seeds from the legacy config when no XDG state exists and
-	// clears the legacy fields afterwards, so a no-op mutator is all it takes.
+	// Adopt any legacy agent-account record into the XDG agent state, so
+	// `jentic reset` can still find (and tear down) the account after
+	// --purge-legacy removes ~/.jentic. MutateAgentState seeds from the legacy
+	// config when no XDG state exists and clears the legacy fields afterwards,
+	// so a no-op mutator is all it takes.
 	// The in-memory cfg keeps the pre-adoption values, which the agent-profile
 	// source walk below still needs (acct.ConfigDir).
 	if cfg.Agent != nil || cfg.SameUserNoticeSeen {

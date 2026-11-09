@@ -21,7 +21,14 @@ from httpx import ASGITransport, AsyncClient
 from jentic_one.admin.repos import OAuthClientRepository, UserRepository
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import service_error_handler
-from jentic_one.auth.web.routers import authorize, local_login, oauth
+from jentic_one.auth.web.routers import (
+    approval,
+    authorize,
+    consent,
+    consent_agent,
+    local_login,
+    oauth,
+)
 from jentic_one.shared.config import PlatformClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -47,7 +54,10 @@ _THIRD_PARTY_REDIRECT = "https://thirdparty.test.local/cb"
 def _make_app(ctx: Context) -> FastAPI:
     """Authorize + login + token routers wired to the REAL context."""
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.include_router(local_login.router)
     app.include_router(oauth.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)

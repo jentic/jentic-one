@@ -38,11 +38,14 @@ func newUninstallCmd(app *app) *cobra.Command {
 		Use:   "uninstall",
 		Short: "Remove everything under ~/.jentic (config files are backed up to *-old)",
 		Long: "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\n" +
-			"CA, etc.). Config files are preserved: each is renamed to a\n" +
+			"etc.). Config files are preserved: each is renamed to a\n" +
 			"'-old' backup so you can restore your settings later. Your agent\n" +
-			"identity (~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\n" +
+			"identity (~/.config/jentic, ~/.local/state/jentic, and any legacy\n" +
+			"~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\n" +
 			"authenticated; run `jentic reset` to remove it. The ~/.jentic\n" +
-			"directory itself is kept.\n\n" +
+			"directory itself is kept. A local agent account an older release\n" +
+			"created (Unix user, ACLs, sudoers entry) is not touched either;\n" +
+			"`jentic reset` removes it too.\n\n" +
 			"For a Docker install the database lives in a named volume (SQLite data or\n" +
 			"the managed Postgres data dir), not under ~/.jentic. uninstall tears the\n" +
 			"stack down but PRESERVES that volume by default, so a later `install`\n" +

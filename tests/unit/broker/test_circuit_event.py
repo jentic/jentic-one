@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,7 +10,10 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.services.execution import service as service_module
 from jentic_one.broker.services.execution.service import default_broker, run_execution
+from jentic_one.broker.web.routers.execute import _emit_streaming_circuit_event
+from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.schemas import OperationInfo
@@ -256,3 +259,35 @@ async def test_a_failing_report_claim_still_answers_circuit_open_unreported() ->
         await runner.run(RunnerRequest(method="GET", url="https://api.example.com/v1/things"))
 
     assert exc.value.report is False
+
+
+@pytest.mark.asyncio
+async def test_streaming_circuit_fast_fail_emits_the_same_event() -> None:
+    """A streaming circuit fast-fail raises ``upstream.circuit_open`` through the shared helper.
+
+    Off the request and in a transaction of its own, so it carries the same
+    type, severity and host payload as the buffered path's event.
+    """
+    mock_session = AsyncMock()
+    mock_tx = AsyncMock()
+    mock_tx.__aenter__.return_value = mock_session
+    mock_tx.__aexit__.return_value = False
+    mock_ctx = MagicMock()
+    mock_ctx.admin_db.transaction.return_value = mock_tx
+    outcome = StreamingOutcome(
+        execution_id="exec_stream_circuit",
+        http_status=None,
+        error="circuit_open",
+        circuit_open=True,
+    )
+
+    with patch.object(service_module, "emit_event", new_callable=AsyncMock) as mock_emit:
+        await _emit_streaming_circuit_event(outcome, mock_ctx, _ctx_req(), "agt_abc123", "agent")
+
+    mock_emit.assert_awaited_once()
+    emitted = mock_emit.await_args_list[0]
+    call_kwargs = emitted.kwargs
+    assert emitted.args[0] is mock_session
+    assert call_kwargs["type"] == EventType.UPSTREAM_CIRCUIT_OPEN
+    assert call_kwargs["data"] == {"host": "api.example.com"}
+    assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.UPSTREAM_CIRCUIT_OPEN]

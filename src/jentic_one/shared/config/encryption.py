@@ -64,7 +64,12 @@ class EncryptionKey(BaseModel):
         }
     )
 
-    id: str
+    id: str = Field(
+        description=(
+            "Key id (``[a-zA-Z0-9_-]+``), stored as the prefix of every value "
+            "encrypted with this key so it can be decrypted after rotation."
+        ),
+    )
     material: SecretStr | None = Field(
         default=None,
         description="Base64-encoded key material, inline in the config.",
@@ -218,5 +223,20 @@ class EncryptionKey(BaseModel):
 class EncryptionConfig(BaseModel):
     """Envelope-encryption keyset configuration."""
 
-    active_id: str = "v1"
-    entries: list[EncryptionKey] = Field(default_factory=list)
+    active_id: str = Field(
+        default="v1",
+        description=(
+            "Id of the key that encrypts new values; must match an entry in "
+            "``entries``. Older keys stay usable for decryption, so rotate by "
+            "adding a key and switching this id."
+        ),
+    )
+    entries: list[EncryptionKey] = Field(
+        default_factory=list,
+        description=(
+            "AES-256-GCM keys (32 bytes, base64) for credentials at rest. Every "
+            "entry can decrypt; ids must be unique. Empty still boots, but "
+            "credential writes and approval-gated executions then fail. Never "
+            "remove a key that still has data encrypted under it."
+        ),
+    )

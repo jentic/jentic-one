@@ -32,6 +32,7 @@ from structlog.testing import capture_logs
 
 from jentic_one.admin.services.errors import AccountLockedError, InvalidCredentialsError
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
+from jentic_one.auth.web import deps
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.flow import (
     approval_state_key,
@@ -40,7 +41,7 @@ from jentic_one.auth.web.flow import (
     state_signing_key,
     verify_payload,
 )
-from jentic_one.auth.web.routers import authorize, local_login
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent, local_login
 from jentic_one.shared.config import (
     AuthConfig,
     LocalLoginConfig,
@@ -78,7 +79,10 @@ def _make_ctx(*, local_login_enabled: bool = True, idp_enabled: bool = False) ->
 
 def _make_app(ctx: MagicMock) -> FastAPI:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.include_router(local_login.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
     app.state.ctx = ctx
@@ -155,7 +159,7 @@ def test_gate_off_authorize_error_unchanged() -> None:
     app = _make_app(disabled_ctx)
     svc = MagicMock()
     svc.get_authorize_redirect_url.return_value = None
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: svc
     resp = TestClient(app).get(
         "/authorize",
         params={
@@ -179,7 +183,7 @@ def test_gate_on_authorize_redirects_to_login_form(ctx: MagicMock) -> None:
     app = _make_app(ctx)
     svc = MagicMock()
     svc.get_authorize_redirect_url.return_value = None
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: svc
     resp = TestClient(app).get(
         "/authorize",
         params={
@@ -210,7 +214,7 @@ def test_gate_on_idp_still_wins(ctx: MagicMock) -> None:
     app = _make_app(ctx)
     svc = MagicMock()
     svc.get_authorize_redirect_url.return_value = "https://idp.example.com/authorize?x=1"
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: svc
     resp = TestClient(app).get(
         "/authorize",
         params={
@@ -249,7 +253,7 @@ def test_idp_on_redirect_state_not_accepted_at_login() -> None:
     app = _make_app(idp_ctx)
     svc = MagicMock()
     svc.get_authorize_redirect_url.return_value = "https://idp.example.com/authorize?x=1"
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: svc
     client = TestClient(app)
     resp = client.get(
         "/authorize",
@@ -440,7 +444,7 @@ def test_submit_platform_client_issues_code_directly(ctx: MagicMock) -> None:
     app = _make_app(ctx)
     authorize_svc = MagicMock()
     authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-123")
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     client = TestClient(app)
     fields = _get_form(ctx, client)
 
@@ -557,7 +561,7 @@ def test_submit_rotation_required_blocks_rejoin(ctx: MagicMock) -> None:
     app = _make_app(ctx)
     authorize_svc = MagicMock()
     authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-should-not-mint")
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     client = TestClient(app)
     fields = _get_form(ctx, client)
 
@@ -591,7 +595,7 @@ def test_ls_single_use_on_success(ctx: MagicMock) -> None:
     app = _make_app(ctx)
     authorize_svc = MagicMock()
     authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-1")
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     client = TestClient(app)
     fields = _get_form(ctx, client)
 
@@ -732,7 +736,7 @@ def _platform_login(app: FastAPI, client: TestClient, ctx: MagicMock) -> Any:
     """Render the form and submit correct credentials for a platform client."""
     authorize_svc = MagicMock()
     authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-share")
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     fields = _get_form(ctx, client)
     with patch.object(local_login, "AuthService", return_value=_auth_ok("usr_victim")):
         return client.post(
@@ -913,7 +917,7 @@ def test_login_survives_the_client_ip_changing_between_form_and_submit(
     app = _make_app(ctx)
     authorize_svc = MagicMock()
     authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-roam")
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     fields = _get_form(ctx, _client_at(app, "198.51.100.20"))
 
     with patch.object(local_login, "AuthService", return_value=_auth_ok("usr_roam")):

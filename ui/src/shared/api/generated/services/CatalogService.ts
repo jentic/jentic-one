@@ -13,7 +13,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class CatalogService {
     /**
-     * List Catalog
+     * List catalog entries
      * List a keyset page of browsable catalog entries (search/filter aware).
      *
      * The catalog holds thousands of entries, so this is cursor-paginated like
@@ -84,7 +84,7 @@ export class CatalogService {
         });
     }
     /**
-     * Get Catalog Entry
+     * Get a catalog entry
      * Retrieve a single catalog entry by api_id.
      * @returns CatalogEntryResponse Successful Response
      * @throws ApiError
@@ -114,7 +114,7 @@ export class CatalogService {
         });
     }
     /**
-     * Preview Catalog Operations
+     * Preview a catalog entry's operations
      * Preview the operations of a catalog entry's spec (capped, offset-paginated).
      *
      * ``tag`` and ``q`` filter the spec's operations server-side before windowing,
@@ -174,7 +174,7 @@ export class CatalogService {
         });
     }
     /**
-     * Import Catalog Entry
+     * Import a catalog entry
      * Enqueue an async import of a catalog entry into the local registry.
      * @returns ApiImportResponse Successful Response
      * @throws ApiError
@@ -204,7 +204,7 @@ export class CatalogService {
         });
     }
     /**
-     * Snooze Catalog Entry
+     * Snooze a catalog entry's update notice
      * Snooze the outstanding update notification for a catalog entry (C1, #925).
      *
      * Operator action (``events:write``): quiet the "update available" badge for a
@@ -248,7 +248,7 @@ export class CatalogService {
         });
     }
     /**
-     * Unsnooze Catalog Entry
+     * Clear a catalog entry's snooze
      * Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
      * @returns void
      * @throws ApiError
@@ -278,7 +278,7 @@ export class CatalogService {
         });
     }
     /**
-     * Refresh Catalog
+     * Refresh the catalog cache
      * Force a refresh of the catalog cache from the upstream manifest (org:admin).
      * @returns CatalogRefreshResponse Successful Response
      * @throws ApiError

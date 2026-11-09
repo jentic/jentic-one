@@ -92,7 +92,14 @@ class IdempotencyConfig(BaseModel):
     async same-``job_id`` replay, and at-rest encryption are future work.
     """
 
-    enabled: bool = True
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Honour the ``Idempotency-Key`` request header on broker executions: a "
+            "repeat of a completed key replays the stored response instead of "
+            "calling the upstream again. Off ignores the header."
+        ),
+    )
     ttl_s: float | None = Field(
         default=None,
         gt=0,
@@ -104,10 +111,22 @@ class IdempotencyConfig(BaseModel):
             "sustained idempotent request rate the idem budget can hold."
         ),
     )
-    # Claim TTL — size to the request deadline (+buffer); poison-pill guard.
-    pending_ttl_s: float = 35.0
-    # Bodies larger than this are NOT stored for byte-for-byte replay.
-    max_response_bytes: int = 256 * 1024
+    pending_ttl_s: float = Field(
+        default=35.0,
+        description=(
+            "Lifetime (seconds) of the in-flight claim on an ``Idempotency-Key``, so "
+            "a broker killed mid-request frees the key within seconds. Size it "
+            "just above ``broker.resilience.request_deadline_s``."
+        ),
+    )
+    max_response_bytes: int = Field(
+        default=256 * 1024,
+        description=(
+            "Largest response body (bytes) stored for byte-for-byte replay. Larger "
+            "responses are recorded without their body: a replay still prevents "
+            "the duplicate call but does not return the body."
+        ),
+    )
 
     def replay_ttl_s(self, backend: str) -> float:
         """``ttl_s``, or the default for the *backend* name when it is unset."""
@@ -136,7 +155,9 @@ class TrustedIssuerConfig(BaseModel):
     issuer can't be downgraded to a symmetric/forgeable signature.
     """
 
-    issuer: str
+    issuer: str = Field(
+        description="Expected ``iss`` claim of tokens from this issuer (exact match).",
+    )
     jwks_url: str = Field(
         description=(
             "URL of the issuer's published JWKS. Must be https:// when "
@@ -144,7 +165,13 @@ class TrustedIssuerConfig(BaseModel):
             "(local/CI stacks) and logs a warning at config load."
         ),
     )
-    algorithms: list[str] = Field(default_factory=lambda: ["RS256", "ES256"])
+    algorithms: list[str] = Field(
+        default_factory=lambda: ["RS256", "ES256"],
+        description=(
+            "Signature algorithms accepted from this issuer. Asymmetric only "
+            "(RS*, ES*, PS*, EdDSA); HMAC and ``none`` are rejected at load."
+        ),
+    )
 
     @field_validator("jwks_url")
     @classmethod
@@ -198,34 +225,86 @@ class JwtVerificationConfig(BaseModel):
     off — the legacy HS256 ``broker.jwt_secret`` path (dev/test) still applies.
     """
 
-    audience: str | None = None
-    # Clock-skew tolerance applied to exp/nbf/iat (seconds).
-    leeway_s: float = 60.0
-    trusted_issuers: list[TrustedIssuerConfig] = Field(default_factory=list)
+    audience: str | None = Field(
+        default=None,
+        description=(
+            "Required ``aud`` claim on trusted-issuer JWTs. Unset, tokens must not "
+            "carry an ``aud`` claim at all (any token with one is rejected)."
+        ),
+    )
+    leeway_s: float = Field(
+        default=60.0,
+        description="Clock-skew tolerance (seconds) applied to ``exp``, ``nbf`` and ``iat``.",
+    )
+    trusted_issuers: list[TrustedIssuerConfig] = Field(
+        default_factory=list,
+        description=(
+            "Identity providers whose self-contained JWTs the broker accepts, each "
+            "verified against its published JWKS. When non-empty this takes "
+            "precedence over ``broker.jwt_secret``; empty leaves the JWKS path off."
+        ),
+    )
 
 
 class SecurityConfig(BaseModel):
     """Platform security event thresholds."""
 
-    auth_failure_event_threshold: int = Field(default=10, ge=1)
-    # How far ahead of an OAuth token's ``expires_at`` the credential-expiry
-    # scanner starts emitting ``credential.expiring_soon`` (a token sits in the
-    # warning state for this whole window until it actually expires).
-    credential_expiring_soon_window_h: int = Field(default=72, ge=1)
-    # The credential-expiry scanner runs on the worker tick clock; it sweeps
-    # every Nth tick rather than every tick (a token's expiry shifts on the
-    # scale of hours, so a sweep per minute is ample). One tick ≈ the worker
-    # poll interval (~2s), so the default ~60 ticks is roughly every 2 minutes.
-    credential_expiry_sweep_interval_ticks: int = Field(default=60, ge=1)
-    # Number of failed executions for one actor+credential+operation within the
-    # rolling window before an ``execution.repeated_failure`` event is emitted.
-    execution_repeated_failure_threshold: int = Field(default=5, ge=1)
-    # Rolling window (seconds) over which repeated failures are counted and over
-    # which a single ``execution.repeated_failure`` event is deduplicated.
-    execution_repeated_failure_window_s: int = Field(default=300, ge=1)
-    # Failure count at/above which the repeated-failure event escalates from
-    # ``error`` to ``critical`` severity. Sized above the base threshold.
-    execution_repeated_failure_critical_threshold: int = Field(default=20, ge=1)
+    auth_failure_event_threshold: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Broker execute requests from one actor refused within a clock minute "
+            "for lacking the execute permission before a "
+            "``security.unauthorized_access_attempt`` event is emitted (at most "
+            "one per actor per minute)."
+        ),
+    )
+    credential_expiring_soon_window_h: int = Field(
+        default=72,
+        ge=1,
+        description=(
+            "Hours before an OAuth token's expiry at which "
+            "``credential.expiring_soon`` events start; the token stays in that "
+            "warning state until it expires."
+        ),
+    )
+    # A token's expiry shifts on the scale of hours, so a sweep every couple of
+    # minutes is ample.
+    credential_expiry_sweep_interval_ticks: int = Field(
+        default=60,
+        ge=1,
+        description=(
+            "Run the credential-expiry scan every Nth worker tick. One tick is "
+            "about ``worker.poll_interval_s``, so the default is roughly every "
+            "2 minutes."
+        ),
+    )
+    execution_repeated_failure_threshold: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Failed executions for one actor, credential and operation within "
+            "``execution_repeated_failure_window_s`` before an "
+            "``execution.repeated_failure`` event is emitted."
+        ),
+    )
+    execution_repeated_failure_window_s: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "Rolling window (seconds) over which repeated failures are counted; "
+            "at most one ``execution.repeated_failure`` event is emitted per window."
+        ),
+    )
+    execution_repeated_failure_critical_threshold: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Failure count within the window at or above which the "
+            "``execution.repeated_failure`` event escalates from ``error`` to "
+            "``critical`` severity. Keep it above the base threshold."
+        ),
+    )
 
 
 class BrokerConfig(BaseModel):
@@ -240,27 +319,44 @@ class BrokerConfig(BaseModel):
             "and the ``request_deadline_s`` envelope."
         ),
     )
-    resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance credential-binding derivation
-    # cache. Wraps the cross-DB `derive_credentials` lookup so the per-request
-    # Admin+Control double hit is served from cache. Agent/credential bindings
-    # change infrequently, so a short TTL bounds revocation staleness (the
-    # cache is per instance, so a grant/revoke is consistent cluster-wide only
-    # after the TTL lapses on each node) while removing the hot-path lookup.
-    # Authorization correctness never depends on the cache — it is a latency
-    # optimization over the authoritative DB lookup. 0 disables it.
-    # Key name is legacy (it originally bounded the toolkit-derivation cache,
-    # deleted in theme-5 Phase 6b); kept for operator config compatibility.
-    toolkit_cache_ttl_s: float = 3.0
-    # Short TTL (seconds) for the per-instance permission-rule cache.
-    # Caches the ordered rules per (agent, credential) binding. Same staleness
-    # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
-    rule_cache_ttl_s: float = 3.0
-    # Upper bound on entries in the per-worker permission-rule LRU. Size
-    # against agents x credentials — each active (agent, credential) binding
-    # is one entry. Eviction is LRU by entry count (the TTL only bounds
-    # staleness, never memory).
-    rule_cache_max_entries: int = 5_000
+    resolve_cache_ttl_seconds: float = Field(
+        default=3.0,
+        description=(
+            "Seconds the broker caches a token or API-key validation verdict (and "
+            "a JWT caller's active status) in process. Bounds how long a revoked "
+            "token or disabled agent keeps working on each broker; 0 disables "
+            "the cache."
+        ),
+    )
+    # The cache wraps the cross-DB credential-binding lookup (admin + control) on
+    # the hot path. Authorization correctness never depends on it: it is a
+    # latency optimisation over the authoritative lookup. The key keeps its
+    # ``toolkit_`` name so existing operator configs stay valid.
+    toolkit_cache_ttl_s: float = Field(
+        default=3.0,
+        description=(
+            "Seconds the broker caches an agent's derived credential bindings in "
+            "process. The cache is per instance, so a grant or revoke takes effect "
+            "cluster-wide only once this lapses on every broker; 0 disables the cache."
+        ),
+    )
+    rule_cache_ttl_s: float = Field(
+        default=3.0,
+        description=(
+            "Seconds the broker caches the permission rules of an (agent, "
+            "credential) binding in process; a rule change reaches each broker "
+            "within this long. 0 disables the cache."
+        ),
+    )
+    # The TTL bounds staleness only, never memory.
+    rule_cache_max_entries: int = Field(
+        default=5_000,
+        description=(
+            "Maximum entries in each broker process's permission-rule cache, one "
+            "per active (agent, credential) binding; least recently used entries "
+            "are evicted first."
+        ),
+    )
     streaming_persist_timeout_s: float = Field(
         default=10.0,
         gt=0,
@@ -307,18 +403,26 @@ class BrokerConfig(BaseModel):
             "shutdown; it does not bound the write itself once a slot is held."
         ),
     )
-    # Absolute public base URL of the admin jobs API, used to build the 202
-    # `_links.self` pointer for async executions (e.g. "https://api.example.com").
-    # None keeps the legacy broker-relative `/jobs/{id}` link.
-    jobs_api_base_url: str | None = None
-    # Shared secret for the self-contained-JWT path. None disables
-    # the JWT path entirely (opaque tokens only). The minimal verifier is HS256
-    # signature + exp; TODO hardens (JWKS, iss/aud, alg allowlist) before
-    # this is enabled in production.
-    jwt_secret: SecretStr | None = None
-    # Hardened inbound-JWT verification: trusted-issuer JWKS, iss/aud/nbf
-    # + clock-skew, strict asymmetric alg allowlist. When trusted_issuers is set
-    # it supersedes the HS256 jwt_secret path for self-contained JWTs.
+    jobs_api_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Public base URL of the admin API (e.g. ``https://api.example.com``), "
+            "used for the links a broker returns for async and held executions "
+            "(``/jobs/{id}``, ``/executions/holds/{id}``, the approval review "
+            "page). Unset, they are relative to the broker's own origin (the review "
+            "page link tries ``server.public_base_url`` first); set it when the "
+            "broker runs without the admin surface."
+        ),
+    )
+    jwt_secret: SecretStr | None = Field(
+        default=None,
+        description=(
+            "HS256 shared secret for verifying self-contained JWTs at the broker "
+            "(signature and ``exp`` only), for development and tests. Unset "
+            "disables this path; ``jwt_verification.trusted_issuers`` takes "
+            "precedence when set and is the production option."
+        ),
+    )
     jwt_verification: JwtVerificationConfig = Field(default_factory=JwtVerificationConfig)
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
@@ -361,12 +465,12 @@ class BrokerConfig(BaseModel):
             value = data["direct_bindings_enabled"]
             if value is False or str(value).strip().lower() in {"false", "0", "no", "off"}:
                 raise ValueError(
-                    "broker.direct_bindings_enabled was removed in theme-5 Phase 6b: "
+                    "broker.direct_bindings_enabled was removed in 0.41.0: "
                     "the toolkit path it selected no longer exists and direct "
                     "agent-credential bindings are the only access path. Remove "
                     "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
-                    "if toolkit-bound agents lose access, run the Phase-6a flattening "
-                    "(docs/development/releasing.md)."
+                    "if toolkit-bound agents lose access, run the toolkit flattening "
+                    "(`flatten-toolkits`, docs/operations/upgrade-notes.md)."
                 )
             _warn_retired_direct_bindings_flag_once()
             data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
@@ -404,7 +508,7 @@ def _warn_retired_direct_bindings_flag_once() -> None:
         "config_retired_setting_ignored",
         setting="broker.direct_bindings_enabled",
         detail=(
-            "removed in theme-5 Phase 6b; direct agent-credential bindings are the "
+            "removed in 0.41.0; direct agent-credential bindings are the "
             "only access path and the value is ignored"
         ),
         actionable_step=(

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Authorize {app_name} | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>{page_css}</style>
+</head>
+<body>
+    <div class="card">
+        {logo_block}
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> wants to access your account</h1>
+        <p class="description">{app_description}</p>
+        <div class="permissions">
+            <h2>This will allow access to:</h2>
+            <ul>
+                {permission_items}
+            </ul>
+        </div>
+        <div class="buttons">
+            <form method="post" action="/oauth/consent" class="form-slot">
+                <input type="hidden" name="consent_token" value="{consent_token}">
+                <input type="hidden" name="action" value="deny">
+                <button type="submit" class="deny">Deny</button>
+            </form>
+            <form method="post" action="/oauth/consent" class="form-slot">
+                <input type="hidden" name="consent_token" value="{consent_token}">
+                <input type="hidden" name="action" value="approve">
+                <button type="submit" class="approve">Authorize</button>
+            </form>
+        </div>
+        <div class="footer">
+            Authorizing grants the application the permissions listed above.<br>
+            <a href="{restart_url}">Not you? Use a different account</a>
+        </div>
+    </div>
+</body>
+</html>

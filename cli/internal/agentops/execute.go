@@ -210,8 +210,6 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 			Actionable: "Use an https broker URL, or a loopback (127.0.0.1/localhost) http broker for local installs.",
 		}
 	}
-	req.Header.Set("Authorization", "Bearer "+r.Token)
-
 	// Auto-set Content-Type for body requests.
 	hasContentType := false
 	for _, kv := range r.Headers {
@@ -228,6 +226,16 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 	for _, kv := range r.Headers {
 		req.Header.Set(strings.TrimSpace(kv.Key), strings.TrimSpace(kv.Value))
 	}
+
+	// The bearer goes on LAST, after any caller-supplied headers, so a header
+	// the model chose can never replace the agent's token on the outbound
+	// broker leg. The hosted mount merges the same way round
+	// (mcp/execute.py); over stdio these headers are model-supplied input.
+	// The other headers an agent must not choose for itself are stamped later
+	// still: the MCP server's attributionTransport.RoundTrip sets User-Agent
+	// and the session id on every attempt, after this builder has run.
+	req.Header.Del("Authorization")
+	req.Header.Set("Authorization", "Bearer "+r.Token)
 
 	// Correlation (P5.2, F8-6). execute builds a bare request outside the SDK
 	// editor chain, so the SDK's session/trace editors never run on this path —
