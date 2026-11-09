@@ -494,3 +494,73 @@ def approval_pending_limit_directive(*, pending: int, limit: int) -> AgentDirect
             "send the call again once one is decided."
         ),
     )
+
+
+def credential_server_variable_mismatch_directive(
+    *,
+    vendor: str,
+    requested: dict[str, str],
+    conflicting: list[str],
+    scoped_values: list[dict[str, str]],
+    unresolved: bool,
+) -> AgentDirective:
+    """Directive for a ``credential_server_variable_mismatch`` 424.
+
+    The strategy is the fixed ``prompt_human`` and no ``suggested_command`` is
+    emitted, following :func:`credential_identity_mismatch_directive`: changing
+    or re-scoping a credential is an operator action with no verbatim CLI
+    command an agent can run.
+
+    ``covered_scopes`` keeps each candidate's values grouped **per variable**,
+    restricted to the variables that disagree. Flattening them into a bare
+    value list would both name values that match and strand a value with no
+    variable to attach it to, so a reader could not tell which axis to fix.
+
+    The strategy stays ``prompt_human`` rather than ``retry`` for two reasons:
+    the identical request can never succeed, and silently retargeting a call at
+    a region the existing credential happens to cover would move data to a
+    jurisdiction nobody chose. Naming the covered scopes lets a human decide.
+    """
+    names = set(conflicting)
+    covered_scopes = [
+        scope
+        for scope in (
+            {name: value for name, value in sorted(s.items()) if not names or name in names}
+            for s in scoped_values
+        )
+        if scope
+    ]
+    if unresolved:
+        instruction = (
+            f"A credential for '{vendor}' exists but is scoped to specific server-variable "
+            "values, and this request URL does not say which values it targets. Send the "
+            "host's templated form (for example '{region}') so the credential supplies the "
+            "value, or ask your operator for a credential that is not scoped. This is not "
+            "agent-recoverable by retrying the same URL."
+        )
+    else:
+        asked = (
+            ", ".join(f"{k}={requested[k]!r}" for k in sorted(names) if k in requested)
+            or ", ".join(f"{k}={v!r}" for k, v in sorted(requested.items()))
+            or "the values this request targets"
+        )
+        rendered = sorted(
+            {", ".join(f"{k}={v!r}" for k, v in sorted(scope.items())) for scope in covered_scopes}
+        )
+        covers = f" Existing credentials cover {'; '.join(rendered)}." if rendered else ""
+        instruction = (
+            f"A credential for '{vendor}' exists, but none is scoped to {asked}.{covers} Ask "
+            "your operator to provision a credential for the value you need, or to widen the "
+            "existing one; connecting another credential only helps if they scope it to this "
+            "value or leave it unscoped. Retrying the same request will fail the same way."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "vendor": vendor,
+            "server_variables": requested,
+            "conflicting_variables": conflicting,
+            "covered_scopes": covered_scopes,
+        },
+        human_readable_instruction=instruction,
+    )

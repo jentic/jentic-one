@@ -1750,7 +1750,7 @@ components:
       description: |
         A bound credential is an unusable dependency, so the broker cannot
         sign the upstream call. Body is RFC 9457
-        `application/problem+json`; the `type` discriminates three cases with
+        `application/problem+json`; the `type` discriminates five cases with
         different recovery paths:
         - `credential_not_provisioned` — no credential is connected for the
           resolved upstream API. The `agent_directive` is a `prompt_human`
@@ -1761,6 +1761,30 @@ components:
           also carries a non-secret `provisioning_url` — that session's
           owner approval link (`/app/agents?approve=<session_id>`) — for
           the agent to relay instead of starting another connect.
+        - `credential_server_variable_mismatch` — a credential is connected
+          and covers the API, but it is scoped to different OpenAPI
+          server-variable values than the request resolved (for example a
+          `region=eu-west-1` credential against a `us-east-1` host). Starting
+          `server_variables` carries the request's own resolved values,
+          `conflicting_variables` only the names the request resolves to a
+          *different* value (a variable that agrees, or one the request does
+          not resolve, is not why the candidate was ruled out), and
+          `candidates` the caller's bound credentials with the
+          `server_variables` each is scoped to, so an operator can see the
+          value that caused the refusal. The `prompt_human` directive emits no
+          `suggested_command`: re-scoping a credential is an operator action.
+          Its `covered_scopes` groups the covered values **per variable**,
+          restricted to the conflicting ones. Fix it by provisioning a
+          credential for the value needed, widening the existing one, or
+          calling a host the existing credential covers.
+        - `credential_server_variables_unresolved` — a credential is connected
+          and is scoped to specific server-variable values, but the request
+          URL does not determine which values it targets, so every scoped
+          credential is ruled out (fail closed). Sending the host's templated
+          form (e.g. `{region}`) lets the credential supply the value. Here
+          `server_variables` is `{}` and `conflicting_variables` lists every
+          name the candidates are scoped to, since nothing disagrees — the
+          values are simply unknown.
         - `credential_undecryptable` — a credential is connected but its
           stored secret can no longer be decrypted (typically the
           deployment's encryption key rotated underneath it, e.g. a
@@ -1804,6 +1828,81 @@ components:
                   human_readable_instruction: >-
                     No credential is connected for 'api.example.com'; ask the user to
                     connect the account before retrying.
+            credential_server_variable_mismatch:
+              summary: A credential exists but is scoped to another region.
+              value:
+                type: credential_server_variable_mismatch
+                title: No credential provisioned for 'amazonaws-com' scoped to region='us-east-1'
+                status: 424
+                detail: No credential provisioned for 'amazonaws-com' scoped to region='us-east-1'
+                error_origin: broker
+                instance: /bedrock-runtime.us-east-1.amazonaws.com/model/m/converse
+                intent_id: intent_7c1d4e9a2b6f8d0c3a5e7b9d1f2a4c6e
+                server_variables:
+                  region: us-east-1
+                conflicting_variables:
+                  - region
+                candidates:
+                  - id: cred_01J8XYZ
+                    name: bedrock-eu
+                    last4: 8XYZ
+                    server_variables:
+                      region: eu-west-1
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    vendor: amazonaws-com
+                    server_variables:
+                      region: us-east-1
+                    conflicting_variables:
+                      - region
+                    covered_scopes:
+                      - region: eu-west-1
+                  human_readable_instruction: >-
+                    A credential for 'amazonaws-com' exists, but none is scoped to
+                    region='us-east-1'. Existing credentials cover region='eu-west-1'. Ask
+                    your operator to provision a credential for the value you need, or to
+                    widen the existing one; connecting another credential only helps if they
+                    scope it to this value or leave it unscoped. Retrying the same request
+                    will fail the same way.
+            credential_server_variables_unresolved:
+              summary: A scoped credential exists, but the URL names no values.
+              value:
+                type: credential_server_variables_unresolved
+                title: >-
+                  No credential for 'amazonaws-com' applies because the request URL does not
+                  determine its server-variable values
+                status: 424
+                detail: >-
+                  No credential for 'amazonaws-com' applies because the request URL does not
+                  determine its server-variable values
+                error_origin: broker
+                instance: /bedrock-runtime.amazonaws.com/model/m/converse
+                intent_id: intent_2b8e6f0a4c1d9e3b5a7c0f2d4e6b8a1c
+                server_variables: {}
+                conflicting_variables:
+                  - region
+                candidates:
+                  - id: cred_01J8XYZ
+                    name: bedrock-eu
+                    last4: 8XYZ
+                    server_variables:
+                      region: eu-west-1
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    vendor: amazonaws-com
+                    server_variables: {}
+                    conflicting_variables:
+                      - region
+                    covered_scopes:
+                      - region: eu-west-1
+                  human_readable_instruction: >-
+                    A credential for 'amazonaws-com' exists but is scoped to specific
+                    server-variable values, and this request URL does not say which values it
+                    targets. Send the host's templated form (for example '{region}') so the
+                    credential supplies the value, or ask your operator for a credential that
+                    is not scoped. This is not agent-recoverable by retrying the same URL.
     ValidationError:
       description: |
         Request well-formed but semantically invalid — e.g. unknown

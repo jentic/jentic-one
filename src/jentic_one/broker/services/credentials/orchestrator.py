@@ -23,6 +23,7 @@ from jentic_one.broker.core.directives import (
     api_connect_hint,
     api_connect_parameters,
     connect_parameters,
+    credential_server_variable_mismatch_directive,
     suggested_permission_rules,
 )
 from jentic_one.broker.core.errors import (
@@ -35,6 +36,9 @@ from jentic_one.broker.core.errors import (
 from jentic_one.broker.core.errors import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
 )
+from jentic_one.broker.core.errors import (
+    CredentialServerVariableMismatchError as DomainCredentialServerVariableMismatchError,
+)
 from jentic_one.broker.core.injection import inject_auth
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.errors import (
@@ -42,6 +46,7 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialIdNotFoundError,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
+    CredentialServerVariableMismatchError,
     RefreshInvalidGrantError,
     RefreshTransientError,
 )
@@ -363,6 +368,17 @@ class CredentialService:
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
             )
+        except CredentialServerVariableMismatchError as exc:
+            # Ordered before the generic 424: a credential exists here, so the
+            # connect-flow directive that one builds cannot fix the call.
+            await self._emit_credential_failure(
+                type=EventType.CREDENTIAL_NOT_PROVISIONED,
+                summary=(
+                    f"No credential scoped to this request's server variables for '{api.vendor}'"
+                ),
+                identity=identity,
+            )
+            raise self._server_variable_mismatch(api, exc) from exc
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_NOT_PROVISIONED,
@@ -450,6 +466,53 @@ class CredentialService:
         """The connect target the 424 suggests, resolved before the error is built."""
         return await resolve_connect_target(
             self._ctx, api, registrations=self._connect_registrations
+        )
+
+    @staticmethod
+    def _server_variable_mismatch(
+        api: APIReference, exc: CredentialServerVariableMismatchError
+    ) -> DomainCredentialServerVariableMismatchError:
+        """Build the 424 for a credential ruled out on its server-variable scope.
+
+        The candidates are the caller's own bound credentials — the injection
+        boundary (``allowed_credential_ids``) and the coverage check both ran
+        before the server-variable filter — so reporting their scopes tells an
+        operator the value that caused the refusal without disclosing anything
+        the caller cannot already read through the control API.
+
+        ``detail`` names only the **requested** values. A denied queued
+        execution persists this body on its job result
+        (``queued_authorization.py``), so the candidates ride as an extension
+        member the caller reads deliberately rather than in the one-line
+        summary.
+        """
+        scoped_values = [c.server_variables or {} for c in exc.candidates]
+        if exc.unresolved:
+            detail = (
+                f"No credential for '{api.vendor}' applies because the request URL does not "
+                f"determine its server-variable values"
+            )
+            problem_type = "credential_server_variables_unresolved"
+        else:
+            asked = ", ".join(f"{k}={v!r}" for k, v in sorted(exc.requested.items()))
+            detail = f"No credential provisioned for '{api.vendor}' scoped to {asked}"
+            problem_type = "credential_server_variable_mismatch"
+        return DomainCredentialServerVariableMismatchError(
+            detail=detail,
+            type=problem_type,
+            extra={
+                "intent_id": f"intent_{uuid.uuid4().hex}",
+                "server_variables": exc.requested,
+                "conflicting_variables": exc.conflicting,
+                "candidates": [c.model_dump(mode="json") for c in exc.candidates],
+            },
+            directive=credential_server_variable_mismatch_directive(
+                vendor=api.vendor,
+                requested=exc.requested,
+                conflicting=exc.conflicting,
+                scoped_values=scoped_values,
+                unresolved=exc.unresolved,
+            ),
         )
 
     async def _not_provisioned(
