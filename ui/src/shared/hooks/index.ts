@@ -13,6 +13,7 @@ export {
 	actorDirectoryKey,
 } from '@/shared/hooks/useActorDirectory';
 export type { ActorDirectory } from '@/shared/hooks/useActorDirectory';
+export { useFleetInitials } from '@/shared/hooks/useFleetInitials';
 export { useVersionInfo, versionInfoKey } from '@/shared/hooks/useVersionInfo';
 export { useApiUsageWeek, apiUsageKeyFor } from '@/shared/hooks/useApiUsageWeek';
 export type { ApiUsageWeek, ApiUsageRow } from '@/shared/hooks/useApiUsageWeek';
@@ -25,8 +26,9 @@ export type {
 	PendingOverlayCounts,
 } from '@/shared/hooks/usePendingOverlayCounts';
 export { useResizableWidth } from '@/shared/hooks/useResizableWidth';
-export { usePersistedChoice } from '@/shared/hooks/usePersistedChoice';
 export type { ResizableWidth, UseResizableWidthOptions } from '@/shared/hooks/useResizableWidth';
+export { usePersistedChoice } from '@/shared/hooks/usePersistedChoice';
+export { useRecentIds, readRecentIds } from '@/shared/hooks/useRecentIds';
 export { useHoverIntent, HOVER_INTENT, HOVER_INTENT_IGNORE } from '@/shared/hooks/useHoverIntent';
 export type { HoverIntentOptions } from '@/shared/hooks/useHoverIntent';
 export { usePinStack } from '@/shared/hooks/usePinStack';

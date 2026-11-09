@@ -40,11 +40,20 @@ export interface VendorIconProps {
 	vendor?: string;
 	/** When present, render the real logo instead of the initials tile. */
 	iconUrl?: string | null;
+	/** Explicit letters for the tile, over the name's own (a fleet-wide pick). */
+	initials?: string;
 	size?: IconSize;
 	className?: string;
 }
 
-export function VendorIcon({ name, vendor, iconUrl, size = 'md', className }: VendorIconProps) {
+export function VendorIcon({
+	name,
+	vendor,
+	iconUrl,
+	initials,
+	size = 'md',
+	className,
+}: VendorIconProps) {
 	const { box, radius, text } = SIZE[size];
 
 	if (iconUrl) {
@@ -66,7 +75,7 @@ export function VendorIcon({ name, vendor, iconUrl, size = 'md', className }: Ve
 		<div
 			data-tone={tone}
 			data-testid="vendor-mark"
-			data-initials={getInitials(name)}
+			data-initials={initials ?? getInitials(name)}
 			className={cn(
 				'font-heading grid shrink-0 place-items-center leading-none font-bold tracking-[0.01em] uppercase select-none',
 				'before:content-[attr(data-initials)]',
