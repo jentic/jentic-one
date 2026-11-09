@@ -119,3 +119,21 @@ def test_server_variables_compatible_unconstrained_cases() -> None:
     assert server_variables_compatible({}, {"region": "eu"})
     assert server_variables_compatible({"region": "us"}, None)
     assert server_variables_compatible({"region": "us"}, {"tier": "gold"})
+
+
+def test_has_host_server_variable_detects_percent_encoded_placeholder() -> None:
+    """An encoded-brace host is still a templated host (#2089).
+
+    Many HTTP clients percent-encode ``{`` and ``}`` on their own, so the same
+    templated host arrives both spellings. ``apply_server_variables`` already
+    substitutes either (``test_substitutes_percent_encoded_placeholder``), so
+    treating only the literal form as templated splits one host into two
+    behaviours.
+    """
+    url = "https://bedrock-runtime.%7Bregion%7D.amazonaws.com/model/x/converse"
+    assert has_host_server_variable(url) is True
+
+
+def test_has_host_server_variable_detects_encoded_placeholder_case_insensitively() -> None:
+    """``%7b``/``%7d`` are as valid as ``%7B``/``%7D`` (RFC 3986 §2.1)."""
+    assert has_host_server_variable("https://%7bregion%7d.posthog.com/api") is True

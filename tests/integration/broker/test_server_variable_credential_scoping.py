@@ -195,3 +195,49 @@ async def test_unresolvable_request_variables_fail_closed_for_scoped_credentials
     )
 
     assert await _inject(integration_context, None, unresolved=True) == "any-secret"
+
+
+async def test_scoped_mismatch_is_reported_as_if_no_credential_existed(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """A region mismatch and a bare API are the same 424 (#2089).
+
+    Dropping a credential on ``server_variables`` and never having one are
+    different problems with different fixes, and the resolver knows which it
+    hit — it compared the scoped value against the request's. Both arrive as
+    ``credential_not_provisioned`` carrying only the API tuple, so an operator
+    cannot see the scoped value that caused it, and the agent is told to run
+    ``jentic connect`` for a credential that already exists. This test records
+    that loss of information: it asserts the two cases are indistinguishable,
+    and that neither value reaches the caller.
+    """
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_eu",
+        secret="eu-secret",  # pragma: allowlist secret
+        server_variables={"region": "eu-west-1"},
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as mismatch:
+        await _inject(integration_context, {"region": "us-east-1"})
+
+    async with integration_context.control_db.session() as session:
+        await session.execute(delete(CustomerAPIKey))
+        await session.execute(delete(Credential))
+        await session.commit()
+
+    with pytest.raises(CredentialNotProvisionedError) as absent:
+        await _inject(integration_context, {"region": "us-east-1"})
+
+    # Same wire identity and same detail for two different causes.
+    assert mismatch.value.type == absent.value.type == "credential_not_provisioned"
+    assert mismatch.value.detail == absent.value.detail
+
+    # Neither the credential's scoped value nor the requested one is reported.
+    body = f"{mismatch.value.detail} {mismatch.value.extra} {mismatch.value.directive}"
+    assert "eu-west-1" not in body
+    assert "us-east-1" not in body
+
+    # The directive sends the agent to provision a credential that already exists.
+    assert mismatch.value.directive is not None
+    assert "jentic connect" in str(mismatch.value.directive)
