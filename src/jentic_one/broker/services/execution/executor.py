@@ -176,7 +176,7 @@ def _exec_result(outcome: ExecutionOutcome) -> UpstreamExecResult:
         status_code=result.status_code,
         body=result.body,
         content_type=result.content_type,
-        duration_ms=result.duration_ms,
+        duration_ms=int(result.duration_ms),
     )
 
 
