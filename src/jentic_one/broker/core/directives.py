@@ -494,3 +494,56 @@ def approval_pending_limit_directive(*, pending: int, limit: int) -> AgentDirect
             "send the call again once one is decided."
         ),
     )
+
+
+def credential_server_variable_mismatch_directive(
+    *,
+    vendor: str,
+    requested: dict[str, str],
+    conflicting: list[str],
+    scoped_values: list[dict[str, str]],
+    unresolved: bool,
+) -> AgentDirective:
+    """Directive for a ``credential_server_variable_mismatch`` 424.
+
+    A credential for the API already exists, so the agent must not be sent to
+    connect one — the strategy is the fixed ``prompt_human`` and no
+    ``suggested_command`` is emitted, following
+    :func:`credential_identity_mismatch_directive`: changing a credential's
+    server-variable scope is an operator action with no verbatim CLI command.
+
+    The directive deliberately does **not** instruct the agent to retry against
+    a value the existing credential does cover. The strategy stays
+    ``prompt_human`` rather than ``retry`` for two reasons: the identical
+    request can never succeed, and silently retargeting a call at another
+    region would move data to a jurisdiction nobody chose. Naming the covered
+    values lets a human decide that.
+    """
+    covered = sorted({v for scope in scoped_values for v in scope.values()})
+    if unresolved:
+        instruction = (
+            f"A credential for '{vendor}' exists but is scoped to specific server-variable "
+            "values, and this request URL does not say which values it targets. Send the "
+            "host's templated form (for example '{region}') so the credential supplies the "
+            "value, or ask your operator for a credential that is not scoped. This is not "
+            "agent-recoverable by retrying the same URL."
+        )
+    else:
+        asked = ", ".join(f"{k}={v!r}" for k, v in sorted(requested.items())) or "this request"
+        covers = f" It covers {', '.join(repr(c) for c in covered)}." if covered else ""
+        instruction = (
+            f"A credential for '{vendor}' exists, but none is scoped to {asked}.{covers} Ask "
+            "your operator either to provision a credential for the value you need, or to "
+            "widen the existing one. Do not start a connect flow — a credential is already "
+            "connected. Retrying the same request will fail the same way."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "vendor": vendor,
+            "server_variables": requested,
+            "conflicting_variables": conflicting,
+            "covered_values": covered,
+        },
+        human_readable_instruction=instruction,
+    )

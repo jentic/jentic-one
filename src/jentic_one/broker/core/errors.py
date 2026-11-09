@@ -156,6 +156,23 @@ class CredentialNotProvisionedError(BrokerError):
     """No credential is provisioned for the resolved API/caller (424)."""
 
 
+class CredentialServerVariableMismatchError(CredentialNotProvisionedError):
+    """A credential covers the API but is scoped to other server-variable values (424).
+
+    Same class of failure as :class:`CredentialNotProvisionedError` — nothing
+    is wrong with the request and a stored dependency does not apply — but a
+    different recovery: a credential already exists, so starting a connect
+    flow cannot help. The body names the variables that disagree and the
+    candidates' own scopes, and the directive asks for a credential for the
+    requested value instead of suggesting ``jentic connect``.
+
+    A **subclass**, so the ~15 call sites that catch
+    :class:`CredentialNotProvisionedError` (and clients branching on the 424
+    family) keep working; it carries its own ``STATUS_BY_ERROR`` entry because
+    that map is an exact-``type()`` lookup and an unmapped subclass renders 500.
+    """
+
+
 class CredentialUndecryptableError(BrokerError):
     """A resolved credential's stored ciphertext cannot be decrypted (424).
 

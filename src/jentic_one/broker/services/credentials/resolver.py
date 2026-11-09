@@ -13,6 +13,7 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialIdNotFoundError,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
+    CredentialServerVariableMismatchError,
 )
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
@@ -119,6 +120,8 @@ class CredentialResolver:
                 ``server_variables`` is then never a match (fail closed).
 
         Raises CredentialNotProvisionedError if no match.
+        Raises CredentialServerVariableMismatchError when the only credentials
+            covering the API were ruled out on their ``server_variables``.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
         Raises CredentialNameNotFoundError if credential_name doesn't match any candidate.
         Raises CredentialIdNotFoundError if credential_id doesn't match any candidate.
@@ -153,6 +156,11 @@ class CredentialResolver:
             # either unscoped (NULL → wildcard) or equal. Precompute (cred, scope)
             # once so the scope isn't recomputed per predicate below.
             covering: list[tuple[Credential, CredentialScope]] = []
+            # Credentials that cover this API and failed *only* on their
+            # server-variable scope. They already passed the injection boundary
+            # and coverage, so they are the caller's own bound credentials —
+            # the fact that separates "scoped elsewhere" from "none at all".
+            scope_mismatched: list[Credential] = []
             for c in candidates:
                 if not c.active:
                     continue
@@ -168,10 +176,29 @@ class CredentialResolver:
                     request_server_variables,
                     unresolved=server_variables_unresolved,
                 ):
+                    scope_mismatched.append(c)
                     continue
                 covering.append((c, scope))
 
             if not covering:
+                if scope_mismatched:
+                    requested = dict(request_server_variables or {})
+                    raise CredentialServerVariableMismatchError(
+                        api.vendor,
+                        api.name,
+                        api.version,
+                        requested=requested,
+                        conflicting=sorted(
+                            {
+                                name
+                                for c in scope_mismatched
+                                for name in (c.server_variables or {})
+                                if name in requested or server_variables_unresolved
+                            }
+                        ),
+                        candidates=[self._to_candidate(c, scoped=True) for c in scope_mismatched],
+                        unresolved=server_variables_unresolved,
+                    )
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
 
             # An explicit credential_id is exact — the authoritative tie-breaker
@@ -236,17 +263,20 @@ class CredentialResolver:
             return self._build_resolved(credential, wire_type, stored_type)
 
     @staticmethod
-    def _to_candidate(credential: Credential) -> CredentialCandidate:
+    def _to_candidate(credential: Credential, *, scoped: bool = False) -> CredentialCandidate:
         """Build a distinguishable ambiguity candidate (issue #643).
 
         ``last4`` is the tail of the non-secret credential id — never the secret
         — so two same-named credentials render distinctly in the 409 body.
+        ``scoped`` adds the credential's ``server_variables``, for a body whose
+        whole point is which scope the candidate carries.
         """
         return CredentialCandidate(
             id=credential.id,
             name=credential.name,
             last4=credential.id[-4:],
             created_at=credential.created_at,
+            server_variables=dict(credential.server_variables or {}) if scoped else None,
         )
 
     def _build_resolved(

@@ -14,7 +14,10 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete
 
-from jentic_one.broker.core.errors import CredentialNotProvisionedError
+from jentic_one.broker.core.errors import (
+    CredentialNotProvisionedError,
+    CredentialServerVariableMismatchError,
+)
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
@@ -99,7 +102,11 @@ async def _inject(
 async def test_region_scoped_credential_not_injected_for_other_region(
     integration_context: Context, clean_credentials: None
 ) -> None:
-    """Only a ``region=us`` credential exists: an ``/eu/`` request gets none."""
+    """Only a ``region=us`` credential exists: an ``/eu/`` request gets none.
+
+    The scope mismatch raises the narrower subclass; catching the base still
+    works, which is what keeps every existing 424 caller valid.
+    """
     await _seed_api_key(
         integration_context,
         cred_id="cred_us",
@@ -107,7 +114,7 @@ async def test_region_scoped_credential_not_injected_for_other_region(
         server_variables={"region": "us"},
     )
 
-    with pytest.raises(CredentialNotProvisionedError):
+    with pytest.raises(CredentialServerVariableMismatchError):
         await _inject(integration_context, {"region": "eu"})
 
 
@@ -184,8 +191,11 @@ async def test_unresolvable_request_variables_fail_closed_for_scoped_credentials
         server_variables={"region": "us"},
     )
 
-    with pytest.raises(CredentialNotProvisionedError):
+    # Fail-closed, but reported as its own cause: the credential exists and the
+    # URL simply does not say which values it targets.
+    with pytest.raises(CredentialServerVariableMismatchError) as fail_closed:
         await _inject(integration_context, None, unresolved=True)
+    assert fail_closed.value.type == "credential_server_variables_unresolved"
 
     await _seed_api_key(
         integration_context,
@@ -197,19 +207,16 @@ async def test_unresolvable_request_variables_fail_closed_for_scoped_credentials
     assert await _inject(integration_context, None, unresolved=True) == "any-secret"
 
 
-async def test_scoped_mismatch_is_reported_as_if_no_credential_existed(
+async def test_scoped_mismatch_is_distinguishable_from_an_absent_credential(
     integration_context: Context, clean_credentials: None
 ) -> None:
-    """A region mismatch and a bare API are the same 424 (#2089).
+    """A region mismatch and a bare API are different 424s (#2089).
 
     Dropping a credential on ``server_variables`` and never having one are
-    different problems with different fixes, and the resolver knows which it
-    hit — it compared the scoped value against the request's. Both arrive as
-    ``credential_not_provisioned`` carrying only the API tuple, so an operator
-    cannot see the scoped value that caused it, and the agent is told to run
-    ``jentic connect`` for a credential that already exists. This test records
-    that loss of information: it asserts the two cases are indistinguishable,
-    and that neither value reaches the caller.
+    different problems with different fixes, so each gets its own problem
+    ``type``. The mismatch body names the requested values, the variables that
+    disagree and the candidates' own scopes, and its directive must not send
+    the agent to connect a credential that already exists.
     """
     await _seed_api_key(
         integration_context,
@@ -218,7 +225,7 @@ async def test_scoped_mismatch_is_reported_as_if_no_credential_existed(
         server_variables={"region": "eu-west-1"},
     )
 
-    with pytest.raises(CredentialNotProvisionedError) as mismatch:
+    with pytest.raises(CredentialServerVariableMismatchError) as mismatch:
         await _inject(integration_context, {"region": "us-east-1"})
 
     async with integration_context.control_db.session() as session:
@@ -229,15 +236,31 @@ async def test_scoped_mismatch_is_reported_as_if_no_credential_existed(
     with pytest.raises(CredentialNotProvisionedError) as absent:
         await _inject(integration_context, {"region": "us-east-1"})
 
-    # Same wire identity and same detail for two different causes.
-    assert mismatch.value.type == absent.value.type == "credential_not_provisioned"
-    assert mismatch.value.detail == absent.value.detail
+    # Two causes, two wire identities — and the absent case keeps the old one.
+    assert mismatch.value.type == "credential_server_variable_mismatch"
+    assert absent.value.type == "credential_not_provisioned"
+    assert mismatch.value.detail != absent.value.detail
 
-    # Neither the credential's scoped value nor the requested one is reported.
-    body = f"{mismatch.value.detail} {mismatch.value.extra} {mismatch.value.directive}"
-    assert "eu-west-1" not in body
-    assert "us-east-1" not in body
+    # The requested value is named; the detail is the one-line summary a denied
+    # queued execution persists, so it carries no candidate scopes.
+    assert "us-east-1" in mismatch.value.detail
+    assert "eu-west-1" not in mismatch.value.detail
 
-    # The directive sends the agent to provision a credential that already exists.
+    # The candidates — the caller's own bound credentials — carry the scope that
+    # caused the refusal, so an operator can see it without guessing.
+    assert mismatch.value.extra["server_variables"] == {"region": "us-east-1"}
+    assert mismatch.value.extra["conflicting_variables"] == ["region"]
+    candidates = mismatch.value.extra["candidates"]
+    assert [c["id"] for c in candidates] == ["cred_eu"]
+    assert candidates[0]["server_variables"] == {"region": "eu-west-1"}
+
+    # The directive must not propose connecting what is already connected.
     assert mismatch.value.directive is not None
-    assert "jentic connect" in str(mismatch.value.directive)
+    directive = str(mismatch.value.directive)
+    assert "jentic connect" not in directive
+    assert "eu-west-1" in directive
+    assert mismatch.value.directive.strategy == "prompt_human"
+
+    # The absent case still gets the connect-flow directive — that one can help.
+    assert absent.value.directive is not None
+    assert "jentic connect" in str(absent.value.directive)

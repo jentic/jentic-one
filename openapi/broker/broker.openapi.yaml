@@ -1750,7 +1750,7 @@ components:
       description: |
         A bound credential is an unusable dependency, so the broker cannot
         sign the upstream call. Body is RFC 9457
-        `application/problem+json`; the `type` discriminates three cases with
+        `application/problem+json`; the `type` discriminates five cases with
         different recovery paths:
         - `credential_not_provisioned` — no credential is connected for the
           resolved upstream API. The `agent_directive` is a `prompt_human`
@@ -1761,6 +1761,23 @@ components:
           also carries a non-secret `provisioning_url` — that session's
           owner approval link (`/app/agents?approve=<session_id>`) — for
           the agent to relay instead of starting another connect.
+        - `credential_server_variable_mismatch` — a credential is connected
+          and covers the API, but it is scoped to different OpenAPI
+          server-variable values than the request resolved (for example a
+          `region=eu-west-1` credential against a `us-east-1` host). Starting
+          a connect flow cannot fix this, so the `prompt_human` directive does
+          **not** suggest one. `server_variables` carries the request's own
+          resolved values, `conflicting_variables` the names that disagree,
+          and `candidates` the caller's bound credentials with the
+          `server_variables` each is scoped to, so an operator can see the
+          value that caused the refusal. Either provision a credential for
+          the value needed, widen the existing one, or call a host the
+          existing credential covers.
+        - `credential_server_variables_unresolved` — a credential is connected
+          and is scoped to specific server-variable values, but the request
+          URL does not determine which values it targets, so every scoped
+          credential is ruled out (fail closed). Sending the host's templated
+          form (e.g. `{region}`) lets the credential supply the value.
         - `credential_undecryptable` — a credential is connected but its
           stored secret can no longer be decrypted (typically the
           deployment's encryption key rotated underneath it, e.g. a
@@ -1804,6 +1821,42 @@ components:
                   human_readable_instruction: >-
                     No credential is connected for 'api.example.com'; ask the user to
                     connect the account before retrying.
+            credential_server_variable_mismatch:
+              summary: A credential exists but is scoped to another region.
+              value:
+                type: credential_server_variable_mismatch
+                title: No credential provisioned for 'amazonaws-com' scoped to region='us-east-1'
+                status: 424
+                detail: No credential provisioned for 'amazonaws-com' scoped to region='us-east-1'
+                error_origin: broker
+                instance: /bedrock-runtime.us-east-1.amazonaws.com/model/m/converse
+                intent_id: intent_7c1d4e9a2b6f8d0c3a5e7b9d1f2a4c6e
+                server_variables:
+                  region: us-east-1
+                conflicting_variables:
+                  - region
+                candidates:
+                  - id: cred_01J8XYZ
+                    name: bedrock-eu
+                    last4: 8XYZ
+                    server_variables:
+                      region: eu-west-1
+                agent_directive:
+                  strategy: prompt_human
+                  parameters:
+                    vendor: amazonaws-com
+                    server_variables:
+                      region: us-east-1
+                    conflicting_variables:
+                      - region
+                    covered_values:
+                      - eu-west-1
+                  human_readable_instruction: >-
+                    A credential for 'amazonaws-com' exists, but none is scoped to
+                    region='us-east-1'. It covers 'eu-west-1'. Ask your operator either to
+                    provision a credential for the value you need, or to widen the existing
+                    one. Do not start a connect flow — a credential is already connected.
+                    Retrying the same request will fail the same way.
     ValidationError:
       description: |
         Request well-formed but semantically invalid — e.g. unknown
