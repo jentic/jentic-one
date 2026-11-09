@@ -109,7 +109,9 @@ Install the CLI on the machine where your agent runs, then connect it:
 
 ```bash
 brew install --cask jentic/tap/jentic    # macOS / Linux
-winget install Jentic.Jentic             # Windows
+
+scoop bucket add jentic https://github.com/jentic/scoop-bucket   # Windows
+scoop install jentic
 
 jentic setup --url http://127.0.0.1:8000   # registers the agent and installs its skill; approve it in the UI
 ```
