@@ -7,6 +7,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, FastAPI
 
+from jentic_one.admin.services.errors import PasswordHasherBusyError
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import (
     cursor_error_handler,
@@ -15,7 +16,10 @@ from jentic_one.auth.web.errors import (
 )
 from jentic_one.auth.web.routers import (
     agents,
+    approval,
     authorize,
+    consent,
+    consent_agent,
     discovery,
     identity,
     local_login,
@@ -50,7 +54,12 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         # the root protected-resource alias, and the /mcp 401 challenge. All
         # gated by server.mcp.oauth.enabled (404 when off).
         (discovery.mcp_router, "", []),
+        # The interactive AuthCode+PKCE flow, split by leg. Order is the
+        # OpenAPI path order of the schema-visible routes.
+        (approval.router, "", []),
         (authorize.router, "", []),
+        (consent.router, "", []),
+        (consent_agent.router, "", []),
         # Local-account login form on the /authorize flow. Gated by
         # auth.local_login.enabled (404 when off).
         (local_login.router, "", []),
@@ -67,6 +76,7 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     """Return auth-specific exception handlers for registration on the combined app."""
     return [
         (AuthServiceError, service_error_handler),
+        (PasswordHasherBusyError, service_error_handler),
         (DatabaseUnavailableError, database_error_handler),
         # A user-supplied `?cursor=` that fails to decode must 400, not 500 —
         # the per-agent grant listing decodes it (see auth/web/errors.py).

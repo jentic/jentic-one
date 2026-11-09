@@ -16,9 +16,9 @@ from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
 from jentic_one.auth.services.errors import AuthServiceError
-from jentic_one.auth.web import flow
+from jentic_one.auth.web import deps, flow
 from jentic_one.auth.web.errors import service_error_handler
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -56,7 +56,10 @@ def _client_view(*, approval_status: str, active: bool, name: str = "Cursor") ->
 @pytest.fixture()
 def app() -> FastAPI:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
 
     mock_ctx = MagicMock()
@@ -70,7 +73,7 @@ def app() -> FastAPI:
     authorize_svc.get_authorize_redirect_url = MagicMock(
         return_value="https://idp.example.com/authorize?state=x"
     )
-    app.dependency_overrides[authorize.get_authorize_service] = lambda: authorize_svc
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
     return app
 
 

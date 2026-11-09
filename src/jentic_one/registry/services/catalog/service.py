@@ -986,8 +986,8 @@ class CatalogService:
         silently reverting the operator's fix.
 
         If the re-import would change the server hosts of an API with bound credentials,
-        only a caller holding ``credentials:write`` makes it current; otherwise the worker
-        keeps the new revision as a draft for operator review (see
+        only an organisation admin makes it current; otherwise the worker keeps the new
+        revision as a draft for an organisation admin to review and promote (see
         ``registry/ingest/host_change_guard.py``).
         """
         entry = await self.get(api_id)
@@ -996,10 +996,11 @@ class CatalogService:
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
         if may_approve_host_change(identity.permissions):
-            # Server-host change guard: an operator (``credentials:write``) may let a
-            # re-import that changes the API's server hosts become current even when
-            # the API has bound credentials. Everyone else gets such a revision held
-            # as a draft for review. Server-set only; client schemas cannot carry it.
+            # Server-host change guard: an organisation admin may let a re-import that
+            # changes the API's server hosts become current even when the API has
+            # bound credentials. Everyone else gets such a revision held as a draft
+            # for an organisation admin to review and promote. Server-set only; client
+            # schemas cannot carry it.
             source["host_change_approved"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:

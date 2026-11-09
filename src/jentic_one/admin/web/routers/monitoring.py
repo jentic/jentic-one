@@ -24,7 +24,7 @@ from jentic_one.shared.web import openapi_examples as ex
 router = APIRouter()
 
 
-@router.get("/monitoring/executions")
+@router.get("/monitoring/executions", summary="Get execution statistics")
 async def get_execution_stats(
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     svc: MonitoringService = Depends(get_monitoring_service),
@@ -63,7 +63,7 @@ async def get_execution_stats(
     )
 
 
-@router.get("/monitoring/usage")
+@router.get("/monitoring/usage", summary="Get usage statistics")
 async def get_usage_stats(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["org:admin"]),

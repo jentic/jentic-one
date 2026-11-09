@@ -345,8 +345,12 @@ def baseline_matches(stored: Mapping[str, Any], live: Mapping[str, Any]) -> bool
     """Whether the binding still holds what the session's baseline recorded.
 
     Compares the rules (ids and content), the attached rule set and its
-    rules, and suspension. Granted scopes are left out: a token refresh can
-    rewrite them without anyone changing the binding.
+    rules, suspension, and the granted scopes. The scopes compare as a set,
+    so a token refresh that rewrites the string without changing what was
+    granted is not a change — but a grant that really moved is, because the
+    sign-in a confirm runs asks the vendor for the scopes the session holds:
+    resolved against a stale grant it would drop whatever another edit added,
+    for every agent bound to the credential, and show that nowhere.
     """
 
     def key(snapshot: Mapping[str, Any]) -> Any:
@@ -360,6 +364,7 @@ def baseline_matches(stored: Mapping[str, Any], live: Mapping[str, Any]) -> bool
             if rule_set is not None
             else None,
             bool(snapshot["suspended"]),
+            frozenset(snapshot.get("granted_scopes") or ()),
         )
 
     return bool(key(stored) == key(live))

@@ -65,8 +65,9 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
 
     Every column above is set by the server from the acting identity. An API
     revision's or connect review's ``submitted_by`` is deliberately not a
-    relation: ``POST /apis:import`` lets the client set it to any value, so
-    labelling it would let a caller name any user it likes.
+    relation: ``POST /apis:import`` lets an ``org:admin`` set it to any value
+    (everyone else's is replaced with the caller), so labelling it would let an
+    admin's import name any user it likes.
 
     The event and held-execution relations are written out rather than
     reusing the ``Event`` / ``HeldExecution`` filters. Of the event filter's
@@ -151,6 +152,6 @@ def build_lookup_user_filters(identity: Identity) -> list[ColumnElement[bool]]:
         )
         conditions.append(exists().where(OAuthClient.created_by == User.id))
     # Not a relation, on purpose: API revision and connect-review
-    # ``submitted_by``. ``POST /apis:import`` lets the client set it to any
-    # value, so labelling it would resolve whichever user the client names.
+    # ``submitted_by``. ``POST /apis:import`` lets an ``org:admin`` set it to any
+    # value, so labelling it would resolve whichever user that import names.
     return [or_(*conditions)]

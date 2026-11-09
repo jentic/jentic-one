@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Authorize {app_name} | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>{page_css}</style>
+</head>
+<body>
+    <div class="card card--wide">
+        {logo_block}
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> wants to connect to one of your agents</h1>
+        <div class="origin">{redirect_origin}</div>
+        <p class="description">{app_description}</p>
+        <form method="post" action="/oauth/consent">
+            <div class="agents">
+                <h2>Choose the agent this application may act through:</h2>
+                {agent_options}
+            </div>
+            <input type="hidden" name="consent_token" value="{consent_token}">
+            <div class="buttons">
+                <button type="submit" name="action" value="deny"
+                        class="deny" formnovalidate>Deny</button>
+                <button type="submit" name="action" value="approve"
+                        class="approve">Authorize</button>
+            </div>
+        </form>
+        <div class="footer">
+            The application will act only through the selected agent,
+            limited to the permissions shown.<br>
+            <a href="{restart_url}">Not you? Use a different account</a>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,15 +1,10 @@
-// Package localagentcmd holds the local-agent runtime feature extracted from
-// cmdcore (ARCH-1): everything that stands up and drives a coding agent as an
-// isolated Unix user — `jentic setup`, `jentic run`, agent-account
-// creation/seeding, workspace grants, and exporting the active context's
-// credentials into the agent's home.
+// Package localagentcmd holds the local agent client commands extracted from
+// cmdcore (ARCH-1): `jentic setup` (register + skill install + MCP entry) and
+// `jentic skill` (the agent-runtime skill engine shared with jenticctl's
+// wizard/update/uninstall).
 //
-// It is the ONLY package that performs privileged host mutation (useradd, ACL
-// grants, sudo-launched processes), so isolating it keeps that blast radius in
-// one reviewable place and leaves cmdcore as the shared command-infrastructure
-// base both binaries embed. localagentcmd depends on cmdcore (the allowed
-// arrow: a command-tree package uses the shared base); cmdcore never depends on
-// it.
+// localagentcmd depends on cmdcore (the allowed arrow: a command-tree package
+// uses the shared base); cmdcore never depends on it.
 package localagentcmd
 
 import "github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
@@ -22,9 +17,8 @@ func New(app *cmdcore.App) *Cmd { return &Cmd{App: app} }
 
 // Cmd is the local-agent command receiver. It embeds *cmdcore.App so every
 // method below keeps calling the shared helpers (Out/Err/Paths, WantsInteractive,
-// …) exactly as it did when these files lived in cmdcore — the move is pure
-// relocation, not a behavior change. The two binary trees construct it from the
-// shared *cmdcore.App (NewSetupCmd/NewRunCmd take *cmdcore.App and wrap it).
+// …). The two binary trees construct it from the shared *cmdcore.App
+// (NewSetupCmd/NewSkillCmd take *cmdcore.App and wrap it).
 //
 // This mirrors the ctl tree's `type app struct { *cmdcore.App }`.
 type Cmd struct {

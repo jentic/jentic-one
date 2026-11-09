@@ -68,7 +68,15 @@ class AppConfig(BaseModel):
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     held_executions: HeldExecutionsConfig = Field(default_factory=HeldExecutionsConfig)
-    apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
+    apps: list[str] = Field(
+        default_factory=lambda: ["registry", "admin", "control", "auth"],
+        description=(
+            "Surfaces this process serves: any of ``registry``, ``admin``, "
+            "``control``, ``auth``, or ``broker`` alone (the broker cannot be "
+            "combined with other surfaces). Also decides which secrets "
+            "production requires."
+        ),
+    )
     state: StateBackendConfig = Field(
         default_factory=StateBackendConfig,
         description=(

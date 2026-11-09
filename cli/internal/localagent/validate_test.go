@@ -46,22 +46,6 @@ func TestValidateAgentUserRejectsInjectionAndMalformed(t *testing.T) {
 	}
 }
 
-func TestValidateHomeDirAcceptsUnderSharedRoot(t *testing.T) {
-	root := AgentHomeRoot()
-	for _, home := range []string{
-		root + "/alice-local-agent",
-		root + "/team/alice-local-agent",
-	} {
-		if err := ValidateHomeDir(home); err != nil {
-			t.Errorf("ValidateHomeDir(%q) = %v, want nil", home, err)
-		}
-	}
-	// DefaultHomeDir must always satisfy the validator on this platform.
-	if err := ValidateHomeDir(DefaultHomeDir("alice-local-agent")); err != nil {
-		t.Errorf("DefaultHomeDir output failed ValidateHomeDir: %v", err)
-	}
-}
-
 func TestValidateHomeDirRejectsUnsafe(t *testing.T) {
 	root := AgentHomeRoot()
 	cases := []string{

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -23,6 +23,28 @@ from jentic_one.control.core.schema.agent_permission_rules import AgentPermissio
 
 class AgentPermissionRuleRepository:
     """Data access layer for AgentPermissionRule entities — flush-only, never commits."""
+
+    @staticmethod
+    async def acquire_binding_lock(
+        session: AsyncSession, agent_id: str, credential_id: str
+    ) -> None:
+        """Serialise the writers that replace one binding's rules.
+
+        ``replace_user_rules`` deletes and re-inserts, so two writers that each
+        checked the rules before writing would both pass and the later one
+        would silently revert the earlier. Held with the caller's transaction,
+        and paired with a re-read of the rules inside it.
+
+        On PostgreSQL this is ``pg_advisory_xact_lock`` (released at commit or
+        rollback). On SQLite it is a no-op: every write transaction opens with
+        ``BEGIN IMMEDIATE``, which already serialises writers to the file.
+        """
+        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        if dialect == "postgresql":
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"agent_permission_rules:{agent_id}:{credential_id}"},
+            )
 
     @staticmethod
     async def list_rules(

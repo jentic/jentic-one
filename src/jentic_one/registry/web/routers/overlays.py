@@ -29,6 +29,7 @@ from jentic_one.shared.models import OverlayStatus
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import conflict
 
 router = APIRouter(prefix="/apis/{vendor}/{name}/{version}/overlays")
 
@@ -213,7 +214,7 @@ async def list_overlays(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/{overlay_id}", response_model=OverlayResponse)
+@router.get("/{overlay_id}", response_model=OverlayResponse, summary="Get an overlay")
 async def get_overlay(
     request: Request,
     vendor: ApiVendorPath,
@@ -233,7 +234,18 @@ async def get_overlay(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/{overlay_id}", response_model=OverlayResponse, summary="Edit an overlay")
+@router.patch(
+    "/{overlay_id}",
+    response_model=OverlayResponse,
+    summary="Edit an overlay",
+    responses=conflict(
+        "The edit is refused and the overlay is unchanged. `overlay_conflict` when the "
+        "overlay is not editable in its state — a `deprecated` overlay, or a confirmed "
+        "one whose revision is no longer the live one (rolled back or re-imported since). "
+        "`overlay_rollback_target_missing` when a live confirmed overlay records no "
+        "pre-overlay base revision, so the edit has no clean base to re-apply over."
+    ),
+)
 async def update_overlay(
     request: Request,
     vendor: ApiVendorPath,
@@ -313,6 +325,14 @@ async def deprecate_overlay(
     "/{overlay_id}:confirm",
     response_model=OverlayResponse,
     summary="Confirm an overlay and apply it to the served spec",
+    responses=conflict(
+        "Nothing is applied and the overlay is unchanged. `overlay_conflict` when the "
+        "overlay is not `pending` (a `deprecated` overlay cannot be confirmed). "
+        "`overlay_apply_conflict` when the overlay cannot be applied to the base spec — "
+        "an action fails to apply, the result is not a recognisable OpenAPI document, it "
+        "exceeds `ingest.max_spec_bytes`, or it declares a `servers[].url` that egress "
+        "policy rejects."
+    ),
 )
 async def confirm_overlay(
     request: Request,
@@ -352,6 +372,13 @@ async def confirm_overlay(
     "/{overlay_id}:rollback",
     status_code=204,
     summary="Roll back a confirmed overlay",
+    responses=conflict(
+        "A precondition failed and nothing changed. `overlay_conflict` when the overlay "
+        "is not `confirmed` or its revision is no longer the live one. "
+        "`overlay_rollback_target_missing` when the revision it superseded was never "
+        "recorded or is no longer restorable. `host_owned_by_other_vendor` when another "
+        "vendor's live API now serves one of the restored revision's hosts."
+    ),
 )
 async def rollback_overlay(
     vendor: ApiVendorPath,

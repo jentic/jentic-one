@@ -137,6 +137,26 @@ async def test_a_narrow_credential_is_used_in_one_step_and_lands_with_the_grant(
     assert (status.status, status.credential_id) == ("connected", narrow)
 
 
+async def test_the_session_reads_as_an_edit_while_it_awaits_the_vendor(env: Context) -> None:
+    """Taking the edit intent means the review reads the session as an edit.
+
+    Without a baseline that read raised out of the app for the whole window
+    the session awaits its callback, for the approver and the agent alike.
+    """
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read", "write"])
+    narrow = await existing_credential(env, oauth_scope="read")
+    result = await _use_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+
+    review = await svc(env).get_review_data(created.session_id, poll_token=None, identity=OWNER)
+    assert review.edit is not None
+    # Nothing is bound yet, so the access it would change is empty.
+    assert review.edit.current["rules"] == []
+    assert review.edit.current["granted_scopes"] == ["read"]
+    assert review.state == "polling"
+
+
 async def test_a_failed_consent_never_binds_or_widens(env: Context) -> None:
     await import_spec(env, OAUTH_SCHEME)
     created = await connect(env, requested_scopes=["read", "write"])

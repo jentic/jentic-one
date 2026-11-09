@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { VendorAuthCapabilitiesResponse } from '../models/VendorAuthCapabilitiesResponse';
 import type { VendorListResponse } from '../models/VendorListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -46,7 +47,7 @@ export class VendorsService {
      * `oauth_app_registration_id` to pick one; without it the request fails
      * with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
      * An unknown vendor returns 404 (`unknown_vendor`).
-     * @returns any Successful Response
+     * @returns VendorAuthCapabilitiesResponse Successful Response
      * @throws ApiError
      */
     public static getAuthCapabilities({
@@ -61,7 +62,7 @@ export class VendorsService {
          * Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.
          */
         oauthAppRegistrationId?: (string | null),
-    }): CancelablePromise<any> {
+    }): CancelablePromise<VendorAuthCapabilitiesResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/vendors/{vendor_key}/auth-capabilities',
@@ -75,6 +76,7 @@ export class VendorsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `No vendor is registered under this \`vendor_key\` (\`unknown_vendor\`). The keys this deployment serves come from \`GET /vendors\`; they are seeded from operator config, so a key valid on another deployment may not exist here.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

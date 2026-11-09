@@ -23,7 +23,7 @@ from jentic_one.shared.web import get_current_identity
 router = APIRouter()
 
 
-@router.get("/me", response_model=MeResponse)
+@router.get("/me", summary="Get the caller's identity", response_model=MeResponse)
 async def get_me(
     request: Request,
     identity: Identity = get_current_identity(allow_expired_password=True),

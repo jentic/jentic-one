@@ -14,12 +14,12 @@ Two servers expose the same loop; **check `tools/list` to tell them apart**:
   local `jentic mcp` **stdio server** — a machine that has the CLI, so CLI
   recovery *may* also be available (defeasible: `--exclude-tools
   get_started` can hide it there, so treat presence as a strong hint,
-  absence as the reliable direction). The stdio server serves **ten** tools:
-  the nine below plus `get_started`.
+  absence as the reliable direction). The stdio server serves **fourteen**
+  tools: the thirteen below plus `get_started`.
 - If `get_started` is **absent**, you are on the daemon's **HTTP `/mcp`
   mount**: **no CLI exists** — never tell the operator to run `jentic …` "on
   this machine"; there is no this-machine. The mount serves exactly the
-  **nine** tools below.
+  **thirteen** tools below.
 
 Both flavors drive the same loop against the same backend; every tool result
 carries an `instance` stamp (`backend`/`host`/`instance_id`) — your
@@ -237,7 +237,7 @@ is still waiting — relay that link to your operator rather than calling
 and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.
 
-## The 12 mount tools (each maps onto the loop)
+## The 13 mount tools (each maps onto the loop)
 
 - `whoami` — your identity, status, permissions, and credential bindings with the
   APIs each one serves; start here and decide access from it.
@@ -275,8 +275,11 @@ delivered in the envelope instead of stderr.
   the mount reports a duplicate as an `already_imported` success (the stdio
   server reports the same duplicate as a failed dead-letter import; either
   way it's already there).
+- `inspect_api` — how a connection to one registry API would be made: its
+  security schemes, how each is collected, and the OAuth scopes you may
+  request (`requestable: true`). Run it before `request_connection`.
 
-The stdio server serves these twelve plus `get_started` (pre-auth setup
+The stdio server serves these thirteen plus `get_started` (pre-auth setup
 diagnosis on a CLI machine).
 
 **Structural facts:** every tool result carries an `instance` stamp

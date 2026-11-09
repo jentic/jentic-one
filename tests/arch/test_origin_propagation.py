@@ -21,6 +21,9 @@ _EXCLUDED = frozenset(
 )
 
 
+pytestmark = pytest.mark.arch
+
+
 def _find_missing_origin(filepath: Path) -> list[str]:
     """Return violation messages for audit calls missing the origin kwarg."""
     source = filepath.read_text(encoding="utf-8")

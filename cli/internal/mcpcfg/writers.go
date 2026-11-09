@@ -118,8 +118,7 @@ func writeFilePreserving(path string, data []byte, existed bool) error {
 }
 
 // ExecStep is one step of an exec-route plan (claude-code), enumerated rather
-// than run so the plan is assertable in tests without spawning anything —
-// mirroring localagent.AccountStep.
+// than run so the plan is assertable in tests without spawning anything.
 type ExecStep struct {
 	// What describes the step for progress/error messages.
 	What string

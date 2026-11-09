@@ -30,6 +30,9 @@ from tests.arch.conftest import SRC_ROOT
 MIGRATIONS_ROOT = SRC_ROOT / "migrations"
 
 
+pytestmark = pytest.mark.arch
+
+
 def _migration_trees() -> list[Path]:
     return sorted(child for child in MIGRATIONS_ROOT.iterdir() if (child / "versions").is_dir())
 

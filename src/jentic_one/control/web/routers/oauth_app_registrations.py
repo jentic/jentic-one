@@ -222,7 +222,7 @@ async def update_oauth_app_registration(
 
 @router.post(
     "/oauth-app-registrations/{id}:rotate-secret",
-    summary="Rotate the client secret",
+    summary="Rotate an OAuth app registration's secret",
     responses=with_responses(not_found(), conflict()),
 )
 async def rotate_oauth_app_registration_secret(

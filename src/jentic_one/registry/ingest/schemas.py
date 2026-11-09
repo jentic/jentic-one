@@ -48,7 +48,7 @@ class IngestResult(BaseModel):
     superseded_revision_id: uuid.UUID | None = None
     state: ApiRevisionState = ApiRevisionState.DRAFT
     operation_count: int
-    #: Set when the revision was held as a DRAFT for operator review because it
+    #: Set when the revision was held as a DRAFT for organisation-admin review because it
     #: would change the server hosts of an API with bound credentials.
     held_host_change: HeldHostChange | None = None
     #: Set when ingest resolved, dropped, or kept back a relative server URL.

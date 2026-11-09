@@ -185,9 +185,11 @@ jobs:
               - 'scripts/flow3_upstream_fixture.py'
             cli:
               - 'cli/**'
-              # The cli job drift-checks the generated CLI reference the docs
-              # SPA renders, so hand-edits to the artifact must run it too.
+              # The cli job drift-checks the generated CLI reference (the JSON
+              # the docs SPA renders and its Markdown rendering for GitHub), so
+              # hand-edits to either artifact must run it too.
               - 'ui/public/cli-reference.json'
+              - 'docs/reference/cli.md'
               # check-cli-gen / check-ctl-gen regenerate the Go client and
               # installer config bindings FROM these backend-owned sources — a
               # PR that changes only a spec/schema (without touching cli/)
@@ -1142,17 +1144,18 @@ jobs:
         run: make test-sdk-consumer
 
       # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
-      # CLI") is generated from the cobra command tree by `make cli-reference`.
-      # Nothing else pins it, so a command/flag change without a regen would
-      # silently drift the published CLI docs.
+      # CLI") and docs/reference/cli.md (its Markdown rendering for GitHub)
+      # are generated from the cobra command tree by `make cli-reference`.
+      # A command/flag change without a regen would silently drift the
+      # published CLI docs.
       - name: CLI reference up to date
         run: |
-          go run ./cmd/clidocs -o ../ui/public/cli-reference.json
+          go run ./cmd/clidocs -o ../ui/public/cli-reference.json -md ../docs/reference/cli.md
           # `status --porcelain` (not `diff --exit-code`) so a deleted-then-
           # regenerated artifact shows up as untracked instead of passing.
-          if [ -n "$(git status --porcelain -- ../ui/public/cli-reference.json)" ]; then
-            git --no-pager diff -- ../ui/public/cli-reference.json
-            echo '::error::ui/public/cli-reference.json is out of date. Run `make cli-reference` and commit.'
+          if [ -n "$(git status --porcelain -- ../ui/public/cli-reference.json ../docs/reference/cli.md)" ]; then
+            git --no-pager diff -- ../ui/public/cli-reference.json ../docs/reference/cli.md
+            echo '::error::ui/public/cli-reference.json or docs/reference/cli.md is out of date. Run `make cli-reference` and commit.'
             exit 1
           fi
 
@@ -1342,8 +1345,8 @@ jobs:
       # ---- Win/mac: run the OS-sensitive Go tests (OPS-21) ----
       # The full race/unit/golden/arch suite runs only on Ubuntu (the `cli`
       # job). The packages whose behavior forks by GOOS — process liveness/
-      # terminate (`internal/proc`), `jenticctl stop`, and the local-agent
-      # launcher/degrade path — must also execute on Windows and macOS so a
+      # terminate (`internal/proc`), `jenticctl stop`, and the agent-account
+      # cleanup commands — must also execute on Windows and macOS so a
       # GOOS-specific regression (e.g. OPS-20's Windows signal semantics) fails
       # CI here instead of silently on a user's machine. Ubuntu already covers
       # these in the `cli` job, so this leg is Win/mac only.

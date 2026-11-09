@@ -49,6 +49,8 @@ from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeListResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
@@ -61,7 +63,12 @@ from jentic_one.shared.web.openapi_responses import conflict, not_found, problem
 router = APIRouter()
 
 
-@router.get("/apis", response_model=ApiListResponse, response_model_by_alias=True)
+@router.get(
+    "/apis",
+    response_model=ApiListResponse,
+    response_model_by_alias=True,
+    summary="List registered APIs",
+)
 async def list_apis(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
@@ -135,7 +142,7 @@ async def list_apis(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse)
+@router.get("/apis/{vendor}/{name}/{version}", response_model=ApiResponse, summary="Get an API")
 async def get_api(
     request: Request,
     vendor: ApiVendorPath,
@@ -249,6 +256,8 @@ def _check_inline_source_sizes(body: ApiImportRequest, max_bytes: int, instance:
 @_import_router.post(
     "/apis",
     status_code=202,
+    response_model=ApiImportResponse,
+    summary="Import OpenAPI or Arazzo specs",
     responses={
         413: problem(
             "The request body exceeds `ingest.max_import_request_bytes`, or an inline "
@@ -271,14 +280,21 @@ async def import_apis(
     request is refused with 413 before any job is queued.
     """
     _check_inline_source_sizes(body, ctx.config.ingest.max_spec_bytes, request.url.path)
-    # Attribute each resulting revision to the authenticated principal unless the
-    # client supplied an explicit `submitted_by` override (e.g. importing on
-    # behalf of someone else). The job row's `created_by` records the caller
-    # either way; this default carries the same principal through the ingest
-    # pipeline onto ApiRevision.submitted_by.
+    # Attribute each resulting revision to the authenticated principal. Only an
+    # organisation admin may name someone else in `submitted_by` (importing on
+    # their behalf): a draft's submitter is who may pin it, so anyone else's
+    # value is replaced with the caller. The job row's `created_by` records the
+    # caller either way; this carries the principal through the ingest pipeline
+    # onto ApiRevision.submitted_by.
+    # A gate on the same permission as the server-host guard's
+    # `may_approve_host_change`, but a deliberately separate one: this governs who
+    # a revision is attributed to, not who may move an API's hosts. Relaxing one
+    # does not imply relaxing the other. Both expand the implication map, so a
+    # grant that only implies `org:admin` counts here too.
+    may_attribute = has_effective_permission(identity.permissions, ORG_ADMIN)
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
-        if source.get("submitted_by") is None:
+        if not may_attribute or source.get("submitted_by") is None:
             source["submitted_by"] = identity.sub
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
@@ -379,7 +395,11 @@ def _build_revision_links(
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions", summary="List an API's revisions")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/revisions",
+    response_model=ApiRevisionListResponse,
+    summary="List an API's revisions",
+)
 async def list_api_revisions(
     request: Request,
     vendor: ApiVendorPath,
@@ -457,7 +477,12 @@ async def list_api_revisions(
 
 
 @router.get(
-    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}", summary="Get an API revision"
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
+    response_model=ApiRevisionResponse,
+    summary="Get an API revision",
+    responses=not_found(
+        "The API (type `api_not_found`) or the revision (type `revision_not_found`) does not exist."
+    ),
 )
 async def get_api_revision(
     request: Request,
@@ -551,6 +576,10 @@ def _build_operations_response(
     response_model=OperationSummaryListResponse,
     response_model_by_alias=True,
     summary="List the operations an API currently serves",
+    responses=not_found(
+        "The API does not exist (type `api_not_found`), or it exists but has no live "
+        "revision to list operations from (type `no_current_revision`)."
+    ),
 )
 async def list_api_operations(
     request: Request,
@@ -592,7 +621,12 @@ async def list_api_operations(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations",
+    response_model=OperationSummaryListResponse,
+    response_model_by_alias=True,
     summary="List the operations in an API revision",
+    responses=not_found(
+        "The API (type `api_not_found`) or the revision (type `revision_not_found`) does not exist."
+    ),
 )
 async def list_api_revision_operations(
     request: Request,
@@ -639,7 +673,11 @@ async def list_api_revision_operations(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/apis/{vendor}/{name}/{version}")
+@router.patch(
+    "/apis/{vendor}/{name}/{version}",
+    response_model=ApiResponse,
+    summary="Update an API",
+)
 async def update_api(
     request: Request,
     vendor: ApiVendorPath,
@@ -664,6 +702,7 @@ async def update_api(
 @router.delete(
     "/apis/{vendor}/{name}/{version}",
     status_code=204,
+    summary="Delete an API",
     responses={
         **not_found(),
         **conflict(
@@ -685,7 +724,11 @@ async def delete_api(
     return Response(status_code=204)
 
 
-@router.post("/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote")
+@router.post(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote",
+    response_model=ApiResponse,
+    summary="Promote an API revision",
+)
 async def promote_revision(
     request: Request,
     vendor: ApiVendorPath,
@@ -702,8 +745,8 @@ async def promote_revision(
 
     If the draft declares different server hosts than the API's current (or last
     live) revision, or serves a host over plaintext http that was https-only, and
-    the API has credentials bound to agents, the caller also needs
-    ``credentials:write``; otherwise the promote is refused with 403
+    the API has credentials bound to agents, the caller must be an organisation
+    admin (``org:admin``); otherwise the promote is refused with 403
     ``host_change_requires_operator``.
     """
     svc = RevisionService(ctx)
@@ -715,7 +758,13 @@ async def promote_revision(
 
 @router.post(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive",
+    response_model=ApiRevisionResponse,
     summary="Archive an API revision",
+    responses=conflict(
+        "Only a `draft` or `imported` revision can be archived; any other state "
+        "(`published`, `archived`) is refused with type `revision_state_conflict`. "
+        "Nothing was archived."
+    ),
 )
 async def archive_revision(
     request: Request,
@@ -769,6 +818,11 @@ async def archive_revision(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
     status_code=204,
     summary="Delete an archived API revision",
+    responses=conflict(
+        "Only an `archived` revision can be deleted; a `draft`, `imported` or "
+        "`published` revision is refused with type `revision_state_conflict`. "
+        "Nothing was deleted."
+    ),
 )
 async def delete_revision(
     vendor: ApiVendorPath,
@@ -793,6 +847,48 @@ async def delete_revision(
 
 
 _SPEC_SUPPORTED_MEDIA_TYPES = {"application/json", "application/openapi+yaml", "application/yaml"}
+
+# The body is a third-party OpenAPI document, so it has no fixed shape and is not
+# modelled. Declaring a permissive schema per media type tells a caller what they
+# are getting instead of leaving the response untyped.
+_SPEC_DOWNLOAD_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "The stored OpenAPI document, served as-is, with "
+            "`Content-Disposition: attachment`. `application/json` is the default; request "
+            "`application/openapi+yaml` or `application/yaml` via `Accept` for YAML."
+        ),
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    # The shape is the third-party document's own, so every member is
+                    # unknown here. Saying so explicitly tells a client generator that
+                    # arbitrary members are expected rather than leaving it to guess.
+                    "additionalProperties": True,
+                    "description": (
+                        "The API's OpenAPI document as stored on the revision — an OpenAPI "
+                        "object (`openapi`, `info`, `paths`, …) whose shape is the "
+                        "third-party spec's own, so it is not modelled here. Expect "
+                        "arbitrary members."
+                    ),
+                }
+            },
+            "application/openapi+yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": "The same OpenAPI document serialized as YAML.",
+                }
+            },
+            "application/yaml": {
+                "schema": {
+                    "type": "string",
+                    "description": "The same OpenAPI document serialized as YAML.",
+                }
+            },
+        },
+    }
+}
 
 
 def _spec_response(request: Request, doc: SpecDocument) -> Response:
@@ -822,7 +918,11 @@ def _spec_response(request: Request, doc: SpecDocument) -> Response:
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/openapi")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/openapi",
+    summary="Get an API's OpenAPI document",
+    responses=_SPEC_DOWNLOAD_RESPONSES,
+)
 async def get_api_spec(
     request: Request,
     vendor: ApiVendorPath,
@@ -852,6 +952,14 @@ async def get_api_spec(
 
 @router.get(
     "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi",
+    responses={
+        **_SPEC_DOWNLOAD_RESPONSES,
+        406: problem(
+            "`Accept` names none of the supported media types — `application/json`, "
+            "`application/openapi+yaml`, `application/yaml` (or `*/*`) — so the document "
+            "cannot be served in a format the caller asked for (type `not_acceptable`)."
+        ),
+    },
     summary="Download an API revision's OpenAPI document",
 )
 async def get_api_revision_spec(

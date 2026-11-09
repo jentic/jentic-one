@@ -41,6 +41,7 @@ import {
 	useConfirmConnectSession,
 	useConnectSession,
 	useAmendConnectSession,
+	useRebaseConnectSession,
 	useBindingAccess,
 	useConnectSessionRevisions,
 	usePollConnectSessionStatus,
@@ -104,6 +105,7 @@ import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-n
 import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
+	AmendedSession,
 	AmendEditBody,
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
@@ -1287,6 +1289,11 @@ function VendorApproveFlow({
 	if (session?.edit) {
 		return (
 			<EditApproveFlow
+				// Mount-once per session: its state (the revision shown, whether
+				// the open read was stale, whether a rebase was asked for) is
+				// about one session, so a host swapping the id without an
+				// unmount in between must not carry the last one's over.
+				key={sessionId}
 				sessionId={sessionId}
 				pollToken={pollToken}
 				session={session as ReviewSession & { edit: ReviewEdit }}
@@ -1655,6 +1662,7 @@ function EditApproveFlow({
 	const [resume, setResume] = useState<boolean>(() => resumes(latest));
 	// The reviewer's own edit, saved as a revision: shown once it's read back.
 	const amendMutation = useAmendConnectSession(sessionId);
+	const rebaseMutation = useRebaseConnectSession(sessionId, pollToken);
 	const [ownRevision, setOwnRevision] = useState<string | null>(null);
 	// The rules while the reviewer edits them, before they're saved.
 	const [draftRules, setDraftRules] = useState<PermissionRule[]>([]);
@@ -1677,6 +1685,15 @@ function EditApproveFlow({
 		[history, shown.revision.number],
 	);
 	const latestChange = history.find((c) => c.revision.id === latest.revision.id);
+	// Everything that happened since the revision on screen, so a rebase is
+	// never the only change named for a reviewer who also has an amend to read.
+	const since = useMemo(
+		() =>
+			history
+				.filter((c) => c.revision.number > shown.revision.number)
+				.sort((a, b) => a.revision.number - b.revision.number),
+		[history, shown.revision.number],
+	);
 	// A new revision the review poll found: read the history again to describe it.
 	const refetchedFor = useRef<string | null>(null);
 	useEffect(() => {
@@ -1695,6 +1712,57 @@ function EditApproveFlow({
 			setOwnRevision(null);
 		}
 	}, [latest, ownRevision]);
+	// The binding moved since the request was opened. A read says so and
+	// writes nothing, so bring it up to date before the reviewer studies the
+	// diff; once they are reading, the changed-request banner offers it
+	// instead, so the diff never moves under them unasked.
+	// What the reviewer has in front of them, read inside the callback so the
+	// mount effect below keeps one identity. Written in an effect, not in
+	// render: a discarded concurrent render would otherwise leave it pointing
+	// at a revision that never committed.
+	const shownRevision = useRef(shown.revision);
+	useEffect(() => {
+		shownRevision.current = shown.revision;
+	}, [shown.revision]);
+	const rebase = useCallback(async (): Promise<void> => {
+		let rebased: AmendedSession;
+		try {
+			rebased = await rebaseMutation.mutateAsync();
+		} catch (err) {
+			// A refusal (the request closed under them, the chain full, the
+			// bucket spent) leaves the diff as it is and says so: the banner
+			// goes on offering the action, so saying nothing reads as a dead
+			// button.
+			setError(err instanceof Error ? err.message : 'The request couldn’t be updated.');
+			return;
+		}
+		setError(null);
+		// Read after the write, not before it: a reviewer who acknowledges an
+		// amend while the rebase is in flight has read that revision by the
+		// time it lands, and comparing against the one they had on screen when
+		// they clicked would re-disable Approve over their own rebase.
+		const from = shownRevision.current;
+		// Adopted as the revision under review only when the rebase appended
+		// onto the one being read, or returned that one unchanged: they asked
+		// for it, so it is theirs. Rebased over an amend they have not seen,
+		// it stays bannered as someone else's change — adopting it would clear
+		// that acknowledgement and re-enable Approve for an ask never shown.
+		if (rebased.revision_id === from.id || rebased.revision_number === from.number + 1) {
+			setOwnRevision(rebased.revision_id);
+		}
+	}, [rebaseMutation]);
+	// Only what the first read said: going stale later belongs to the banner,
+	// so the diff never moves while they are reading it. Only for a reviewer
+	// who can approve, too: for anyone else the write would charge their page
+	// open to the connect bucket for an action they cannot take.
+	const openedStale = useRef(session.stale === true && session.can_confirm);
+	const askedToRebase = useRef(false);
+	useEffect(() => {
+		if (!openedStale.current || askedToRebase.current) return;
+		askedToRebase.current = true;
+		void rebase();
+	}, [rebase]);
+
 	const changed = latest.revision.id !== shown.revision.id && latest.revision.id !== ownRevision;
 	const conflicts = shown.conflicts ?? [];
 	const changes = useMemo(() => ruleChanges(shown), [shown]);
@@ -1921,11 +1989,19 @@ function EditApproveFlow({
 				}
 			/>
 
-			{(changed || staleApprove) && (
+			{(changed || staleApprove || session.stale) && (
 				<RequestChangedBanner
-					change={changed ? latestChange : undefined}
+					// Remounted when which thing happened changes, so a reader
+					// is told again rather than the live region mutating under
+					// them unannounced.
+					key={changed ? 'changed' : 'stale'}
+					changes={changed ? since : undefined}
+					changed={changed}
 					agentId={byAgent ? shown.binding.agent_id : undefined}
 					afterApprove={staleApprove}
+					stale={session.stale === true}
+					onUpdate={session.stale && canConfirm ? (): void => void rebase() : undefined}
+					updating={rebaseMutation.isPending}
 					onReview={changed ? showLatest : undefined}
 					onHistory={(): void => setHistoryOpen(true)}
 				/>
@@ -2053,23 +2129,25 @@ function EditApproveFlow({
 							scopes; nothing changes until you do.
 						</p>
 					)}
-					{(newScopes.length > 0 || droppedScopes.length > 0) &&
-						otherAgents.length > 0 && (
-							<p className="text-muted-foreground text-xs">
-								The changes also reach{' '}
-								{otherAgents.length === 1
-									? '1 other agent'
-									: `${otherAgents.length} other agents`}{' '}
-								using this credential:{' '}
-								{otherAgents.map((agent, i) => (
-									<span key={agent.agent_id}>
-										{i > 0 && ', '}
-										<ActorLabel actorId={agent.agent_id} />
-									</span>
-								))}
-								.
-							</p>
-						)}
+				</section>
+			)}
+
+			{otherAgents.length > 0 && (
+				<section aria-label="Agents this change reaches" className="text-xs">
+					<p className="text-muted-foreground">
+						The changes also reach{' '}
+						{otherAgents.length === 1
+							? '1 other agent'
+							: `${otherAgents.length} other agents`}
+						, bound to this credential or to a rule set this change rewrites:{' '}
+						{otherAgents.map((agent, i) => (
+							<span key={agent.agent_id}>
+								{i > 0 && ', '}
+								<ActorLabel actorId={agent.agent_id} />
+							</span>
+						))}
+						.
+					</p>
 				</section>
 			)}
 
@@ -2679,21 +2757,37 @@ function capitalise(text: string): string {
  * what they did and why. Also shown when Approve was refused for it.
  */
 function RequestChangedBanner({
-	change,
+	changes,
+	changed = false,
 	agentId,
 	afterApprove,
+	stale = false,
+	onUpdate,
+	updating = false,
 	onReview,
 	onHistory,
 }: {
-	/** The new current revision; absent until it is read. */
-	change?: RevisionChange;
+	/**
+	 * Every revision since the one under review, oldest first: a rebase that
+	 * lands over an amend must not be the only change the reviewer is shown,
+	 * or the ask they are acknowledging reads as their own.
+	 */
+	changes?: RevisionChange[];
+	/** The request itself moved, which outranks the access moving under it. */
+	changed?: boolean;
 	agentId?: string;
 	afterApprove: boolean;
+	/** The access moved since the request was opened, so the diff is behind it. */
+	stale?: boolean;
+	onUpdate?: () => void;
+	updating?: boolean;
 	/** Absent until the new version is read. */
 	onReview?: () => void;
 	onHistory: () => void;
 }) {
-	const reason = change ? revisionReason(change.revision) : null;
+	// Newest last, so the reviewer reads them in the order they happened.
+	const named = changes ?? [];
+	const reason = named.length === 1 ? revisionReason(named[0].revision) : null;
 	return (
 		<div
 			role="alert"
@@ -2703,28 +2797,49 @@ function RequestChangedBanner({
 				<p className="font-medium">
 					{afterApprove
 						? 'Not approved: this request changed while you were reviewing it.'
-						: 'This request changed while you were reviewing it.'}
+						: changed
+							? 'This request changed while you were reviewing it.'
+							: 'The access this request was opened against has changed since.'}
 				</p>
-				{change && (
+				{stale && (
 					<p className="text-xs">
-						Revision {change.revision.number}:{' '}
-						{change.revision.created_by === null ? (
+						The changes below are against the access as it was.
+						{onUpdate
+							? ' Bring the request up to date to review it against the access as it is now.'
+							: ' Whoever approves it can bring it up to date first.'}
+					</p>
+				)}
+				{named.map((entry) => (
+					<p className="text-xs" key={entry.revision.id}>
+						Revision {entry.revision.number}:{' '}
+						{entry.revision.created_by === null ? (
 							'the request was rebased onto the access as it is now'
 						) : (
 							<>
 								<RevisionAuthor
-									createdBy={change.revision.created_by}
+									createdBy={entry.revision.created_by}
 									agentId={agentId}
 								/>{' '}
-								{revisionSummary(change)}
+								{revisionSummary(entry)}
 							</>
 						)}
-						, {timeAgo(change.revision.created_at)} ago.
+						, {timeAgo(entry.revision.created_at)} ago.
 					</p>
-				)}
+				))}
 				{reason && <p className="text-foreground-sub text-[11px] italic">“{reason}”</p>}
 			</div>
 			<div className="flex shrink-0 gap-2">
+				{onUpdate && (
+					<Button
+						type="button"
+						size="sm"
+						variant="secondary"
+						onClick={onUpdate}
+						disabled={updating}
+					>
+						{updating ? 'Updating…' : 'Update to current access'}
+					</Button>
+				)}
 				{onReview && (
 					<Button type="button" size="sm" variant="secondary" onClick={onReview}>
 						Review the new version

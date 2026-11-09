@@ -11,8 +11,14 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class SystemService {
     /**
-     * Health
-     * Return admin service health status.
+     * Admin health and first-run status
+     * Report admin-surface health, and whether the deployment still needs setup.
+     *
+     * Unlike the dependency-free root `/health` liveness probe, this one reaches the
+     * database to answer `setup_required`: true while no user exists, which is what
+     * the SPA and CLI read before offering a login. A database that cannot be
+     * reached still answers 200 with `setup_required: false`, so treat this as a
+     * readiness hint rather than a database health check.
      * @returns HealthResponse Successful Response
      * @throws ApiError
      */
@@ -29,7 +35,7 @@ export class SystemService {
         });
     }
     /**
-     * Health
+     * Liveness probe
      * Liveness probe for the combined control-plane app.
      *
      * Unauthenticated and dependency-free so orchestrators and load balancers

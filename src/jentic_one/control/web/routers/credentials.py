@@ -952,7 +952,13 @@ async def get_rule_set(
     "/permission-rule-sets/{rule_set_id}",
     operation_id="updatePermissionRuleSet",
     summary="Rename or re-describe a permission rule set",
-    responses=not_found(),
+    responses={
+        **not_found(),
+        **conflict(
+            "Another rule set in the same scope already uses the new name "
+            "(`rule_set_name_conflict`). Nothing was renamed."
+        ),
+    },
 )
 async def update_rule_set(
     rule_set_id: Annotated[
@@ -1121,7 +1127,7 @@ async def delete_credential(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
     responses=with_responses(not_found(), conflict("Credential is not connectable")),
-    response_model=None,
+    response_model=ConnectChallengeResponse,
 )
 async def connect_credential(
     credential_id: Annotated[

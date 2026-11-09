@@ -147,6 +147,27 @@ class ConnectSessionRepository:
         return result.scalars().first()
 
     @staticmethod
+    async def acquire_revision_lock(session: AsyncSession, session_id: str) -> None:
+        """Serialise the writers that append a revision to one session.
+
+        An amend swaps the session row and then inserts its revision; a rebase
+        inserted first and swapped after, so the two took the same two rows in
+        opposite orders and could deadlock — and a deadlock is an operational
+        error, not an integrity one, so it surfaced as a 5xx rather than a
+        mapped conflict. Both take this first instead.
+
+        On PostgreSQL this is ``pg_advisory_xact_lock`` (released at commit or
+        rollback). On SQLite it is a no-op: every write transaction opens with
+        ``BEGIN IMMEDIATE``, which already serialises writers to the file.
+        """
+        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        if dialect == "postgresql":
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:sid))"),
+                {"sid": f"connect_session_revision:{session_id}"},
+            )
+
+    @staticmethod
     async def transition_state(
         session: AsyncSession,
         session_id: str,

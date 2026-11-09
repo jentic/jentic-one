@@ -22,7 +22,15 @@ from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web import flow
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.ratelimit import client_network
-from jentic_one.auth.web.routers import authorize, local_login, oauth, oauth_client_registration
+from jentic_one.auth.web.routers import (
+    approval,
+    authorize,
+    consent,
+    consent_agent,
+    local_login,
+    oauth,
+    oauth_client_registration,
+)
 from jentic_one.shared.config import AuthConfig, OAuthRateLimitConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -57,7 +65,10 @@ def _rate_limit(*, trusted_proxies: list[str] | None = None) -> OAuthRateLimitCo
 
 def _make_app(*, trusted_proxies: list[str] | None = None) -> FastAPI:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(

@@ -13,6 +13,7 @@ import asyncio
 import json
 import time
 from datetime import UTC, datetime
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,9 +21,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
-from jentic_one.auth.services.authorize_service import AgentConsentOption
+from jentic_one.auth.services.authorize_service import AgentConsentOption, AuthorizeService
 from jentic_one.auth.services.errors import ConsentAgentNotEligibleError
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web import pages
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.state.backend import MemoryStateBackend
 
@@ -59,7 +61,10 @@ def _client_view(
 
 def _make_app() -> tuple[TestClient, MemoryStateBackend]:
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
 
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(
@@ -134,13 +139,20 @@ def _mock_authorize_svc(
     svc.provision_from_claims = AsyncMock(return_value="usr_owner")
     svc.record_consent_decision = AsyncMock()
     svc.issue_authorization_code = AsyncMock(return_value="code_grant")
+    # The consent workflows run for real on top of the stubbed reads above,
+    # so these router tests keep exercising the whole decision tree. The
+    # collaborators the bodies construct (AgentService, OAuthGrantService) are
+    # patched per test; nothing in either body touches the database directly,
+    # so the MagicMock standing in for ``self`` never reaches one.
+    svc.approve_agent_consent = partial(AuthorizeService.approve_agent_consent, svc)
+    svc.create_agent_from_consent = partial(AuthorizeService.create_agent_from_consent, svc)
     return svc
 
 
 # ---------- consent page (GET) ----------
 
 
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_page_renders_picker_with_own_active_agents(
     mock_client_svc_cls: MagicMock,
@@ -175,7 +187,7 @@ def test_agent_model_page_renders_picker_with_own_active_agents(
     svc.provision_from_claims.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_page_renders_private_use_scheme_origin(
     mock_client_svc_cls: MagicMock,
@@ -211,10 +223,10 @@ def test_agent_model_page_renders_private_use_scheme_origin(
 def test_redirect_origin_renders_sensibly_for_all_accepted_shapes(
     redirect_uri: str, expected: str
 ) -> None:
-    assert authorize._redirect_origin(redirect_uri) == expected
+    assert pages.redirect_origin(redirect_uri) == expected
 
 
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_zero_agents_renders_create_form(
     mock_client_svc_cls: MagicMock,
@@ -237,7 +249,7 @@ def test_agent_model_zero_agents_renders_create_form(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_unresolvable_user_renders_create_form_without_provisioning(
     mock_client_svc_cls: MagicMock,
@@ -260,7 +272,7 @@ def test_agent_model_unresolvable_user_renders_create_form_without_provisioning(
     svc.provision_from_claims.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_user_model_page_unchanged_no_picker(
     mock_client_svc_cls: MagicMock,
@@ -288,8 +300,8 @@ def test_user_model_page_unchanged_no_picker(
 # ---------- consent submit (POST) ----------
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_approve_mints_grant_and_grant_bearing_code(
     mock_client_svc_cls: MagicMock,
@@ -343,8 +355,8 @@ def test_agent_model_approve_mints_grant_and_grant_bearing_code(
     svc.record_consent_decision.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_deny_mints_nothing(
     mock_client_svc_cls: MagicMock,
@@ -373,8 +385,8 @@ def test_agent_model_deny_mints_nothing(
     svc.provision_from_claims.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_invalid_agent_selection_rejected(
     mock_client_svc_cls: MagicMock,
@@ -404,8 +416,8 @@ def test_agent_model_invalid_agent_selection_rejected(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_mint_time_refusal_renders_error_page(
     mock_client_svc_cls: MagicMock,
@@ -437,8 +449,8 @@ def test_agent_model_mint_time_refusal_renders_error_page(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_missing_agent_id_rejected(
     mock_client_svc_cls: MagicMock,
@@ -466,8 +478,8 @@ def test_agent_model_missing_agent_id_rejected(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_agent_model_empty_effective_scope_set_rejected(
     mock_client_svc_cls: MagicMock,
@@ -501,8 +513,8 @@ def test_agent_model_empty_effective_scope_set_rejected(
     svc.issue_authorization_code.assert_not_awaited()
 
 
-@patch("jentic_one.auth.web.routers.authorize.OAuthGrantService")
-@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.services.authorize_service.OAuthGrantService")
+@patch("jentic_one.auth.web.deps.AuthorizeService")
 @patch("jentic_one.auth.web.flow.OAuthClientService")
 def test_user_model_submit_byte_identical(
     mock_client_svc_cls: MagicMock,

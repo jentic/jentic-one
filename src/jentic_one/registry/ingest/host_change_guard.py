@@ -4,22 +4,30 @@ A catalog re-import (``catalog:import``, a default agent scope) or a draft
 promote (``apis:write``) replaces the revision an API is served from. When the
 new revision declares a different set of server hosts and the API has stored
 credentials bound to an agent, making it current would change where those
-credentials are sent. That step needs an operator: a caller holding
-``credentials:write`` (implied by ``org:admin``).
+credentials are sent. That step needs an organisation admin (``org:admin``).
 
-- **Catalog re-import** without the operator scope: the new revision is kept
-  as a DRAFT (origin preserved) and the current revision stays live. An
-  operator reviews and promotes it.
-- **Promote** without the operator scope: refused with
-  ``HostChangeRequiresOperatorError`` (403 ``host_change_requires_operator``).
+- **Catalog re-import** not enqueued by an organisation admin: the new
+  revision is kept as a DRAFT (origin preserved) and the current revision
+  stays live. An organisation admin reviews and promotes it.
+- **Promote** by anyone else: refused with ``HostChangeRequiresOperatorError``
+  (403 ``host_change_requires_operator``).
 - **Pinning a draft** (``Jentic-Revision``) routes calls through it without a
   promote, so the same check applies: a draft whose hosts need review on a
-  credential-bound API resolves only for the operator scope
+  credential-bound API resolves only for an organisation admin
   (``RegistryService.resolve_revision_pin``).
 
-``credentials:write`` is the gate because the decision is about where stored
-credentials go, it is not a default agent scope, and ``apis:write`` cannot be
-the gate since promote already requires it.
+The API catalog is shared by the whole organisation and the bound credentials
+belong to many users, so where they are sent is an organisation-level
+decision: no narrower scope (``credentials:write`` included) lets one user
+approve sending another user's credential to new hosts.
+
+The 403 detail text names no credential, binding or session, and never counts
+them. The guard engages only on a credential-bound API, though, so *whether it
+engages at all* is observable to a caller holding ``apis:write``: a held
+promote (403) against a successful one distinguishes an API that has a bound
+credential or an open connect session from one that has neither. Holding every
+host change regardless of bindings would close that, at the cost of requiring
+an organisation admin for host changes that put no stored credential at risk.
 """
 
 from __future__ import annotations
@@ -35,19 +43,26 @@ from jentic_one.registry.repos.credential_binding_presence_repo import (
 )
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.server_repo import ServerRepository
-from jentic_one.shared.auth.permission_catalog import CREDENTIALS_WRITE
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 
 logger = structlog.get_logger(__name__)
 
-#: Scope that may make a server-host change current on a credential-bound API.
-HOST_CHANGE_OPERATOR_SCOPE = CREDENTIALS_WRITE
+#: Permission that may make a server-host change current on a credential-bound API.
+HOST_CHANGE_APPROVER_PERMISSION = ORG_ADMIN
 
 
-def may_approve_host_change(permissions: list[str] | None) -> bool:
-    """True when the caller may make a server-host change current."""
-    return has_effective_permission(permissions or [], HOST_CHANGE_OPERATOR_SCOPE)
+def may_approve_host_change(permissions: list[str]) -> bool:
+    """True when the caller may make a server-host change current (an organisation admin).
+
+    Expands ``permissions`` through the implication map before the membership
+    test, so a grant that implies ``org:admin`` counts. Grants reach a service
+    unexpanded (an API key's come straight from ``actor_permission_grants``),
+    so a literal membership test here would refuse an admin whose grant only
+    implies the permission.
+    """
+    return has_effective_permission(permissions, HOST_CHANGE_APPROVER_PERMISSION)
 
 
 async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, version: str) -> bool:
@@ -55,7 +70,7 @@ async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, ver
 
     An open connect session that targets the API counts as bound: the human
     approving it enters a secret for the hosts pinned when the session opened,
-    so a host change during that window must be held for an operator too.
+    so a host change during that window must be held for an organisation admin too.
 
     Fails closed: if this process cannot reach the control or admin database,
     or a lookup errors, the API is treated as bound so the change is held.
@@ -100,7 +115,7 @@ async def pending_host_change(
     name: str,
     version: str,
 ) -> tuple[list[str], list[str]] | None:
-    """``(current_hosts, new_hosts)`` when serving ``revision_id`` needs an operator.
+    """``(current_hosts, new_hosts)`` when serving ``revision_id`` needs an approver.
 
     The baseline is the API's current revision, else its most recently live one,
     so archiving the current revision first does not skip the check. When the API

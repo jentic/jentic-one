@@ -33,7 +33,9 @@ What Jentic One is and how it works: [repository README](../README.md).
 
 - [Operating Jentic One](operations/README.md) — the day-2 map
 - [Monitoring & logs](operations/monitoring.md) — health endpoints, log sinks, executions and the audit trail, metrics
+- [Scaling & tuning](operations/scaling-and-tuning.md) — process topology, shared-state budgets, memory, connection pools
 - [Upgrades](operations/upgrades.md) — the version/migration contract, per-install pointers
+- [Upgrade notes](operations/upgrade-notes.md) — per-release breaking changes, required steps and rollback, newest first
 - [Backup & restore](operations/backup-restore.md) — what a restorable backup must contain
 - [Troubleshooting](operations/troubleshooting.md) — symptom index for humans, backed by the [agent failure catalogue](agent/troubleshoot.md)
 - Agent runbook: [operate](agent/operate.md) — status/logs/upgrade/uninstall as executable steps
@@ -47,25 +49,25 @@ Get going:
 Connect agents:
 
 - [Connect an agent](guides/connecting-agents.md) — the four integration paths
-- [Run coding agents in isolation](guides/local-agent.md) — the `jentic run` sandbox
 - [Serve MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
 
 Operate the catalog:
 
+- [Import APIs](guides/importing-apis.md) — from the public catalog or your own OpenAPI description; server URLs, revisions, troubleshooting
 - [Fix a spec with an overlay](guides/overlays.md) — patching imported API descriptions
 - [How credential resolution works](guides/credentials-and-toolkits.md) — how secrets stay server-side, encrypted, and audited
 
 Integrate apps:
 
 - [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users
-- [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
+- [CLI README](../cli/README.md) — the `jentic` / `jenticctl` overview: command groups, onboarding, local vs remote; every flag is in the [CLI reference](reference/cli.md)
 
 Agent runbook: [use](agent/use.md) — discover → check access → execute, as executable steps.
 
 ## Secure
 
 - [Deploying Jentic One securely](security/README.md) — threat model and the deployment-tier ladder
-- [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
+- [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options
 - Agent runbook: [harden](agent/harden.md) — posture checks as executable steps
 
 ## Understand
@@ -80,9 +82,11 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 ## Develop
 
 - [development/README.md](development/README.md) — the folder index
-- [Local development setup](development/local-setup.md)
+- [Local development setup](development/local-setup.md) — prerequisites, running the stack, common failures
+- [Testing](development/testing.md) — Python test tiers and generated-artifact drift checks
 - [Extending Jentic One](development/extending-jentic-one.md)
 - [Context and configuration](development/context-and-config.md)
+- [Developing the CLI](development/cli.md) — building `jentic` / `jenticctl` from source, the MCP Inspector loop, package map, install-wizard internals
 - [Releasing](development/releasing.md)
 - [Product scope](development/product-scope.md) — the product-fit rubric the issue-intake harness scores against
 - [deploy/README.md](../deploy/README.md) — build architecture: images, charts, Terraform, multi-arch
@@ -94,4 +98,5 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 
 - [Configuration](reference/config.md) — every config key, default, and env var (`make config-reference`)
 - [Endpoints & permissions](reference/endpoints.md) — every HTTP route and its required permission (`make endpoints`)
+- [CLI](reference/cli.md) — every `jentic` / `jenticctl` command, flag, and example (`make cli-reference`)
 - [reference/README.md](reference/README.md) — how the generated material works
