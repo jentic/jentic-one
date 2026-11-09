@@ -288,8 +288,8 @@ the agent:
 - [Deploying Jentic One securely](../security/README.md) — the umbrella
   threat model, deployment tiers, and production checklist.
 - [Same-host setups](../security/same-host/README.md) — what changes when
-  the agent and the credential store share a machine, and what `jentic run`
-  isolation buys.
+  the agent and the credential store share a machine, and the isolation
+  options.
 - [Hardening same-host MCP](../security/same-host/mcp-same-host-hardening.md) —
   the stdio MCP server runs as the desktop user; how to contain it.
 - [Identity and authorization](../architecture/identity-and-authorization.md) —

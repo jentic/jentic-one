@@ -92,24 +92,20 @@ grep -q '"checks"' "$SCRATCH/ctl-doctor.json" 2>/dev/null \
 pass "jenticctl doctor --json parses"
 
 # 6. OPS-22 degrade paths — assert "sane error / clean no-op", not a crash, for
-#    the two OS-sensitive lifecycle commands whose behavior forks by GOOS
-#    (they otherwise only execute on the Ubuntu leg, which is why OPS-20's
-#    Windows signal bug regressed silently). Both run offline on a scratch home.
+#    OS-sensitive lifecycle commands whose behavior forks by GOOS (they
+#    otherwise only execute on the Ubuntu leg, which is why OPS-20's Windows
+#    signal bug regressed silently). Both run offline on a scratch home.
 #
-# 6a. `jentic run <agent>` on a home with no isolated agent user takes the
-#     same-user launcher path. Whether or not the agent binary happens to be
-#     installed on the runner, the command must terminate GRACEFULLY (a normal
-#     non-zero exit with a rendered error) rather than panic or hang: either the
-#     binary is missing (resolve error) or it is present and exits non-zero
-#     without a prompt. `run` is fenced in agent mode, so force human mode for
-#     this check only — the point is the launcher's degrade, not the fence.
+# 6a. `jentic run` is not a command: it must fail as an unknown command (a
+#     rendered error, non-zero exit), never launch anything. Force human mode
+#     so the check is about the command tree, not agent-mode fencing.
 set +e
 JENTIC_MODE=human "$JENTIC" run claude --yes </dev/null > "$SCRATCH/run.out" 2>&1
 rc=$?
 set -e
-[ "$rc" -ne 0 ] || fail "jentic run claude exit=0 offline, want a graceful non-zero"
-if grep -qi 'panic' "$SCRATCH/run.out"; then fail "jentic run claude crashed (panic): $(cat "$SCRATCH/run.out")"; fi
-pass "jentic run claude degrades cleanly (exit $rc, no crash)"
+[ "$rc" -ne 0 ] || fail "jentic run claude exit=0, want unknown-command non-zero"
+grep -q 'unknown command "run"' "$SCRATCH/run.out" || fail "jentic run is not reported as an unknown command: $(cat "$SCRATCH/run.out")"
+pass "jentic run is an unknown command (exit $rc)"
 
 # 6b. `jenticctl stop` on a scratch home (no compose file, no PID file) must
 #     report "nothing to stop" and exit 0 — never error on the process path.

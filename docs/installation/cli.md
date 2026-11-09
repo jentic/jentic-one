@@ -14,12 +14,16 @@ brew install --cask jentic/tap/jentic      # macOS / Linux — installs BOTH bin
 ```
 
 ```powershell
-winget install Jentic.Jentic               # Windows — jentic (agent CLI) only
-
-# or, via our Scoop bucket (no Microsoft review lag on brand-new releases):
+# Windows — jentic (agent CLI) only, via our Scoop bucket:
 scoop bucket add jentic https://github.com/jentic/scoop-bucket
 scoop install jentic
+
+# or winget, once Microsoft has merged the manifest for the release:
+winget install Jentic.Jentic
 ```
+
+The Scoop and winget channels publish from the first release after v0.44.0 on; for v0.44.0 and
+earlier on Windows, use the [manual download](#manual-download).
 
 All three resolve your CPU architecture, verify the download hash, put the
 binary on `PATH`, and upgrade with the manager's native command (`brew
@@ -38,8 +42,8 @@ supply chain yourself.
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 
 # jentic only, verified download — for talking to a remote instance:
-JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=jentic \
-  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh \
+  | JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=jentic sh
 ```
 
 The script downloads the released archive for your OS/arch, **verifies its
@@ -95,7 +99,7 @@ curl -fsSLO "${BASE}/jenticctl_${VER}_${OS}_${ARCH}.tar.gz"   # admin host only
 | macOS (darwin) | amd64 / arm64 | ✅ | ✅ |
 | Windows | amd64 / arm64 (arm64 untested) | ✅ `jentic_<ver>_windows_<arch>.zip` (`jentic.exe`) | ❌ use WSL |
 
-The full component-by-platform picture (server, installer, confinement) is in
+The full component-by-platform picture (server, installer, CLIs) is in
 [platform-support.md](platform-support.md).
 
 ## Verify
@@ -137,9 +141,8 @@ jentic doctor   # sanity check
 
 On Windows: unzip, put `jentic.exe` on `PATH`, run `jentic doctor`.
 `jenticctl` is unsupported on native Windows — use WSL2 for the server side.
-`jentic run` (the local-agent sandbox) is unsupported on native Windows *and*
-untested under WSL2 — the [platform matrix](platform-support.md) is the
-authority on what runs where.
+The [platform matrix](platform-support.md) is the authority on what runs
+where.
 
 ## After installing
 

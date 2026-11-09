@@ -72,7 +72,9 @@ Run these on the machine where your agent runs. For MCP setup, see [Setting up y
 
 ```bash
 brew install --cask jentic/tap/jentic    # macOS / Linux
-winget install Jentic.Jentic             # Windows
+
+scoop bucket add jentic https://github.com/jentic/scoop-bucket   # Windows
+scoop install jentic
 
 # Or install directly from GitHub
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/clis/install.sh | sh

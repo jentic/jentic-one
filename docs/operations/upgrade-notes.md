@@ -14,6 +14,25 @@ before moving on — see [0.41.0](#0410) for why.
 
 Changes on `main` since 0.44.0; they ship in the next release.
 
+- **Breaking: `jentic run` and local agent accounts are removed.** The CLI no
+  longer creates a dedicated `<you>-local-agent` Unix user (with its home-dir
+  ACL grants, passwordless-launch sudoers entry, and Seatbelt/bwrap session
+  confinement), and `jentic setup` no longer offers that step or the MCP
+  sudo-shim isolation (`_jentic-<runtime>` service users and the root-owned
+  `/usr/local/libexec/jentic/jentic` copy). `jentic run` is now an unknown
+  command; `jentic setup` registers the agent, installs the skill, and writes
+  the plain `jentic mcp` entry. A machine that already has an agent account or
+  MCP service account keeps it until you run **`jentic reset`**, which still
+  deletes the users, revokes the ACL grants, removes the sudoers lines and the
+  root-owned copy, and then wipes your local jentic identity state (re-run
+  `jentic setup` afterwards). `jenticctl doctor` warns about any that remain,
+  and about a sudo-shim MCP entry left in a runtime config; on a machine
+  without `jenticctl`, `jentic reset` shows what it would remove before it
+  changes anything. To keep a coding
+  agent away from the instance's files, run it in a container or VM, or run
+  the instance on another machine — see
+  [same-host options](../security/same-host/README.md) and
+  [hardening same-host MCP](../security/same-host/mcp-same-host-hardening.md).
 - **The connect-session rejection cooldown is off by default.**
   `control.connect.rejection_cooldown_hours` defaults to `0` (it was `24`),
   so an agent whose request a human rejected may ask again at once instead of

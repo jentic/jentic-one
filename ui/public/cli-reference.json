@@ -5,14 +5,14 @@
       "name": "jentic",
       "tagline": "discover, inspect, and run against the Jentic API catalog",
       "short": "jentic: discover, inspect, and run against the Jentic API catalog",
-      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic setup`\nto set one up end to end (identity + skills + isolation). If you're an agent\nthat just needs tokens for an existing identity, run `jentic register`. Then\nbrowse the public catalog with `jentic catalog`. To install and operate\njentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use\n`jentic \u003ccommand\u003e --help` for details.",
+      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic setup`\nto set one up end to end (identity + skills). If you're an agent\nthat just needs tokens for an existing identity, run `jentic register`. Then\nbrowse the public catalog with `jentic catalog`. To install and operate\njentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use\n`jentic \u003ccommand\u003e --help` for details.",
       "commands": [
         {
           "name": "setup",
           "path": "jentic setup",
           "use": "setup",
-          "short": "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
-          "long": "setup takes a fresh machine from nothing to ready: it connects this\nmachine to a Jentic install (creating the environment, identity and context\nif needed), registers the agent (Dynamic Client Registration), prints an\napproval link and waits for a human to approve it, mints and saves tokens,\nand generates the Jentic CLI-usage skill into your agent runtime's native\nlayout. It also offers to isolate the coding agent behind its own Unix user.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
+          "short": "Set up a new local agent (identity + skills) — start here if you're a person",
+          "long": "setup takes a fresh machine from nothing to ready: it connects this\nmachine to a Jentic install (creating the environment, identity and context\nif needed), registers the agent (Dynamic Client Registration), prints an\napproval link and waits for a human to approve it, mints and saves tokens,\nand generates the Jentic CLI-usage skill into your agent runtime's native\nlayout, plus the `jentic mcp` server entry for each detected MCP runtime.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
           "example": "  jentic setup\n  jentic setup --url https://jentic.example.com --broker-url https://broker.jentic.example.com\n  jentic setup --url https://jentic.example.com --operator claude --yes\n  jentic setup --skip-skill   # identity only\n  jentic setup --dry-run",
           "group_title": "Identity \u0026 access",
           "flags": [
@@ -2839,95 +2839,12 @@
           ]
         },
         {
-          "name": "run",
-          "path": "jentic run",
-          "use": "run \u003cagent\u003e [path] [-- \u003cagent-args\u003e...]",
-          "short": "Launch a coding agent as its own isolated Unix user",
-          "long": "run launches a coding agent under a dedicated, unprivileged OS account\ndistinct from the operator's login user, so a compromised or prompt-injected\nagent cannot read the operator's keys, browser session, or the jentic-one\ncredential store. It provisions the agent's binary for that account if\nmissing, resolves filesystem access to the working directory (granting a\nscoped ACL only when the operator confirms), and starts the session as\nthe agent's own Unix user in a fresh login shell, so the operator's\nenvironment and secrets are not inherited by the agent.\n\nRunnable agents: claude, codex, cursor, hermes.\n(\"generic\" is a skill-only operator — it has no binary and cannot be run;\nuse `jentic skill` to write its onboarding docs instead.)\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- \u003cagent-args\u003e)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\nSee the security analysis in\ndocs/security/same-host/local-agent-isolation.md for the full rationale.",
-          "group_title": "Local agent client",
-          "flags": [
-            {
-              "name": "agent-user",
-              "type": "string",
-              "usage": "override the derived \u003coperator\u003e-local-agent account"
-            },
-            {
-              "name": "allow-dir",
-              "type": "bool",
-              "default": "false",
-              "usage": "grant the agent access to the working directory without prompting"
-            },
-            {
-              "name": "context",
-              "type": "string",
-              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-            },
-            {
-              "name": "grant",
-              "type": "string",
-              "usage": "grant the agent access to the given directory, then exit (without launching)"
-            },
-            {
-              "name": "home",
-              "type": "bool",
-              "default": "false",
-              "usage": "open the session in the agent's own home, skipping the current directory"
-            },
-            {
-              "name": "list-grants",
-              "type": "bool",
-              "default": "false",
-              "usage": "list the directories the agent has been granted, then exit"
-            },
-            {
-              "name": "mode",
-              "type": "string",
-              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
-            },
-            {
-              "name": "no-allow-dir",
-              "type": "bool",
-              "default": "false",
-              "usage": "never grant directory access; open in the agent's home instead"
-            },
-            {
-              "name": "no-seed-config",
-              "type": "bool",
-              "default": "false",
-              "usage": "never copy the operator's agent config into the agent's home"
-            },
-            {
-              "name": "revoke",
-              "type": "string",
-              "usage": "revoke the agent's access to the given directory, then exit"
-            },
-            {
-              "name": "seed-config",
-              "type": "bool",
-              "default": "false",
-              "usage": "copy the operator's agent config into the agent's home without prompting"
-            },
-            {
-              "name": "theme",
-              "type": "string",
-              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-            },
-            {
-              "name": "yes",
-              "shorthand": "y",
-              "type": "bool",
-              "default": "false",
-              "usage": "assume the safe default for every prompt (never grants a flagged-dangerous dir)"
-            }
-          ]
-        },
-        {
           "name": "reset",
           "path": "jentic reset",
           "use": "reset",
-          "short": "Tear down the agent account and wipe this machine's jentic identity state",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic setup`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — plus any MCP-isolation service accounts (`_jentic-\u003cruntime\u003e`,\ntheir sudoers lines, and their exported key material), and then also wipes\nyour OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
-          "example": "  jentic reset                              # full clean slate: the account + your identity state\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
+          "short": "Wipe this machine's jentic identity state and remove any leftover agent account",
+          "long": "reset is the clean-slate hatch for this machine's jentic identity state.\n\nIf an older jentic release left a local agent account on this machine, reset\ntears it down first — the dedicated Unix user (`\u003cyou\u003e-local-agent`), the\nnamed-user ACLs stamped across your home (both the leaf read/write grants and\nthe execute-only ancestor traverse grants), and the passwordless-launch\nsudoers drop-in — plus any MCP-isolation service accounts (`_jentic-\u003cruntime\u003e`,\ntheir sudoers lines, their exported key material, and the root-owned jentic\ncopy they ran). Current releases never create these. Then it wipes\nyour OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting an agent account and stripping ACLs are privileged, so reset\nrequires sudo for those steps: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "example": "  jentic reset                              # full clean slate: any agent account + your identity state\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
           "group_title": "Local agent client",
           "flags": [
             {
@@ -3706,7 +3623,7 @@
           "path": "jenticctl uninstall",
           "use": "uninstall",
           "short": "Remove everything under ~/.jentic (config files are backed up to *-old)",
-          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nCA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. Your agent\nidentity (~/.config/jentic, ~/.local/state/jentic, and any legacy\n~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\nauthenticated; run `jentic reset` to remove it. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.\n\nAgent skills installed by `jentic skill init` live outside ~/.jentic\n(e.g. ~/.claude/skills/jentic, AGENTS.md managed blocks). By default\nuninstall leaves them in place and lists any that remain, with the\ncommand to remove them (`jentic skill remove --all`).\n--remove-skills (implied by --purge) also removes the user-scope\ninstalls under your home directory. Project-scope installs (./AGENTS.md\nblocks, ./.claude|.cursor|.hermes/skills/jentic) are found relative to\nthe current directory and are only removed with --remove-project-skills.\nUninstall lists the exact files first and asks before removing them\nunless --yes is given. Manually edited skills, and files at a skill path\nthat Jentic did not write, are kept and reported. --dry-run shows what\nwould be removed and changes nothing. If a skill cannot be removed,\nuninstall still finishes the teardown, reports the failure, and exits\nnon-zero.",
+          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\netc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. Your agent\nidentity (~/.config/jentic, ~/.local/state/jentic, and any legacy\n~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\nauthenticated; run `jentic reset` to remove it. The ~/.jentic\ndirectory itself is kept. A local agent account an older release\ncreated (Unix user, ACLs, sudoers entry) is not touched either;\n`jentic reset` removes it too.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.\n\nAgent skills installed by `jentic skill init` live outside ~/.jentic\n(e.g. ~/.claude/skills/jentic, AGENTS.md managed blocks). By default\nuninstall leaves them in place and lists any that remain, with the\ncommand to remove them (`jentic skill remove --all`).\n--remove-skills (implied by --purge) also removes the user-scope\ninstalls under your home directory. Project-scope installs (./AGENTS.md\nblocks, ./.claude|.cursor|.hermes/skills/jentic) are found relative to\nthe current directory and are only removed with --remove-project-skills.\nUninstall lists the exact files first and asks before removing them\nunless --yes is given. Manually edited skills, and files at a skill path\nthat Jentic did not write, are kept and reported. --dry-run shows what\nwould be removed and changes nothing. If a skill cannot be removed,\nuninstall still finishes the teardown, reports the failure, and exits\nnon-zero.",
           "example": "  jenticctl uninstall\n  jenticctl uninstall --dry-run --purge\n  jenticctl uninstall --yes --keep-data\n  jenticctl uninstall --yes --remove-skills\n  jenticctl uninstall --yes --remove-project-skills\n  jenticctl uninstall --yes --purge",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [

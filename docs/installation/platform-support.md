@@ -13,7 +13,6 @@ anything not listed as tested should be treated as best-effort.
 | `jentic` — agent CLI | ✅ Supported (amd64, arm64) | ✅ Supported (amd64, arm64) | ✅ Supported (amd64; arm64 builds but is untested) | ✅ Supported |
 | `jenticctl` — operator CLI | ✅ Supported (amd64, arm64) | ✅ Supported (amd64, arm64) | ❌ Not shipped — its surface is Docker/compose lifecycle; use WSL2 | ✅ Supported |
 | [`tools/install.sh`](../../tools/install.sh) installer | ✅ Supported | ✅ Supported | ❌ Unsupported — bash script | ✅ Supported |
-| `jentic run` — local-agent confinement | ✅ Supported (`bwrap` + user namespaces) | ✅ Supported (`sandbox-exec`) | ❌ Unsupported — no confinement backend | ❌ Unsupported — needs unprivileged user namespaces inside WSL; untested |
 | `jentic mcp` — local MCP stdio server | ✅ Supported | ✅ Supported | ⚠️ Partial — stdio mode works; `--http`'s default unix-socket/OS-identity mode fails closed (peer-credential checks are unsupported on Windows), and `mcp config` cannot locate the Claude Desktop config path | ✅ Supported |
 
 One nuance the Linux column hides: the Go CLIs are static binaries
@@ -35,8 +34,6 @@ Step-by-step path: [windows.md](windows.md). The shape:
 - **Operating an install:** `jenticctl` is deliberately not shipped for
   Windows; its job is Docker/compose lifecycle management, which on Windows
   lives in WSL2. Install it inside WSL2 and treat that environment as Linux.
-- **Local-agent isolation (`jentic run`):** unavailable — the confinement
-  layer requires macOS `sandbox-exec` or Linux `bwrap`.
 
 ## What CI actually tests
 
