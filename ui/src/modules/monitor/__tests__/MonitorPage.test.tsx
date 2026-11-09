@@ -419,10 +419,9 @@ describe('MonitorPage', () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/held_held_1',
-			),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('review')).toBe('held_held_1');
 		expect(currentParams().get('execution_id')).toBeNull();
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
@@ -602,7 +601,7 @@ describe('MonitorPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('offers the Approvals page, not Cancel, for a held execution', async () => {
+	it('offers the inbox, not Cancel, for a held execution', async () => {
 		const held = {
 			_links: {
 				self: '/jobs/job_exec_held',
@@ -628,7 +627,7 @@ describe('MonitorPage', () => {
 
 		await user.click(await screen.findByText('job_exec_held'));
 		const dialog = await screen.findByRole('dialog');
-		const open = await within(dialog).findByRole('button', { name: 'Open approvals' });
+		const open = await within(dialog).findByRole('button', { name: 'Open inbox' });
 		expect(
 			within(dialog).queryByRole('button', { name: 'Cancel job' }),
 		).not.toBeInTheDocument();
@@ -637,8 +636,9 @@ describe('MonitorPage', () => {
 
 		await user.click(open);
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents/approvals'),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('inbox')).toBe('1');
 	});
 
 	it('opens the review page, not the job, from a decided approval row', async () => {
@@ -671,10 +671,9 @@ describe('MonitorPage', () => {
 			await screen.findByRole('link', { name: /Held call held_held_1 approved/ }),
 		);
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/held_held_1',
-			),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('review')).toBe('held_held_1');
 		expect(currentParams().get('job_id')).toBeNull();
 	});
 

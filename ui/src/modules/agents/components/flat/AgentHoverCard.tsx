@@ -4,7 +4,7 @@
  * rides the shared bubble (portal, viewport clamp, Esc, `aria-describedby`).
  * Only facts the page already holds are shown; an unknown count is left out.
  */
-import { ArrowDown, Check } from 'lucide-react';
+import { ArrowDown, Check, ShieldQuestion } from 'lucide-react';
 import { AgentBadge, STATUS_ICON, STATUS_LABELS, STATUS_TINT } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { AgentEntity } from '@/modules/agents/api';
@@ -14,6 +14,15 @@ export interface AgentFacts {
 	credentialCount?: number;
 	blocked?: number;
 	gaps?: number;
+	/** Held calls waiting for the viewer's decision. */
+	waiting?: number;
+}
+
+/** One fact column; `attention` marks the one that asks for the viewer. */
+interface FactRow {
+	label: string;
+	value: string;
+	attention?: boolean;
 }
 
 export function AgentHoverCard({
@@ -26,11 +35,18 @@ export function AgentHoverCard({
 	selected: boolean;
 }) {
 	const StatusIcon = STATUS_ICON[agent.status];
-	const rows: Array<[string, string]> = [];
-	if (facts.apiCount != null) rows.push(['APIs', String(facts.apiCount)]);
-	if (facts.credentialCount != null) rows.push(['Credentials', String(facts.credentialCount)]);
-	if (facts.blocked) rows.push(['Blocked', String(facts.blocked)]);
-	if (facts.gaps) rows.push(['To set up', String(facts.gaps)]);
+	const rows: FactRow[] = [];
+	if (facts.apiCount != null) rows.push({ label: 'APIs', value: String(facts.apiCount) });
+	if (facts.credentialCount != null) {
+		rows.push({ label: 'Credentials', value: String(facts.credentialCount) });
+	}
+	if (facts.blocked) rows.push({ label: 'Blocked', value: String(facts.blocked) });
+	if (facts.gaps) rows.push({ label: 'To set up', value: String(facts.gaps) });
+	// The calls held for the viewer's decision, in the same amber as the tab's
+	// chip and the card's status mark.
+	if (facts.waiting) {
+		rows.push({ label: 'Waiting for you', value: String(facts.waiting), attention: true });
+	}
 	return (
 		<span
 			data-testid="agent-hover-card"
@@ -58,12 +74,25 @@ export function AgentHoverCard({
 			</span>
 			{rows.length > 0 && (
 				<span className="flex gap-4">
-					{rows.map(([label, value]) => (
+					{rows.map(({ label, value, attention }) => (
 						<span key={label} className="flex flex-col">
-							<span className="text-foreground-faint text-[10px] font-semibold tracking-[0.04em] uppercase">
+							<span
+								className={cn(
+									'text-[10px] font-semibold tracking-[0.04em] uppercase',
+									attention ? 'text-warning' : 'text-foreground-faint',
+								)}
+							>
 								{label}
 							</span>
-							<span className="text-foreground-name text-[13px] font-semibold tabular-nums">
+							<span
+								className={cn(
+									'inline-flex items-center gap-1 text-[13px] font-semibold tabular-nums',
+									attention ? 'text-warning' : 'text-foreground-name',
+								)}
+							>
+								{attention && (
+									<ShieldQuestion aria-hidden="true" className="size-3" />
+								)}
 								{value}
 							</span>
 						</span>

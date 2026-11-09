@@ -22,13 +22,13 @@ function LocationProbe() {
 	return <div data-testid="location">{loc.pathname + loc.search}</div>;
 }
 
-function renderMenu() {
+function renderMenu(route = '/agents') {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<MemoryRouter initialEntries={['/agents']}>
+			<MemoryRouter initialEntries={[route]}>
 				<AgentStreamProvider live={false}>
 					<NotificationsMenu />
 					<LocationProbe />
@@ -369,14 +369,33 @@ describe('NotificationsMenu', () => {
 		});
 	});
 
-	describe('agents waiting on a held call', () => {
-		it("collapses an agent's held calls into one approval row linking to the oldest", async () => {
+	describe('held calls waiting for you', () => {
+		/** The Stripe API's operation names, as its live spec lists them. */
+		function serveOperationNames() {
+			worker.use(
+				http.get('/apis/:vendor/:name/:version/operations', () =>
+					HttpResponse.json({
+						data: [
+							{ operation_id: 'createCharge', name: 'Create a charge' },
+							{ operation_id: 'createRefund', name: 'Create a refund' },
+						],
+						has_more: false,
+						next_cursor: null,
+					}),
+				),
+			);
+		}
+
+		it('lists one row per call, oldest first, ahead of the alerts', async () => {
+			serveOperationNames();
 			approvalRows = [
 				heldCall({
 					id: 'held_new',
+					operation_id: 'createCharge',
 					created_at: new Date(Date.now() - 60_000).toISOString(),
 				}),
-				heldCall({ id: 'held_old', path: '/v1/refunds' }),
+				heldCall({ id: 'held_old', path: '/v1/refunds', operation_id: 'createRefund' }),
+				heldCall({ id: 'held_route', path: '/v1/payouts' }),
 			];
 			// The request event mirrors the live row; the row wins, so it is not
 			// listed (or counted) twice.
@@ -395,21 +414,44 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
+			// A failure, a pending agent and three held calls.
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 5/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
-			const approvals = within(dialog).getByRole('region', { name: 'Approvals' });
-			const row = await within(approvals).findByText(
-				'scout-bot is waiting for you to approve 2 calls',
+			const waiting = within(dialog).getByRole('region', { name: 'Waiting for you' });
+			await within(waiting).findByText('scout-bot wants to run “Create a charge”');
+			const rows = within(waiting).getAllByRole('listitem');
+			expect(rows.map((row) => row.querySelector('p')?.textContent)).toEqual([
+				'Unread: scout-bot wants to run “Create a refund”',
+				'Unread: scout-bot wants to run POST /v1/payouts',
+				'Unread: scout-bot wants to run “Create a charge”',
+			]);
+			expect(rows[0]).toHaveTextContent(/15m ago · expires in 1 h/);
+			expect(rows.every((row) => within(row).queryByRole('button', { name: 'Review' }))).toBe(
+				true,
 			);
-			expect(within(dialog).queryByText(/wants to POST/)).toBeNull();
-
-			const item = row.closest('li')!;
-			expect(item).toHaveTextContent('2 held calls');
-			await user.click(within(item).getByRole('link', { name: 'Review' }));
-			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/held_old');
+			// Held calls lead the list.
+			const sections = within(dialog).getAllByRole('region');
+			expect(sections[0]).toBe(waiting);
+			expect(within(dialog).queryByText(/Agent agnt_scout wants to POST/)).toBeNull();
+			expect(within(dialog).queryByText(/See all/)).toBeNull();
+			await checkA11y(dialog);
 		});
 
-		it('names a single held call and drops one whose window lapsed', async () => {
+		it("Review closes the menu and opens the call's review pop-up", async () => {
+			approvalRows = [heldCall({ id: 'held_old', path: '/v1/refunds' })];
+			const user = userEvent.setup();
+			renderMenu();
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
+			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+			const row = (
+				await within(dialog).findByText('scout-bot wants to run POST /v1/refunds')
+			).closest('li')!;
+			await user.click(within(row).getByRole('button', { name: 'Review' }));
+			expect(screen.queryByRole('dialog', { name: /Notifications/ })).toBeNull();
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents?review=held_old');
+		});
+
+		it('drops a call whose window lapsed', async () => {
 			approvalRows = [
 				heldCall(),
 				heldCall({
@@ -422,13 +464,51 @@ describe('NotificationsMenu', () => {
 			renderMenu();
 			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
-			const row = await within(dialog).findByText(
-				'scout-bot is waiting for you to approve a call to api.stripe.com/payments',
-			);
-			expect(row.closest('li')).toHaveTextContent(
-				'POST /v1/charges on api.stripe.com/payments',
-			);
+			expect(
+				await within(dialog).findByText('scout-bot wants to run POST /v1/charges'),
+			).toBeInTheDocument();
 			expect(within(dialog).queryByText(/agnt_other/)).toBeNull();
+		});
+
+		it('lists the first five and links the rest to the inbox', async () => {
+			approvalRows = Array.from({ length: 7 }, (_, i) =>
+				heldCall({
+					id: `held_${i}`,
+					path: `/v1/charges/${i}`,
+					created_at: new Date(Date.now() - (20 - i) * 60_000).toISOString(),
+				}),
+			);
+			const user = userEvent.setup();
+			renderMenu('/dashboard');
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 9/ }));
+			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+			const waiting = within(dialog).getByRole('region', { name: 'Waiting for you' });
+			await within(waiting).findByText('scout-bot wants to run POST /v1/charges/0');
+			expect(within(waiting).getAllByRole('button', { name: 'Review' })).toHaveLength(5);
+			expect(within(waiting).getByRole('heading')).toHaveTextContent('Waiting for you7');
+			expect(
+				within(waiting).queryByText('scout-bot wants to run POST /v1/charges/5'),
+			).toBeNull();
+
+			await user.click(
+				within(waiting).getByRole('button', { name: 'See all 7 in the inbox' }),
+			);
+			expect(screen.queryByRole('dialog', { name: /Notifications/ })).toBeNull();
+			expect(screen.getByTestId('location')).toHaveTextContent('/dashboard?inbox=1');
+		});
+
+		it('opens the inbox over the Agents page from a page without the rail', async () => {
+			approvalRows = Array.from({ length: 6 }, (_, i) =>
+				heldCall({ id: `held_${i}`, path: `/v1/charges/${i}` }),
+			);
+			const user = userEvent.setup();
+			renderMenu('/monitor');
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 8/ }));
+			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+			await user.click(
+				await within(dialog).findByRole('button', { name: 'See all 6 in the inbox' }),
+			);
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents?inbox=1');
 		});
 	});
 });

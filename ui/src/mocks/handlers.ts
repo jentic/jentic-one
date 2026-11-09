@@ -124,6 +124,11 @@ const actorDirectorySeed = [
 	},
 ];
 
+/** Mocked dev only: add actors to the directory (an opt-in scenario's agents). */
+export function seedMockActors(rows: typeof actorDirectorySeed): void {
+	actorDirectorySeed.push(...rows);
+}
+
 export const handlers = [
 	http.get('/admin/health', healthOk),
 	http.get('/health', healthOk),

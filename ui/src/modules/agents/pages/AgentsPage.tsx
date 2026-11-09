@@ -3,15 +3,15 @@
  *
  * The header carries what the agent-scoped dock cannot: the org-wide credential
  * inventory (a sheet reached through `?credentials`, `=new` for the wizard, and
- * `?approve=<sid>` for an agent's connect approval link), the agents'
- * held calls (the Approvals subsection), the fleet filter and `New agent`. It
- * owns the keyboard map documented in `PageHelp`; below it sit "Waiting for
- * you" (connect requests and held calls) and `FlatAgentsSection`, which keeps
- * its selection in `?agent=`.
+ * `?approve=<sid>` for an agent's connect approval link), the fleet filter and
+ * `New agent`. It owns the keyboard map documented in `PageHelp`; below it sit
+ * "Waiting for you" (agents' connect requests) and `FlatAgentsSection`, which
+ * keeps its selection in `?agent=` and shows the held calls waiting for the
+ * viewer on each agent.
  */
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
-import { CheckSquare, Filter, Plus, Wallet } from 'lucide-react';
+import { useSearchParams } from 'react-router';
+import { Filter, Plus, Wallet } from 'lucide-react';
 import {
 	Button,
 	FOOTER_ACTION_BAR_PAGE_PADDING,
@@ -22,8 +22,6 @@ import {
 	SearchInput,
 	type KeyboardShortcut,
 } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
-import { PendingApprovalsBadge } from '@/shared/approvals';
 import { useHotkey } from '@/shared/hooks';
 import { commandChordLabel } from '@/shared/lib/keyboard';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
@@ -48,7 +46,6 @@ const SHORTCUTS: KeyboardShortcut[] = [
 ];
 
 export default function AgentsPage() {
-	const navigate = useNavigate();
 	const [agentCreateOpen, setAgentCreateOpen] = useState(false);
 	const [inventoryOpen, setInventoryOpen] = useState(false);
 	const [inventoryWantsCreate, setInventoryWantsCreate] = useState(false);
@@ -166,17 +163,6 @@ export default function AgentsPage() {
 							    390px; the name stays for assistive tech. */}
 							<span className="sr-only sm:not-sr-only">Credentials</span>
 						</Button>
-						{/* Calls an agent made that an Ask rule holds for its
-						    owner's (or an org admin's) decision. */}
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => navigate(ROUTES.approvals)}
-						>
-							<CheckSquare className="h-4 w-4" />
-							Approvals
-							<PendingApprovalsBadge />
-						</Button>
 						<PageHelp
 							title="About Agents"
 							// The inventory sheet binds its own help while it's open.
@@ -206,7 +192,12 @@ export default function AgentsPage() {
 										<p>
 											A call that matches an <strong>Ask</strong> rule is held
 											until the agent's owner or an org admin approves or
-											denies it under <strong>Approvals</strong>.
+											denies it. The agent's card shows its calls under{' '}
+											<strong>Waiting for you</strong>; the{' '}
+											<strong>Inbox</strong> in the right rail lists them for
+											every agent, and the bell tells you when a new one
+											arrives. Open a call to review it, or tick several to
+											deny or approve them at once.
 										</p>
 									),
 								},

@@ -1,8 +1,9 @@
 /**
  * AgentCard — the selected agent's card under the strip's notch: avatar, name,
- * a neutral status chip, one facts line (registered · owner or self-registered ·
- * id tail · last activity), one contextual action, the state banner when the
- * agent is not serving, and the KPI row.
+ * a neutral status chip (and, beside it, what the agent is waiting on), one
+ * facts line (registered · owner or self-registered · id tail · last
+ * activity), one contextual action, the state banner when the agent is not
+ * serving, and the KPI row.
  *
  * Status is never a hue: the chip is the neutral tonal chip with the state's
  * glyph (`STATUS_ICON`) and word (`STATUS_LABELS`), the same vocabulary as
@@ -78,6 +79,8 @@ interface AgentCardProps {
 	description?: ReactNode;
 	/** The non-serving state's banner (pending decision, rejected, archived). */
 	banner?: ReactNode;
+	/** Beside the status chip: what the agent is waiting on, if anything. */
+	statusExtra?: ReactNode;
 	/** The KPI row. */
 	kpis?: ReactNode;
 	/**
@@ -220,6 +223,7 @@ export function AgentCard({
 	viewToggle,
 	description,
 	banner,
+	statusExtra,
 	kpis,
 	stickyTop = 0,
 	stuckTop = stickyTop,
@@ -460,6 +464,7 @@ export function AgentCard({
 										status={agent.status}
 										data-testid="agent-status-chip"
 									/>
+									{statusExtra}
 								</div>
 								{/* On a phone the facts fold away while the card is pinned. */}
 								<Fold

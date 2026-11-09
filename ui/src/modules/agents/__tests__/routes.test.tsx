@@ -30,10 +30,14 @@ function Harness() {
 	const accessRequests = agentsRoutes.find((r) => r.path === 'access-requests');
 	const credentials = agentsRoutes.find((r) => r.path === 'credentials');
 	const agentPath = agentsRoutes.find((r) => r.path === 'agents/:agentId');
+	const approvalsInbox = agentsRoutes.find((r) => r.path === 'agents/approvals');
+	const heldCallReview = agentsRoutes.find((r) => r.path === 'agents/approvals/:id');
 	return useRoutes([
 		redirect!,
 		accessRequests!,
 		credentials!,
+		approvalsInbox!,
+		heldCallReview!,
 		agentPath!,
 		{ path: ROUTES.agents.slice(1), element: <h1>Agents stub</h1> },
 	]);
@@ -153,5 +157,49 @@ describe('agent path URLs', () => {
 		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
 		const params = new URLSearchParams(screen.getByTestId('location-search').textContent!);
 		expect(params.get('agent')).toBe('agnt a&b');
+	});
+});
+
+describe('held-call review URLs', () => {
+	it("redirect a held call's review_url path to the review pop-up over the Agents page", async () => {
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/agents/approvals/held_pending1' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		expect(screen.getByTestId('location').textContent).toBe(ROUTES.agents);
+		expect(screen.getByTestId('location-search').textContent).toBe('?review=held_pending1');
+	});
+
+	it('keeps an encoded held-call id intact through the redirect', async () => {
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/agents/approvals/held%20a%26b' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		const params = new URLSearchParams(screen.getByTestId('location-search').textContent!);
+		expect(params.get('review')).toBe('held a&b');
+	});
+
+	it('redirect the approvals list path to the Agents page with the inbox open', async () => {
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/agents/approvals' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		expect(screen.getByTestId('location').textContent).toBe(ROUTES.agents);
+		expect(screen.getByTestId('location-search').textContent).toBe('?inbox=1');
 	});
 });

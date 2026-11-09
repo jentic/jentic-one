@@ -99,11 +99,14 @@ export const ROUTE_PATHS = {
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
 	/**
-	 * One held execution's review page, a subsection of Agents. The broker
-	 * builds the same path into a held call's `review_url`.
+	 * One held execution opened in the review pop-up, over the Agents page.
+	 * Any page opens the same pop-up with `?review=` (`useReviewLinks`); the
+	 * broker's `review_url` path (`/agents/approvals/<id>`) redirects here.
 	 */
 	approval: (heldExecutionId: string) =>
-		`${ROUTES.approvals}/${encodeURIComponent(heldExecutionId)}`,
+		`${ROUTES.agents}?review=${encodeURIComponent(heldExecutionId)}`,
+	/** The shell rail opened on its Inbox tab, over the Agents page. */
+	approvalsInbox: () => `${ROUTES.agents}?inbox=1`,
 	/**
 	 * An agent's connect request opened for approval — the address the backend
 	 * mints as the session's `approval_url` (`?approve=<sid>`, no poll token:

@@ -9,7 +9,9 @@
  * just left of the card avatar's centre; each elbow is 17px wide with an 8px
  * radius and runs from the branch's top into its child's centre; the child
  * starts 6px past the elbow (`pl-[34px]` = 11 + 17 + 6), so a line never
- * touches a row. The trunk carries on only past children with a sibling below.
+ * touches a row. The trunk carries on only past children with a sibling below,
+ * or past a branch that `continues` into the list after it (the held calls
+ * pinned with the agent card, above the API rows).
  * Strokes are a true 1.5px: Chromium snaps border widths (and a bar's layout
  * width) to whole pixels, so the trunk is a 3px bar scaled to half its width
  * from the left, and the elbow is drawn at twice its size (3px border, 16px
@@ -43,24 +45,43 @@ interface TreeBranchProps {
 	lands: keyof typeof ELBOW;
 	/** This branch's place in the tree, for the entrance stagger. */
 	item: LensItem;
+	/** A list item (the default), or a lone branch outside a list. */
+	as?: 'li' | 'div';
+	/**
+	 * The trunk runs on past this branch even with no sibling after it, and
+	 * through the 3px gap the next list leaves before its first elbow, so the
+	 * two read as one tree.
+	 */
+	continues?: boolean;
 	className?: string;
 	children: ReactNode;
 }
 
-export function TreeBranch({ lands, item, className, children }: TreeBranchProps) {
+export function TreeBranch({
+	lands,
+	item,
+	as: Branch = 'li',
+	continues = false,
+	className,
+	children,
+}: TreeBranchProps) {
 	const elbow = ELBOW[lands];
 	return (
-		<li
+		<Branch
 			data-testid="tree-branch"
 			className={cn('group/branch relative pt-2.5 pl-[34px]', className)}
 		>
-			{/* The trunk segment past this branch — only when a sibling follows. */}
+			{/* The trunk segment past this branch — only when a sibling follows,
+			    or the tree carries on below. */}
 			<motion.span
 				aria-hidden="true"
 				data-testid="tree-trunk"
 				custom={item}
 				variants={TREE_TRUNK_VARIANTS}
-				className="pointer-events-none absolute inset-y-0 left-[11px] w-[3px] origin-top group-last/branch:hidden"
+				className={cn(
+					'pointer-events-none absolute top-0 left-[11px] w-[3px] origin-top',
+					continues ? '-bottom-[3px]' : 'bottom-0 group-last/branch:hidden',
+				)}
 			>
 				<span className="bg-ledger-tree block h-full w-full origin-left scale-x-50" />
 			</motion.span>
@@ -81,6 +102,6 @@ export function TreeBranch({ lands, item, className, children }: TreeBranchProps
 			<motion.div custom={item} variants={TREE_ROW_VARIANTS}>
 				{children}
 			</motion.div>
-		</li>
+		</Branch>
 	);
 }

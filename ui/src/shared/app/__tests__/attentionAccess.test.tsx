@@ -358,10 +358,10 @@ describe('Notifications — held calls go to whoever the server shows them to', 
 		expect(reads).toBeGreaterThan(0);
 		if (listed) {
 			expect(
-				await within(dialog).findByText(/is waiting for you to approve a call/),
+				await within(dialog).findByText(/wants to run POST \/v1\/charges/),
 			).toBeInTheDocument();
 		} else {
-			expect(within(dialog).queryByText(/is waiting for you to approve/)).toBeNull();
+			expect(within(dialog).queryByText(/wants to/)).toBeNull();
 		}
 	});
 });

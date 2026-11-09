@@ -21,10 +21,11 @@
  *                                    `awaiting_app` / `polling`, collapsed per agent;
  *                                    listed only to approvers — `org:admin`, or
  *                                    `credentials:write` and `agents:write`)
- *   - agents waiting on a held call (`GET /executions/holds?state=pending`,
- *                                    collapsed per agent; no permission gate —
- *                                    scoped server-side to the agents the viewer
- *                                    owns, or every agent for `org:admin`)
+ *   - held calls waiting on the viewer (`GET /executions/holds?state=pending`,
+ *                                    one item per call, oldest first; no
+ *                                    permission gate — scoped server-side to the
+ *                                    agents the viewer owns, or every agent for
+ *                                    `org:admin`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
  * client's registration, a held call's approval request) are dropped — the queue row is the actionable one —
@@ -53,12 +54,12 @@ import {
 	useCanApproveConnectRequests,
 } from '@/shared/credentials/lib/connectRequests';
 import {
-	describeHeldCall,
-	groupApprovalsByAgent,
-	summariseHeldCalls,
 	useCanDecideApprovals,
+	useHeldCallHeadlines,
 	usePendingApprovals,
+	type HeldCall,
 } from '@/shared/approvals';
+import { heldCallAsk } from '@/shared/approvals/heldCallCopy';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -89,6 +90,8 @@ export interface AttentionItem {
 	agent?: AgentResponse;
 	event?: EventResponse;
 	oauthClient?: OAuthClientResponse;
+	/** The held call a `held_execution` item stands for. */
+	heldCall?: HeldCall;
 }
 
 export interface AttentionState {
@@ -106,6 +109,9 @@ export const attentionKeys = {
 };
 
 const REFETCH_MS = 45_000;
+
+/** Joins held-call headlines into one memo key; no headline contains it. */
+const HEADLINE_SEPARATOR = '\u001f';
 
 /** How far back the alert source reads `requires_action` events. */
 export const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -166,13 +172,17 @@ export function useAttentionItems(): AttentionState {
 	);
 	const canDecideApprovals = useCanDecideApprovals();
 	const pendingApprovals = usePendingApprovals({ enabled: canDecideApprovals });
-	const approvalGroups = useMemo(
-		() => groupApprovalsByAgent(pendingApprovals.data?.approvals ?? []),
+	const heldCalls = useMemo<HeldCall[]>(
+		() => pendingApprovals.data?.approvals ?? [],
 		[pendingApprovals.data],
 	);
+	// The headline reader is a fresh function each render; joining what it reads
+	// keeps the item list stable until a headline actually changes.
+	const headlineOf = useHeldCallHeadlines(heldCalls);
+	const heldHeadlines = heldCalls.map((call) => headlineOf(call)).join(HEADLINE_SEPARATOR);
 	const actors = useActorDirectory([
 		...connectGroups.map((g) => g.agentId),
-		...approvalGroups.map((g) => g.agentId),
+		...heldCalls.map((call) => call.agent_id),
 	]);
 
 	const items = useMemo<AttentionItem[]>(() => {
@@ -230,25 +240,23 @@ export function useAttentionItems(): AttentionState {
 			});
 		}
 
-		// Likewise one row per agent with held calls; the link opens the
-		// longest-waiting one.
+		// One row per held call, each its own decision: the agent is blocked on
+		// every one of them, and each opens its own review.
 		if (canDecideApprovals) {
-			for (const group of approvalGroups) {
-				const oldest = group.approvals[0];
-				const name = actors.resolve(group.agentId) ?? group.agentId;
+			const headlines = heldHeadlines.split(HEADLINE_SEPARATOR);
+			heldCalls.forEach((call, i) => {
+				const name = actors.resolve(call.agent_id) ?? call.agent_id;
 				out.push({
-					key: `held_execution:${group.agentId}`,
+					key: `held_execution:${call.id}`,
 					kind: 'held_execution',
 					urgency: 2,
-					title: `${name} is waiting for you to approve ${summariseHeldCalls(group.approvals)}`,
-					detail:
-						group.approvals.length > 1
-							? `${group.approvals.length} held calls`
-							: describeHeldCall(oldest),
-					since: group.since,
-					href: ROUTE_PATHS.approval(oldest.id),
+					title: heldCallAsk(name, headlines[i] ?? ''),
+					detail: null,
+					since: call.created_at,
+					href: ROUTE_PATHS.approval(call.id),
+					heldCall: call,
 				});
-			}
+			});
 		}
 
 		if (credentials.complete) {
@@ -292,7 +300,8 @@ export function useAttentionItems(): AttentionState {
 		oauthClients.data,
 		connectGroups,
 		canApproveConnectRequests,
-		approvalGroups,
+		heldCalls,
+		heldHeadlines,
 		canDecideApprovals,
 		actors,
 		credentials.complete,
