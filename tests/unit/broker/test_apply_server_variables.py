@@ -2,6 +2,7 @@
 
 from jentic_one.shared.url import (
     apply_server_variables,
+    decode_server_variable_placeholders,
     has_host_server_variable,
     server_variables_compatible,
 )
@@ -137,3 +138,23 @@ def test_has_host_server_variable_detects_percent_encoded_placeholder() -> None:
 def test_has_host_server_variable_detects_encoded_placeholder_case_insensitively() -> None:
     """``%7b``/``%7d`` are as valid as ``%7B``/``%7D`` (RFC 3986 §2.1)."""
     assert has_host_server_variable("https://%7bregion%7d.posthog.com/api") is True
+
+
+def test_decode_server_variable_placeholders_decodes_only_braces() -> None:
+    """Brace escapes fold; every other escape is left for the forwarder."""
+    assert (
+        decode_server_variable_placeholders("bedrock-runtime.%7Bregion%7D.amazonaws.com")
+        == "bedrock-runtime.{region}.amazonaws.com"
+    )
+    # Either case, and a half-encoded spelling, name the same variable.
+    assert decode_server_variable_placeholders("%7bregion%7d.posthog.com") == "{region}.posthog.com"
+    assert decode_server_variable_placeholders("%7Bregion}.posthog.com") == "{region}.posthog.com"
+    # A literal host, and a literal template, are returned unchanged.
+    assert decode_server_variable_placeholders("api.posthog.com") == "api.posthog.com"
+    assert decode_server_variable_placeholders("{region}.posthog.com") == "{region}.posthog.com"
+    # An escape that could spell a real DNS label is never folded: routing on a
+    # decoded host the broker does not forward would inject a credential for an
+    # operation the request never reaches.
+    assert decode_server_variable_placeholders("%41pi.example.com") == "%41pi.example.com"
+    # An empty name is not a placeholder.
+    assert decode_server_variable_placeholders("%7B%7D.example.com") == "%7B%7D.example.com"

@@ -30,6 +30,7 @@ from jentic_one.shared.discovery.errors import (
     MethodNotAllowedError,
     TooManyCandidatesError,
 )
+from jentic_one.shared.url import decode_server_variable_placeholders
 
 logger = structlog.get_logger(__name__)
 
@@ -91,7 +92,11 @@ class URLLookupService:
         """
         parsed = urlparse(url)
         scheme = parsed.scheme or "https"
-        raw_host = parsed.hostname or ""
+        # A templated host is indexed with literal braces, and the path is
+        # already decoded by ``normalize_path``, so decode the placeholder
+        # braces here too — otherwise a client that encoded them (many do it
+        # unasked) misses the row that serves it.
+        raw_host = decode_server_variable_placeholders(parsed.hostname or "")
         port = parsed.port
         host_str = f"{raw_host}:{port}" if port else raw_host
         host = normalise_host(host_str, scheme)

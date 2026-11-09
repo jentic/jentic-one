@@ -15,15 +15,42 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 # not be flagged as a mismatch against a ``0.0.0.0`` bind.
 _EQUIVALENT_HOSTS = frozenset({"0.0.0.0", "127.0.0.1", "localhost", "::1"})
 
-# A ``{name}`` OpenAPI server-variable placeholder. Names follow the OpenAPI
-# variable-name grammar (letters, digits, underscores, hyphens, dots) so an
-# empty ``{}`` or a stray brace in a query value is not mistaken for one.
-_SERVER_VAR_PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
+# The grammar of a ``{name}`` OpenAPI server-variable placeholder, in its
+# literal or percent-encoded (``%7Bname%7D``) form — many HTTP clients encode
+# the braces on their own, so both spellings name the same variable and every
+# reader of a placeholder here is built from these fragments. Names follow the
+# OpenAPI variable-name grammar (letters, digits, underscores, hyphens, dots)
+# so an empty ``{}`` or a stray brace in a query value is not mistaken for one.
+_SV_OPEN = r"(?:\{|%7[Bb])"
+_SV_CLOSE = r"(?:\}|%7[Dd])"
+_SV_NAME = r"[A-Za-z0-9_.-]+"
+
+_SERVER_VAR_PLACEHOLDER = re.compile(_SV_OPEN + _SV_NAME + _SV_CLOSE)
+_NAMED_SERVER_VAR_PLACEHOLDER = re.compile(_SV_OPEN + "(" + _SV_NAME + ")" + _SV_CLOSE)
 
 
 def _server_var_placeholder(name: str) -> re.Pattern[str]:
     """Match ``{name}`` in its literal or percent-encoded (``%7Bname%7D``) form."""
-    return re.compile(r"(?:\{|%7[Bb])" + re.escape(name) + r"(?:\}|%7[Dd])")
+    return re.compile(_SV_OPEN + re.escape(name) + _SV_CLOSE)
+
+
+def decode_server_variable_placeholders(host: str) -> str:
+    """Rewrite a percent-encoded server-variable placeholder in *host* to literal braces.
+
+    Only the braces around an OpenAPI variable name are decoded, never any
+    other escape. The URL index stores a templated host with literal braces, so
+    a caller that encoded them has to be matched against that one spelling.
+
+    A general unescape would be unsafe here: it also folds escapes that *can*
+    spell a real DNS label (``%41pi.example.com`` → ``api.example.com``), which
+    would route to an operation and decrypt and inject its credential while the
+    broker still forwards the raw host — one that then fails to resolve. Braces
+    cannot appear in a real label, so decoding only those keeps routing and
+    forwarding in agreement: :func:`apply_server_variables` substitutes either
+    spelling, and a placeholder nothing substitutes leaves the host
+    unresolvable whichever way it was spelled.
+    """
+    return _NAMED_SERVER_VAR_PLACEHOLDER.sub(r"{\1}", host)
 
 
 def apply_server_variables(
