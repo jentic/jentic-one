@@ -159,6 +159,20 @@ conflicts. Read your access again and amend the request to fit. After the human 
   denied call). Read the target from `connect` rather than parsing
   `suggested_command`. A denial that carries a `provisioning_url` omits
   `connect` and `suggested_command`.
+- **`credential_server_variable_mismatch` (424)** — a credential is
+  connected and covers the API, but it is scoped to different OpenAPI
+  server-variable values than your request (for example a `region=eu-west-1`
+  credential against a `us-east-1` host). `conflicting_variables` names the
+  variables that disagree and the directive's `covered_scopes` the values the
+  existing credentials do cover. Do not start a connect flow on its own — a
+  credential already exists; ask your operator to provision one for the value
+  you need or to widen the existing one. Calling a host the existing
+  credential covers also works, but check with a human first: switching region
+  moves data to another jurisdiction.
+- **`credential_server_variables_unresolved` (424)** — a scoped credential
+  exists, but your URL does not say which server-variable values it targets,
+  so every scoped credential is ruled out. Send the host's templated form
+  (for example `{region}`) and the credential supplies the value.
 - **`action_denied` (403)** — you are bound to a credential for this API,
   but its permission rules deny this call. `parameters.edit` names the
   binding and the minimal rule to ask for (`{credential_id,

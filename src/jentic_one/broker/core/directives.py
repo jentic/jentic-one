@@ -506,20 +506,30 @@ def credential_server_variable_mismatch_directive(
 ) -> AgentDirective:
     """Directive for a ``credential_server_variable_mismatch`` 424.
 
-    A credential for the API already exists, so the agent must not be sent to
-    connect one — the strategy is the fixed ``prompt_human`` and no
-    ``suggested_command`` is emitted, following
-    :func:`credential_identity_mismatch_directive`: changing a credential's
-    server-variable scope is an operator action with no verbatim CLI command.
+    The strategy is the fixed ``prompt_human`` and no ``suggested_command`` is
+    emitted, following :func:`credential_identity_mismatch_directive`: changing
+    or re-scoping a credential is an operator action with no verbatim CLI
+    command an agent can run.
 
-    The directive deliberately does **not** instruct the agent to retry against
-    a value the existing credential does cover. The strategy stays
-    ``prompt_human`` rather than ``retry`` for two reasons: the identical
-    request can never succeed, and silently retargeting a call at another
-    region would move data to a jurisdiction nobody chose. Naming the covered
-    values lets a human decide that.
+    ``covered_scopes`` keeps each candidate's values grouped **per variable**,
+    restricted to the variables that disagree. Flattening them into a bare
+    value list would both name values that match and strand a value with no
+    variable to attach it to, so a reader could not tell which axis to fix.
+
+    The strategy stays ``prompt_human`` rather than ``retry`` for two reasons:
+    the identical request can never succeed, and silently retargeting a call at
+    a region the existing credential happens to cover would move data to a
+    jurisdiction nobody chose. Naming the covered scopes lets a human decide.
     """
-    covered = sorted({v for scope in scoped_values for v in scope.values()})
+    names = set(conflicting)
+    covered_scopes = [
+        scope
+        for scope in (
+            {name: value for name, value in sorted(s.items()) if not names or name in names}
+            for s in scoped_values
+        )
+        if scope
+    ]
     if unresolved:
         instruction = (
             f"A credential for '{vendor}' exists but is scoped to specific server-variable "
@@ -529,13 +539,20 @@ def credential_server_variable_mismatch_directive(
             "agent-recoverable by retrying the same URL."
         )
     else:
-        asked = ", ".join(f"{k}={v!r}" for k, v in sorted(requested.items())) or "this request"
-        covers = f" It covers {', '.join(repr(c) for c in covered)}." if covered else ""
+        asked = (
+            ", ".join(f"{k}={requested[k]!r}" for k in sorted(names) if k in requested)
+            or ", ".join(f"{k}={v!r}" for k, v in sorted(requested.items()))
+            or "the values this request targets"
+        )
+        rendered = sorted(
+            {", ".join(f"{k}={v!r}" for k, v in sorted(scope.items())) for scope in covered_scopes}
+        )
+        covers = f" Existing credentials cover {'; '.join(rendered)}." if rendered else ""
         instruction = (
             f"A credential for '{vendor}' exists, but none is scoped to {asked}.{covers} Ask "
-            "your operator either to provision a credential for the value you need, or to "
-            "widen the existing one. Do not start a connect flow — a credential is already "
-            "connected. Retrying the same request will fail the same way."
+            "your operator to provision a credential for the value you need, or to widen the "
+            "existing one; connecting another credential only helps if they scope it to this "
+            "value or leave it unscoped. Retrying the same request will fail the same way."
         )
     return AgentDirective(
         strategy="prompt_human",
@@ -543,7 +560,7 @@ def credential_server_variable_mismatch_directive(
             "vendor": vendor,
             "server_variables": requested,
             "conflicting_variables": conflicting,
-            "covered_values": covered,
+            "covered_scopes": covered_scopes,
         },
         human_readable_instruction=instruction,
     )

@@ -192,8 +192,17 @@ class CredentialResolver:
                             {
                                 name
                                 for c in scope_mismatched
-                                for name in (c.server_variables or {})
-                                if name in requested or server_variables_unresolved
+                                for name, scoped in (c.server_variables or {}).items()
+                                # Only a name the request resolves to a
+                                # *different* value disagrees. A variable the
+                                # request does not resolve imposes no
+                                # constraint, and one that agrees is not why
+                                # the candidate was ruled out — naming either
+                                # sends an operator to the wrong variable.
+                                # When the URL resolves nothing, every scoped
+                                # name is in play, so all are named.
+                                if server_variables_unresolved
+                                or (name in requested and requested[name] != scoped)
                             }
                         ),
                         candidates=[self._to_candidate(c, scoped=True) for c in scope_mismatched],

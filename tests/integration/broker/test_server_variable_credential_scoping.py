@@ -87,6 +87,7 @@ async def _inject(
     request_server_variables: dict[str, str] | None,
     *,
     unresolved: bool = False,
+    allowed_credential_ids: list[str] | None = None,
 ) -> str:
     result = await CredentialService(ctx).inject(
         api_vendor=_VENDOR,
@@ -95,6 +96,7 @@ async def _inject(
         identity=_IDENTITY,
         request_server_variables=request_server_variables,
         server_variables_unresolved=unresolved,
+        allowed_credential_ids=allowed_credential_ids,
     )
     return result.headers["X-Api-Key"]
 
@@ -264,3 +266,108 @@ async def test_scoped_mismatch_is_distinguishable_from_an_absent_credential(
     # The absent case still gets the connect-flow directive — that one can help.
     assert absent.value.directive is not None
     assert "jentic connect" in str(absent.value.directive)
+
+
+async def test_only_the_variables_that_disagree_are_reported(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """A variable whose value matches is not why the credential was ruled out.
+
+    The credential is scoped on two axes and the request agrees on one of
+    them, so naming both would send an operator to inspect a variable that is
+    already correct — and flattening the covered values would strand ``gold``
+    with no variable to attach it to.
+    """
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_us_gold",
+        secret="us-gold-secret",  # pragma: allowlist secret
+        server_variables={"region": "us", "tier": "gold"},
+    )
+
+    with pytest.raises(CredentialServerVariableMismatchError) as exc:
+        await _inject(integration_context, {"region": "us", "tier": "silver"})
+
+    assert exc.value.extra["conflicting_variables"] == ["tier"]
+    assert "tier='silver'" in exc.value.detail
+    assert exc.value.directive is not None
+    params = exc.value.directive.parameters
+    assert params["conflicting_variables"] == ["tier"]
+    # Grouped per variable, and narrowed to the axis that disagrees.
+    assert params["covered_scopes"] == [{"tier": "gold"}]
+    instruction = exc.value.directive.human_readable_instruction or ""
+    assert "tier='gold'" in instruction
+    # The agreeing variable is never presented as the problem.
+    assert "region" not in instruction
+
+
+async def test_a_scoped_variable_the_request_does_not_resolve_is_not_a_conflict(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """Only the axis the request actually constrains can disagree."""
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_us_a",
+        secret="us-a-secret",  # pragma: allowlist secret
+        server_variables={"region": "us", "zone": "a"},
+    )
+
+    with pytest.raises(CredentialServerVariableMismatchError) as exc:
+        await _inject(integration_context, {"region": "eu"})
+
+    assert exc.value.extra["conflicting_variables"] == ["region"]
+
+
+async def test_unresolved_variables_report_every_scoped_name_and_no_values(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """Nothing disagrees — the URL simply names no values, so all axes are in play."""
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_us_gold",
+        secret="us-gold-secret",  # pragma: allowlist secret
+        server_variables={"region": "us", "tier": "gold"},
+    )
+
+    with pytest.raises(CredentialServerVariableMismatchError) as exc:
+        await _inject(integration_context, None, unresolved=True)
+
+    assert exc.value.type == "credential_server_variables_unresolved"
+    assert exc.value.extra["server_variables"] == {}
+    assert exc.value.extra["conflicting_variables"] == ["region", "tier"]
+    assert exc.value.directive is not None
+    instruction = exc.value.directive.human_readable_instruction or ""
+    assert "does not say which values it targets" in instruction
+    assert "jentic connect" not in instruction
+
+
+async def test_reported_candidates_stay_within_the_injection_boundary(
+    integration_context: Context, clean_credentials: None
+) -> None:
+    """Reported candidates are the caller's own bindings (#2089).
+
+    The body names each candidate's scope, which is only safe because the
+    injection boundary runs before the server-variable filter. This pins that
+    ordering: a credential outside ``allowed_credential_ids`` is never
+    reported, however well it covers the API.
+    """
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_mine",
+        secret="mine-secret",  # pragma: allowlist secret
+        server_variables={"region": "eu"},
+    )
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_someone_else",
+        secret="theirs-secret",  # pragma: allowlist secret
+        server_variables={"region": "ap"},
+    )
+
+    with pytest.raises(CredentialServerVariableMismatchError) as exc:
+        await _inject(integration_context, {"region": "us"}, allowed_credential_ids=["cred_mine"])
+
+    reported = [c["id"] for c in exc.value.extra["candidates"]]
+    assert reported == ["cred_mine"]
+    body = f"{exc.value.detail} {exc.value.extra} {exc.value.directive}"
+    assert "ap" not in body

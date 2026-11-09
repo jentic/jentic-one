@@ -324,13 +324,15 @@
                 "summary": "A credential exists but is scoped to another region.",
                 "value": {
                   "agent_directive": {
-                    "human_readable_instruction": "A credential for 'amazonaws-com' exists, but none is scoped to region='us-east-1'. It covers 'eu-west-1'. Ask your operator either to provision a credential for the value you need, or to widen the existing one. Do not start a connect flow — a credential is already connected. Retrying the same request will fail the same way.",
+                    "human_readable_instruction": "A credential for 'amazonaws-com' exists, but none is scoped to region='us-east-1'. Existing credentials cover region='eu-west-1'. Ask your operator to provision a credential for the value you need, or to widen the existing one; connecting another credential only helps if they scope it to this value or leave it unscoped. Retrying the same request will fail the same way.",
                     "parameters": {
                       "conflicting_variables": [
                         "region"
                       ],
-                      "covered_values": [
-                        "eu-west-1"
+                      "covered_scopes": [
+                        {
+                          "region": "eu-west-1"
+                        }
                       ],
                       "server_variables": {
                         "region": "us-east-1"
@@ -363,6 +365,48 @@
                   "title": "No credential provisioned for 'amazonaws-com' scoped to region='us-east-1'",
                   "type": "credential_server_variable_mismatch"
                 }
+              },
+              "credential_server_variables_unresolved": {
+                "summary": "A scoped credential exists, but the URL names no values.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "A credential for 'amazonaws-com' exists but is scoped to specific server-variable values, and this request URL does not say which values it targets. Send the host's templated form (for example '{region}') so the credential supplies the value, or ask your operator for a credential that is not scoped. This is not agent-recoverable by retrying the same URL.",
+                    "parameters": {
+                      "conflicting_variables": [
+                        "region"
+                      ],
+                      "covered_scopes": [
+                        {
+                          "region": "eu-west-1"
+                        }
+                      ],
+                      "server_variables": {},
+                      "vendor": "amazonaws-com"
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "candidates": [
+                    {
+                      "id": "cred_01J8XYZ",
+                      "last4": "8XYZ",
+                      "name": "bedrock-eu",
+                      "server_variables": {
+                        "region": "eu-west-1"
+                      }
+                    }
+                  ],
+                  "conflicting_variables": [
+                    "region"
+                  ],
+                  "detail": "No credential for 'amazonaws-com' applies because the request URL does not determine its server-variable values",
+                  "error_origin": "broker",
+                  "instance": "/bedrock-runtime.amazonaws.com/model/m/converse",
+                  "intent_id": "intent_2b8e6f0a4c1d9e3b5a7c0f2d4e6b8a1c",
+                  "server_variables": {},
+                  "status": 424,
+                  "title": "No credential for 'amazonaws-com' applies because the request URL does not determine its server-variable values",
+                  "type": "credential_server_variables_unresolved"
+                }
               }
             },
             "schema": {
@@ -370,7 +414,7 @@
             }
           }
         },
-        "description": "A bound credential is an unusable dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `type` discriminates five cases with\ndifferent recovery paths:\n- `credential_not_provisioned` — no credential is connected for the\n  resolved upstream API. The `agent_directive` is a `prompt_human`\n  instruction carrying an `intent_id` correlation id, so an\n  autonomous agent stops and asks the user to connect the account\n  rather than retrying or guessing the credential. When the agent\n  already has an open connect session for the API, the directive\n  also carries a non-secret `provisioning_url` — that session's\n  owner approval link (`/app/agents?approve=<session_id>`) — for\n  the agent to relay instead of starting another connect.\n- `credential_server_variable_mismatch` — a credential is connected\n  and covers the API, but it is scoped to different OpenAPI\n  server-variable values than the request resolved (for example a\n  `region=eu-west-1` credential against a `us-east-1` host). Starting\n  a connect flow cannot fix this, so the `prompt_human` directive does\n  **not** suggest one. `server_variables` carries the request's own\n  resolved values, `conflicting_variables` the names that disagree,\n  and `candidates` the caller's bound credentials with the\n  `server_variables` each is scoped to, so an operator can see the\n  value that caused the refusal. Either provision a credential for\n  the value needed, widen the existing one, or call a host the\n  existing credential covers.\n- `credential_server_variables_unresolved` — a credential is connected\n  and is scoped to specific server-variable values, but the request\n  URL does not determine which values it targets, so every scoped\n  credential is ruled out (fail closed). Sending the host's templated\n  form (e.g. `{region}`) lets the credential supply the value.\n- `credential_undecryptable` — a credential is connected but its\n  stored secret can no longer be decrypted (typically the\n  deployment's encryption key rotated underneath it, e.g. a\n  reinstall over existing data). The caller cannot self-provision\n  and retrying will not help; the `prompt_human` directive tells\n  the agent to ask an operator to remove and re-add the credential.\n- `credential_needs_reconnect` — a credential is connected but the\n  broker's own OAuth refresh against the vendor was rejected\n  (`invalid_grant`): the stored upstream grant was revoked or\n  expired beyond refresh. **The caller's own access token is\n  fine — do not re-authenticate and do not discard it.** Only\n  reconnecting the upstream credential fixes this, so the\n  `prompt_human` directive asks the user to reconnect the account.\n  This answers `424` rather than `401` precisely so a client does\n  not mistake it for its own credential being rejected.\n",
+        "description": "A bound credential is an unusable dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `type` discriminates five cases with\ndifferent recovery paths:\n- `credential_not_provisioned` — no credential is connected for the\n  resolved upstream API. The `agent_directive` is a `prompt_human`\n  instruction carrying an `intent_id` correlation id, so an\n  autonomous agent stops and asks the user to connect the account\n  rather than retrying or guessing the credential. When the agent\n  already has an open connect session for the API, the directive\n  also carries a non-secret `provisioning_url` — that session's\n  owner approval link (`/app/agents?approve=<session_id>`) — for\n  the agent to relay instead of starting another connect.\n- `credential_server_variable_mismatch` — a credential is connected\n  and covers the API, but it is scoped to different OpenAPI\n  server-variable values than the request resolved (for example a\n  `region=eu-west-1` credential against a `us-east-1` host). Starting\n  `server_variables` carries the request's own resolved values,\n  `conflicting_variables` only the names the request resolves to a\n  *different* value (a variable that agrees, or one the request does\n  not resolve, is not why the candidate was ruled out), and\n  `candidates` the caller's bound credentials with the\n  `server_variables` each is scoped to, so an operator can see the\n  value that caused the refusal. The `prompt_human` directive emits no\n  `suggested_command`: re-scoping a credential is an operator action.\n  Its `covered_scopes` groups the covered values **per variable**,\n  restricted to the conflicting ones. Fix it by provisioning a\n  credential for the value needed, widening the existing one, or\n  calling a host the existing credential covers.\n- `credential_server_variables_unresolved` — a credential is connected\n  and is scoped to specific server-variable values, but the request\n  URL does not determine which values it targets, so every scoped\n  credential is ruled out (fail closed). Sending the host's templated\n  form (e.g. `{region}`) lets the credential supply the value. Here\n  `server_variables` is `{}` and `conflicting_variables` lists every\n  name the candidates are scoped to, since nothing disagrees — the\n  values are simply unknown.\n- `credential_undecryptable` — a credential is connected but its\n  stored secret can no longer be decrypted (typically the\n  deployment's encryption key rotated underneath it, e.g. a\n  reinstall over existing data). The caller cannot self-provision\n  and retrying will not help; the `prompt_human` directive tells\n  the agent to ask an operator to remove and re-add the credential.\n- `credential_needs_reconnect` — a credential is connected but the\n  broker's own OAuth refresh against the vendor was rejected\n  (`invalid_grant`): the stored upstream grant was revoked or\n  expired beyond refresh. **The caller's own access token is\n  fine — do not re-authenticate and do not discard it.** Only\n  reconnecting the upstream credential fixes this, so the\n  `prompt_human` directive asks the user to reconnect the account.\n  This answers `424` rather than `401` precisely so a client does\n  not mistake it for its own credential being rejected.\n",
         "headers": {
           "Jentic-Error-Origin": {
             "$ref": "#/components/headers/JenticErrorOrigin"
