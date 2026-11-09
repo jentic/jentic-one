@@ -572,6 +572,9 @@ export type { ImportJob, ImportSource, JobStatus } from './apis';
 // HOOKS may import it; view code must not.
 export { getJob } from './apis';
 
+// Classifies a failed credential write for the views that retry one.
+export { isCredentialGone } from './vendors-client';
+
 // The job poll and its success test, shared with the workspace catalog re-import.
 export { jobSucceeded, pollJobToTerminal } from './apis-hooks';
 

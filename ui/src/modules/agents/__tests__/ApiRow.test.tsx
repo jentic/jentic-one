@@ -19,6 +19,7 @@ import { ApiRow } from '@/modules/agents/components/flat/ApiRow';
 import { HOVER_INTENT, usePinStack } from '@/shared/hooks';
 import { REVEAL_MOTION } from '@/shared/ui';
 import { accountLabels, type ApiTileModel } from '@/modules/agents/lib/apiTiles';
+import { CredentialType } from '@/shared/credentials/api';
 import type { ApiRowActivity } from '@/modules/agents/lib/apiRowActivity';
 import type { BindingRulesState } from '@/modules/agents/api';
 
@@ -32,6 +33,7 @@ function makeTile(over: Partial<ApiTileModel> = {}): ApiTileModel {
 		apiName: 'default',
 		version: '1.0.0',
 		authLabel: 'Bearer token',
+		authType: CredentialType.BEARER_TOKEN,
 		operationCount: 9,
 		bindingId: 'acb_1',
 		credentialId: 'cred_0123456789abcdef',
@@ -43,6 +45,7 @@ function makeTile(over: Partial<ApiTileModel> = {}): ApiTileModel {
 		suspendedReason: null,
 		awaitingConsent: false,
 		updateAvailable: false,
+		scope: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
 		...over,
 	};
 }

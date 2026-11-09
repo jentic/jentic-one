@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, checkA11y, within } from '@/__tests__/test-utils';
 import { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 
 const options = [
@@ -165,6 +165,69 @@ describe('SegmentedToggle', () => {
 		);
 		await user.click(screen.getByRole('button', { name: 'Grid' }));
 		expect(onChange).toHaveBeenCalledWith('grid');
+		await checkA11y(container);
+	});
+
+	it('`as="choice"`: one tab stop, arrows move focus, Space presses, pressing again or Delete clears', async () => {
+		const user = userEvent.setup();
+		function Harness() {
+			const [value, setValue] = useState<string | null>(null);
+			return (
+				<>
+					<SegmentedToggle
+						as="choice"
+						size="xs"
+						ariaLabel="Access for GET /x"
+						options={[
+							{ value: 'allow', label: 'Allow' },
+							{
+								value: 'ask',
+								label: 'Ask',
+								activeTint: { pill: 'bg-warning/15', text: 'text-warning' },
+							},
+							{ value: 'deny', label: 'Deny' },
+						]}
+						value={value}
+						onChange={setValue}
+						onClear={() => setValue(null)}
+					/>
+					<output data-testid="value">{value ?? 'unset'}</output>
+				</>
+			);
+		}
+		const { container } = renderWithProviders(<Harness />);
+		const group = screen.getByRole('group', { name: 'Access for GET /x' });
+		const [allow, ask, deny] = within(group).getAllByRole('button');
+		const value = () => screen.getByTestId('value').textContent;
+		// Nothing pressed: all quiet, no pill; the first option is the tab stop.
+		for (const b of [allow, ask, deny]) expect(b).toHaveAttribute('aria-pressed', 'false');
+		expect(group.querySelector('[aria-hidden="true"]')).toBeNull();
+		expect(allow).toHaveAttribute('tabindex', '0');
+		expect(ask).toHaveAttribute('tabindex', '-1');
+
+		await user.tab();
+		expect(allow).toHaveFocus();
+		// Arrows move focus without choosing.
+		await user.keyboard('{ArrowRight}');
+		expect(ask).toHaveFocus();
+		expect(value()).toBe('unset');
+		await user.keyboard(' ');
+		expect(value()).toBe('ask');
+		expect(ask).toHaveAttribute('aria-pressed', 'true');
+		expect(ask).toHaveAttribute('tabindex', '0');
+		// The active option's tint colours its pill and its word.
+		expect(group.querySelector('[aria-hidden="true"]')).toHaveClass('bg-warning/15');
+		expect(within(ask).getByText('Ask')).toHaveClass('text-warning');
+		// Delete clears from the keyboard…
+		await user.keyboard('{Delete}');
+		expect(value()).toBe('unset');
+		// …and pressing the pressed option clears by mouse.
+		await user.click(deny);
+		expect(value()).toBe('deny');
+		await user.click(deny);
+		expect(value()).toBe('unset');
+		await user.keyboard('{End}');
+		expect(deny).toHaveFocus();
 		await checkA11y(container);
 	});
 });

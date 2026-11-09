@@ -44,6 +44,7 @@ import {
 import { formatApiVersion, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { HOVER_INTENT_IGNORE, useHoverIntent } from '@/shared/hooks';
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import type { BindingRulesState } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import {
@@ -161,6 +162,7 @@ export const ApiRow = memo(function ApiRow({
 	]
 		.filter(Boolean)
 		.join(' · ');
+	const AuthIcon = tile.authLabel && tile.authType ? credentialTypeIcon(tile.authType) : null;
 	const idle = tile.suspended || !agentServing;
 
 	// Reveal: pinned by the list, or previewed — a mouse at rest on the row,
@@ -324,10 +326,11 @@ export const ApiRow = memo(function ApiRow({
 				</div>
 				<div className="col-start-2 min-w-0 lg:col-start-3 lg:row-start-1">
 					<p
-						className="text-foreground-sub truncate text-xs leading-[18px]"
+						className="text-foreground-sub flex min-w-0 items-center gap-1.5 text-xs leading-[18px]"
 						data-testid="tile-capability"
 					>
-						{capability}
+						{AuthIcon && <AuthIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
+						<span className="min-w-0 truncate">{capability}</span>
 					</p>
 					{tile.awaitingConsent ? (
 						<StatusText

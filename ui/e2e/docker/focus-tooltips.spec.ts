@@ -73,7 +73,7 @@ test('Add APIs → the setup queue, by pointer, leaves no hover card over the sh
 
 	await tray.getByRole('checkbox', { name: new RegExp(`/${apiName}@1\\.0\\.0`) }).click();
 	await tray.getByRole('button', { name: 'Continue' }).click();
-	await expect(page.getByRole('heading', { name: /^Set up 1 API$/ })).toBeVisible();
+	await expect(page.getByRole('heading', { name: /^Set up 1 API for / })).toBeVisible();
 	await page.waitForTimeout(800);
 	await expect(page.getByRole('tooltip')).toHaveCount(0);
 });

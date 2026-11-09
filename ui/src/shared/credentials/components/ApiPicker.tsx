@@ -14,7 +14,8 @@ import { Badge, EmptyState, ErrorAlert, Input, LoadingState, Tag, VendorIcon } f
 import { useDebouncedValue } from '@/shared/hooks';
 import { apiRefDisplayName } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
-import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
+import { apiRefKey, pickKey } from '@/shared/credentials/lib/apiIdentity';
+import { schemeTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import {
 	apiRowToSelected,
 	catalogToSelected,
@@ -55,16 +56,16 @@ export interface ApiPickerProps {
 	/** Escape hatch — drop into the legacy free-text API reference form.
 	 *  Omit to hide the affordance (the tray offers spec upload instead). */
 	onManualEntry?: () => void;
-	/** Multi-select mode: the `apiRefKey`s currently picked. Passing this — even
+	/** Multi-select mode: the `pickKey`s currently picked. Passing this — even
 	 * empty — switches rows from drill-in buttons to checkboxes. */
 	selectedKeys?: ReadonlySet<string>;
-	/** Rows that cannot be picked, by `apiRefKey`. */
+	/** Rows that cannot be picked, by `pickKey`. */
 	disabledKeys?: ReadonlySet<string>;
 	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added");
-	 * a function labels each row by its `apiRefKey`. */
+	 * a function labels each row by its `pickKey`. */
 	disabledLabel?: string | ((key: string) => string | undefined);
 	/** A quiet note on a row that stays pickable (e.g. "Added via GitHub — personal"),
-	 * by `apiRefKey`. */
+	 * by `pickKey`. */
 	rowHint?: (key: string) => string | undefined;
 	/** The search box, for a host that must move focus there itself (e.g. a sheet
 	 * re-opened without remounting the picker). */
@@ -160,13 +161,25 @@ export function ApiPicker({
 
 	const catalogRows = useMemo(() => {
 		if (!debouncedQuery.trim()) return [];
-		// Hide catalog entries already imported into the workspace, so one API
-		// never lists twice. Both sides key in slug form: a workspace row stores
-		// `abstractapi-com`, the catalog entry says `abstractapi.com`.
-		const localKeys = new Set(localRows.map((r) => apiRefKey(r.api)));
-		return (catalogQuery.data?.data ?? []).filter(
-			(e) => !localKeys.has(apiRefKey(catalogToSelected(e))),
-		);
+		// One API never lists twice: a catalog entry keys by the identity its
+		// import registers, so an entry the workspace already holds is hidden, and
+		// two entries that import alike (`api.github.com` and
+		// `github.com/api.github.com`) collapse to the first. Picking both would
+		// make two credentials for one API, and every unnamed call to it a 409.
+		const local = new Set(localRows.map((r) => pickKey(r.api)));
+		const kept = new Map<string, CatalogEntryResponse>();
+		for (const e of catalogQuery.data?.data ?? []) {
+			const selected = catalogToSelected(e);
+			const key = pickKey(selected);
+			// The importer names an API by its id's sub-segment, or by the whole id
+			// when two entries' sub-segments collide under one vendor — a workspace
+			// row under either name is this entry, imported.
+			if (local.has(key) || local.has(apiRefKey(selected))) continue;
+			const prior = kept.get(key);
+			// Of two alike entries, the one the workspace registered is the one to show.
+			if (!prior || (e.registered && !prior.registered)) kept.set(key, e);
+		}
+		return [...kept.values()];
 	}, [catalogQuery.data, debouncedQuery, localRows]);
 
 	const isSearching = catalogQuery.isFetching && !!debouncedQuery.trim();
@@ -379,7 +392,7 @@ function PickerRow({
 	onSelect: (api: SelectedApi) => void;
 	selection?: RowSelection;
 }) {
-	const key = apiRefKey(api);
+	const key = pickKey(api);
 	const checked = selection ? selection.selectedKeys.has(key) : undefined;
 	const blocked = selection?.disabledKeys?.has(key) ?? false;
 	const blockedLabel =
@@ -470,7 +483,9 @@ function LocalApiRow({
 				schemes.length > 0 && (
 					<div className="flex shrink-0 gap-1">
 						{schemes.slice(0, 2).map((t) => (
-							<Tag key={t}>{prettySchemeType(t)}</Tag>
+							<Tag key={t} icon={schemeTypeIcon(t)}>
+								{prettySchemeType(t)}
+							</Tag>
 						))}
 					</div>
 				)

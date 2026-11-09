@@ -1,10 +1,78 @@
 import { describe, it, expect } from 'vitest';
 import {
+	apiKeyWiringCommands,
+	cliContextName,
+	cliEnvName,
 	commandText,
 	registerCommand,
 	registerCommandTokens,
+	registerNameError,
 	shellArg,
 } from '@/modules/agents/lib/registerCommand';
+
+describe('apiKeyWiringCommands', () => {
+	it('stores the key as the identity of the context `register` would have created', () => {
+		expect(cliEnvName('https://jentic.example.test')).toBe('jentic');
+		expect(
+			apiKeyWiringCommands({ url: 'https://jentic.example.test', name: 'ui-made' }),
+		).toEqual([
+			'jentic env add jentic --url https://jentic.example.test',
+			"jentic identity add ui-made --env jentic --api-key '<api-key>'",
+			'jentic context create jentic-ui-made --env jentic --identity ui-made',
+		]);
+	});
+
+	it('carries the broker on a remote install, a placeholder when none is reported', () => {
+		expect(
+			apiKeyWiringCommands({
+				url: 'https://jentic.example.test',
+				brokerUrl: 'https://broker.example.test',
+				name: 'bot',
+			})[0],
+		).toBe(
+			'jentic env add jentic --url https://jentic.example.test --broker-url https://broker.example.test',
+		);
+		expect(
+			apiKeyWiringCommands({
+				url: 'https://jentic.example.test',
+				brokerUrl: null,
+				name: 'bot',
+			})[0],
+		).toMatch(/--broker-url '<broker-url>'$/);
+	});
+
+	it('quotes a key when given one, so a paste runs nothing else', () => {
+		// A pasted value carrying a command substitution.
+		const pasted = ['jak_a', '$(id)'].join('');
+		expect(
+			apiKeyWiringCommands({ url: 'https://j.test', name: 'bot', apiKey: pasted })[1],
+		).toBe(`jentic identity add bot --env j --api-key '${pasted}'`);
+	});
+});
+
+describe('registerNameError', () => {
+	it('accepts what `register --name` accepts: lowercase, digits, hyphens, up to 64', () => {
+		expect(registerNameError('my-agent')).toBeNull();
+		expect(registerNameError('bot2')).toBeNull();
+		expect(registerNameError('  a  ')).toBeNull();
+		expect(registerNameError('a'.repeat(64))).toBeNull();
+	});
+
+	it('refuses what the CLI refuses, and offers the slug it would take', () => {
+		expect(registerNameError('')).toBe('A name is required.');
+		expect(registerNameError('My Agent!')).toBe(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64 — try my-agent.',
+		);
+		expect(registerNameError('-lead')).toBe(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64 — try lead.',
+		);
+		expect(registerNameError('a'.repeat(65))).toMatch(/up to 64 — try a{64}\.$/);
+		// Nothing usable survives: no suggestion, no trailing dash.
+		expect(registerNameError('!!!')).toBe(
+			'The CLI takes lowercase letters, digits and hyphens only, up to 64.',
+		);
+	});
+});
 
 describe('shellArg', () => {
 	it.each([
@@ -47,5 +115,53 @@ describe('registerCommand', () => {
 		expect(commandText(tokens)).toBe(
 			"jentic register --url 'https://j.test/$(id)' --name 'x'\\''y'",
 		);
+	});
+
+	it('`setup` is the same command with the other verb', () => {
+		// So a surface showing both snippets never rewrites one into the other by string replacement.
+		const tokens = registerCommandTokens({ url: 'https://j.test', name: 'bot', verb: 'setup' });
+		expect(commandText(tokens)).toBe('jentic setup --url https://j.test --name bot');
+		expect(tokens[1]).toEqual({ text: 'setup', tone: 'plain' });
+		expect(registerCommandTokens({ url: 'https://j.test', name: 'bot' })[1].text).toBe(
+			'register',
+		);
+	});
+});
+
+/** `cliContextName` hand-ports the CLI's `config.SanitizeName` naming, so it must agree with Go. */
+describe('cliContextName', () => {
+	// One case per rule in one test: per-test browser-runner cost once hit the 5s timeout.
+	it('derives the env from the URL host, as the CLI does', () => {
+		expect(cliContextName('https://jentic.example.test', 'bot')).toBe('jentic-bot');
+		expect(cliContextName('https://acme-eu.jentic.com:8443/api', 'bot')).toBe('acme-eu-bot');
+		// `localhost` is rewritten to 127.0.0.1 before the env is derived.
+		expect(cliContextName('http://localhost:8080', 'bot')).toBe('127-bot');
+		expect(cliContextName('http://127.0.0.1:8080', 'bot')).toBe('127-bot');
+		// Go's `Hostname()` drops an IPv6 literal's brackets.
+		expect(cliContextName('http://[::1]:8080', 'bot')).toBe('1-bot');
+		expect(cliContextName('http://[2001:db8::7]/x', 'bot')).toBe('2001-db8-7-bot');
+	});
+
+	it('falls back to `default` when there is no host to read', () => {
+		expect(cliContextName('jentic.example.test', 'bot')).toBe('default-bot');
+		expect(cliContextName('', 'bot')).toBe('default-bot');
+		expect(cliContextName('not a url', 'bot')).toBe('default-bot');
+		expect(cliContextName('file:///tmp/x', 'bot')).toBe('default-bot');
+	});
+
+	it('folds the joined name to the config-name alphabet and its 64-char limit', () => {
+		expect(cliContextName('https://Jentic.EXAMPLE.test', 'My Bot')).toBe('jentic-my-bot');
+		expect(cliContextName('https://j.test', 'bot!!!v2')).toBe('j-bot-v2');
+		expect(cliContextName('https://j.test', '***')).toBe('j');
+		expect(cliContextName('https://j.test', 'bot-')).toBe('j-bot');
+
+		const long = cliContextName('https://j.test', 'a'.repeat(100));
+		expect(long).toHaveLength(64);
+		expect(long).toBe(`j-${'a'.repeat(62)}`);
+		// The CLI trims a separator exposed by truncation.
+		const exposed = cliContextName('https://j.test', `${'a'.repeat(61)} tail`);
+		expect(exposed).toHaveLength(63);
+		expect(exposed).toBe(`j-${'a'.repeat(61)}`);
+		expect(exposed.endsWith('-')).toBe(false);
 	});
 });

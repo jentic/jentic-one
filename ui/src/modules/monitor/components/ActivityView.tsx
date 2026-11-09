@@ -101,6 +101,7 @@ export const SOURCE_SCOPED_PARAMS = [
 	'target_id',
 	'target_type',
 	'origin',
+	'trace',
 	'api',
 	'cursor',
 ];

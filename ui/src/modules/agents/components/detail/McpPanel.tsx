@@ -10,7 +10,11 @@
  *     plus the prerequisites and the instance identity the snippet registers
  *     against. The stdio config encodes no base URL: the target instance comes
  *     from the context's environment on the AGENT machine, which is why the
- *     prerequisites lead with `jentic register --url <this instance>`.
+ *     prerequisites lead with `jentic register --url <this instance>` for an
+ *     agent that registered itself — and, for an agent created here (which
+ *     has no CLI identity, and which `register` would duplicate), with its
+ *     API key stored as that identity (`env add` / `identity add` /
+ *     `context create`).
  *   - McpSessionsCard  → session history from `mcp.session_started` internal
  *     events plus "last active" from the newest MCP-origin execution. The
  *     label vocabulary is "started / last active" — NEVER "connected":
@@ -42,7 +46,13 @@ import {
 	type McpSessionEntity,
 } from '@/modules/agents/api';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
-import { registerCommand, shellArg } from '@/modules/agents/lib/registerCommand';
+import {
+	apiKeyWiringCommands,
+	cliContextName,
+	configName,
+	registerCommand,
+	shellArg,
+} from '@/modules/agents/lib/registerCommand';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
@@ -59,6 +69,9 @@ export function showHttpVariant(mcpEnabled: boolean | undefined): boolean {
 interface McpPanelProps {
 	agentName: string;
 	agentId: string;
+	/** Who registered the agent: `self` for one that ran `jentic register`; a
+	 * user id for one created here, which has no CLI identity yet. */
+	registeredBy: string | null;
 }
 
 /**
@@ -81,8 +94,17 @@ function safeHost(url: string): string {
 // Config card
 // ---------------------------------------------------------------------------
 
-function McpConfigCard({ agentName }: { agentName: string }) {
+function McpConfigCard({
+	agentName,
+	registeredBy,
+}: {
+	agentName: string;
+	registeredBy: string | null;
+}) {
 	const identity = useInstanceIdentity();
+	// An agent that registered itself has a CLI identity on its machine; one
+	// created here has none — `jentic register` there would make a second agent.
+	const selfRegistered = registeredBy === 'self';
 	// The instance URL and, on a remote install, the broker (#1249) — the same
 	// target the landing's command uses. When the broker can't be advertised
 	// (older backend, or a loopback-only broker on a remote install) the snippet
@@ -96,14 +118,15 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 	// Shown whenever the backend reports one — never a guess.
 	const reportedBrokerUrl = identity.data?.brokerUrl || null;
 
-	// §3.10 one-agent-per-runtime: the context name is whatever binding the
-	// operator created on the agent machine — the agent's name is the
-	// suggested (and `jentic setup`-default) convention, so pre-fill it.
-	const context = shellArg(agentName);
-	const command = `jentic mcp --context ${context}`;
-	const registerSnippet = registerCommand(target);
+	// One agent per runtime: the context `register --name <agent>` creates, in the
+	// CLI's name shape (so "Billing Bot" is passed as `billing-bot`).
+	const cliName = configName(agentName) || undefined;
+	const contextName = cliContextName(instanceUrl, cliName ?? '');
+	const command = `jentic mcp --context ${shellArg(contextName)}`;
+	const registerSnippet = registerCommand({ ...target, name: cliName });
+	const keyWiring = apiKeyWiringCommands({ ...target, name: cliName ?? '' }).join('\n');
 	const jsonConfig = JSON.stringify(
-		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', agentName] } } },
+		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', contextName] } } },
 		null,
 		2,
 	);
@@ -128,11 +151,24 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 		<DetailSection title="Connect via MCP" icon={<Terminal className="h-4 w-4" />}>
 			<p className="text-muted-foreground text-sm">
 				Wire an MCP client to this instance as{' '}
-				<AgentNameText name={agentName} className="font-semibold" />. Prerequisites:{' '}
-				<code className="font-mono text-xs">jentic</code> CLI installed +{' '}
-				<code className="font-mono text-xs">{registerSnippet}</code> on the{' '}
-				<strong>agent machine</strong> — or{' '}
-				<code className="font-mono text-xs">jentic setup</code> for the guided path.
+				<AgentNameText name={agentName} className="font-semibold" />.{' '}
+				{selfRegistered ? (
+					<>
+						Prerequisites: <code className="font-mono text-xs">jentic</code> CLI
+						installed + <code className="font-mono text-xs">{registerSnippet}</code> on
+						the <strong>agent machine</strong> — or{' '}
+						<code className="font-mono text-xs">jentic setup</code> for the guided path.
+					</>
+				) : (
+					<span data-testid="mcp-created-here">
+						This agent was created here, so it has no CLI identity yet — and{' '}
+						<code className="font-mono text-xs">jentic register</code> would register a
+						second agent. Generate its <strong>API key</strong> (in this agent&apos;s
+						actions), then on the <strong>agent machine</strong>, with the{' '}
+						<code className="font-mono text-xs">jentic</code> CLI installed, store the
+						key as the agent&apos;s identity:
+					</span>
+				)}
 				{isRemote && !brokerUrl && (
 					<>
 						{' '}
@@ -158,11 +194,25 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 			</p>
 
 			<div className="space-y-3">
+				{!selfRegistered && (
+					<CodeSnippet
+						label="Store the key as this agent's identity (agent machine)"
+						code={keyWiring}
+						copyAriaLabel="Copy the identity commands"
+					/>
+				)}
 				<CodeSnippet label="MCP server command (stdio)" code={command} />
 				<CodeSnippet
 					label=".cursor/mcp.json · claude_desktop_config.json"
 					code={jsonConfig}
 				/>
+				<p className="text-muted-foreground text-xs" data-testid="mcp-command-path-note">
+					A GUI client (Cursor, Claude Desktop) often can&apos;t find{' '}
+					<code className="font-mono">jentic</code> on its PATH: put the full path from{' '}
+					<code className="font-mono">which jentic</code> in place of{' '}
+					<code className="font-mono">&quot;jentic&quot;</code>. Then restart the client —
+					it reads this file on launch.
+				</p>
 				{/* Instance-gated (server.mcp.enabled): the HTTP transport only
 				    renders when this instance actually serves /mcp. */}
 				{showHttpVariant(identity.data?.mcpEnabled) && (
@@ -177,8 +227,21 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 				<code className="font-mono">--context</code> is pinned on purpose: a bare{' '}
 				<code className="font-mono">jentic mcp</code> follows the machine's <em>active</em>{' '}
 				context, so a later context switch would silently re-point the runtime at a
-				different agent or instance. Use the context bound to this agent on the agent
-				machine (its name is the suggested convention).
+				different agent or instance.{' '}
+				{selfRegistered ? (
+					<>
+						Registering creates it as{' '}
+						<code className="font-mono">&lt;instance&gt;-&lt;agent&gt;</code>; if you
+						passed <code className="font-mono">--env</code>, check{' '}
+						<code className="font-mono">jentic context list</code> on the agent machine.
+					</>
+				) : (
+					<>
+						The <code className="font-mono">context create</code> above names it{' '}
+						<code className="font-mono">&lt;instance&gt;-&lt;agent&gt;</code>, exactly
+						as the snippets pin it.
+					</>
+				)}
 			</p>
 
 			<dl className="border-hairline grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3">
@@ -304,10 +367,10 @@ export function McpSessionsCard({ agentId }: { agentId: string }) {
 }
 
 /** The MCP sheet's body: config card + session history. */
-export function McpPanel({ agentName, agentId }: McpPanelProps) {
+export function McpPanel({ agentName, agentId, registeredBy }: McpPanelProps) {
 	return (
 		<div className="space-y-4">
-			<McpConfigCard agentName={agentName} />
+			<McpConfigCard agentName={agentName} registeredBy={registeredBy} />
 			<McpSessionsCard agentId={agentId} />
 		</div>
 	);

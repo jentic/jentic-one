@@ -166,6 +166,8 @@ export type { UserTextProps } from '@/shared/ui/UserText';
 export { ExpandableText } from '@/shared/ui/ExpandableText';
 export { ExpandReveal, REVEAL_MOTION } from '@/shared/ui/ExpandReveal';
 export type { ExpandRevealProps } from '@/shared/ui/ExpandReveal';
+export { DetailsLine } from '@/shared/ui/DetailsLine';
+export type { DetailsLineProps } from '@/shared/ui/DetailsLine';
 
 export { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
 

@@ -33,15 +33,16 @@ import { ROUTE_PATHS } from '@/shared/app/routes';
 import { hasTrace } from '@/shared/lib';
 import { cn, timeAgo } from '@/shared/lib/utils';
 import { ago } from '@/modules/agents/lib/ago';
-import { useAllowedOperationCount, type OpsApiReference } from '@/shared/credentials/components';
 import {
-	useAgentBindingEffectiveRules,
-	type ActorExecutionEntity,
-	type BindingPermissionRule,
-} from '@/modules/agents/api';
+	useActionCatalog,
+	useAllowedOperationCount,
+	type OpsApiReference,
+} from '@/shared/credentials/components';
+import { useAgentBindingEffectiveRules, type ActorExecutionEntity } from '@/modules/agents/api';
 import { successShare, toEditorRule } from '@/modules/agents/components/detail/shared';
 import { API_ROW_COLUMNS_LG, API_ROW_GAP } from '@/modules/agents/components/flat/apiRowGrid';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
+import { ruleChipWords } from '@/modules/agents/lib/ruleChip';
 import {
 	callsBeyondScan,
 	formatDurationMs,
@@ -412,28 +413,6 @@ function RecentCall({ agentId, call }: { agentId: string; call: ActorExecutionEn
 	);
 }
 
-/** The word a rule chip leads with, per effect. */
-const EFFECT_WORD: Record<string, string> = {
-	allow: 'Allow',
-	'require-approval': 'Ask',
-	deny: 'Deny',
-};
-
-/** "Allow GET, POST /repos/*" — one rule as a chip's words. */
-function ruleWords(rule: BindingPermissionRule): { effect: string; scope: string } {
-	// An effect this chip doesn't know reads as allow, the editor's default.
-	const effect = EFFECT_WORD[String(rule.effect)] ?? 'Allow';
-	const bits: string[] = [];
-	bits.push(rule.methods?.length ? rule.methods.join(', ') : 'Any');
-	if (rule.operations?.length) {
-		bits.push(
-			`${rule.operations.length} ${rule.operations.length === 1 ? 'operation' : 'operations'}`,
-		);
-	}
-	if (rule.path) bits.push(rule.path);
-	return { effect, scope: bits.join(' ') };
-}
-
 /** A quiet in-line link that opens the rules editor. */
 function RulesLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
 	return (
@@ -478,6 +457,9 @@ function AccessSection({
 		[tile.vendor, tile.apiName, tile.version],
 	);
 	const coverage = useAllowedOperationCount(apiReference, editorRules);
+	// Names an action rule's operation ids; the same operations read as `coverage`.
+	const hasActions = operatorRules?.some((r) => r.operations?.length) ?? false;
+	const actionCatalog = useActionCatalog(apiReference, { enabled: hasActions });
 	const more = (operatorRules?.length ?? 0) - RULE_CHIPS_SHOWN;
 
 	return (
@@ -508,11 +490,26 @@ function AccessSection({
 					data-testid="row-rule-chips"
 				>
 					{operatorRules.slice(0, RULE_CHIPS_SHOWN).map((rule, index) => {
-						const { effect, scope } = ruleWords(rule);
+						const { effect, effectKey, scope, details } = ruleChipWords(
+							rule,
+							actionCatalog,
+						);
+						const headline = rule._comment ?? `${effect} ${scope}`;
 						return (
 							<Tooltip
 								key={index}
-								content={rule._comment ?? `${effect} ${scope}`}
+								content={
+									details.length > 0 ? (
+										<span className="flex flex-col gap-0.5 text-left">
+											<span className="font-semibold">{headline}</span>
+											{details.map((line, i) => (
+												<span key={i}>{line}</span>
+											))}
+										</span>
+									) : (
+										headline
+									)
+								}
 								className={cn(
 									'min-w-0 rounded-md',
 									// The first, usually longer chip gives way first, so the
@@ -521,7 +518,7 @@ function AccessSection({
 								)}
 							>
 								<span
-									data-effect={effect.toLowerCase()}
+									data-effect={effectKey}
 									className="bg-surface-chip text-foreground-sub inline-flex h-6 min-w-0 items-center gap-1.5 rounded-md px-2 text-[11.5px]"
 								>
 									<b className="text-foreground-lighter shrink-0 font-semibold">
@@ -550,17 +547,32 @@ function AccessSection({
 										{coverage.allowed.toLocaleString()}
 									</b>{' '}
 									of {coverage.total.toLocaleString()} operations allowed
+									{coverage.ask > 0 && (
+										<>
+											{' · '}
+											<b className="text-foreground-lighter">
+												{coverage.ask.toLocaleString()}
+											</b>{' '}
+											ask first
+										</>
+									)}
 								</span>
 							</Tooltip>
 						</p>
 						<span
 							aria-hidden="true"
-							className="bg-surface-chip block h-0.5 w-full overflow-hidden rounded-full"
+							className="bg-surface-chip flex h-0.5 w-full overflow-hidden rounded-full"
 						>
 							<span
-								className="bg-primary block h-full rounded-full"
+								className="bg-primary block h-full"
 								style={{
 									width: `${coverage.total ? (coverage.allowed / coverage.total) * 100 : 0}%`,
+								}}
+							/>
+							<span
+								className="bg-warning block h-full"
+								style={{
+									width: `${coverage.total ? (coverage.ask / coverage.total) * 100 : 0}%`,
 								}}
 							/>
 						</span>

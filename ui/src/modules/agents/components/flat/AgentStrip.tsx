@@ -30,7 +30,7 @@ import {
 	type ReactNode,
 } from 'react';
 import { AnimatePresence, LayoutGroup, motion, useReducedMotionConfig } from 'framer-motion';
-import { ChevronLeft, Search } from 'lucide-react';
+import { Archive, ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
 import {
 	AgentBadge,
 	Button,
@@ -72,6 +72,7 @@ const STACK_TAIL = 40;
 function stackWidth(circles: number): number {
 	return circles * CIRCLE_STEP + STACK_TAIL;
 }
+const NEW_AGENT_PX = 120;
 /** The fade each raised end casts over the tabs passing under it. */
 const FADE_PX = 24;
 /** The `‹ N` chip's footprint beside the pin. */
@@ -190,6 +191,7 @@ const StripTab = memo(function StripTab({
 	const StatusIcon = STATUS_ICON[agent.status];
 	const facts: AgentFacts = { apiCount, credentialCount, blocked, gaps };
 	const slim = pinned && compact;
+	const muted = agent.status === 'archived';
 	return (
 		<Tooltip
 			content={<AgentHoverCard agent={agent} facts={facts} selected={pinned} />}
@@ -219,12 +221,13 @@ const StripTab = memo(function StripTab({
 				tabIndex={focusable ? 0 : -1}
 				onClick={() => onActivate(agent.id)}
 				className={cn(
-					'group/tab relative flex h-9 shrink-0 items-center gap-2 rounded-[9px] pr-3 pl-1.5 text-[13.5px] font-semibold whitespace-nowrap transition-colors duration-150',
+					'group/tab relative flex h-9 shrink-0 items-center gap-2 rounded-[9px] pr-3 pl-1.5 text-sm font-semibold whitespace-nowrap transition-[color,background-color,opacity] duration-150',
 					'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none',
 					pinned
 						? 'bg-surface-tonal text-foreground-name shadow-[inset_0_1px_0_hsl(0_0%_100%/0.04)]'
 						: // The `sub` tier, so the pinned wash registers against the idle tabs.
 							'text-foreground-sub hover:text-foreground-name hover:bg-tint-2',
+					muted && 'text-foreground-sub',
 					slim && 'gap-1.5 pr-2.5',
 				)}
 			>
@@ -248,7 +251,7 @@ const StripTab = memo(function StripTab({
 					className={cn(
 						'min-w-0 truncate',
 						slim ? 'max-w-[8ch]' : 'max-w-[18ch] max-md:max-w-[11ch]',
-						isSettled && 'line-through decoration-from-font',
+						muted && 'line-through decoration-from-font',
 					)}
 				>
 					{agent.name}
@@ -362,6 +365,8 @@ interface AgentStripProps {
 	/** `agents` is not the whole fleet (pages still to come, or a later one
 	 * failed): every fleet total reads as a floor ("38+", "at least 38"). */
 	incomplete?: boolean;
+	/** Draws `+ New agent` at the stack's end; without it, the strip draws none. */
+	onNewAgent?: () => void;
 }
 
 export function AgentStrip({
@@ -379,11 +384,12 @@ export function AgentStrip({
 	pickerOpen: pickerOpenProp,
 	onPickerOpenChange,
 	incomplete = false,
+	onNewAgent,
 }: AgentStripProps) {
 	const reduced = useReducedMotionConfig() ?? false;
 	const compact = useMediaQuery('(max-width: 767px)');
 	const circleCount = compact ? STACK_CIRCLES_COMPACT : STACK_CIRCLES;
-	const stackPx = stackWidth(circleCount);
+	const stackPx = stackWidth(circleCount) + (onNewAgent ? NEW_AGENT_PX : 0);
 
 	const barRef = useRef<HTMLDivElement | null>(null);
 	const railRef = useRef<HTMLDivElement | null>(null);
@@ -411,16 +417,32 @@ export function AgentStrip({
 	);
 
 	// The scroll list: the filter's matches less the pinned selection. Pending
-	// tabs lead, so DOM order and arrow-key traversal agree with the groups.
+	// tabs lead, so DOM order and arrow-key traversal agree with the groups;
+	// archived ones close the rail, folded behind the "N archived" chip.
 	const list = useMemo(() => {
 		const matched = agents.filter((a) => a.id !== selectedId && matchesAgent(a, filter));
 		return {
 			pending: matched.filter((a) => a.status === 'pending'),
-			rest: matched.filter((a) => a.status !== 'pending'),
+			rest: matched.filter((a) => a.status !== 'pending' && a.status !== 'archived'),
+			archived: matched.filter((a) => a.status === 'archived'),
 		};
 	}, [agents, filter, selectedId]);
-	const order = useMemo(() => [...list.pending, ...list.rest].map((a) => a.id), [list]);
-	const nothingMatches = order.length === 0 && filter.trim() !== '';
+	const [archivedOpen, setArchivedOpen] = useState(false);
+	const selectedArchived = selected?.status === 'archived';
+	useEffect(() => {
+		if (selectedArchived) setArchivedOpen(true);
+	}, [selectedArchived]);
+	// A typed filter shows archived matches even when folded, as the picker does.
+	const archivedShown = list.archived.length > 0 && (archivedOpen || filter.trim() !== '');
+	const order = useMemo(
+		() =>
+			[...list.pending, ...list.rest, ...(archivedShown ? list.archived : [])].map(
+				(a) => a.id,
+			),
+		[list, archivedShown],
+	);
+	const nothingMatches = order.length === 0 && list.archived.length === 0 && filter.trim() !== '';
+	const liveCount = useMemo(() => agents.filter((a) => a.status !== 'archived').length, [agents]);
 	// Roving order: the pin, then the rail.
 	const keyOrder = useMemo(() => (selected ? [selected.id, ...order] : order), [selected, order]);
 
@@ -699,6 +721,24 @@ export function AgentStrip({
 		sc.scrollBy({ left: -Math.max(120, page), behavior: reduced ? 'auto' : 'smooth' });
 	}
 
+	const revealArchived = useRef(false);
+	function toggleArchived(open: boolean) {
+		revealArchived.current = open;
+		setArchivedOpen(open);
+	}
+	useLayoutEffect(() => {
+		if (!revealArchived.current) return;
+		revealArchived.current = false;
+		const sc = scrollerRef.current;
+		const label = sc?.querySelector<HTMLElement>('[data-strip-archived-label]');
+		if (!sc || !label) return;
+		const left = contentX(sc, label) - pinPx - FADE_PX - 6;
+		sc.scrollTo({
+			left: Math.min(Math.max(0, left), sc.scrollWidth - sc.clientWidth),
+			behavior: reduced ? 'auto' : 'smooth',
+		});
+	}, [archivedShown, pinPx, reduced]);
+
 	// The picker: ⌘K / Ctrl+K toggles it (also from a text field), `+N` and the
 	// end-state search button open it — and, with the state lifted to the
 	// parent, the card's name too. Closing hands focus back to the opener: the
@@ -825,7 +865,7 @@ export function AgentStrip({
 			>
 				<StripHeader
 					ref={headerRef}
-					total={agents.length}
+					total={liveCount}
 					incomplete={incomplete}
 					waiting={waitingCount}
 					kbd={kbd}
@@ -840,12 +880,7 @@ export function AgentStrip({
 					className="group/rail bg-surface-1 relative flex min-w-0 rounded-xl"
 				>
 					<LayoutGroup id="agent-strip">
-						<div
-							role="tablist"
-							aria-label="Agents"
-							onKeyDown={handleTablistKeyDown}
-							className="flex min-w-0 flex-1"
-						>
+						<div className="flex min-w-0 flex-1">
 							<motion.div
 								ref={scrollerRef}
 								// Framer reads the rail's scroll offset into every tab's box,
@@ -866,74 +901,118 @@ export function AgentStrip({
 									'[scrollbar-width:none] flex-nowrap [&::-webkit-scrollbar]:hidden',
 								)}
 							>
-								{/* The pin sits in the scroller's DOM (so the roving tab stop is
-								    inside the scroll region) but its containing block is the
-								    rail: absolutely positioned against it, it neither scrolls
-								    nor clips with the tabs. */}
-								{selected && (
-									<div
-										ref={pinRef}
-										data-strip-pin=""
-										data-testid="strip-pin"
-										className={cn(
-											'bg-surface-1 absolute inset-y-0 left-0 z-[3] flex items-center rounded-l-xl p-1 transition-shadow duration-200 motion-reduce:transition-none',
-											// The fade + lift onto the tabs behind it; the `‹ N`
-											// chip takes both over while it shows.
-											!chipShown &&
-												'after:from-surface-1 group-data-[rail-scrolled=true]/rail:shadow-[10px_0_16px_-12px_rgb(0_0_0/0.7)] after:pointer-events-none after:absolute after:inset-y-0 after:left-full after:w-6 after:bg-linear-to-r after:to-transparent after:opacity-0 after:transition-opacity after:duration-200 group-data-[rail-scrolled=true]/rail:after:opacity-100',
-										)}
-									>
-										{renderTab(selected, true)}
-										{/* The notch: a square in the card's tone, turned 45° and half
+								{/* Unpositioned, so the pin below still sits against the rail. */}
+								<div
+									role="tablist"
+									aria-label="Agents"
+									onKeyDown={handleTablistKeyDown}
+									className="flex shrink-0 items-center gap-0.5"
+								>
+									{/* In the scroller's DOM (for the roving tab stop) but positioned against
+									the rail, so it neither scrolls nor clips with the tabs. */}
+									{selected && (
+										<div
+											ref={pinRef}
+											data-strip-pin=""
+											data-testid="strip-pin"
+											className={cn(
+												'bg-surface-1 absolute inset-y-0 left-0 z-[3] flex items-center rounded-l-xl p-1 transition-shadow duration-200 motion-reduce:transition-none',
+												// The `‹ N` chip takes the fade + lift over while it shows.
+												!chipShown &&
+													'after:from-surface-1 group-data-[rail-scrolled=true]/rail:shadow-[10px_0_16px_-12px_rgb(0_0_0/0.7)] after:pointer-events-none after:absolute after:inset-y-0 after:left-full after:w-6 after:bg-linear-to-r after:to-transparent after:opacity-0 after:transition-opacity after:duration-200 group-data-[rail-scrolled=true]/rail:after:opacity-100',
+											)}
+										>
+											{renderTab(selected, true)}
+											{/* The notch: a square in the card's tone, turned 45° and half
 										    inside the card's top edge, under the pinned tab — so it never
 										    moves with the rail. Hidden once the bar pins, unless the
 										    card has pinned under it, so it is beneath it again. */}
-										<motion.span
-											aria-hidden="true"
-											data-testid="strip-notch"
-											data-card-pinned={cardPinned}
-											// Slides with the pin's width change instead of popping.
-											layout="position"
-											transition={{
-												layout: reduced ? { duration: 0 } : SWITCH_SPRING,
-											}}
-											style={{ rotate: 45 }}
-											className="bg-surface-1 border-hairline-field pointer-events-none absolute top-[calc(100%+4px)] left-1/2 -ml-[6.5px] h-[13px] w-[13px] border-t border-l group-data-[scrolled=true]/strip:data-[card-pinned=false]:hidden"
-										/>
-									</div>
-								)}
-								{list.pending.length > 0 && (
-									<>
-										{/* Visual only — the sr-only tab suffix carries the state. */}
-										<motion.span
-											aria-hidden="true"
-											data-testid="strip-pending-label"
-											layout="position"
-											transition={{
-												layout: reduced ? { duration: 0 } : SWITCH_SPRING,
-											}}
-											className="text-warning flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium"
-										>
-											<span className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
-											Waiting
-										</motion.span>
-										{list.pending.map((a) => renderTab(a, false))}
-										{list.rest.length > 0 && (
 											<motion.span
 												aria-hidden="true"
-												data-testid="strip-pending-divider"
+												data-testid="strip-notch"
+												data-card-pinned={cardPinned}
 												layout="position"
 												transition={{
 													layout: reduced
 														? { duration: 0 }
 														: SWITCH_SPRING,
 												}}
-												className="bg-hairline-field mx-1.5 h-5 w-px shrink-0 self-center"
+												style={{ rotate: 45 }}
+												className="bg-surface-1 border-hairline-field pointer-events-none absolute top-[calc(100%+4px)] left-1/2 -ml-[6.5px] h-[13px] w-[13px] border-t border-l group-data-[scrolled=true]/strip:data-[card-pinned=false]:hidden"
 											/>
-										)}
-									</>
+										</div>
+									)}
+									{list.pending.length > 0 && (
+										<>
+											<motion.span
+												aria-hidden="true"
+												data-testid="strip-pending-label"
+												layout="position"
+												transition={{
+													layout: reduced
+														? { duration: 0 }
+														: SWITCH_SPRING,
+												}}
+												className="text-warning flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium"
+											>
+												<span className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
+												Waiting
+											</motion.span>
+											{list.pending.map((a) => renderTab(a, false))}
+											{list.rest.length > 0 && (
+												<motion.span
+													aria-hidden="true"
+													data-testid="strip-pending-divider"
+													layout="position"
+													transition={{
+														layout: reduced
+															? { duration: 0 }
+															: SWITCH_SPRING,
+													}}
+													className="bg-hairline-field mx-1.5 h-5 w-px shrink-0 self-center"
+												/>
+											)}
+										</>
+									)}
+									{list.rest.map((a) => renderTab(a, false))}
+									{archivedShown && (
+										<motion.div
+											data-testid="strip-archived"
+											layout="position"
+											initial={reduced ? false : { opacity: 0, x: -6 }}
+											animate={{ opacity: 1, x: 0 }}
+											transition={{
+												duration: reduced ? 0 : 0.22,
+												ease: EASE,
+												layout: reduced ? { duration: 0 } : SWITCH_SPRING,
+											}}
+											className="flex shrink-0 items-center gap-0.5"
+										>
+											{(list.pending.length > 0 || list.rest.length > 0) && (
+												<span
+													aria-hidden="true"
+													className="bg-hairline-field mx-1.5 h-5 w-px shrink-0 self-center"
+												/>
+											)}
+											<span
+												aria-hidden="true"
+												data-strip-archived-label=""
+												className="text-foreground-faint flex shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium"
+											>
+												<Archive className="size-3.5" />
+												Archived
+											</span>
+											{list.archived.map((a) => renderTab(a, false))}
+										</motion.div>
+									)}
+								</div>
+								{list.archived.length > 0 && (
+									<ArchivedToggle
+										open={archivedShown}
+										count={list.archived.length}
+										onToggle={() => toggleArchived(!archivedShown)}
+									/>
 								)}
-								{list.rest.map((a) => renderTab(a, false))}
 							</motion.div>
 						</div>
 					</LayoutGroup>
@@ -1010,6 +1089,11 @@ export function AgentStrip({
 							kbd={kbd}
 							onOpen={openPicker}
 						/>
+						{onNewAgent && (
+							<span className="flex shrink-0 pl-1">
+								<NewAgentButton onClick={onNewAgent} />
+							</span>
+						)}
 					</div>
 				</div>
 			</div>
@@ -1075,6 +1159,82 @@ function StripHeader({
 				Switch agent <Kbd>{kbd}</Kbd>
 			</p>
 		</div>
+	);
+}
+
+/** "N archived ›" / "‹ Hide": outside the tablist (it is not a tab), scrolling with the rail. */
+function ArchivedToggle({
+	open,
+	count,
+	onToggle,
+}: {
+	open: boolean;
+	count: number;
+	onToggle: () => void;
+}) {
+	const chip = (
+		<Button
+			variant="ghost"
+			size="xs"
+			data-testid="strip-archived-toggle"
+			aria-expanded={open}
+			aria-label={open ? 'Hide archived agents' : `Show ${plural(count, 'archived agent')}`}
+			onClick={onToggle}
+			className={cn(
+				'bg-surface-chip text-foreground-sub hover:bg-surface-tonal-hover hover:text-foreground shrink-0 gap-1.5 rounded-full pr-2.5 pl-2 font-bold whitespace-nowrap transition-colors active:scale-100',
+				open ? 'ml-1' : 'ml-1.5',
+				'focus-visible:ring-primary/70 focus-visible:ring-offset-surface-1',
+			)}
+		>
+			{open ? (
+				<>
+					<ChevronLeft aria-hidden="true" className="size-3.5" />
+					Hide
+				</>
+			) : (
+				<>
+					<Archive aria-hidden="true" className="size-3.5" />
+					<span className="tabular-nums">{count} archived</span>
+					<ChevronRight aria-hidden="true" className="size-3.5" />
+				</>
+			)}
+		</Button>
+	);
+	// The chip keeps its element across the swap, so focus stays on it.
+	return (
+		<Tooltip
+			content={open ? 'Hide archived agents' : 'Show archived agents'}
+			interactiveChild
+			placement="bottom"
+			delayMs={250}
+			className="shrink-0"
+		>
+			{chip}
+		</Tooltip>
+	);
+}
+
+/** `+ New agent`, drawn as the strip's next tab; `n` opens the same panel page-wide. */
+function NewAgentButton({ onClick }: { onClick: () => void }) {
+	return (
+		<Button
+			variant="secondary"
+			data-testid="strip-new-agent"
+			aria-keyshortcuts="n"
+			onClick={onClick}
+			className={cn(
+				'group/new bg-surface-chip-active hover:bg-surface-chip-active text-foreground-name h-9 shrink-0 gap-2 rounded-[9px] py-0 pr-3 pl-1.5 text-sm whitespace-nowrap',
+				'focus-visible:ring-primary/70 focus-visible:ring-offset-surface-1',
+			)}
+		>
+			<span
+				aria-hidden="true"
+				className="bg-primary/15 text-primary group-hover/new:bg-primary/25 grid size-5 place-items-center rounded-full transition-colors"
+			>
+				<Plus className="size-3.5" strokeWidth={2.5} />
+			</span>
+			New agent
+		</Button>
 	);
 }
 

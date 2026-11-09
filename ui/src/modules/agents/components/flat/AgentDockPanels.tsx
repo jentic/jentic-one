@@ -223,7 +223,11 @@ export function AgentMcpSheet({
 						<McpSessionsCard agentId={agent.id} />
 					</div>
 				) : (
-					<McpPanel agentName={agent.name} agentId={agent.id} />
+					<McpPanel
+						agentName={agent.name}
+						agentId={agent.id}
+						registeredBy={agent.attribution.registeredBy}
+					/>
 				)}
 			</DockSheetFrame>
 		</SheetPrimitive>
