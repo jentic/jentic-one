@@ -45,8 +45,8 @@ before an agent touches production credentials.
 # Quickstart
 
 Sets up a self-hosted Jentic One instance on your machine with Docker. Run your agents in a separate environment from the
-stack (a different machine, VM or user), and connect them over HTTP or MCP. An encryption key for
-your credentials is written to `~/.jentic/enc-key` by default.
+stack (a different machine, VM or user), and connect them over HTTP or MCP. The key that encrypts
+your credentials lives in `~/.config/jentic-one/.env`: back it up.
 
 - For Windows, use the [Windows guide](docs/installation/windows.md). For other deployment methods, see
   [Alternative deployments](#alternative-deployments).
@@ -59,6 +59,10 @@ your credentials is written to `~/.jentic/enc-key` by default.
 ```bash
 # Download the quickstart compose file
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
+
+# Generate the credential-encryption key (once; a re-run keeps the existing key)
+mkdir -p ~/.config/jentic-one
+(umask 077; set -C; echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" > ~/.config/jentic-one/.env)
 
 # Start the stack. Open the webapp at http://127.0.0.1:8000 (or your configured url) once it returns
 docker compose up -d --wait

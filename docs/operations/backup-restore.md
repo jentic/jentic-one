@@ -42,8 +42,9 @@ docker run --rm -v jentic-data:/data -v "$PWD":/backup alpine \
 ```
 
 The quickstart keeps its keyset outside the volume: in `quickstart.env` for the
-`docker run` shape, or in the `.env` next to the quickstart compose file. Copy
-that file with every volume snapshot.
+`docker run` shape, or in `~/.config/jentic-one/.env` for the quickstart
+compose file (in the `.env` next to it, for installs from before that file).
+Copy that file with every volume snapshot.
 
 CLI-managed installs (`jenticctl install`): the volume is
 `jentic_jentic-data` and the config to keep is `~/.jentic/jentic-one.yaml` +

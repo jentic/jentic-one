@@ -187,6 +187,9 @@ QUICKSTART_DEV := docker compose -p jentic-quickstart-dev \
 ARGS ?=
 
 start-quickstart-dev: ## Run the Docker quickstart with a mock IdP (SSO + MCP OAuth) on :8000/:8100/:8080, logs in the foreground (ARGS="-d --wait" for background)
+	@# The quickstart's credential-encryption key, generated once (as in the README).
+	@mkdir -p "$$HOME/.config/jentic-one"
+	@[ -f "$$HOME/.config/jentic-one/.env" ] || (umask 077; echo "JENTIC_ENCRYPTION_KEY=$$(openssl rand -base64 32)" > "$$HOME/.config/jentic-one/.env")
 	@echo "==> http://127.0.0.1:8000: create your admin, then sign in via SSO with that email"
 	$(QUICKSTART_DEV) up $(ARGS)
 
