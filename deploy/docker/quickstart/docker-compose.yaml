@@ -93,8 +93,8 @@ services:
   # its process, so it is its own service, sharing the app's network and
   # listening on 8100. `restart: true` restarts it with `docker compose
   # restart app`. If the app instead crashes and Docker restarts it, the broker
-  # loses that network (while still reporting healthy): run
-  # `docker compose restart broker`.
+  # loses that network: its healthcheck also probes the app on 127.0.0.1:8000,
+  # so it then reports unhealthy. Run `docker compose restart broker`.
   broker:
     <<: *common
     environment:
@@ -108,7 +108,8 @@ services:
     restart: unless-stopped
     healthcheck:
       <<: *healthcheck
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      # Itself, then the app through the shared network (fails once stale).
+      test: ["CMD", "python", "-c", "import urllib.request as u; [u.urlopen(f'http://127.0.0.1:{p}/health', timeout=3) for p in (8100, 8000)]"]
 
 volumes:
   jentic-data:
