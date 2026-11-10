@@ -378,3 +378,39 @@ Then walk through the [first brokered call](../guides/first-call.md).
 Migrations are applied forward — prefer rolling forward to a fixed release
 over rolling the image back onto a newer schema. The full contract:
 [docs/operations/upgrades.md](../operations/upgrades.md).
+
+## Trial setup on SQLite
+
+The README quickstart's stack without compose: app and broker on SQLite files in
+one volume, configured by [`config/quickstart.env`](../../config/quickstart.env).
+Back up `quickstart.env` with the volume — it holds the encryption key.
+
+```bash
+docker pull ghcr.io/jentic/jentic-one-app:latest
+docker volume create jentic-data
+
+# Grab the quickstart config (SQLite on the volume; fetched from main) — tweak it, or use as is.
+# Skipped if you already have one, so re-running this block keeps your key.
+[ -f quickstart.env ] || curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
+
+# Generate this install's credential-encryption key into it (once — a new key
+# makes credentials stored under the old one unreadable)
+grep -q '^JENTIC__CREDENTIALS__ENCRYPTION__' quickstart.env || cat >> quickstart.env <<EOF
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID=v1
+JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL=$(openssl rand -base64 32)
+EOF
+
+# Migrate, then start the two roles
+docker run --rm --env-file quickstart.env -v jentic-data:/data \
+  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one.migrations.run
+docker run -d --name jentic-app --env-file quickstart.env -v jentic-data:/data \
+  -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest      # control plane (UI + APIs)
+docker run -d --name jentic-broker --env-file quickstart.env -e JENTIC__APPS=broker -v jentic-data:/data \
+  -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest      # data plane (agents call this)
+
+# First admin (prompts for a password), then sign in at http://127.0.0.1:8000
+docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
+  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one create-admin --email you@example.com
+
+curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
+```

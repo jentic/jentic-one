@@ -5,15 +5,20 @@
 # one-shot init service; `app` and `broker` wait for it to finish.
 #
 #   curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
-#   grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
-#   docker compose up -d
-#   docker compose exec app python -m jentic_one create-admin --email you@example.com
+#   mkdir -p ~/.config/jentic-one
+#   (umask 077; set -C; echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" > ~/.config/jentic-one/.env)
+#   docker compose up -d --wait
 #
-# Then sign in at http://127.0.0.1:8000. Agents call the broker on :8100.
+# Then open http://127.0.0.1:8000 and create the first admin account. Agents
+# call the broker on :8100.
 #
-# The credential-encryption key is the one kept secret: generated once into
-# .env (the second command above), read from there by compose. Back .env up
-# with the volume — without the key, stored credentials are unreadable.
+# The credential-encryption key is the one kept secret. The middle commands
+# above generate it once into ~/.config/jentic-one/.env (the quickstart's own
+# settings), outside the data volume; compose reads it from there and hands it
+# to the app. Back the file up with the volume — without the key, stored
+# credentials are unreadable.
+# Earlier quickstarts kept the key in .env next to this file: if that file
+# still sets JENTIC_ENCRYPTION_KEY, it takes precedence, so they keep working.
 #
 # Trial use only: the other secrets are per-process dev values and the image
 # tag floats.
@@ -42,16 +47,22 @@ x-env: &env
   JENTIC__DATABASES__CONTROL__PATH: /data/control.db
   JENTIC__DATABASES__ADMIN__BACKEND: sqlite
   JENTIC__DATABASES__ADMIN__PATH: /data/admin.db
-  # Credential-encryption key (the keyset's one entry, active by default); the
-  # value comes from .env.
+  # Credential-encryption key (the keyset's one entry, active by default),
+  # read from JENTIC_ENCRYPTION_KEY, which the env files below provide.
   JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID: v1
-  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL: ${JENTIC_ENCRYPTION_KEY:?set JENTIC_ENCRYPTION_KEY in .env - see the header of this file}
+  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL_ENV: JENTIC_ENCRYPTION_KEY
   # Anonymous product telemetry (docs/reference/config.md#telemetry).
   # Set to "false" to opt out.
   JENTIC__TELEMETRY__ENABLED: "true"
 x-common: &common
   image: *image
   environment: *env
+  env_file:
+    # The quickstart's settings, including the key the header generates.
+    - path: ${HOME:-${USERPROFILE}}/.config/jentic-one/.env
+    # An earlier quickstart's key, which wins when present (see the header).
+    - path: .env
+      required: false
   volumes:
     - jentic-data:/data
 
@@ -61,27 +72,44 @@ services:
     command: ["python", "-m", "jentic_one.migrations.run"]
     restart: "no"
 
-  # Control plane: UI + APIs.
+  # Control plane: UI + APIs, and the MCP endpoint at /mcp. It also publishes
+  # the broker's port, since the broker runs in this container's network.
   app:
     <<: *common
+    environment:
+      <<: *env
+      # MCP execute calls reach the broker on 127.0.0.1:8100 (the default
+      # broker URL) through the shared network; a bearer is only sent over
+      # plain http to loopback. Not in config/quickstart.env: its `docker run`
+      # containers share no network.
+      JENTIC__SERVER__MCP__ENABLED: "true"
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:8000:8000", "127.0.0.1:8100:8100"]
     restart: unless-stopped
     healthcheck: *healthcheck
 
   # Data plane: agents call this. The broker must run as the sole surface of
-  # its process, so it is its own service.
+  # its process, so it is its own service, sharing the app's network and
+  # listening on 8100. `restart: true` restarts it with `docker compose
+  # restart app`. If the app instead crashes and Docker restarts it, the broker
+  # loses that network: its healthcheck also probes the app on 127.0.0.1:8000,
+  # so it then reports unhealthy. Run `docker compose restart broker`.
   broker:
     <<: *common
     environment:
       <<: *env
       JENTIC__APPS: broker
+      JENTIC__SERVER__PORT: "8100"
+    network_mode: "service:app"
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["127.0.0.1:8100:8000"]
+      app: { condition: service_started, restart: true }
     restart: unless-stopped
-    healthcheck: *healthcheck
+    healthcheck:
+      <<: *healthcheck
+      # Itself, then the app through the shared network (fails once stale).
+      test: ["CMD", "python", "-c", "import urllib.request as u; [u.urlopen(f'http://127.0.0.1:{p}/health', timeout=3) for p in (8100, 8000)]"]
 
 volumes:
   jentic-data:

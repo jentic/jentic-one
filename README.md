@@ -25,7 +25,7 @@
 > **Public beta.** Schemas and CLI commands can change between 0.x releases — pin a version if
 > you need stability.
 
-## What it is
+# What it is
 
 <p align="center">
   <img src="docs/assets/how-it-works.svg" alt="An agent sends POST /v1/invoices to Jentic One, which checks the permission, injects the stored credential and forwards the call to the Stripe API; the API returns 201 and the call is logged. The agent then sends POST /v1/refunds; the permission check denies it by rule, the request never leaves Jentic One, the agent gets a 403, and the denial is logged. The agent never sees the API key." width="100%">
@@ -42,70 +42,37 @@ Agents connect through the `jentic` CLI, a generated skill, an MCP server, or pl
 access; teams running agents inside a private network; anyone who has to pass a security review
 before an agent touches production credentials.
 
-## Quickstart
+# Quickstart
 
-The open-source build is the real product — same code and security model as every other install.
-Linux and macOS; on Windows use the [Windows guide](docs/installation/windows.md).
+Sets up a self-hosted Jentic One instance on your machine with Docker. Run your agents in a separate environment from the
+stack (a different machine, VM or user), and connect them over HTTP or MCP. The key that encrypts
+your credentials lives in `~/.config/jentic-one/.env`: back it up.
 
-### Self-hosted (Docker)
+- For Windows, use the [Windows guide](docs/installation/windows.md). For other deployment methods, see
+  [Alternative deployments](#alternative-deployments).
+- By default, the quickstart enables anonymous telemetry. For more information and how to opt out,
+  see [Telemetry](docs/reference/config.md#telemetry).
+- Something failed? See [Troubleshooting](docs/operations/troubleshooting.md).
 
-Run the control plane and broker as one stack, on SQLite. This is a trial setup — don't point it at a
-real credential. **Back up `.env`**: it holds the key that encrypts stored credentials.
+## Start the instance
 
 ```bash
+# Download the quickstart compose file
 curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/deploy/docker/quickstart/docker-compose.yaml
-grep -qs '^JENTIC_ENCRYPTION_KEY=' .env || echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
-docker compose up -d
-docker compose exec app python -m jentic_one create-admin --email you@example.com
+
+# Generate the credential-encryption key (once; a re-run keeps the existing key)
+mkdir -p ~/.config/jentic-one
+(umask 077; set -C; echo "JENTIC_ENCRYPTION_KEY=$(openssl rand -base64 32)" > ~/.config/jentic-one/.env)
+
+# Start the stack. Open the webapp at http://127.0.0.1:8000 (or your configured url) once it returns
+docker compose up -d --wait
 ```
 
-Then sign in at <http://127.0.0.1:8000>.
+## Connect your agent
 
-<details>
-<summary>Prefer plain <code>docker run</code>?</summary>
+Run these on the machine where your agent runs. For MCP setup, see [Setting up your MCP client](docs/guides/mcp-http-endpoint.md#setting-up-your-mcp-client).
 
-The same setup without compose, using [`config/quickstart.env`](config/quickstart.env).
-Back up `quickstart.env` with the volume — it holds the encryption key.
-
-```bash
-docker pull ghcr.io/jentic/jentic-one-app:latest
-docker volume create jentic-data
-
-# Grab the quickstart config (SQLite on the volume; fetched from main) — tweak it, or use as is.
-# Skipped if you already have one, so re-running this block keeps your key.
-[ -f quickstart.env ] || curl -fsSLO https://raw.githubusercontent.com/jentic/jentic-one/main/config/quickstart.env
-
-# Generate this install's credential-encryption key into it (once — a new key
-# makes credentials stored under the old one unreadable)
-grep -q '^JENTIC__CREDENTIALS__ENCRYPTION__' quickstart.env || cat >> quickstart.env <<EOF
-JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID=v1
-JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL=$(openssl rand -base64 32)
-EOF
-
-# Migrate, then start the two roles
-docker run --rm --env-file quickstart.env -v jentic-data:/data \
-  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one.migrations.run
-docker run -d --name jentic-app --env-file quickstart.env -v jentic-data:/data \
-  -p 127.0.0.1:8000:8000 ghcr.io/jentic/jentic-one-app:latest      # control plane (UI + APIs)
-docker run -d --name jentic-broker --env-file quickstart.env -e JENTIC__APPS=broker -v jentic-data:/data \
-  -p 127.0.0.1:8100:8000 ghcr.io/jentic/jentic-one-app:latest      # data plane (agents call this)
-
-# First admin (prompts for a password), then sign in at http://127.0.0.1:8000
-docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
-  ghcr.io/jentic/jentic-one-app:latest python -m jentic_one create-admin --email you@example.com
-
-curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
-```
-
-</details>
-
-The quickstart turns on anonymous telemetry. To opt out, set `JENTIC__TELEMETRY__ENABLED` to
-`false` in the compose file (or in `quickstart.env`) — [what is sent](docs/reference/config.md#telemetry). Something failed? See
-[Troubleshooting](docs/operations/troubleshooting.md).
-
-### Connect your agent
-
-Install the CLI on the machine where your agent runs, then connect it:
+### Install the CLIs
 
 ```bash
 brew install --cask jentic/tap/jentic    # macOS / Linux
@@ -113,24 +80,46 @@ brew install --cask jentic/tap/jentic    # macOS / Linux
 scoop bucket add jentic https://github.com/jentic/scoop-bucket   # Windows
 scoop install jentic
 
-jentic setup --url http://127.0.0.1:8000   # registers the agent and installs its skill; approve it in the UI
+# Or install directly from GitHub
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/clis/install.sh | sh
 ```
 
-Agents that call Jentic One over plain HTTP or the hosted MCP endpoint don't need the CLI — see
-[Connecting agents](docs/guides/connecting-agents.md). Next:
-[make your first brokered call](docs/guides/first-call.md).
+### Register your agent
 
-### Other ways to run it
+```bash
+JENTIC_ONE_URL=http://127.0.0.1:8000   # where your Jentic One web app is running
+jentic setup --url "$JENTIC_ONE_URL"   # registers the agent and installs its skill; approve it in the UI
+```
+
+Next: [make your first brokered call](docs/guides/first-call.md).
+
+## Manage the instance
+
+Run these in the folder with `docker-compose.yaml`.
+
+```bash
+# Stop the stack
+docker compose down
+
+# Start it again
+docker compose up -d
+
+# Restart it
+docker compose restart
+```
+
+## Alternative deployments
 
 | If you want… | Go to |
 | --- | --- |
 | Production on Docker (Postgres, pinned image, TLS) | [Docker](docs/installation/docker.md) · [docker-compose](docs/installation/docker-compose.md) · [systemd](docs/installation/systemd.md) |
 | Kubernetes | [Helm](docs/installation/helm.md) |
 | Buy it on AWS Marketplace (runs on your EKS) | [AWS Marketplace](docs/installation/aws-marketplace.md) |
+| A trial without compose (plain `docker run`, SQLite) | [Trial setup](docs/installation/docker.md#trial-setup-on-sqlite) |
 | From source, to develop on it | [Local setup](docs/development/local-setup.md) |
 | CLI without a package manager | [Installing the CLIs](docs/installation/cli.md) |
 
-## How it works
+# How it works
 
 <p align="center">
   <img src="docs/assets/architecture.svg" alt="Two units over one database. The operator uses App, the control plane, with the Registry, Control, Admin and Auth surfaces: register APIs, store credentials, approve agents. The agent registers through App and calls the Broker, the data plane, which checks permissions, injects the credential and forwards the call to public or private APIs. App writes rules and credentials to PostgreSQL or SQLite (three databases: registry, control and admin); the Broker reads them and records every call." width="100%">
@@ -145,7 +134,7 @@ One boundary to know: the Broker protects credentials from agents running as *ot
 other machines. An agent running as the *same* OS user as its CLI state can read that state — see
 [same-host setups](docs/security/same-host/README.md).
 
-## Documentation
+# Documentation
 
 | I want to… | Start here |
 | --- | --- |
@@ -161,13 +150,13 @@ other machines. An agent running as the *same* OS user as its CLI state can read
 Everything else is in the [documentation index](docs/README.md). AI agents can start from
 [`llms.txt`](llms.txt).
 
-## Community
+# Community
 
 Questions and ideas go to [Discussions](https://github.com/jentic/jentic-one/discussions);
 bugs and contributions to the [issues](https://github.com/jentic/jentic-one/issues).
 Security reports: [SECURITY.md](SECURITY.md). Support options: [SUPPORT.md](SUPPORT.md).
 For commercial use: [jentic.com/contact](https://jentic.com/contact).
 
-## License
+# License
 
 [Apache 2.0](LICENSE); third-party attributions in [NOTICE](NOTICE).

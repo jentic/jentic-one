@@ -1973,11 +1973,11 @@
       "type": "object"
     },
     "TelemetryConfig": {
-      "description": "Anonymous product-telemetry settings.\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt), which is where the\non-by-default install experience comes from. ``instance_id`` seeds the\ndurable admin-DB identity row on first startup for opted-in instances.\n``host_os`` is the operator's OS family, stamped by the CLI at install\ntime so a Docker-run instance reports the host's OS rather than the\ncontainer's; sent once per boot, on the ``instance_booted`` event.",
+      "description": "Anonymous product telemetry. Off by default for hand-written configs, but the\nshipped install paths (such as the quickstarts) may turn it on.\n\nTo opt out, set ``telemetry.enabled`` to ``false`` in the config, or the\nenvironment variable ``JENTIC__TELEMETRY__ENABLED=false`` (for example, in a\nDocker compose file).\n\nEvents carry only a fixed event name (such as ``instance_booted``,\n``agent_created`` or ``broker_execution``), closed-enum tags, the actor type and\na timestamp, plus a random instance id and the app version. No credentials,\nrequest data or personal data are sent. The full event list is\n``TelemetryEventName`` in ``src/jentic_one/shared/telemetry/events.py``.",
       "properties": {
         "enabled": {
           "default": false,
-          "description": "Send anonymous product telemetry. Off when the block is omitted; the onboarding CLI writes it explicitly.",
+          "description": "Send anonymous product telemetry. Off when unset; the shipped install paths may set it to true. Set false to opt out.",
           "title": "Enabled",
           "type": "boolean"
         },
