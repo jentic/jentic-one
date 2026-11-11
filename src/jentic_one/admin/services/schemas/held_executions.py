@@ -37,6 +37,8 @@ class HeldExecutionView(BaseModel):
     #: Where the held call stands: ``held`` until decided, then ``queued``,
     #: ``running`` and a terminal ``completed``, ``failed`` or ``cancelled``.
     execution_status: str | None = None
+    #: The filing agent's explanation of why it made the call, when it gave one.
+    agent_reason: str | None = None
 
 
 class HeldRequestView(BaseModel):

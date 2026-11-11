@@ -1117,6 +1117,147 @@ def s16_connect_session_interplay(w: World, o: Outcome) -> None:
     o.note("the UI side of the inbox is ui/e2e/docker/ask-tier-inbox.spec.ts")
 
 
+def _reason_of(w: World, held_execution_id: str) -> Any:
+    """The reviewer's read of a held execution's ``agent_reason`` (the admin's)."""
+    r = w.admin.hold(held_execution_id)
+    expect(r.status_code == 200, f"GET /executions/holds/{held_execution_id}", r.text)
+    return r.json().get("agent_reason")
+
+
+def s17_agent_explains_held_call(w: World, o: Outcome) -> None:
+    """Each lane's agent explains its held call once; the reviewer reads it; nobody else can."""
+    withdraw_all_pending(w)
+    target = f"GET:{w.env.upstream}/items"
+    asks = "call explain_held_call once"
+
+    # Plain HTTP: the 202 asks for a reason and links where to send it.
+    r = broker_raw(w, "GET", "/items?limit=140")
+    expect(r.status_code == 202, "broker holds the call", r.text)
+    held = r.json()
+    hid = held["held_execution_id"]
+    expect(
+        asks in held["agent_directive"]["human_readable_instruction"],
+        "the 202 directive asks for a reason",
+        held,
+    )
+    link = held["_links"].get("explain", "")
+    expect(link.endswith(f"/executions/holds/{hid}:explain"), "the 202 links :explain", held)
+    expect(_reason_of(w, hid) is None, "no reason before the agent gives one", hid)
+    # Only the agent that made the call: the admin, the owner and another user get 404.
+    for who, token in (
+        ("admin", w.admin.token),
+        ("owner", w.owner.token),
+        ("another user", w.other.token),
+    ):
+        r = httpx.post(
+            link, json={"reason": "not mine"}, headers={"authorization": f"Bearer {token}"}
+        )
+        expect(r.status_code == 404, f"{who} cannot explain another agent's call", r.text)
+    reason = "Order 140 is the customer's replacement (ticket #88) \u202e"
+    r = agent_api(w, "POST", f"/executions/holds/{hid}:explain", {"reason": reason})
+    expect(r.status_code == 200, "the filing agent explains", r.text)
+    expect(
+        r.json().get("agent_reason") == "Order 140 is the customer's replacement (ticket #88)",
+        "the reason is cleaned (direction mark dropped, trimmed)",
+        r.json(),
+    )
+    again = agent_api(w, "POST", f"/executions/holds/{hid}:explain", {"reason": "changed my mind"})
+    expect(is_problem(again, 409, "held_execution_already_explained"), "once only", again.text)
+    expect(
+        _reason_of(w, hid) == "Order 140 is the customer's replacement (ticket #88)",
+        "the reviewer reads the first reason",
+        hid,
+    )
+    pending = {h["id"]: h for h in w.owner.holds(state="pending", agent_id=w.http.agent_id)}
+    expect(
+        pending.get(hid, {}).get("agent_reason") is not None, "the owner's list carries it", pending
+    )
+    # Audit (by length) and an event tagged with the agent, so its owner sees it.
+    entries = [a for a in _audit(w, hid) if a.get("action") == "explain"]
+    expect(len(entries) == 1 and "ticket" not in json.dumps(entries), "audited by length", entries)
+    events = _events_for(w, "execution.approval_reason_added", hid)
+    expect(len(events) == 1 and "ticket" not in json.dumps(events), "one event, no text", events)
+    created_by = psql(
+        w.env,
+        "SELECT created_by FROM admin.events "
+        f"WHERE type = 'execution.approval_reason_added' AND data->>'held_execution_id' = '{hid}'",
+    ).strip()
+    expect(created_by == w.http.agent_id, "the event is tagged with the agent", created_by)
+    # Decided: the reason stays on the record, and a late explain is refused.
+    w.admin.decide(hid, "deny", "e2e")
+    expect(_reason_of(w, hid) is not None, "the reason outlives the decision", hid)
+    late = agent_api(w, "POST", f"/executions/holds/{hid}:explain", {"reason": "too late"})
+    expect(is_problem(late, 409, "held_execution_already_settled"), "a late explain", late.text)
+
+    # HTTP MCP mount (Python handler).
+    held = _http_mcp_payload(
+        w.http.call("execute", {"operation_id": target, "inputs": {"limit": 141}})
+    )
+    body = held["body"]
+    expect(asks in json.dumps(body.get("agent_directive")), "HTTP MCP relays the ask", body)
+    hid2 = body["held_execution_id"]
+    out = _http_mcp_payload(
+        w.http.call(
+            "explain_held_call", {"held_execution_id": hid2, "reason": "HTTP MCP: refund #141"}
+        )
+    )
+    expect(
+        out.get("agent_reason") == "HTTP MCP: refund #141"
+        and "get_execution_result" in out.get("agent_directive", ""),
+        "HTTP MCP explain_held_call records it and says what next",
+        out,
+    )
+    err, again2 = mcp_payload(
+        w.http.call("explain_held_call", {"held_execution_id": hid2, "reason": "again"})
+    )
+    expect(err and again2.get("error_code") == "RESOLVE_FAILED", "HTTP MCP: once only", again2)
+    expect(_reason_of(w, hid2) == "HTTP MCP: refund #141", "reviewer reads the MCP reason", hid2)
+
+    # Go stdio daemon.
+    go = GoMcpLane(w.gocli)
+    try:
+        err, payload = mcp_payload(
+            go.call("execute", {"operation_id": target, "inputs": {"limit": 142}})
+        )
+        expect(not err and payload.get("status") == 202, "Go MCP held result", payload)
+        ghid = payload["body"]["held_execution_id"]
+        expect(
+            asks in json.dumps(payload["body"].get("agent_directive")),
+            "Go MCP relays the ask",
+            payload,
+        )
+        err, out = mcp_payload(
+            go.call("explain_held_call", {"held_execution_id": ghid, "reason": "Go MCP: #142"})
+        )
+        expect(not err and out.get("agent_reason") == "Go MCP: #142", "Go MCP explains", out)
+        err, out = mcp_payload(
+            go.call("explain_held_call", {"held_execution_id": hid2, "reason": "not mine"})
+        )
+        expect(
+            err and out.get("error_code") == "RESOLVE_FAILED",
+            "another agent cannot explain the HTTP agent's call",
+            out,
+        )
+    finally:
+        go.close()
+    expect(_reason_of(w, ghid) == "Go MCP: #142", "reviewer reads the Go MCP reason", ghid)
+
+    # CLI.
+    body = cli_hold(w.cli, target, "--query", "limit=143")
+    chid = body["held_execution_id"]
+    p = w.cli.run("executions", "explain", chid, "CLI: customer 143 asked")
+    expect(p.returncode == 0, "`jentic executions explain` succeeds", p.stdout + p.stderr)
+    p = w.cli.run("executions", "explain", chid, "again")
+    expect(
+        p.returncode == 2 and "already explained" in p.stdout + p.stderr,
+        "a second `executions explain` exits 2",
+        p.stdout + p.stderr,
+    )
+    expect(_reason_of(w, chid) == "CLI: customer 143 asked", "reviewer reads the CLI reason", chid)
+    o.note("explained over plain HTTP, the HTTP MCP mount, the Go MCP daemon and the CLI")
+    withdraw_all_pending(w)
+
+
 SCENARIOS: dict[str, Callable[[World, Outcome], None]] = {
     "s01": s01_hold_approve_result,
     "s02": s02_deny_with_reason,
@@ -1134,6 +1275,7 @@ SCENARIOS: dict[str, Callable[[World, Outcome], None]] = {
     "s14": s14_inbox,
     "s15": s15_migration_round_trip,
     "s16": s16_connect_session_interplay,
+    "s17": s17_agent_explains_held_call,
 }
 
 

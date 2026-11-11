@@ -1176,9 +1176,10 @@ components:
         (`/executions/holds/{held_execution_id}`) to see where it stands;
         once it has finished, `_links.result` returns the upstream response,
         or the problem explaining why it never ran (denied, expired, or
-        refused at run time). To abandon the call, `POST` to
-        `_links.withdraw`. Never re-send the call: an identical call while
-        one is pending joins the same held execution.
+        refused at run time). To tell the reviewer why the call is needed,
+        `POST` a `reason` to `_links.explain`, once. To abandon the call,
+        `POST` to `_links.withdraw`. Never re-send the call: an identical
+        call while one is pending joins the same held execution.
       required:
         - status
         - held_execution_id
@@ -1237,6 +1238,16 @@ components:
                 the agent that made the call may). The call never runs.
               examples:
                 - https://control.your-instance.example/executions/holds/held_abc123:withdraw
+            explain:
+              type: [string, "null"]
+              description: |
+                `POST` a `reason` here to tell the reviewer why the call is
+                needed, before it is decided (only the agent that made the
+                call may, and only once). The reviewer sees it beside the
+                request, as the agent's own claim. Null when a retry joins a
+                call that is already explained.
+              examples:
+                - https://control.your-instance.example/executions/holds/held_abc123:explain
     HealthResponse:
       type: object
       title: HealthResponse
@@ -1469,6 +1480,10 @@ components:
                   human_readable_instruction: >-
                     This call needs human approval. Most important: show the user the review_url,
                     since they cannot approve it without that link, and end your turn so they see it.
+                    Before you end your turn, if you can, call explain_held_call once with
+                    held_execution_id and one or two sentences on why you are making this call (over
+                    plain HTTP, POST a JSON body with a reason field to _links.explain instead); the
+                    reviewer sees it next to the request.
                     Do not call get_execution_result until the user replies; then call it once with
                     held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is
                     still held, show the user the review_url again and end your turn again. Do not
@@ -1477,6 +1492,7 @@ components:
                   self: https://control.your-instance.example/executions/holds/held_abc123
                   result: https://control.your-instance.example/executions/holds/held_abc123/result
                   withdraw: https://control.your-instance.example/executions/holds/held_abc123:withdraw
+                  explain: https://control.your-instance.example/executions/holds/held_abc123:explain
     BadRequest:
       description: |
         Request rejected before reaching the upstream — malformed JSON,

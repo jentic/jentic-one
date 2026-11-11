@@ -160,8 +160,9 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		}`))
 	}
 
-	// A call a require-approval rule held: the 202 held envelope (held
-	// execution, review link, directive, links) instead of a run.
+	// A call a require-approval rule held: the broker's 202 held envelope
+	// (held execution, review link, the AgentDirective object, links) instead
+	// of a run.
 	brokerHeld := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header()["Date"] = nil
 		w.Header().Set("Content-Type", "application/json")
@@ -169,10 +170,14 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"held","held_execution_id":"held_held1",` +
 			`"review_url":"https://console.example/app/agents/approvals/held_held1",` +
-			`"expires_at":"2026-10-10T12:00:00Z","agent_directive":"This call needs human approval.",` +
+			`"expires_at":"2026-10-10T12:00:00Z","agent_directive":{"strategy":"prompt_human",` +
+			`"parameters":{"held_execution_id":"held_held1",` +
+			`"review_url":"https://console.example/app/agents/approvals/held_held1"},` +
+			`"human_readable_instruction":"This call needs human approval."},` +
 			`"_links":{"self":"https://console.example/executions/holds/held_held1",` +
 			`"result":"https://console.example/executions/holds/held_held1/result",` +
-			`"withdraw":"https://console.example/executions/holds/held_held1:withdraw"}}`))
+			`"withdraw":"https://console.example/executions/holds/held_held1:withdraw",` +
+			`"explain":"https://console.example/executions/holds/held_held1:explain"}}`))
 	}
 	// The held execution's control-plane routes once a reviewer denied it:
 	// the call failed and its result is the approval_denied problem.

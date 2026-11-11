@@ -15,11 +15,13 @@ import pytest
 from sqlalchemy import delete, select
 from starlette.requests import Request
 
+from jentic_one.admin.core.schema.agent_explanations import AgentExplanation
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos.agent_explanation_repo import AgentExplanationRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.admin.repos.user_repo import UserRepository
 from jentic_one.broker.core.errors import ApprovalPendingLimitError
@@ -31,7 +33,11 @@ from jentic_one.broker.web.routers.execute import _handle_hold
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import RuleVerdict
 from jentic_one.shared.context import Context
-from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, HELD_AGENT_DIRECTIVE
+from jentic_one.shared.jobs.hold import (
+    ENCRYPTED_PAYLOAD_KEY,
+    HELD_AGENT_DIRECTIVE,
+    HELD_EXPLAINED_AGENT_DIRECTIVE,
+)
 from jentic_one.shared.models import (
     ActorStatus,
     ActorType,
@@ -53,6 +59,7 @@ _BODY = b'{"amount": 500}'
 async def clean(integration_context: Context) -> AsyncGenerator[None, None]:
     async def _truncate() -> None:
         async with integration_context.admin_db.transaction() as session:
+            await session.execute(delete(AgentExplanation))
             await session.execute(delete(Job))
             await session.execute(delete(Event).where(Event.type.like("execution.approval_%")))
 
@@ -152,7 +159,7 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
         },
         "human_readable_instruction": HELD_AGENT_DIRECTIVE,
     }
-    assert set(envelope["_links"]) == {"self", "result", "withdraw"}
+    assert set(envelope["_links"]) == {"self", "result", "withdraw", "explain"}
     assert envelope["_links"]["self"].endswith(f"/executions/holds/{held_id}")
     assert envelope["_links"]["result"].endswith(f"/executions/holds/{held_id}/result")
     assert envelope["_links"]["withdraw"].endswith(f"/executions/holds/{held_id}:withdraw")
@@ -284,6 +291,7 @@ async def test_held_links_root_on_the_admin_api_origin(
         "self": f"http://ui.local:8000/executions/holds/{held_id}",
         "result": f"http://ui.local:8000/executions/holds/{held_id}/result",
         "withdraw": f"http://ui.local:8000/executions/holds/{held_id}:withdraw",
+        "explain": f"http://ui.local:8000/executions/holds/{held_id}:explain",
     }
     async with ctx.admin_db.session() as session:
         (event,) = (
@@ -317,6 +325,27 @@ async def test_identical_retry_joins_without_a_second_event(
             .all()
         )
     assert count == 1
+
+
+async def test_a_retry_joining_an_explained_call_is_not_asked_again(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx)
+    hid = first["held_execution_id"]
+    assert "explain_held_call" in first["agent_directive"]["human_readable_instruction"]
+    assert first["_links"]["explain"].endswith(f"/executions/holds/{hid}:explain")
+    async with ctx.admin_db.transaction() as session:
+        await AgentExplanationRepository.create(
+            session, subject_type="held_execution", subject_id=hid, agent_id=_AGENT.sub, text="x"
+        )
+
+    again = await _hold(ctx)
+    assert again["held_execution_id"] == hid
+    assert again["agent_directive"]["human_readable_instruction"] == (
+        HELD_EXPLAINED_AGENT_DIRECTIVE
+    )
+    assert again["_links"]["explain"] is None
 
 
 async def test_pending_cap_is_a_distinct_403_denial(

@@ -77,6 +77,14 @@ class HeldExecutionAlreadyDecidedError(AdminServiceError):
     """Raised when a decide action targets a non-pending approval."""
 
 
+class HeldExecutionAlreadyExplainedError(AdminServiceError):
+    """Raised when the agent explains a held execution it has already explained."""
+
+    def __init__(self, approval_id: str) -> None:
+        super().__init__(f"Held execution '{approval_id}' is already explained")
+        self.approval_id = approval_id
+
+
 class HeldExecutionJobNotHeldError(AdminServiceError):
     """Raised when a pending approval's job is no longer ``held``.
 

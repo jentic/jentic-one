@@ -508,12 +508,13 @@
                 "summary": "Call held for human approval by a require-approval rule.",
                 "value": {
                   "_links": {
+                    "explain": "https://control.your-instance.example/executions/holds/held_abc123:explain",
                     "result": "https://control.your-instance.example/executions/holds/held_abc123/result",
                     "self": "https://control.your-instance.example/executions/holds/held_abc123",
                     "withdraw": "https://control.your-instance.example/executions/holds/held_abc123:withdraw"
                   },
                   "agent_directive": {
-                    "human_readable_instruction": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
+                    "human_readable_instruction": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Before you end your turn, if you can, call explain_held_call once with held_execution_id and one or two sentences on why you are making this call (over plain HTTP, POST a JSON body with a reason field to _links.explain instead); the reviewer sees it next to the request. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
                     "parameters": {
                       "held_execution_id": "held_abc123",
                       "review_url": "https://your-instance.example/app/agents/approvals/held_abc123"
@@ -1467,10 +1468,20 @@
         "type": "object"
       },
       "HeldExecutionAcceptedResponse": {
-        "description": "Handle returned when a permission rule holds the call for human\napproval — the `202` body when the call matches a permission rule\nwith `effect: require-approval`. The call has not run: it waits\nuntil a reviewer (the agent's owner or an `org:admin`) approves or\ndenies it on `review_url`, or it expires. Follow `_links.self`\n(`/executions/holds/{held_execution_id}`) to see where it stands;\nonce it has finished, `_links.result` returns the upstream response,\nor the problem explaining why it never ran (denied, expired, or\nrefused at run time). To abandon the call, `POST` to\n`_links.withdraw`. Never re-send the call: an identical call while\none is pending joins the same held execution.\n",
+        "description": "Handle returned when a permission rule holds the call for human\napproval — the `202` body when the call matches a permission rule\nwith `effect: require-approval`. The call has not run: it waits\nuntil a reviewer (the agent's owner or an `org:admin`) approves or\ndenies it on `review_url`, or it expires. Follow `_links.self`\n(`/executions/holds/{held_execution_id}`) to see where it stands;\nonce it has finished, `_links.result` returns the upstream response,\nor the problem explaining why it never ran (denied, expired, or\nrefused at run time). To tell the reviewer why the call is needed,\n`POST` a `reason` to `_links.explain`, once. To abandon the call,\n`POST` to `_links.withdraw`. Never re-send the call: an identical\ncall while one is pending joins the same held execution.\n",
         "properties": {
           "_links": {
             "properties": {
+              "explain": {
+                "description": "`POST` a `reason` here to tell the reviewer why the call is\nneeded, before it is decided (only the agent that made the\ncall may, and only once). The reviewer sees it beside the\nrequest, as the agent's own claim. Null when a retry joins a\ncall that is already explained.\n",
+                "examples": [
+                  "https://control.your-instance.example/executions/holds/held_abc123:explain"
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "result": {
                 "description": "The call's outcome, once it has finished.",
                 "examples": [

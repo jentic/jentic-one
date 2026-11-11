@@ -41,8 +41,11 @@ from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from jentic_one.admin.services.errors import (
+    HeldExecutionAlreadyDecidedError,
+    HeldExecutionAlreadyExplainedError,
     HeldExecutionNotFoundError,
     HeldExecutionResultNotReadyError,
+    InvalidInputError,
     JobNotCompletedError,
     JobNotFoundError,
 )
@@ -136,6 +139,7 @@ from jentic_one.registry.services.inspect.service import InspectService
 from jentic_one.registry.services.inspect.url_lookup import URLLookupService
 from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.registry.services.search_service import SearchService
+from jentic_one.shared.agent_text import MAX_AGENT_TEXT_INPUT_LEN
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.auth.permissions import has_effective_permission
@@ -146,7 +150,9 @@ from jentic_one.shared.catalog.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import (
+    EXPLAINED_AGENT_DIRECTIVE,
     HELD_AGENT_DIRECTIVE,
+    HELD_EXPLAINED_AGENT_DIRECTIVE,
     STILL_HELD_AGENT_DIRECTIVE,
     review_page_path,
 )
@@ -214,7 +220,7 @@ def invalid_params(message: str) -> MCPError:
 @dataclass(frozen=True)
 class ParamSpec:
     name: str
-    kind: str  # "string" | "int" | "object" | "json" | "string_list"
+    kind: str  # "string" | "text" | "int" | "object" | "json" | "string_list"
     aliases: tuple[str, ...] = ()
 
 
@@ -241,6 +247,12 @@ def normalize_tool_args(arguments: dict[str, Any] | None, specs: list[ParamSpec]
 
 
 def _coerce(spec: ParamSpec, value: Any) -> Any:
+    # "text" is free prose a person reads (explain_held_call's reason): only a
+    # JSON string is accepted, so a number never becomes text nobody wrote.
+    if spec.kind == "text":
+        if isinstance(value, str):
+            return value
+        raise invalid_params(f'parameter "{spec.name}": expected a string')
     if spec.kind == "string":
         if isinstance(value, str):
             return value
@@ -1213,8 +1225,24 @@ async def _resume_held(env: CallEnv, token: str) -> ToolCallResult:
     terminal = await approvals.short_wait(_held_poller(env), state["held_execution_id"])
     if terminal is not None:
         return tool_result(env.ctx, terminal)
-    envelope = approvals.envelope_from_state(state, HELD_AGENT_DIRECTIVE)
+    # The sealed state predates any reason: once the agent has explained the
+    # call, it is not asked again and the explain link is gone, as on the
+    # broker's 202 for a retry that joins an explained call.
+    if await _held_explained(env, state["held_execution_id"]):
+        envelope = approvals.envelope_from_state(state, HELD_EXPLAINED_AGENT_DIRECTIVE)
+        envelope["_links"] = {**envelope["_links"], "explain": None}
+    else:
+        envelope = approvals.envelope_from_state(state, HELD_AGENT_DIRECTIVE)
     return tool_result(env.ctx, approvals.held_result_payload(envelope))
+
+
+async def _held_explained(env: CallEnv, held_execution_id: str) -> bool:
+    """Whether the held execution already carries the agent's reason (Go: ``heldExplained``)."""
+    try:
+        view = await HeldExecutionService(env.ctx).get(held_execution_id, identity=env.identity)
+    except HeldExecutionNotFoundError:
+        return False
+    return view.agent_reason is not None
 
 
 def _poller(env: CallEnv) -> Callable[[str], Awaitable[dict[str, Any]]]:
@@ -1307,6 +1335,101 @@ async def _poll_until_finished(
         if remaining <= 0:
             return payload
         await asyncio.sleep(min(approvals.SHORT_WAIT_POLL_SECONDS, remaining))
+
+
+# ── explain_held_call ─────────────────────────────────────────────────────────
+
+_EXPLAIN_HELD_CALL_PARAMS = [
+    ParamSpec("held_execution_id", "string", ("held_execution",)),
+    ParamSpec("reason", "text"),
+]
+
+
+async def handle_explain_held_call(
+    env: CallEnv, arguments: dict[str, Any]
+) -> mcp_types.CallToolResult:
+    """Tell a held call's reviewer why it is needed (Go: ``handleExplainHeldCall``).
+
+    Records the reason through the held execution service as the calling
+    agent, which the service accepts only from the agent that filed the hold,
+    once, while it waits for a decision.
+    """
+    args = normalize_tool_args(arguments, _EXPLAIN_HELD_CALL_PARAMS)
+    held_execution_id = args.get("held_execution_id", "")
+    reason = args.get("reason", "")
+    if not held_execution_id:
+        raise invalid_params(
+            'explain_held_call requires "held_execution_id" (from a held 202 execute response)'
+        )
+    details = {"held_execution_id": held_execution_id}
+    if not reason.strip():
+        raise ToolError(
+            CODE_MISSING_ARGUMENT,
+            "a reason is required",
+            actionable="Give one or two sentences on why you are making this call; the reviewer "
+            "sees them next to the request.",
+            details=details,
+        )
+    if len(reason) > MAX_AGENT_TEXT_INPUT_LEN:
+        # The route's request model refuses this; the in-process call skips it.
+        raise ToolError(
+            CODE_MISSING_ARGUMENT,
+            f"the reason was rejected: at most {MAX_AGENT_TEXT_INPUT_LEN} characters, "
+            f"got {len(reason)}",
+            actionable="Give one or two sentences of plain text on why you are making this call.",
+            details=details,
+        )
+    _require_db(env.ctx, "admin", "explaining a held execution")
+    try:
+        view = await HeldExecutionService(env.ctx).explain(
+            held_execution_id, reason, identity=env.identity
+        )
+    except HeldExecutionNotFoundError:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"held execution {held_execution_id!r} not found",
+            actionable="Re-check the id — it is the held_execution_id of the held (202) execute "
+            "response; only the agent that made the call can explain it.",
+            details=details,
+            next_tool="get_execution_result",
+        ) from None
+    except HeldExecutionAlreadyExplainedError:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"held execution {held_execution_id} is already explained",
+            actionable="The reviewer already has your reason; it is given once. Follow the call "
+            "with get_execution_result once the user replies.",
+            details=details,
+            next_tool="get_execution_result",
+        ) from None
+    except HeldExecutionAlreadyDecidedError as exc:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"held execution {held_execution_id} is no longer waiting for a decision: {exc}",
+            actionable="It was decided, expired or withdrawn, so a reason no longer helps. Follow "
+            "it with get_execution_result.",
+            details=details,
+            next_tool="get_execution_result",
+        ) from None
+    except InvalidInputError as exc:
+        raise ToolError(
+            CODE_MISSING_ARGUMENT,
+            f"the reason was rejected: {exc}",
+            actionable="Give one or two sentences of plain text on why you are making this call.",
+            details=details,
+        ) from None
+    return tool_result(
+        env.ctx,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "held_execution_id": view.id,
+            "state": view.state,
+            "status": view.execution_status,
+            "agent_reason": view.agent_reason,
+            "review_url": env.base_url.rstrip("/") + review_page_path(view.id),
+            "agent_directive": EXPLAINED_AGENT_DIRECTIVE,
+        },
+    )
 
 
 async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> dict[str, Any]:
@@ -2439,6 +2562,7 @@ HANDLERS: dict[str, Handler] = {
     "execute": handle_execute,
     "execute_read": handle_execute_read,
     "get_execution_result": handle_get_execution_result,
+    "explain_held_call": handle_explain_held_call,
     "request_connection": handle_request_connection,
     "show_access": handle_show_access,
     "inspect_api": handle_inspect_api,

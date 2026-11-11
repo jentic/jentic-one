@@ -10,13 +10,18 @@ import (
 // Held is the broker's 202 answer to a call a require-approval rule held for
 // a human: the held execution, the review page a person opens to approve or
 // deny it, and the directive telling the agent what to do next.
+//
+// AgentDirective is kept verbatim: the broker sends the AgentDirective object
+// (strategy, parameters, human_readable_instruction), while a held envelope
+// an MCP resume rebuilds carries the instruction as a plain string. Either
+// shape parses, so a held call is always recognised as held.
 type Held struct {
-	Status          string    `json:"status"`
-	HeldExecutionID string    `json:"held_execution_id"`
-	ReviewURL       string    `json:"review_url"`
-	ExpiresAt       string    `json:"expires_at"`
-	AgentDirective  string    `json:"agent_directive"`
-	Links           HeldLinks `json:"_links"`
+	Status          string          `json:"status"`
+	HeldExecutionID string          `json:"held_execution_id"`
+	ReviewURL       string          `json:"review_url"`
+	ExpiresAt       string          `json:"expires_at"`
+	AgentDirective  json.RawMessage `json:"agent_directive"`
+	Links           HeldLinks       `json:"_links"`
 }
 
 // HeldLinks are a held envelope's links: the held execution itself, its

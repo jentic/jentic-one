@@ -689,9 +689,11 @@ def test_held_accepted_response_serializes_the_directive_as_an_object() -> None:
             self_link="/executions/holds/held_abc",
             result="/executions/holds/held_abc/result",
             withdraw="/executions/holds/held_abc:withdraw",
+            explain="/executions/holds/held_abc:explain",
         ),
     )
     dumped = json.loads(body.model_dump_json(by_alias=True))
+    assert dumped["_links"]["explain"] == "/executions/holds/held_abc:explain"
     assert set(dumped["agent_directive"]) == {
         "strategy",
         "parameters",

@@ -108,6 +108,11 @@ func (r *heldRef) pollCommand() string {
 	return "jentic executions poll " + r.ID
 }
 
+// explainCommand tells the reviewer why the held call is needed.
+func (r *heldRef) explainCommand() string {
+	return "jentic executions explain " + r.ID + ` "<why you are making this call>"`
+}
+
 // details is the held call's identity for an error envelope's details.
 func (r *heldRef) details() map[string]any {
 	d := map[string]any{"held_execution_id": r.ID}
@@ -145,12 +150,14 @@ func (a *app) executeHeld(cmd *cobra.Command, opts *executeOptions, res *agentop
 func heldPendingErr(ref *heldRef) *ux.CodedError {
 	details := ref.details()
 	details["next_command"] = ref.pollCommand()
+	details["explain_command"] = ref.explainCommand()
 	return &ux.CodedError{
 		Code: ux.CodeTimeoutPending,
 		Msg:  fmt.Sprintf("the call is held for human approval (held execution %s); it has not run", ref.ID),
 		Actionable: fmt.Sprintf("Show the user the review_url (%s) — they approve or deny the call there — "+
-			"and end your turn. When they reply, run `%s` once for the result. Do not re-send the call.",
-			ref.ReviewURL, ref.pollCommand()),
+			"and end your turn. Before you do, if you can, run `%s` once; the reviewer sees your reason "+
+			"next to the request. When they reply, run `%s` once for the result. Do not re-send the call.",
+			ref.ReviewURL, ref.explainCommand(), ref.pollCommand()),
 		Details: details,
 	}
 }

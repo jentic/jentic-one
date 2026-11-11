@@ -17,7 +17,8 @@ const heldBrokerBody = `{"status":"held","held_execution_id":"held_9",` +
 	`"review_url":"https://jentic.example/app/agents/approvals/held_9","expires_at":"2026-10-07T00:00:00Z",` +
 	`"agent_directive":"` + heldAgentDirective + `","_links":{"self":"https://jentic.example/executions/holds/held_9",` +
 	`"result":"https://jentic.example/executions/holds/held_9/result",` +
-	`"withdraw":"https://jentic.example/executions/holds/held_9:withdraw"}}`
+	`"withdraw":"https://jentic.example/executions/holds/held_9:withdraw",` +
+	`"explain":"https://jentic.example/executions/holds/held_9:explain"}}`
 
 const mcpReviewURL = "https://jentic.example/app/agents/approvals/held_9"
 
@@ -29,6 +30,17 @@ const mcpReviewURL = "https://jentic.example/app/agents/approvals/held_9"
 // never read through it.
 func heldServers(t *testing.T, statuses ...string) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
+	return heldServersWithReason(t, "", statuses...)
+}
+
+// heldServersWithReason is heldServers whose held execution carries the
+// agent's reason (none when agentReason is empty).
+func heldServersWithReason(t *testing.T, agentReason string, statuses ...string) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+	reasonField := ""
+	if agentReason != "" {
+		reasonField = `"agent_reason":"` + agentReason + `",`
+	}
 	var executes, polls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -47,7 +59,7 @@ func heldServers(t *testing.T, statuses ...string) (*httptest.Server, *atomic.In
 				review = ""
 			}
 			_, _ = io.WriteString(w, `{"id":"held_9","state":"`+state+`","execution_status":"`+statuses[i]+`",`+
-				`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+review+
+				`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+review+reasonField+
 				`"method":"POST","path":"/v1/charges","expires_at":"2026-10-07T00:00:00Z",`+
 				`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/held_9"}}`)
 		case r.URL.Path == "/executions/holds/held_9/result":
@@ -151,8 +163,42 @@ func TestMCPExecuteHeld_URLElicitationRoundTrip(t *testing.T) {
 		body["expires_at"] != "2026-10-07T00:00:00Z" || body["agent_directive"] != heldAgentDirective {
 		t.Errorf("retry body = %v, want the still-held envelope", body)
 	}
-	if links, _ := body["_links"].(map[string]any); links["result"] != "https://jentic.example/executions/holds/held_9/result" {
+	if links, _ := body["_links"].(map[string]any); links["result"] != "https://jentic.example/executions/holds/held_9/result" ||
+		links["explain"] != "https://jentic.example/executions/holds/held_9:explain" {
 		t.Errorf("retry _links = %v, want the broker's links", body["_links"])
+	}
+	if executes.Load() != 1 {
+		t.Errorf("executes = %d, want the retry to never re-send the call", executes.Load())
+	}
+}
+
+func TestMCPExecuteHeld_URLElicitationRetryOfAnExplainedCallDoesNotAskAgain(t *testing.T) {
+	srv, executes, _ := heldServersWithReason(t, "Customer 4821 asked for a refund", "held")
+	s := heldTestServer(t)
+	ctx := activeCtxWithBroker(srv.URL, srv.URL)
+	res, err := s.handleExecute(ctx, executeRequestWithCaps(`{"elicitation":{"url":{}}}`))
+	if err != nil || res.RequestState == "" {
+		t.Fatalf("handleExecute: err=%v, want a sealed state", err)
+	}
+	retry := executeRequestWithCaps(`{"elicitation":{"url":{}}}`)
+	retry.Params.RequestState = res.RequestState
+	again, err := s.handleExecute(ctx, retry)
+	if err != nil || again.IsError {
+		t.Fatalf("retry: err=%v", err)
+	}
+	body, _ := decodeToolJSON(t, again)["body"].(map[string]any)
+	if body["status"] != "held" || body["agent_directive"] != heldExplainedAgentDirective {
+		t.Errorf("retry body = %v, want the still-held envelope without the reason ask", body)
+	}
+	if d, _ := body["agent_directive"].(string); strings.Contains(d, "explain_held_call") {
+		t.Errorf("directive = %q, want no reason ask", d)
+	}
+	links, _ := body["_links"].(map[string]any)
+	if explain, ok := links["explain"]; !ok || explain != nil {
+		t.Errorf("retry _links = %v, want explain present and null", links)
+	}
+	if links["result"] != "https://jentic.example/executions/holds/held_9/result" {
+		t.Errorf("retry _links = %v, want the broker's other links kept", links)
 	}
 	if executes.Load() != 1 {
 		t.Errorf("executes = %d, want the retry to never re-send the call", executes.Load())

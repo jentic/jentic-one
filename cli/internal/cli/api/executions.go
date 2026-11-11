@@ -13,10 +13,12 @@ func newExecutionsCmd(app *app) *cobra.Command {
 		Short: "Follow your held executions (calls awaiting human approval)",
 		Long: "executions follows your held executions: calls a permission rule held for\n" +
 			"a human to approve or deny. `jentic execute` prints a held call's\n" +
-			"held_execution_id; `jentic executions poll <held_execution_id>` collects\n" +
-			"its outcome.",
+			"held_execution_id; `jentic executions explain <held_execution_id> <reason>`\n" +
+			"tells the reviewer why you made it, and `jentic executions poll\n" +
+			"<held_execution_id>` collects its outcome.",
 	}
 	cmd.AddCommand(newExecutionsPollCmd(app))
+	cmd.AddCommand(newExecutionsExplainCmd(app))
 	return cmd
 }
 

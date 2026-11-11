@@ -26,11 +26,11 @@ from jentic_one.mcp.tools import CallEnv, dispatch_mcp_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, EncryptionConfig, ServerConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
-from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE
+from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE, HELD_EXPLAINED_AGENT_DIRECTIVE
 from jentic_one.shared.models import ActorType
 
 _KEY = base64.b64encode(b"k" * 32).decode()
-_ENVELOPE = {
+_ENVELOPE: dict[str, Any] = {
     "status": "held",
     "held_execution_id": "held_1",
     "review_url": "https://jentic.example/app/agents/approvals/held_1",
@@ -40,6 +40,7 @@ _ENVELOPE = {
         "self": "https://jentic.example/executions/holds/held_1",
         "result": "https://jentic.example/executions/holds/held_1/result",
         "withdraw": "https://jentic.example/executions/holds/held_1:withdraw",
+        "explain": "https://jentic.example/executions/holds/held_1:explain",
     },
 }
 
@@ -105,11 +106,12 @@ def job_polls(monkeypatch: pytest.MonkeyPatch) -> Callable[[list[str]], list[str
     """Stub the held-execution poll with a sequence of statuses and a zero-length wait cadence.
 
     The job poll is stubbed too, recording into the same list, so a test that
-    expects only held-execution polls sees any stray job poll.
+    expects only held-execution polls sees any stray job poll. ``explained``
+    is whether the held execution already carries the agent's reason.
     """
     seen: list[str] = []
 
-    def install(statuses: list[str]) -> list[str]:
+    def install(statuses: list[str], *, explained: bool = False) -> list[str]:
         queue = list(statuses)
 
         def next_status() -> str:
@@ -127,8 +129,12 @@ def job_polls(monkeypatch: pytest.MonkeyPatch) -> Callable[[list[str]], list[str
             seen.append(job_id)
             return {"job_id": job_id, "kind": "execution", "status": next_status()}
 
+        async def held_explained(env: CallEnv, held_execution_id: str) -> bool:
+            return explained
+
         monkeypatch.setattr(tools_mod, "held_execution_poll_payload", poll_held)
         monkeypatch.setattr(tools_mod, "job_poll_payload", poll_job)
+        monkeypatch.setattr(tools_mod, "_held_explained", held_explained)
         return seen
 
     monkeypatch.setattr(approvals, "SHORT_WAIT_POLL_SECONDS", 0.0)
@@ -214,6 +220,26 @@ async def test_url_elicitation_retry_reads_the_held_execution_and_never_resends(
     assert held["body"]["held_execution_id"] == "held_1"
     assert held["body"]["review_url"] == _ENVELOPE["review_url"]
     assert held["body"]["agent_directive"] == HELD_AGENT_DIRECTIVE
+    assert held["body"]["_links"]["explain"] == _ENVELOPE["_links"]["explain"]
+    assert len(held_broker) == 1
+
+
+async def test_url_elicitation_retry_of_an_explained_call_does_not_ask_again(
+    held_broker: list[httpx.Request], job_polls: Callable[..., list[str]], monkeypatch
+) -> None:
+    """Once the agent explained the call, a retry neither asks for a reason nor links explain."""
+    env = _env({"elicitation": {"url": {}}})
+    first = await _execute(env)
+    assert isinstance(first, mcp_types.InputRequiredResult)
+    monkeypatch.setattr(approvals, "SHORT_WAIT_SECONDS", 0.0)
+    job_polls(["held"], explained=True)
+    held = _json(await _execute(replace(env, request_state=first.request_state)))
+    assert held["body"]["status"] == "held"
+    assert held["body"]["agent_directive"] == HELD_EXPLAINED_AGENT_DIRECTIVE
+    assert "explain_held_call" not in held["body"]["agent_directive"]
+    links = held["body"]["_links"]
+    assert links["explain"] is None
+    assert links["result"] == _ENVELOPE["_links"]["result"]
     assert len(held_broker) == 1
 
 

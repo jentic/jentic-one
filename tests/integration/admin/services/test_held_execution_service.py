@@ -1,4 +1,4 @@
-"""Integration tests for require-approval holds: filing, deciding, withdrawing, expiring.
+"""Integration tests for require-approval holds: filed, decided, withdrawn, explained, expired.
 
 Runs the shared hold path, ``HeldExecutionService``, ``JobService`` /
 ``JobResultService`` and the worker's expiry sweep against the real admin DB,
@@ -19,8 +19,10 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from mcp.shared.exceptions import MCPError
 from sqlalchemy import delete, select, update
 
+from jentic_one.admin.core.schema.agent_explanations import AgentExplanation
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
@@ -36,21 +38,29 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.services.errors import (
     HeldExecutionAlreadyDecidedError,
+    HeldExecutionAlreadyExplainedError,
     HeldExecutionForbiddenError,
     HeldExecutionJobNotHeldError,
     HeldExecutionNotFoundError,
+    InvalidInputError,
     JobAwaitingApprovalError,
 )
+from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.held_execution_service import HeldExecutionService
 from jentic_one.admin.services.job_service import JobService
+from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.admin.services.schemas.held_executions import DecideInput
 from jentic_one.admin.web.app import create_app
+from jentic_one.mcp import tools as mcp_tools
+from jentic_one.mcp.envelopes import ToolError
+from jentic_one.mcp.tools import CallEnv, handle_explain_held_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
+    EXPLAINED_AGENT_DIRECTIVE,
     HoldOutcome,
     PendingApprovalLimitError,
     file_hold,
@@ -82,6 +92,7 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
 
     async def _clean() -> None:
         async with ctx.admin_db.transaction() as session:
+            await session.execute(delete(AgentExplanation))
             await session.execute(delete(HeldExecution))
             await session.execute(delete(JobResult))
             await session.execute(delete(Job))
@@ -1051,3 +1062,385 @@ async def test_a_held_execution_never_reaches_a_job_that_is_not_its_held_executi
         assert rows[hold.approval_id]["execution_status"] is None
         assert result.status_code == 404, caller.sub
         assert "import result" not in result.text
+
+
+# ── explaining a held call ───────────────────────────────────────────────────
+
+_REASON = "Customer 4821 asked for a refund in ticket #88"
+
+
+async def test_the_filing_agent_explains_once_and_every_read_carries_it(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    hold = await _hold(ctx, actors.agent)
+    other = await _hold(ctx, actors.agent, path="/v1/other")
+
+    view = await svc.explain(hold.approval_id, f"  {_REASON}\u202e  ", identity=actors.agent)
+    assert view.agent_reason == _REASON
+    assert view.state == "pending"
+    assert view.execution_status == JobStatus.HELD
+
+    # Detail and list, for the agent, its owner and an admin.
+    for caller in (actors.agent, actors.owner, actors.admin):
+        assert (await svc.get(hold.approval_id, identity=caller)).agent_reason == _REASON
+        page = await svc.list_all(identity=caller)
+        reasons = {row.id: row.agent_reason for row in page.data}
+        assert reasons[hold.approval_id] == _REASON
+        assert reasons[other.approval_id] is None
+
+    # The decision keeps it, and so does the hold once settled.
+    decided = await svc.decide(
+        hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
+    )
+    assert decided.agent_reason == _REASON
+
+
+async def test_an_explanation_is_audited_by_length_and_raises_an_event_the_owner_sees(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    await HeldExecutionService(ctx).explain(hold.approval_id, _REASON, identity=actors.agent)
+    async with ctx.admin_db.session() as session:
+        audit = (
+            await session.execute(
+                select(AuditEntry).where(
+                    AuditEntry.target_id == hold.approval_id, AuditEntry.action == "explain"
+                )
+            )
+        ).scalar_one()
+        (event,) = (
+            (
+                await session.execute(
+                    select(Event).where(
+                        Event.job_id == hold.job_id,
+                        Event.type == EventType.EXECUTION_APPROVAL_REASON_ADDED,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert audit.actor_id == actors.agent.sub
+    assert _REASON not in json.dumps(audit.after)
+    assert audit.after == {"reason_length": len(_REASON)}
+    assert event.created_by == actors.agent.sub
+    assert event.summary == "Call POST /v1/charges by agent 'held-agent' explained why"
+    assert event.data == {"held_execution_id": hold.approval_id, "agent_id": actors.agent.sub}
+    assert _REASON not in event.summary
+
+    # Tagged with the agent, so its owner's feed carries it.
+    page = await EventService(ctx).list_all(
+        EventFilter(event_type=[EventType.EXECUTION_APPROVAL_REASON_ADDED]),
+        identity=actors.owner,
+    )
+    assert [e.data["held_execution_id"] for e in page.data] == [hold.approval_id]
+
+
+async def test_only_the_filing_agent_may_explain(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    hold = await _hold(ctx, actors.agent)
+    for caller in (actors.owner, actors.admin, actors.outsider, actors.ownerless_agent):
+        with pytest.raises(HeldExecutionNotFoundError):
+            await svc.explain(hold.approval_id, _REASON, identity=caller)
+    with pytest.raises(HeldExecutionNotFoundError):
+        await svc.explain("held_missing", _REASON, identity=actors.agent)
+    assert (await svc.get(hold.approval_id, identity=actors.owner)).agent_reason is None
+
+
+async def test_a_second_explanation_conflicts_and_the_first_stands(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    hold = await _hold(ctx, actors.agent)
+    await svc.explain(hold.approval_id, _REASON, identity=actors.agent)
+    with pytest.raises(HeldExecutionAlreadyExplainedError):
+        await svc.explain(hold.approval_id, "Something else entirely", identity=actors.agent)
+    assert (await svc.get(hold.approval_id, identity=actors.owner)).agent_reason == _REASON
+
+
+async def test_concurrent_explanations_record_exactly_one(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    hold = await _hold(ctx, actors.agent)
+    results = await asyncio.gather(
+        *(svc.explain(hold.approval_id, f"reason {i}", identity=actors.agent) for i in range(4)),
+        return_exceptions=True,
+    )
+    wins = [r for r in results if not isinstance(r, BaseException)]
+    assert len(wins) == 1
+    assert all(
+        isinstance(r, HeldExecutionAlreadyExplainedError)
+        for r in results
+        if isinstance(r, BaseException)
+    )
+    async with ctx.admin_db.session() as session:
+        rows = (await session.execute(select(AgentExplanation))).scalars().all()
+    assert [row.text for row in rows] == [wins[0].agent_reason]
+
+
+async def test_explaining_a_settled_or_lapsed_call_conflicts(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    denied = await _hold(ctx, actors.agent, path="/v1/denied")
+    await svc.decide(
+        denied.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
+    )
+    withdrawn = await _hold(ctx, actors.agent, path="/v1/withdrawn")
+    await svc.withdraw(withdrawn.approval_id, identity=actors.agent)
+    lapsed = await _hold(ctx, actors.agent, path="/v1/lapsed")
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            update(HeldExecution)
+            .where(HeldExecution.id == lapsed.approval_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+
+    for hold, state in ((denied, "denied"), (withdrawn, "withdrawn"), (lapsed, "expired")):
+        with pytest.raises(HeldExecutionAlreadyDecidedError, match=f"already {state}"):
+            await svc.explain(hold.approval_id, _REASON, identity=actors.agent)
+
+
+async def test_a_reason_with_no_readable_text_is_refused(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    with pytest.raises(InvalidInputError):
+        await HeldExecutionService(ctx).explain(
+            hold.approval_id, "\u200b\u202e\x00", identity=actors.agent
+        )
+
+
+async def test_a_retry_that_joins_an_explained_hold_keeps_its_explanation(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = HeldExecutionService(ctx)
+    hold = await _hold(ctx, actors.agent)
+    await svc.explain(hold.approval_id, _REASON, identity=actors.agent)
+    joined = await _hold(ctx, actors.agent)
+    assert joined.joined
+    assert joined.approval_id == hold.approval_id
+    assert (await svc.get(hold.approval_id, identity=actors.owner)).agent_reason == _REASON
+
+
+async def test_explain_route_records_the_reason_for_the_filing_agent(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.owner) as client:
+        before = (await client.get(f"/executions/holds/{hold.approval_id}")).json()
+    assert before["agent_reason"] is None
+    # Only the agent that filed the call is offered the link.
+    assert before["_links"].get("explain") is None
+    async with _client(ctx, actors.agent) as client:
+        mine = (await client.get(f"/executions/holds/{hold.approval_id}")).json()
+    assert mine["_links"]["explain"].endswith(f"/executions/holds/{hold.approval_id}:explain")
+
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(
+            f"/executions/holds/{hold.approval_id}:explain", json={"reason": _REASON}
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["agent_reason"] == _REASON
+    assert body["state"] == "pending"
+    assert body["_links"].get("explain") is None
+    assert "job_id" not in body
+
+
+async def test_explain_route_answers_404_409_and_400(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    url = f"/executions/holds/{hold.approval_id}:explain"
+    for caller in (actors.owner, actors.admin, actors.outsider, actors.ownerless_agent):
+        async with _client(ctx, caller) as client:
+            resp = await client.post(url, json={"reason": _REASON})
+        assert resp.status_code == 404, caller.sub
+    async with _client(ctx, actors.agent) as client:
+        unreadable = await client.post(url, json={"reason": "\u200b"})
+        missing = await client.post(url, json={})
+        first = await client.post(url, json={"reason": _REASON})
+        again = await client.post(url, json={"reason": _REASON})
+    assert unreadable.status_code == 400
+    assert unreadable.json()["type"].endswith("invalid_input")
+    assert missing.status_code == 422
+    assert first.status_code == 200
+    assert again.status_code == 409
+    assert again.json()["type"].endswith("held_execution_already_explained")
+    async with _client(ctx, None) as client:
+        assert (await client.post(url, json={"reason": _REASON})).status_code == 401
+
+
+def _mcp_env(ctx: Context, identity: Identity) -> CallEnv:
+    return CallEnv(
+        ctx=ctx, identity=identity, credential="tok", base_url="http://test", session_id=None
+    )
+
+
+async def test_mcp_explain_held_call_records_the_reason_for_the_filing_agent(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    result = await handle_explain_held_call(
+        _mcp_env(ctx, actors.agent), {"held_execution": hold.approval_id, "reason": _REASON}
+    )
+    payload = json.loads(result.content[0].text)  # type: ignore[union-attr]
+    assert payload["held_execution_id"] == hold.approval_id
+    assert payload["agent_reason"] == _REASON
+    assert payload["state"] == "pending"
+    assert payload["status"] == "held"
+    assert payload["review_url"] == f"http://test/app/agents/approvals/{hold.approval_id}"
+    assert payload["agent_directive"] == EXPLAINED_AGENT_DIRECTIVE
+
+    with pytest.raises(ToolError, match="already explained") as again:
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.agent), {"held_execution_id": hold.approval_id, "reason": "x"}
+        )
+    assert again.value.code == "RESOLVE_FAILED"
+    assert again.value.next_tool == "get_execution_result"
+
+
+async def test_mcp_explain_held_call_refuses_others_and_blank_reasons(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    with pytest.raises(ToolError, match="not found"):
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.ownerless_agent),
+            {"held_execution_id": hold.approval_id, "reason": _REASON},
+        )
+    with pytest.raises(ToolError, match="a reason is required") as blank:
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.agent), {"held_execution_id": hold.approval_id, "reason": "  "}
+        )
+    assert blank.value.code == "MISSING_ARGUMENT"
+    with pytest.raises(ToolError, match="the reason was rejected"):
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.agent),
+            {"held_execution_id": hold.approval_id, "reason": "\u200b\u202e"},
+        )
+    assert (
+        await HeldExecutionService(ctx).get(hold.approval_id, identity=actors.owner)
+    ).agent_reason is None
+
+
+@pytest.mark.parametrize("settled", ["denied", "withdrawn"])
+async def test_an_explain_waits_for_a_settlement_in_flight_and_then_refuses(
+    integration_context: Context, actors: _Actors, settled: str
+) -> None:
+    """A decision or withdrawal that holds the row lands first; the explain then 409s."""
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    locked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def settle_slowly() -> None:
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(
+                update(HeldExecution)
+                .where(HeldExecution.id == hold.approval_id)
+                .values(state=settled, decided_at=datetime.now(UTC), decided_by=actors.owner.sub)
+            )
+            locked.set()
+            await release.wait()
+
+    settling = asyncio.create_task(settle_slowly())
+    try:
+        await locked.wait()
+        explaining = asyncio.create_task(
+            HeldExecutionService(ctx).explain(hold.approval_id, _REASON, identity=actors.agent)
+        )
+        await asyncio.sleep(0.5)
+        blocked = not explaining.done()
+    finally:
+        # Always let the settlement commit, so a failure can't leave the row locked.
+        release.set()
+        await settling
+    assert blocked, "the explain must wait on the hold's row until the settlement commits"
+    with pytest.raises(HeldExecutionAlreadyDecidedError, match=f"already {settled}"):
+        await explaining
+    async with ctx.admin_db.session() as session:
+        rows = (await session.execute(select(AgentExplanation))).scalars().all()
+        events = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REASON_ADDED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert rows == [] and events == []
+
+
+@pytest.mark.parametrize("reason", [123, 4.5, True, ["why"], {"text": "why"}])
+async def test_mcp_explain_held_call_refuses_a_reason_that_is_not_a_string_like_the_route(
+    integration_context: Context, actors: _Actors, reason: object
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    with pytest.raises(MCPError, match='parameter "reason": expected a string'):
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.agent), {"held_execution_id": hold.approval_id, "reason": reason}
+        )
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(
+            f"/executions/holds/{hold.approval_id}:explain", json={"reason": reason}
+        )
+    assert resp.status_code == 422
+    assert (
+        await HeldExecutionService(ctx).get(hold.approval_id, identity=actors.owner)
+    ).agent_reason is None
+
+
+async def test_the_mcp_resume_lookup_sees_the_reason_only_once_the_agent_explained(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """``_held_explained`` decides whether a URL-elicitation retry asks for a reason again."""
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    env = _mcp_env(ctx, actors.agent)
+    assert await mcp_tools._held_explained(env, hold.approval_id) is False
+    await handle_explain_held_call(env, {"held_execution_id": hold.approval_id, "reason": _REASON})
+    assert await mcp_tools._held_explained(env, hold.approval_id) is True
+    # Another agent cannot see the call, so for it nothing is explained.
+    other = _mcp_env(ctx, actors.ownerless_agent)
+    assert await mcp_tools._held_explained(other, hold.approval_id) is False
+
+
+async def test_mcp_explain_held_call_refuses_an_over_long_reason_like_the_route(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    with pytest.raises(ToolError, match="at most 4096 characters, got 4097") as long:
+        await handle_explain_held_call(
+            _mcp_env(ctx, actors.agent),
+            {"held_execution_id": hold.approval_id, "reason": "x" * 4097},
+        )
+    assert long.value.code == "MISSING_ARGUMENT"
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(
+            f"/executions/holds/{hold.approval_id}:explain", json={"reason": "x" * 4097}
+        )
+    assert resp.status_code == 422
+    assert (
+        await HeldExecutionService(ctx).get(hold.approval_id, identity=actors.owner)
+    ).agent_reason is None

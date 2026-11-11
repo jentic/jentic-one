@@ -7,9 +7,14 @@ import (
 )
 
 func TestParseHeld(t *testing.T) {
-	held := `{"status":"held","held_execution_id":"held_1","review_url":"http://ui/r","expires_at":"x",` +
-		`"agent_directive":"d","_links":{"self":"http://ui/executions/holds/held_1",` +
-		`"result":"http://ui/executions/holds/held_1/result","withdraw":"http://ui/executions/holds/held_1:withdraw"}}`
+	envelope := func(directive string) string {
+		return `{"status":"held","held_execution_id":"held_1","review_url":"http://ui/r","expires_at":"x",` +
+			`"agent_directive":` + directive + `,"_links":{"self":"http://ui/executions/holds/held_1",` +
+			`"result":"http://ui/executions/holds/held_1/result","withdraw":"http://ui/executions/holds/held_1:withdraw"}}`
+	}
+	// The broker's 202 carries the AgentDirective object.
+	held := envelope(`{"strategy":"prompt_human","parameters":{"held_execution_id":"held_1",` +
+		`"review_url":"http://ui/r"},"human_readable_instruction":"d"}`)
 	cases := []struct {
 		name   string
 		status int
@@ -17,6 +22,8 @@ func TestParseHeld(t *testing.T) {
 		want   bool
 	}{
 		{"the held envelope", http.StatusAccepted, held, true},
+		{"a held envelope with a string directive", http.StatusAccepted, envelope(`"d"`), true},
+		{"a held envelope with no directive", http.StatusAccepted, envelope(`null`), true},
 		{"a plain respond-async job", http.StatusAccepted, `{"job_id":"job_1","status":"queued"}`, false},
 		{"held without a review link", http.StatusAccepted, `{"status":"held","held_execution_id":"held_1"}`, false},
 		{"held without an id", http.StatusAccepted, `{"status":"held","review_url":"http://ui/r"}`, false},
