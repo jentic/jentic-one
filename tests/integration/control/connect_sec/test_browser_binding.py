@@ -604,8 +604,16 @@ async def test_cookie_follows_our_state_when_the_authorize_url_has_its_own(
     async with _browser(env) as approver:
         confirmed = await _confirm(approver, env, created.session_id, body)
     assert confirmed.status_code == 200, confirmed.text
-    states = parse_qs(urlsplit(confirmed.json()["authorize_url"]).query)["state"]
-    assert len(states) == 2  # the endpoint's own, then ours
+    query = parse_qs(urlsplit(confirmed.json()["authorize_url"]).query)
+    assert query["tenant"] == ["t1"]
+    assert query["client_id"] == ["approver-client"]
+    assert query["response_type"] == ["code"]
+    assert query["redirect_uri"] == [prefixed]
+    assert query["scope"] == ["read"]
+    assert query["code_challenge_method"] == ["S256"]
+    assert len(query["code_challenge"]) == 1
+    assert len(query["state"]) == 1
+    assert query["state"][0] != "fixed"
     # The cookie is scoped by the session's real state (its platform callback),
     # not the endpoint's own ``state=fixed``.
     assert _attrs(confirmed)["path"] == "/jentic/credentials/oauth/callback"

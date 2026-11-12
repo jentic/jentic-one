@@ -195,3 +195,84 @@ async def test_first_set_without_secret_rejected(
     service = ProviderConfigService(integration_context)
     with pytest.raises(InvalidInputError):
         await service.set("pipedream", _pipedream_fields(secret=None), identity=_identity())
+
+
+async def test_cross_origin_connect_base_url_with_preserved_secret_rejected(
+    integration_context: Context, _clean_provider_configs: None
+) -> None:
+    """Changing connect_base_url origin without re-entering client_secret is refused."""
+    service = ProviderConfigService(integration_context)
+    await service.set("pipedream", _pipedream_fields(), identity=_identity())
+
+    with pytest.raises(InvalidInputError, match="client_secret"):
+        await service.set(
+            "pipedream",
+            {"connect_base_url": "https://attacker.example.com/v1"},
+            identity=_identity(),
+        )
+
+    stored = await _stored_config(integration_context, "pipedream")
+    assert stored["connect_base_url"] == "https://api.pipedream.com/v1"
+    provider = integration_context.providers.get("pipedream")
+    assert isinstance(provider, PipedreamProvider)
+    assert provider._base_url == "https://api.pipedream.com/v1"
+
+
+async def test_same_origin_connect_base_url_path_update_preserves_secret(
+    integration_context: Context, _clean_provider_configs: None
+) -> None:
+    """A same-origin path update on connect_base_url keeps the stored secret."""
+    service = ProviderConfigService(integration_context)
+    await service.set("pipedream", _pipedream_fields(), identity=_identity())
+
+    view = await service.set(
+        "pipedream",
+        {"connect_base_url": "https://api.pipedream.com/v2"},
+        identity=_identity(),
+    )
+    assert view.config["connect_base_url"] == "https://api.pipedream.com/v2"
+    stored = await _stored_config(integration_context, "pipedream")
+    assert stored["connect_base_url"] == "https://api.pipedream.com/v2"
+    assert integration_context.encryption.decrypt(stored["client_secret"]) == _PLAINTEXT_SECRET
+
+
+async def test_cross_origin_connect_base_url_with_new_secret_allowed(
+    integration_context: Context, _clean_provider_configs: None
+) -> None:
+    """Changing connect_base_url origin succeeds when a new client_secret is supplied."""
+    service = ProviderConfigService(integration_context)
+    await service.set("pipedream", _pipedream_fields(), identity=_identity())
+
+    view = await service.set(
+        "pipedream",
+        {
+            "connect_base_url": "https://pipedream.corp.example.com/v1",
+            "client_secret": _ROTATED_SECRET,
+        },
+        identity=_identity(),
+    )
+    assert view.config["connect_base_url"] == "https://pipedream.corp.example.com/v1"
+    stored = await _stored_config(integration_context, "pipedream")
+    assert integration_context.encryption.decrypt(stored["client_secret"]) == _ROTATED_SECRET
+
+
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "http://api.pipedream.com/v1",
+        "https://169.254.169.254/v1",
+        "https://10.0.0.1/v1",
+    ],
+)
+async def test_unsafe_or_cleartext_connect_base_url_rejected(
+    integration_context: Context,
+    _clean_provider_configs: None,
+    unsafe_url: str,
+) -> None:
+    service = ProviderConfigService(integration_context)
+    with pytest.raises(InvalidInputError):
+        await service.set(
+            "pipedream",
+            {**_pipedream_fields(), "connect_base_url": unsafe_url},
+            identity=_identity(),
+        )

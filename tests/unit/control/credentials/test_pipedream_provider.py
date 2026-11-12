@@ -193,12 +193,136 @@ async def test_complete_connect_maps_account_id() -> None:
     )
     callback = ConnectCallback(account_id="acct_pd_456")
 
-    result = await provider.complete_connect(ctx, state=state, callback=callback)
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
+        )
+        mock_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"id": "acct_pd_456", "external_id": "cred_123"},
+            )
+        )
+        mock_client_cls.return_value = mock_client
+
+        result = await provider.complete_connect(ctx, state=state, callback=callback)
 
     assert result.provider_account_ref == "acct_pd_456"
     assert result.access_token is None
     assert result.refresh_token is None
     assert result.expires_at is None
+
+
+@pytest.mark.asyncio()
+async def test_complete_connect_rejects_substituted_account_external_id() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="pipedream",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce="test-nonce",
+    )
+    callback = ConnectCallback(account_id="acct_other_user")
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
+        )
+        mock_client.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"id": "acct_other_user", "external_id": "cred_someone_else"},
+            )
+        )
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ProviderError, match="external_id"):
+            await provider.complete_connect(ctx, state=state, callback=callback)
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "bad_token_payload",
+    [
+        {},
+        {"access_token": ""},
+        {"access_token": "at", "expires_in": 0},
+        {"access_token": "at", "expires_in": -5},
+        {"access_token": "at", "expires_in": "invalid"},
+        {"access_token": "at", "expires_in": True},
+        {"access_token": "at", "expires_at": 0},
+        {"access_token": "at", "expires_at": "invalid"},
+        {"access_token": "at", "expires_at": True},
+    ],
+)
+async def test_refresh_rejects_malformed_token_payload(
+    bad_token_payload: dict[str, object],
+) -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+
+    async def fake_decrypt() -> str:
+        return ""
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="pipedream",
+        provider_account_ref="acct_pd_456",
+        expires_at=None,
+        decrypt=fake_decrypt,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
+        )
+        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=bad_token_payload))
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ProviderError):
+            await provider.refresh(ctx, token=token_view)
+
+
+@pytest.mark.asyncio()
+async def test_refresh_maps_transport_error_to_provider_error() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+
+    async def fake_decrypt() -> str:
+        return ""
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="pipedream",
+        provider_account_ref="acct_pd_456",
+        expires_at=None,
+        decrypt=fake_decrypt,
+    )
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
+        )
+        mock_client.get = AsyncMock(side_effect=httpx.ReadError("socket closed"))
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ProviderError, match="ReadError"):
+            await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()

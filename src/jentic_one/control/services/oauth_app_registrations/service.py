@@ -14,6 +14,7 @@ from jentic_one.control.repos.oauth_app_registration_repo import (
     FLOW_KIND_AUTH_CODE,
     FLOW_KIND_DEVICE_AUTHORIZATION,
 )
+from jentic_one.control.services.credentials.token_endpoint import same_origin
 from jentic_one.control.services.oauth_app_registrations.errors import (
     InvalidOAuthAppRegistrationInputError,
     OAuthAppRegistrationInUseError,
@@ -234,6 +235,16 @@ class OAuthAppRegistrationService:
                         "authorization_endpoint / token_endpoint are only valid on "
                         "device-authorization registrations"
                     )
+                ac = registration.authorization_code_details
+                if (
+                    token_url is not None
+                    and ac is not None
+                    and not same_origin(token_url, ac.token_url)
+                ):
+                    raise InvalidOAuthAppRegistrationInputError(
+                        "authorization-code registrations cannot move token_url to a different "
+                        "origin (scheme, host or port); create a new registration instead"
+                    )
                 if any(v is not None for v in (authorize_url, token_url, default_scopes)):
                     await OAuthAppRegistrationRepository.update_authorization_code_details(
                         session,
@@ -247,6 +258,27 @@ class OAuthAppRegistrationService:
                     raise InvalidOAuthAppRegistrationInputError(
                         "authorize_url / token_url are only valid on authorization-code "
                         "registrations"
+                    )
+                dev = registration.device_authorization_details
+                if (
+                    token_endpoint is not None
+                    and dev is not None
+                    and not same_origin(token_endpoint, dev.token_endpoint)
+                ):
+                    raise InvalidOAuthAppRegistrationInputError(
+                        "device-authorization registrations cannot move token_endpoint to a "
+                        "different origin (scheme, host or port); create a new registration "
+                        "instead"
+                    )
+                if (
+                    authorization_endpoint is not None
+                    and dev is not None
+                    and not same_origin(authorization_endpoint, dev.authorization_endpoint)
+                ):
+                    raise InvalidOAuthAppRegistrationInputError(
+                        "device-authorization registrations cannot move authorization_endpoint "
+                        "to a different origin (scheme, host or port); create a new registration "
+                        "instead"
                     )
                 if any(
                     v is not None for v in (authorization_endpoint, token_endpoint, default_scopes)

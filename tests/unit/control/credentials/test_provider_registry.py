@@ -61,7 +61,7 @@ def test_from_config_builds_pipedream_provider() -> None:
     registry = ProviderRegistry.from_config(cfg)
     provider = registry.get("my_pipedream")
     assert isinstance(provider, PipedreamProvider)
-    assert provider.name == "pipedream"
+    assert provider.name == "my_pipedream"
 
 
 def test_from_config_multiple_pipedream_instances() -> None:
@@ -85,6 +85,8 @@ def test_from_config_multiple_pipedream_instances() -> None:
     assert isinstance(p1, PipedreamProvider)
     assert isinstance(p2, PipedreamProvider)
     assert p1 is not p2
+    assert p1.name == "pipedream_slack"
+    assert p2.name == "pipedream_github"
 
 
 def test_from_config_and_dynamic_builds_runtime_pipedream() -> None:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -12,13 +14,25 @@ from jentic_one.admin.services.errors import InvalidInputError, NotFoundError
 from jentic_one.admin.services.schemas.provider_configs import ProviderConfigView
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.config import PipedreamProviderConfig
+from jentic_one.shared.config import PipedreamProviderConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.url import is_loopback_url
+from jentic_one.shared.url_validation import validate_upstream_url_async
 
 # Secret fields per provider that must be encrypted at rest and redacted on read.
 _SECRET_FIELDS = ("client_secret",)
 _REDACTED = "***"
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _url_origin(url: str) -> tuple[str, str, int]:
+    """Return ``(scheme, host, port)`` for *url* with default ports filled in."""
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    port = parts.port or _DEFAULT_PORTS.get(scheme, 0)
+    return scheme, host, port
 
 
 class ProviderConfigNotFoundError(NotFoundError):
@@ -103,6 +117,35 @@ class ProviderConfigService:
             merged[key] = value
 
         validated = _validate_by_name(name, merged)
+
+        secret_supplied = bool(fields.get("client_secret"))
+        if existing is not None:
+            old_base_url = str(base.get("connect_base_url") or "https://api.pipedream.com/v1")
+            new_base_url = str(validated.get("connect_base_url") or "")
+            if (
+                new_base_url
+                and _url_origin(new_base_url) != _url_origin(old_base_url)
+                and not secret_supplied
+            ):
+                raise InvalidInputError(
+                    "Changing connect_base_url origin (scheme, host or port) requires "
+                    "re-entering client_secret in the same request"
+                )
+
+        connect_base_url = str(validated.get("connect_base_url") or "")
+        if connect_base_url:
+            is_prod = os.environ.get("JENTIC_ENV", "development") == "production"
+            if not connect_base_url.startswith("https://") and (
+                is_prod or not is_loopback_url(connect_base_url)
+            ):
+                raise InvalidInputError("invalid pipedream config: connect_base_url must use https")
+            egress = resolved_control_egress(self._ctx.config)
+            try:
+                await validate_upstream_url_async(connect_base_url, egress)
+            except ValueError as exc:
+                raise InvalidInputError(
+                    f"invalid pipedream config: unsafe connect_base_url: {exc}"
+                ) from exc
 
         # Encrypt secret fields before persisting; plaintext never lands in the DB.
         stored = dict(validated)
