@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
+
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
@@ -31,7 +33,11 @@ from jentic_one.control.services.credentials.providers.base import (
     NotRefreshableError,
     ProviderError,
 )
-from jentic_one.control.services.credentials.providers.oauth2 import OAuth2Provider
+from jentic_one.control.services.credentials.providers.direct_oauth2 import _true_expiry
+from jentic_one.control.services.credentials.providers.oauth2 import (
+    OAuth2Provider,
+    TokenExchangeError,
+)
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
     ConnectRequest,
@@ -44,6 +50,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
     ProvisionResult,
     RefreshResult,
 )
+from jentic_one.control.services.credentials.token_endpoint import same_origin
 from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.shared.config import resolved_control_egress
 from jentic_one.shared.context import Context
@@ -164,30 +171,38 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
                     f"oauth_app_registration {registration.id!r} is missing its "
                     "device_authorization_details extension"
                 )
+            if not same_origin(details.token_endpoint, dfc.token_url):
+                raise ProviderError(
+                    f"oauth_app_registration {registration.id!r} token_endpoint origin "
+                    "does not match the origin where the credential was minted"
+                )
             token_url, client_id = details.token_endpoint, registration.client_id
         refresh_token = await token.decrypt()
-        data = await self._post_token(
-            token_url,
-            {
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": client_id,
-            },
-            egress=resolved_control_egress(ctx.config),
-        )
+        try:
+            data = await self._post_token(
+                token_url,
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": client_id,
+                },
+                egress=resolved_control_egress(ctx.config),
+            )
+        except httpx.HTTPError as exc:
+            raise TokenExchangeError(
+                0, f"token endpoint transport error: {type(exc).__name__}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise ProviderError("device-flow refresh returned non-object JSON")
         access_token = data.get("access_token")
-        if not access_token:
+        if not isinstance(access_token, str) or not access_token.strip():
             raise ProviderError("device-flow refresh returned no access_token")
-        expires_at: datetime | None = None
-        expires_in_raw = data.get("expires_in")
-        if expires_in_raw is not None:
-            try:
-                expires_at = datetime.now(UTC) + timedelta(seconds=int(expires_in_raw))
-            except (TypeError, ValueError):
-                expires_at = None
+        expires_at = _true_expiry(data)
+        new_refresh_token = data.get("refresh_token")
+        scope = data.get("scope")
         return RefreshResult(
             access_token=access_token,
             expires_at=expires_at,
-            refresh_token=data.get("refresh_token"),
-            scope=data.get("scope"),
+            refresh_token=new_refresh_token if isinstance(new_refresh_token, str) else None,
+            scope=scope if isinstance(scope, str) else None,
         )

@@ -476,7 +476,10 @@ async def test_refresh_uses_live_registration_token_endpoint(
             "jentic_one.control.repos.device_authorization_credential_repo."
             "DeviceAuthorizationCredentialRepository.get_by_credential",
             new_callable=AsyncMock,
-            return_value=_FakeDFC(client_id="stale-client", token_url="https://old/token"),
+            return_value=_FakeDFC(
+                client_id="stale-client",
+                token_url="https://idp.example.com/v1/token",
+            ),
         ),
         patch(
             f"{_PROVIDER_MOD}.OAuthAppRegistrationRepository.get_by_id",
@@ -499,3 +502,126 @@ async def test_refresh_uses_live_registration_token_endpoint(
     assert result.access_token == "at_new"
     assert call.args[0] == "https://idp.example.com/v2/token"
     assert call.kwargs["data"]["client_id"] == "live-client"
+
+
+@pytest.mark.asyncio()
+async def test_refresh_refuses_cross_origin_registration_token_endpoint(
+    _legacy_credential_row: AsyncMock,
+) -> None:
+    provider = DeviceAuthorizationConnectProvider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    _legacy_credential_row.return_value = MagicMock(oauth_app_registration_id="oar_1")
+    registration = MagicMock(
+        id="oar_1",
+        is_active=True,
+        client_id="live-client",
+        device_authorization_details=MagicMock(token_endpoint="https://attacker.example.com/token"),
+    )
+    token_view = OAuthTokenView(
+        credential_id="cred_1",
+        provider="device_authorization",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeDFC(
+                client_id="public-client",
+                token_url="https://idp.example.com/token",
+            ),
+        ),
+        patch(
+            f"{_PROVIDER_MOD}.OAuthAppRegistrationRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=registration,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+        pytest.raises(ProviderError, match="origin"),
+    ):
+        await provider.refresh(ctx, token=token_view)
+    mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "bad_expires_in",
+    ["not-a-number", "", 0, -10, True, False, 3600.5, 10**20],
+)
+async def test_refresh_rejects_malformed_or_non_positive_expires_in(
+    bad_expires_in: object,
+) -> None:
+    provider = DeviceAuthorizationConnectProvider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    token_view = OAuthTokenView(
+        credential_id="cred_1",
+        provider="device_authorization",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+    with (
+        patch(
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeDFC(),
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(
+                200, json={"access_token": "at_new", "expires_in": bad_expires_in}
+            )
+        )
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ProviderError, match="expires_in"):
+            await provider.refresh(ctx, token=token_view)
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"access_token": "at_new"},
+        {"access_token": "at_new", "expires_in": None},
+    ],
+)
+async def test_refresh_preserves_omitted_or_null_expires_in(
+    payload: dict[str, object],
+) -> None:
+    provider = DeviceAuthorizationConnectProvider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    token_view = OAuthTokenView(
+        credential_id="cred_1",
+        provider="device_authorization",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+    with (
+        patch(
+            "jentic_one.control.repos.device_authorization_credential_repo."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeDFC(),
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=payload))
+        mock_client_cls.return_value = mock_client
+
+        result = await provider.refresh(ctx, token=token_view)
+    assert result.access_token == "at_new"
+    assert result.expires_at is None

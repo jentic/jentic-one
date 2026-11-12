@@ -315,6 +315,10 @@ async def oauth_callback(
         description="OAuth error code from the identity provider when authorization failed.",
         openapi_examples=ex.example("access_denied"),
     ),
+    account_id: str | None = Query(
+        default=None,
+        description="Connected account identifier returned by hosted connect providers.",
+    ),
     ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
     session_svc: ConnectSessionService = Depends(get_connect_session_service),
@@ -381,6 +385,7 @@ async def oauth_callback(
         raw_state=state,
         session_id=peeked.session_id if peeked is not None else None,
         code=code,
+        account_id=account_id,
         error=error,
         binding=binding,
         svc=svc,
@@ -398,6 +403,7 @@ async def _complete_oauth_callback(
     raw_state: str,
     session_id: str | None,
     code: str | None,
+    account_id: str | None = None,
     error: str | None,
     binding: str | None,
     svc: ConnectService,
@@ -464,7 +470,7 @@ async def _complete_oauth_callback(
         _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
         return _oauth_callback_success()
 
-    callback = ConnectCallback(code=code, error=error)
+    callback = ConnectCallback(code=code, account_id=account_id, error=error)
 
     try:
         credential_id = await svc.complete(raw_state, callback, browser_binding=binding)

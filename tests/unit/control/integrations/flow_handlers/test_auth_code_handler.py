@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+import structlog
 from pydantic import SecretStr
 
 from jentic_one.control.services.credentials.state import decode_state
@@ -46,6 +47,7 @@ from jentic_one.shared.config import (
     ServerConfig,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.redaction import redact_event
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 _STATE_SECRET = "test-state-secret"  # pragma: allowlist secret
@@ -547,3 +549,162 @@ async def test_complete_from_callback_refuses_idp_outside_control_egress(
     ):
         await AuthCodeFlowHandler(ctx).complete_from_callback(_row(), code="c")
     mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("raw_authorize_url", "expected_preserved", "expected_fragment"),
+    [
+        ("https://idp.example.com/authorize", {}, ""),
+        ("https://idp.example.com/authorize?audience=api", {"audience": ["api"]}, ""),
+        (
+            "https://idp.example.com/authorize?tenant=t1&resource=https%3A%2F%2Fapi.example%2Fv1&blank=",
+            {"tenant": ["t1"], "resource": ["https://api.example/v1"], "blank": [""]},
+            "",
+        ),
+        (
+            "https://idp.example.com/authorize?audience=api&state=fixed&client_id=shadow#frag",
+            {"audience": ["api"]},
+            "frag",
+        ),
+    ],
+)
+async def test_begin_merges_existing_query_and_overrides_security_params(
+    raw_authorize_url: str,
+    expected_preserved: dict[str, list[str]],
+    expected_fragment: str,
+) -> None:
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    app = SessionApp(
+        flow_kind="authorization_code",
+        client_id="app-client",
+        client_secret_provider=lambda: "app-secret",
+        default_scopes=[],
+        registration_id=None,
+        authorize_url=raw_authorize_url,
+        token_url="https://idp.example.com/token",
+    )
+    result = await handler.begin(_row(), app=app, confirmed_scopes=["read", "write"])
+    assert isinstance(result, AuthCodeBeginResult)
+    parsed = urlparse(result.authorize_url)
+    assert parsed.fragment == expected_fragment
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    for k, v in expected_preserved.items():
+        assert params[k] == v
+    assert params["client_id"] == ["app-client"]
+    assert params["response_type"] == ["code"]
+    assert params["redirect_uri"] == ["https://app.example.com/credentials/oauth/callback"]
+    assert params["scope"] == ["read write"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert len(params["code_challenge"]) == 1
+    assert len(params["state"]) == 1
+    assert params["state"][0] != "fixed"
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("body_text", "expected_error_slug"),
+    [
+        (
+            '{"error":"invalid_grant","access_token":"live-secret-at","refresh_token":"live-secret-rt","client_secret":"live-cs","code":"live-code"}',
+            "invalid_grant",
+        ),
+        (
+            "access_token=live-secret-at&refresh_token=live-secret-rt&client_secret=live-cs&code=live-code&error=live-secret-at",
+            None,
+        ),
+        (
+            '{"error":"live-secret-at","access_token":"live-secret-at"}',
+            None,
+        ),
+    ],
+)
+async def test_non_200_token_response_never_logs_raw_secret_bearing_body(
+    body_text: str,
+    expected_error_slug: str | None,
+) -> None:
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+        structlog.testing.capture_logs() as captured,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=httpx.Response(400, text=body_text))
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(AuthCodeExchangeError, match="HTTP 400"):
+            await handler.complete_from_callback(_row(), code="live-code")
+
+    assert len(captured) == 1
+    redacted = redact_event(None, "warning", dict(captured[0]))
+    rendered = str(redacted)
+    for secret_marker in ("live-secret-at", "live-secret-rt", "live-cs", "live-code"):
+        assert secret_marker not in rendered
+    assert "body_snippet" not in redacted
+    assert redacted.get("error") == expected_error_slug
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "bad_expires_in",
+    ["not-a-number", "", 0, -5, True, False, 3600.5, 10**20],
+)
+async def test_complete_from_callback_rejects_malformed_or_zero_expires_in(
+    bad_expires_in: object,
+) -> None:
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(
+                200, json={"access_token": "at_ok", "expires_in": bad_expires_in}
+            )
+        )
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(AuthCodeExchangeError, match="expires_in"):
+            await handler.complete_from_callback(_row(), code="c")
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("payload", "expected_expires_in"),
+    [
+        ({"access_token": "at_ok"}, None),
+        ({"access_token": "at_ok", "expires_in": None}, None),
+        ({"access_token": "at_ok", "expires_in": "3600"}, 3600),
+    ],
+)
+async def test_complete_from_callback_preserves_omitted_or_numeric_string_expires_in(
+    payload: dict[str, object],
+    expected_expires_in: int | None,
+) -> None:
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=payload))
+        mock_client_cls.return_value = mock_client
+
+        tokens = await handler.complete_from_callback(_row(), code="c")
+    assert tokens.expires_in == expected_expires_in

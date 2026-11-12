@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import httpx
 
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.repos import CredentialRepository, OAuthClientCredentialRepository
@@ -50,15 +53,49 @@ __all__ = [
 ]
 
 
-def _true_expiry(token_data: dict[str, str]) -> datetime | None:
+def _parse_positive_seconds(raw: object) -> int:
+    """Parse a positive integer second count from a JSON field or raise ``ProviderError``."""
+    if isinstance(raw, bool):
+        raise ProviderError("Invalid expires_in in token response")
+    if isinstance(raw, int):
+        seconds = raw
+    elif isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped or not stripped.lstrip("+-").isdigit():
+            raise ProviderError("Invalid expires_in in token response")
+        seconds = int(stripped)
+    else:
+        raise ProviderError("Invalid expires_in in token response")
+    if seconds <= 0:
+        raise ProviderError("Invalid expires_in in token response")
+    return seconds
+
+
+def _true_expiry(token_data: dict[str, Any]) -> datetime | None:
     """The access token's true expiry from an RFC 6749 ``expires_in`` response.
 
     No safety margin is subtracted: the broker's refresher applies
     ``expiry_skew_seconds`` once, at comparison time.
     """
-    if "expires_in" not in token_data:
+    if "expires_in" not in token_data or token_data["expires_in"] is None:
         return None
-    return datetime.now(UTC) + timedelta(seconds=int(token_data["expires_in"]))
+    seconds = _parse_positive_seconds(token_data["expires_in"])
+    try:
+        return datetime.now(UTC) + timedelta(seconds=seconds)
+    except (OverflowError, ValueError) as exc:
+        raise ProviderError("Invalid expires_in in token response") from exc
+
+
+def _merge_authorize_url(base_url: str, params: dict[str, str]) -> str:
+    """Merge *params* into *base_url*, overriding colliding endpoint query keys."""
+    parts = urlsplit(base_url)
+    existing = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in params
+    ]
+    merged = existing + list(params.items())
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(merged), parts.fragment))
 
 
 class DirectOAuth2Provider(OAuth2Provider):
@@ -66,7 +103,10 @@ class DirectOAuth2Provider(OAuth2Provider):
 
     name: str = "direct_oauth2"
 
-    def __init__(self, cfg: DirectOAuth2ProviderConfig) -> None:
+    def __init__(
+        self, cfg: DirectOAuth2ProviderConfig, *, provider_id: str = "direct_oauth2"
+    ) -> None:
+        self.name = provider_id
         # Explicit override; when None, begin_connect derives per request.
         self._configured_redirect_uri = cfg.redirect_uri
         self._default_scopes = cfg.default_scopes
@@ -158,9 +198,10 @@ class DirectOAuth2Provider(OAuth2Provider):
         ttl = ctx.config.credentials.connect.state_ttl_seconds
         nonce = generate_nonce()
 
+        provider_id = request.extra.get("provider_id") or self.name
         connect_state = ConnectState(
             credential_id=credential_id,
-            provider=self.name,
+            provider=provider_id,
             actor_id=request.extra.get("actor_id"),
             actor_type=request.extra.get("actor_type"),
             issued_at=datetime.now(UTC),
@@ -187,7 +228,7 @@ class DirectOAuth2Provider(OAuth2Provider):
         params.update(self._authorize_extra_params)
 
         return AuthCodeChallenge(
-            authorize_url=f"{authorize_url}?{urlencode(params)}",
+            authorize_url=_merge_authorize_url(authorize_url, params),
             state=signed_state,
         )
 
@@ -225,13 +266,19 @@ class DirectOAuth2Provider(OAuth2Provider):
             redirect_uri=redirect_uri,
         )
 
+        access_token = token_data.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise ProviderError("Token endpoint returned no access_token")
+
         expires_at = _true_expiry(token_data)
+        refresh_token = token_data.get("refresh_token")
+        scope = token_data.get("scope")
 
         return ProvisionResult(
-            access_token=token_data.get("access_token"),
-            refresh_token=token_data.get("refresh_token"),
+            access_token=access_token,
+            refresh_token=refresh_token if isinstance(refresh_token, str) else None,
             expires_at=expires_at,
-            scope=token_data.get("scope"),
+            scope=scope if isinstance(scope, str) else None,
             provider_account_ref=None,
             token_url=token_url,
         )
@@ -255,13 +302,19 @@ class DirectOAuth2Provider(OAuth2Provider):
             refresh_token=refresh_token_value,
         )
 
+        access_token = token_data.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise ProviderError("Token endpoint returned no access_token")
+
         expires_at = _true_expiry(token_data)
+        new_refresh_token = token_data.get("refresh_token")
+        scope = token_data.get("scope")
 
         return RefreshResult(
-            access_token=token_data["access_token"],
+            access_token=access_token,
             expires_at=expires_at,
-            refresh_token=token_data.get("refresh_token"),
-            scope=token_data.get("scope"),
+            refresh_token=new_refresh_token if isinstance(new_refresh_token, str) else None,
+            scope=scope if isinstance(scope, str) else None,
         )
 
     async def _resolve_client_material(
@@ -321,7 +374,7 @@ class DirectOAuth2Provider(OAuth2Provider):
         client_id: str,
         client_secret: str,
         redirect_uri: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         payload = {
             "grant_type": "authorization_code",
             "code": code,
@@ -329,7 +382,7 @@ class DirectOAuth2Provider(OAuth2Provider):
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
         }
-        return await self._post_token(token_url, payload, egress=egress)
+        return await self._post_token_checked(token_url, payload, egress=egress)
 
     async def _refresh_token(
         self,
@@ -339,11 +392,28 @@ class DirectOAuth2Provider(OAuth2Provider):
         client_id: str,
         client_secret: str,
         refresh_token: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         payload = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": client_id,
             "client_secret": client_secret,
         }
-        return await self._post_token(token_url, payload, egress=egress)
+        return await self._post_token_checked(token_url, payload, egress=egress)
+
+    async def _post_token_checked(
+        self,
+        token_url: str,
+        payload: dict[str, str],
+        *,
+        egress: EgressConfig,
+    ) -> dict[str, Any]:
+        try:
+            data = await self._post_token(token_url, payload, egress=egress)
+        except httpx.HTTPError as exc:
+            raise TokenExchangeError(
+                0, f"token endpoint transport error: {type(exc).__name__}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise TokenExchangeError(200, "token endpoint returned non-object JSON")
+        return data

@@ -88,6 +88,7 @@ class ConnectService:
         extra = dict(request.extra)
         extra.update(
             credential_id=credential_id,
+            provider_id=provider_name,
             actor_id=identity.sub,
             actor_type=str(identity.actor_type),
         )
@@ -137,6 +138,16 @@ class ConnectService:
             # theme-8 Phase 4): that actor can no longer own a credential.
             raise ConnectFlowError(f"Unsupported actor_type in state: {state.actor_type}") from exc
         try:
+            async with self._ctx.control_db.session() as session:
+                credential = await CredentialRepository.get_by_id(session, state.credential_id)
+                if credential is None:
+                    raise CredentialNotFoundError(state.credential_id)
+                if credential.provider != state.provider:
+                    raise ConnectFlowError(
+                        f"State provider {state.provider!r} does not match "
+                        f"credential provider {credential.provider!r}"
+                    )
+
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)
 
@@ -150,6 +161,11 @@ class ConnectService:
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
+                if credential.provider != state.provider:
+                    raise ConnectFlowError(
+                        f"State provider {state.provider!r} does not match "
+                        f"credential provider {credential.provider!r}"
+                    )
                 current_token_url = await OAuthClientCredentialRepository.current_token_url(
                     session, credential
                 )
