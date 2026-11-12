@@ -9,6 +9,7 @@ rather than inline string literals scattered across the routers.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
 
 # Anything outside printable ASCII (0x20-0x7E). Excludes CR/LF/NUL and all
@@ -148,3 +149,67 @@ SPOOFABLE_HEADERS: frozenset[str] = frozenset(
         "via",
     }
 )
+
+
+def extract_header_items(
+    headers: Mapping[str, str] | Iterable[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Return ordered ``(name, value)`` pairs from ``headers``, preserving repeated fields."""
+    raw_attr = getattr(headers, "raw_headers", None)
+    if isinstance(raw_attr, tuple | list) and (
+        not raw_attr or (isinstance(raw_attr[0], tuple) and isinstance(raw_attr[0][0], str))
+    ):
+        return [(str(k), str(v)) for k, v in raw_attr]
+    multi_items = getattr(headers, "multi_items", None)
+    if callable(multi_items):
+        raw_multi = multi_items()
+        if isinstance(raw_multi, Iterable):
+            return [(str(k), str(v)) for k, v in raw_multi]
+    if isinstance(headers, Mapping):
+        return [(str(k), str(v)) for k, v in headers.items()]
+    return [(str(k), str(v)) for k, v in headers]
+
+
+def connection_nominated_headers(
+    headers: Mapping[str, str] | Iterable[tuple[str, str]],
+) -> frozenset[str]:
+    """Parse ``Connection`` header tokens case-insensitively across all ``Connection`` fields.
+
+    Every token nominated in a ``Connection`` header is hop-by-hop (RFC 7230 §6.1)
+    and must be stripped before forwarding in either direction.
+    """
+    nominated: set[str] = set(getattr(headers, "connection_nominated", ()))
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        raw_vals = getlist("connection")
+        if isinstance(raw_vals, Iterable):
+            for raw_val in raw_vals:
+                for token in str(raw_val).split(","):
+                    cleaned = token.strip().lower()
+                    if cleaned:
+                        nominated.add(cleaned)
+    for name, value in extract_header_items(headers):
+        if name.lower() == "connection":
+            for token in value.split(","):
+                cleaned = token.strip().lower()
+                if cleaned:
+                    nominated.add(cleaned)
+    return frozenset(nominated)
+
+
+def scrub_sensitive_header_items(
+    headers: Mapping[str, str] | Iterable[tuple[str, str]],
+    *,
+    extra_excluded: Iterable[str] = (),
+) -> list[tuple[str, str]]:
+    """Return ordered ``(name, value)`` pairs with sensitive response headers removed.
+
+    Preserves repeated non-sensitive fields while scrubbing ``Set-Cookie`` and
+    other security-bearing headers in :data:`SENSITIVE_RESPONSE_HEADERS`.
+    """
+    excluded = SENSITIVE_RESPONSE_HEADERS | {name.lower() for name in extra_excluded}
+    return [
+        (name, value)
+        for name, value in extract_header_items(headers)
+        if name.lower() not in excluded
+    ]

@@ -7,23 +7,33 @@ domain layer per the 00-overview layering table.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from jentic_one.broker.core.headers import (
     BROKER_CONSUMED_HEADERS,
     HOP_BY_HOP_HEADERS,
     SPOOFABLE_HEADERS,
+    connection_nominated_headers,
+    extract_header_items,
+    scrub_sensitive_header_items,
+)
+from jentic_one.shared.http.injection import (
+    filter_inbound_cookie,
+    get_current_upstream_url,
+    record_upstream_set_cookie,
+    set_current_upstream_url,
 )
 
 # Restore the scheme's doubled slash that Starlette collapses (``https:/x`` →
 # ``https://x``) — applied to the *raw* path only.
 _SCHEME_RE = re.compile(r"^(https?):/([^/])")
 
-# Response headers that describe the *encoded* upstream body. httpx decompresses
-# the body before we see it, so these no longer match ``RunnerResult.body`` and
-# must be dropped (the ASGI server recomputes ``content-length``).
-_DECODED_BODY_HEADERS: frozenset[str] = frozenset({"content-length", "content-encoding"})
+# Response framing header dropped on passthrough: the ASGI server recomputes
+# ``content-length`` from the actual body bytes (or uses chunked transfer on
+# streaming responses). ``content-encoding`` is preserved because the HTTP
+# runner reads raw, undecoded bytes via ``aiter_raw``.
+_STRIPPED_RESPONSE_BODY_HEADERS: frozenset[str] = frozenset({"content-length"})
 
 # Inbound framing that describes the *caller's* body, not the outbound one. The
 # broker drops the body on body-less methods (GET, HEAD, OPTIONS) and httpx
@@ -40,32 +50,112 @@ PASSTHROUGH_CACHE_CONTROL = "private, no-store"
 # Request headers an async (``Prefer: respond-async``) or held execution keeps
 # for its worker run. The job payload sits in the admin DB (a held one for its
 # whole approval window), so this is an explicit
-# allow-list of headers that describe the body, the response the caller wants,
-# and the API version a vendor requires — never the caller's credentials,
-# cookies, hop-by-hop or broker headers. The run re-injects upstream
-# credentials itself; the caller's ``Cookie`` rides separately, encrypted
-# (``INBOUND_COOKIE_PAYLOAD_KEY`` in ``shared/jobs/hold.py``).
+# allow-list of end-to-end semantic headers that describe the body, range/conditional
+# semantics, content negotiation, and the API version a vendor requires — never
+# the caller's credentials, cookies, hop-by-hop or broker headers. The run
+# re-injects upstream credentials itself; the caller's ``Cookie`` rides
+# separately, encrypted (``INBOUND_COOKIE_PAYLOAD_KEY`` in ``shared/jobs/hold.py``).
 REPLAY_HEADERS: frozenset[str] = frozenset(
     {
         "accept",
+        "accept-charset",
+        "accept-encoding",
         "accept-language",
+        "cache-control",
+        "content-disposition",
         "content-encoding",
         "content-language",
+        "content-location",
+        "content-range",
         "content-type",
+        "expect",
         "if-match",
         "if-modified-since",
         "if-none-match",
+        "if-range",
         "if-unmodified-since",
-        # Vendor API version headers, several of them required on every call.
+        "max-forwards",
+        "range",
+        "user-agent",
+        # Vendor API version and semantic headers required on calls.
+        "anthropic-beta",
         "anthropic-version",
         "api-version",
         "intercom-version",
         "notion-version",
+        "openai-beta",
+        "openai-organization",
+        "openai-project",
+        "stripe-account",
+        "stripe-context",
         "stripe-version",
         "x-api-version",
         "x-github-api-version",
     }
 )
+
+
+class ResponseHeaderMap(dict[str, str]):
+    """Dictionary view of HTTP headers that also retains raw ``(name, value)`` pairs."""
+
+    __slots__ = ("raw_headers",)
+
+    def __init__(
+        self,
+        mapping: Mapping[str, str] | Iterable[tuple[str, str]] = (),
+        *,
+        raw_headers: Iterable[tuple[str, str]] | None = None,
+    ) -> None:
+        if isinstance(mapping, Mapping):
+            super().__init__(mapping)
+            if raw_headers is not None:
+                self.raw_headers: tuple[tuple[str, str], ...] = tuple(
+                    (str(k), str(v)) for k, v in raw_headers
+                )
+            elif isinstance(mapping, ResponseHeaderMap):
+                self.raw_headers = mapping.raw_headers
+            else:
+                self.raw_headers = tuple(extract_header_items(mapping))
+        else:
+            items = tuple((str(k), str(v)) for k, v in mapping)
+            combined: dict[str, str] = {}
+            for k, v in items:
+                if k in combined:
+                    combined[k] = f"{combined[k]}, {v}"
+                else:
+                    combined[k] = v
+            super().__init__(combined)
+            self.raw_headers = (
+                tuple((str(k), str(v)) for k, v in raw_headers)
+                if raw_headers is not None
+                else items
+            )
+
+    def multi_items(self) -> list[tuple[str, str]]:
+        """Return all ``(name, value)`` pairs in order, preserving duplicates."""
+        return list(self.raw_headers)
+
+    def getlist(self, name: str) -> list[str]:
+        """Return all values for ``name`` (case-insensitive) in order."""
+        target = name.lower()
+        return [v for k, v in self.raw_headers if k.lower() == target]
+
+    get_list = getlist
+
+
+class ForwardedHeaderMap(dict[str, str]):
+    """Forwarded request headers carrying ``Connection``-nominated field names."""
+
+    __slots__ = ("connection_nominated",)
+
+    def __init__(
+        self,
+        mapping: Mapping[str, str] | Iterable[tuple[str, str]] = (),
+        *,
+        connection_nominated: frozenset[str] = frozenset(),
+    ) -> None:
+        super().__init__(mapping)
+        self.connection_nominated = connection_nominated
 
 
 def reconstruct_upstream_url(scope: Mapping[str, Any]) -> str:
@@ -88,32 +178,46 @@ def reconstruct_upstream_url(scope: Mapping[str, Any]) -> str:
         url = f"https://{url}"
     if query_string:
         url = f"{url}?{query_string}"
+    set_current_upstream_url(url)
     return url
 
 
-def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> dict[str, str]:
+def forward_headers(
+    inbound: Mapping[str, str],
+    injected: Mapping[str, str],
+    *,
+    upstream_url: str | None = None,
+) -> dict[str, str]:
     """Filter inbound request headers for forwarding, then apply injected auth.
 
-    Strips hop-by-hop (incl. ``Host``), broker-consumed, and spoofable
-    forwarding/topology headers, plus the inbound ``Content-Length``: httpx
-    computes the outbound length from the body actually sent. Injected auth
-    headers win on conflict.
-
-    ``Cookie`` is intentionally **not** special-cased here: the router passes
-    the result to :func:`~jentic_one.shared.http.injection.apply_injection`,
-    which appends cookie credentials to the caller's ``Cookie`` rather than
-    overwriting it.
+    Strips fixed hop-by-hop (incl. ``Host``), ``Connection``-nominated
+    hop-by-hop, broker-consumed, and spoofable forwarding/topology headers,
+    plus the inbound ``Content-Length``: httpx computes the outbound length
+    from the body actually sent. Injected auth headers win on conflict in any
+    letter case.
     """
-    out = {
-        key: value
-        for key, value in inbound.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS
-        and key.lower() not in BROKER_CONSUMED_HEADERS
-        and key.lower() not in SPOOFABLE_HEADERS
-        and key.lower() not in _INBOUND_FRAMING_HEADERS
-    }
+    nominated = connection_nominated_headers(inbound)
+    injected_lower = {k.lower() for k in injected}
+    out: dict[str, str] = {}
+    for key, value in inbound.items():
+        lowered = key.lower()
+        if (
+            lowered in HOP_BY_HOP_HEADERS
+            or lowered in nominated
+            or lowered in BROKER_CONSUMED_HEADERS
+            or lowered in SPOOFABLE_HEADERS
+            or lowered in _INBOUND_FRAMING_HEADERS
+            or lowered in injected_lower
+        ):
+            continue
+        if lowered == "cookie" and upstream_url:
+            filtered_cookie = filter_inbound_cookie(value, upstream_url)
+            if not filtered_cookie:
+                continue
+            value = filtered_cookie
+        out[key] = value
     out.update(injected)
-    return out
+    return ForwardedHeaderMap(out, connection_nominated=nominated)
 
 
 # API version request headers beyond the named ones above. Many vendors refuse
@@ -132,13 +236,14 @@ def is_replay_header(name: str) -> bool:
 
     True for :data:`REPLAY_HEADERS` and API version headers (see
     ``_REPLAY_VERSION_HEADER_RE``); never for hop-by-hop, broker-consumed,
-    spoofable or ``Jentic-*`` headers.
+    spoofable, framing, or ``Jentic-*`` headers.
     """
     key = name.lower()
     if (
         key in HOP_BY_HOP_HEADERS
         or key in BROKER_CONSUMED_HEADERS
         or key in SPOOFABLE_HEADERS
+        or key in _INBOUND_FRAMING_HEADERS
         or key.startswith(_JENTIC_HEADER_PREFIXES)
     ):
         return False
@@ -148,64 +253,111 @@ def is_replay_header(name: str) -> bool:
 def replay_headers(inbound: Mapping[str, str]) -> dict[str, str]:
     """The inbound headers :func:`is_replay_header` keeps, keyed lower-case.
 
-    What an async or held execution's job payload keeps so its run sends the
-    body as the caller described it (``Content-Type`` above all) and at the
-    API version the caller chose.
+    Excludes any header nominated in ``Connection`` so connection-scoped fields
+    never persist into a queued or held job payload.
     """
-    return {key.lower(): value for key, value in inbound.items() if is_replay_header(key)}
+    nominated = connection_nominated_headers(inbound)
+    return {
+        key.lower(): value
+        for key, value in inbound.items()
+        if key.lower() not in nominated and is_replay_header(key)
+    }
 
 
-def _private_cache_control(passthrough: dict[str, str]) -> dict[str, str]:
-    """Replace any upstream ``Cache-Control`` with ``private, no-store`` (#1835).
+extract_replay_headers = replay_headers
 
-    Every passthrough body was produced with a credential the broker injected,
-    so it belongs to that caller whatever the upstream said: an upstream
-    ``public, max-age=…`` would let a shared cache in front of the broker serve
-    it to another caller. Applies to every content type. ``ETag`` and the
-    other validators pass through untouched.
+
+def passthrough_response_header_items(
+    upstream: Mapping[str, str] | Iterable[tuple[str, str]],
+    *,
+    upstream_url: str | None = None,
+) -> list[tuple[str, str]]:
+    """Filter upstream response header ``(name, value)`` pairs for passthrough.
+
+    Preserves repeated fields (such as multiple ``Set-Cookie`` headers) and
+    ``Content-Encoding`` (matching the raw bytes read via ``aiter_raw``),
+    strips fixed and ``Connection``-nominated hop-by-hop headers plus
+    ``Content-Length``, and replaces ``Cache-Control`` with
+    :data:`PASSTHROUGH_CACHE_CONTROL`.
     """
-    out = {key: value for key, value in passthrough.items() if key.lower() != "cache-control"}
-    out["cache-control"] = PASSTHROUGH_CACHE_CONTROL
-    return out
+    items = extract_header_items(upstream)
+    nominated = connection_nominated_headers(upstream)
+    effective_url = upstream_url or get_current_upstream_url()
+    kept: list[tuple[str, str]] = []
+    for key, value in items:
+        lowered = key.lower()
+        if (
+            lowered in HOP_BY_HOP_HEADERS
+            or lowered in nominated
+            or lowered in _STRIPPED_RESPONSE_BODY_HEADERS
+            or lowered == "cache-control"
+        ):
+            continue
+        if lowered == "set-cookie" and effective_url:
+            record_upstream_set_cookie(effective_url, value)
+        kept.append((key, value))
+    kept.append(("cache-control", PASSTHROUGH_CACHE_CONTROL))
+    return kept
 
 
-def passthrough_response_headers(upstream: Mapping[str, str]) -> dict[str, str]:
+def passthrough_streaming_header_items(
+    upstream: Mapping[str, str] | Iterable[tuple[str, str]],
+    *,
+    upstream_url: str | None = None,
+) -> list[tuple[str, str]]:
+    """Filter upstream streaming response header ``(name, value)`` pairs for passthrough."""
+    return passthrough_response_header_items(upstream, upstream_url=upstream_url)
+
+
+filter_response_header_items = passthrough_response_header_items
+
+
+def passthrough_response_headers(
+    upstream: Mapping[str, str] | Iterable[tuple[str, str]],
+    *,
+    upstream_url: str | None = None,
+) -> ResponseHeaderMap:
     """Filter upstream *response* headers for passthrough.
 
-    Strips hop-by-hop plus ``content-length``/``content-encoding``: httpx
-    transparently decompresses the response, so ``RunnerResult.body`` is the
-    *decoded* bytes — forwarding the upstream ``content-encoding`` (e.g. ``gzip``)
-    or its now-stale ``content-length`` would misdescribe the body to the
-    downstream client. The ASGI server recomputes ``content-length`` from the
-    actual body. ``Cache-Control`` is always ``private, no-store`` (see
-    :func:`_private_cache_control`). Everything else passes through verbatim —
-    no ``x-upstream-`` prefixing (B-002).
+    Strips fixed and ``Connection``-nominated hop-by-hop headers plus
+    ``content-length`` (recomputed by the ASGI server from the actual body).
+    ``content-encoding`` is preserved because ``HttpRunner`` streams raw,
+    still-compressed bytes via ``aiter_raw``. ``Cache-Control`` is always
+    ``private, no-store``. Returns a :class:`ResponseHeaderMap` (a ``dict``
+    subclass) that also retains ``raw_headers`` for repeated fields.
     """
-    return _private_cache_control(
-        {
-            key: value
-            for key, value in upstream.items()
-            if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() not in _DECODED_BODY_HEADERS
-        }
-    )
+    items = passthrough_response_header_items(upstream, upstream_url=upstream_url)
+    return ResponseHeaderMap(items, raw_headers=items)
 
 
-def passthrough_streaming_headers(upstream: Mapping[str, str]) -> dict[str, str]:
-    """Filter upstream response headers for the **raw streaming** passthrough.
+def passthrough_streaming_headers(
+    upstream: Mapping[str, str] | Iterable[tuple[str, str]],
+    *,
+    upstream_url: str | None = None,
+) -> ResponseHeaderMap:
+    """Filter upstream response headers for the **raw streaming** passthrough."""
+    items = passthrough_streaming_header_items(upstream, upstream_url=upstream_url)
+    return ResponseHeaderMap(items, raw_headers=items)
 
-    The streaming path forwards the upstream body byte-for-byte via ``aiter_raw``
-    (still-compressed), so — unlike the buffered path — ``content-encoding`` is
-    **preserved** (the bytes really are still in that encoding). ``content-length``
-    is dropped: we may abort the stream early (size cap / deadline), and a partial
-    body must not be described by the original full length; the ASGI server uses
-    chunked transfer instead. ``Cache-Control`` is always ``private, no-store``
-    (see :func:`_private_cache_control`). Only hop-by-hop headers are otherwise
-    stripped.
-    """
-    return _private_cache_control(
-        {
-            key: value
-            for key, value in upstream.items()
-            if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "content-length"
-        }
-    )
+
+filter_response_headers = passthrough_response_headers
+
+
+__all__ = [
+    "PASSTHROUGH_CACHE_CONTROL",
+    "REPLAY_HEADERS",
+    "ForwardedHeaderMap",
+    "ResponseHeaderMap",
+    "extract_replay_headers",
+    "filter_response_header_items",
+    "filter_response_headers",
+    "forward_headers",
+    "is_replay_header",
+    "passthrough_response_header_items",
+    "passthrough_response_headers",
+    "passthrough_streaming_header_items",
+    "passthrough_streaming_headers",
+    "reconstruct_upstream_url",
+    "replay_headers",
+    "scrub_sensitive_header_items",
+]

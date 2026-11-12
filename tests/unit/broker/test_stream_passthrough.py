@@ -266,6 +266,42 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
     assert resp.headers["x-vendor"] == "v"
 
 
+@pytest.mark.asyncio
+async def test_open_streaming_response_preserves_repeated_set_cookie_fields() -> None:
+    cookie_1 = "c1=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/"
+    cookie_2 = "c2=2; Path=/; HttpOnly"
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[
+                ("content-type", "application/json"),
+                ("set-cookie", cookie_1),
+                ("set-cookie", cookie_2),
+            ],
+            content=b"{}",
+        )
+
+    ctx_req = ExecuteRequestContext(
+        upstream_url="https://api.example.com/x",
+        method="GET",
+        trace_id="t",
+        operation=OperationInfo(id="op"),
+        api_vendor="vendor",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        resp = await open_streaming_response(
+            runner,
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            ctx_req,
+            "exec-stream-cookies",
+            transfer_deadline_s=0,
+        )
+
+    assert resp.headers.getlist("set-cookie") == [cookie_1, cookie_2]
+
+
 # --- circuit-breaker streaming decorator --------------------------------------
 
 

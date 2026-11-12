@@ -175,3 +175,30 @@ def test_any_vendor_version_header_replays(name: str) -> None:
 def test_replay_never_keeps_credentials_hop_by_hop_or_jentic_headers(name: str) -> None:
     assert is_replay_header(name) is False
     assert replay_headers({name: "1"}) == {}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Range",
+        "If-Range",
+        "Accept-Encoding",
+        "Accept-Charset",
+        "Cache-Control",
+        "Content-Disposition",
+        "Content-Location",
+        "Content-Range",
+        "Expect",
+        "Max-Forwards",
+        "User-Agent",
+        "Anthropic-Beta",
+        "OpenAI-Beta",
+        "OpenAI-Organization",
+        "OpenAI-Project",
+        "Stripe-Account",
+        "Stripe-Context",
+    ],
+)
+def test_replay_preserves_semantic_and_content_negotiation_headers(name: str) -> None:
+    assert is_replay_header(name) is True
+    assert replay_headers({name: "value"}) == {name.lower(): "value"}

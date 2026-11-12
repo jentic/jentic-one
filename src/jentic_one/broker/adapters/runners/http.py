@@ -23,6 +23,7 @@ import contextlib
 import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import httpx
 import structlog
@@ -43,9 +44,17 @@ from jentic_one.broker.core.errors import (
     UpstreamResponseTooLargeError,
     UpstreamTimeoutError,
     UpstreamTransportError,
+    UpstreamUrlNotAllowedError,
 )
+from jentic_one.broker.core.headers import connection_nominated_headers
+from jentic_one.broker.core.proxy_headers import ResponseHeaderMap
 from jentic_one.shared.broker.protocols import RunnerCapabilities
 from jentic_one.shared.egress import UpstreamHostUnresolvedError
+from jentic_one.shared.http.injection import (
+    filter_inbound_cookie,
+    record_upstream_set_cookie,
+)
+from jentic_one.shared.url_validation import UpstreamUrlInvalidError, reject_url_userinfo
 
 logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer("broker.runner")
@@ -208,6 +217,44 @@ class _HostBulkhead:
             slot.in_flight -= 1
 
 
+@dataclass(frozen=True, slots=True)
+class HttpRunnerResult(RunnerResult):
+    """HTTP runner response retaining ordered multi-item ``raw_headers``."""
+
+    raw_headers: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class HttpStreamingResult(StreamingResult):
+    """HTTP streaming response retaining ordered multi-item ``raw_headers``."""
+
+    raw_headers: tuple[tuple[str, str], ...] = ()
+
+
+def _parse_request_url(url: str) -> httpx.URL:
+    """Parse ``url`` and reject any embedded userinfo before transport dispatch.
+
+    HTTPX derives Basic authentication from URL userinfo and overwrites an
+    existing ``Authorization`` header during request authentication. Rejecting
+    userinfo here defends the transport edge even if a caller bypasses pre-flight
+    URL validation.
+    """
+    try:
+        reject_url_userinfo(url)
+    except UpstreamUrlInvalidError as exc:
+        raise UpstreamUrlNotAllowedError(
+            detail=str(exc),
+            type="invalid_upstream_url",
+        ) from exc
+    parsed = httpx.URL(url)
+    if parsed.username or parsed.password or b"@" in parsed.raw_host:
+        raise UpstreamUrlNotAllowedError(
+            detail="upstream URL must not contain userinfo",
+            type="invalid_upstream_url",
+        )
+    return parsed
+
+
 class HttpRunner(UpstreamRunner):
     """Executes upstream requests over the single shared bounded ``httpx.AsyncClient``.
 
@@ -234,24 +281,36 @@ class HttpRunner(UpstreamRunner):
         return HTTP_RUNNER_CAPABILITIES
 
     @staticmethod
-    def _outbound_headers(headers: dict[str, str]) -> dict[str, str]:
-        """Ensure Accept-Encoding is explicit so httpx never injects its default.
+    def _outbound_headers(headers: dict[str, str], url: str | None = None) -> dict[str, str]:
+        """Ensure Accept-Encoding is explicit and strip Connection-nominated or foreign cookies.
 
         When the caller omits Accept-Encoding, httpx silently adds
         ``gzip, deflate, br`` — causing the upstream to compress a response the
         caller never opted into. We inject ``identity`` as a sentinel to suppress
         the default while signalling "no encoding" to the upstream.
         """
-        if any(k.lower() == "accept-encoding" for k in headers):
-            return headers
-        return {**headers, "accept-encoding": "identity"}
+        nominated = connection_nominated_headers(headers)
+        out: dict[str, str] = {}
+        for key, value in headers.items():
+            lowered = key.lower()
+            if lowered == "connection" or lowered in nominated:
+                continue
+            if lowered == "cookie" and url:
+                filtered_cookie = filter_inbound_cookie(value, url)
+                if not filtered_cookie:
+                    continue
+                value = filtered_cookie
+            out[key] = value
+        if any(k.lower() == "accept-encoding" for k in out):
+            return out
+        return {**out, "accept-encoding": "identity"}
 
-    async def run(self, request: RunnerRequest) -> RunnerResult:
-        host = httpx.URL(request.url).host
+    async def run(self, request: RunnerRequest) -> HttpRunnerResult:
+        host = _parse_request_url(request.url).host
         async with self._bulkhead.guard(host):
             return await self._run(request, host)
 
-    async def _run(self, request: RunnerRequest, host: str) -> RunnerResult:
+    async def _run(self, request: RunnerRequest, host: str) -> HttpRunnerResult:
         start = time.perf_counter()
         with _tracer.start_as_current_span("broker.upstream_request") as span:
             span.set_attribute("http.url_host", host)
@@ -260,7 +319,7 @@ class HttpRunner(UpstreamRunner):
                     method=request.method,
                     url=request.url,
                     content=request.body,
-                    headers=self._outbound_headers(request.headers),
+                    headers=self._outbound_headers(request.headers, request.url),
                     timeout=request.timeout_s,
                 )
                 resp = await self._client.send(req, stream=True)
@@ -279,13 +338,29 @@ class HttpRunner(UpstreamRunner):
                 raise _map_transport_error(exc) from None
 
         elapsed_ms = (time.perf_counter() - start) * 1000
-        return RunnerResult(
+        raw_headers = tuple((k, v) for k, v in resp.headers.multi_items())
+        for header_name, header_val in raw_headers:
+            if header_name.lower() == "set-cookie":
+                record_upstream_set_cookie(request.url, header_val)
+        return HttpRunnerResult(
             status_code=resp.status_code,
             body=body,
-            headers=dict(resp.headers),
+            headers=ResponseHeaderMap(dict(resp.headers), raw_headers=raw_headers),
             content_type=resp.headers.get("content-type"),
             duration_ms=elapsed_ms,
+            raw_headers=raw_headers,
         )
+
+    @staticmethod
+    async def _raw_source(resp: httpx.Response) -> AsyncIterator[bytes]:
+        if resp.is_stream_consumed:
+            raw = getattr(resp, "_raw_content", None)
+            payload = raw if isinstance(raw, bytes) else resp.content
+            if payload:
+                yield payload
+            return
+        async for chunk in resp.aiter_raw():
+            yield chunk
 
     async def _read_capped(self, resp: httpx.Response) -> bytes:
         """Drain the raw (still-compressed) body, enforcing the size cap mid-stream.
@@ -298,7 +373,7 @@ class HttpRunner(UpstreamRunner):
         pool slot. A cap of 0 disables the check (unbounded passthrough).
         """
         chunks: list[bytes] = []
-        async for chunk in self._cap_iter(resp.aiter_raw(), resp.status_code):
+        async for chunk in self._cap_iter(self._raw_source(resp), resp.status_code):
             chunks.append(chunk)
         return b"".join(chunks)
 
@@ -337,7 +412,7 @@ class HttpRunner(UpstreamRunner):
         surfaced (see :func:`_transport_error_detail`).
         """
         try:
-            async for chunk in self._cap_iter(resp.aiter_raw(), resp.status_code):
+            async for chunk in self._cap_iter(self._raw_source(resp), resp.status_code):
                 yield chunk
         except httpx.TimeoutException as exc:
             raise UpstreamBodyInterruptedError(
@@ -353,7 +428,7 @@ class HttpRunner(UpstreamRunner):
             ) from None
 
     @contextlib.asynccontextmanager
-    async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
+    async def stream(self, request: RunnerRequest) -> AsyncIterator[HttpStreamingResult]:
         """Open the upstream response and stream it without buffering.
 
         Holds the upstream ``httpx`` response open only for the ``async with``
@@ -366,21 +441,26 @@ class HttpRunner(UpstreamRunner):
         (see :meth:`_stream_body`). The per-host bulkhead is held for the full
         stream lifetime.
         """
-        host = httpx.URL(request.url).host
+        host = _parse_request_url(request.url).host
         async with self._bulkhead.guard(host):
             try:
                 async with self._client.stream(
                     method=request.method,
                     url=request.url,
                     content=request.body,
-                    headers=self._outbound_headers(request.headers),
+                    headers=self._outbound_headers(request.headers, request.url),
                     timeout=request.timeout_s,
                 ) as resp:
-                    yield StreamingResult(
+                    raw_headers = tuple((k, v) for k, v in resp.headers.multi_items())
+                    for header_name, header_val in raw_headers:
+                        if header_name.lower() == "set-cookie":
+                            record_upstream_set_cookie(request.url, header_val)
+                    yield HttpStreamingResult(
                         status_code=resp.status_code,
-                        headers=dict(resp.headers),
+                        headers=ResponseHeaderMap(dict(resp.headers), raw_headers=raw_headers),
                         content_type=resp.headers.get("content-type"),
                         aiter=self._stream_body(resp),
+                        raw_headers=raw_headers,
                     )
             except _TRANSPORT_FAILURES as exc:
                 # Same mapping as the buffered path. The edge drains the body

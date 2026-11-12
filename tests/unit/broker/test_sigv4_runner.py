@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import AsyncIterator
 
+import httpx
 import pytest
 
 from jentic_one.broker.adapters.runners.base import (
@@ -19,7 +20,9 @@ from jentic_one.broker.adapters.runners.base import (
     RunnerResult,
     StreamingResult,
 )
+from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.sigv4 import SigV4SigningRunner
+from jentic_one.broker.core.errors import UpstreamUrlNotAllowedError
 from jentic_one.shared.aws.sigv4 import SigV4Material
 
 
@@ -185,3 +188,47 @@ async def test_stream_signs_request() -> None:
     assert inner.seen is not None
     assert "authorization" in inner.seen.headers
     assert inner.seen.signing is None
+
+
+@pytest.mark.asyncio()
+async def test_sigv4_runner_rejects_url_userinfo_before_signing_or_dispatch() -> None:
+    inner = _CapturingRunner()
+    runner = SigV4SigningRunner(inner)
+
+    for signing in (_MATERIAL, None):
+        req = RunnerRequest(
+            method="GET",
+            url="https://user:pass@x.aoss.amazonaws.com/",
+            headers={"Authorization": "Bearer injected"},
+            signing=signing,
+        )
+        with pytest.raises(UpstreamUrlNotAllowedError, match="userinfo"):
+            await runner.run(req)
+        with pytest.raises(UpstreamUrlNotAllowedError, match="userinfo"):
+            async with runner.stream(req):
+                pass
+
+    assert inner.seen is None
+
+
+@pytest.mark.asyncio()
+async def test_sigv4_wrapping_http_runner_retains_signed_authorization() -> None:
+    seen_auth: list[str | None] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen_auth.append(req.headers.get("authorization"))
+        return httpx.Response(200, content=b"ok")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        composed = SigV4SigningRunner(HttpRunner(client))
+        await composed.run(
+            RunnerRequest(
+                method="GET",
+                url="https://x.aoss.amazonaws.com/",
+                signing=_MATERIAL,
+            )
+        )
+
+    assert len(seen_auth) == 1
+    assert seen_auth[0] is not None
+    assert seen_auth[0].startswith("AWS4-HMAC-SHA256 ")

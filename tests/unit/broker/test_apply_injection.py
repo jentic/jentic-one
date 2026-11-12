@@ -295,3 +295,45 @@ async def test_held_payload_sends_the_same_upstream_request_as_sync(
     assert _lowered(held_headers) == _lowered(sync_headers)
     if inbound_cookies:
         assert _lowered(held_headers)["cookie"].startswith("; ".join(inbound_cookies))
+
+
+@pytest.mark.asyncio
+async def test_sync_async_and_held_strip_colliding_query_and_cookie_names() -> None:
+    url = "https://api.example.com/v1/things?api_key=caller1&page=2&%61pi_key=caller2"
+    injection = InjectedAuth(
+        headers={"Authorization": "Bearer broker"},
+        query_params={"api_key": "broker"},
+        cookies={"session": "broker"},
+    )
+    req = _request(cookies=["session=caller1; sid=keep; %73ession=caller2"])
+    sync_url, sync_headers = _apply_injection(url, injection, req)
+    assert sync_url == "https://api.example.com/v1/things?page=2&api_key=broker"
+    assert sync_headers["Cookie"] == "sid=keep; session=broker"
+
+
+def test_sync_connection_nominated_cookie_dropped_before_cookie_injection() -> None:
+    raw: list[tuple[bytes, bytes]] = [
+        (b"host", b"broker.local:8080"),
+        (b"connection", b"Cookie, X-Hop"),
+        (b"cookie", b"caller_sid=1"),
+        (b"x-hop", b"drop-me"),
+        (b"accept", b"application/json"),
+    ]
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "scheme": "http",
+        "server": ("broker.local", 8080),
+        "path": "/api.example.com/v1/things",
+        "raw_path": b"/api.example.com/v1/things",
+        "root_path": "",
+        "query_string": b"",
+        "headers": raw,
+    }
+    request = Request(scope)
+    auth = InjectedAuth(headers={}, query_params={}, cookies={"session": "broker"})
+    _, headers = _apply_injection(_URL, auth, request)
+    lowered = _lowered(headers)
+    assert "x-hop" not in lowered
+    assert "connection" not in lowered
+    assert lowered["cookie"] == "session=broker"

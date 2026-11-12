@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import types
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -20,8 +22,14 @@ from jentic_one.broker.core.errors import (
     BrokerError,
     UpstreamTimeoutError,
     UpstreamTransportError,
+    UpstreamUrlNotAllowedError,
+)
+from jentic_one.broker.core.proxy_headers import (
+    passthrough_response_header_items,
+    passthrough_response_headers,
 )
 from jentic_one.shared.broker.execution import ErrorOrigin
+from jentic_one.shared.http.injection import clear_upstream_cookie_scopes
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
@@ -408,3 +416,111 @@ async def test_proxy_error_maps_to_pre_send_connect_failed_502() -> None:
     assert excinfo.value.pre_send is True
     assert excinfo.value.local_only is False
     assert excinfo.value.origin is ErrorOrigin.BROKER
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_url_userinfo_without_dispatching() -> None:
+    dispatched = False
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        nonlocal dispatched
+        dispatched = True
+        return httpx.Response(200)
+
+    async with _mock_client(httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        with pytest.raises(UpstreamUrlNotAllowedError, match="userinfo"):
+            await runner.run(
+                RunnerRequest(
+                    method="GET",
+                    url="https://other:secret@api.example.com/resource",
+                    headers={"Authorization": "Bearer centrally-injected"},
+                )
+            )
+        with pytest.raises(UpstreamUrlNotAllowedError, match="userinfo"):
+            async with runner.stream(
+                RunnerRequest(
+                    method="GET",
+                    url="https://other:secret@api.example.com/resource",
+                    headers={"Authorization": "Bearer centrally-injected"},
+                )
+            ):
+                pass
+
+    assert dispatched is False
+
+
+@pytest.mark.asyncio
+async def test_buffered_gzip_and_repeated_set_cookie_preserved() -> None:
+    clear_upstream_cookie_scopes()
+    compressed = gzip.compress(b'{"ok":true}')
+    cookie_1 = "c1=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/"
+    cookie_2 = "c2=2; Path=/; HttpOnly"
+    repeated = [
+        (b"content-type", b"application/json"),
+        (b"content-encoding", b"gzip"),
+        (b"set-cookie", cookie_1.encode("latin-1")),
+        (b"set-cookie", cookie_2.encode("latin-1")),
+    ]
+
+    async def upstream(_request: httpx.Request) -> httpx.Response:
+        class CompressedStream(httpx.AsyncByteStream):
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                yield compressed
+
+        return httpx.Response(200, headers=repeated, stream=CompressedStream())
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            runner = HttpRunner(client)
+            result = await runner.run(RunnerRequest("GET", "https://example.test/data"))
+            downstream = passthrough_response_headers(result.headers)
+            items = passthrough_response_header_items(result.raw_headers)
+
+        assert result.body == compressed
+        assert gzip.decompress(result.body) == b'{"ok":true}'
+        assert downstream["content-encoding"] == "gzip"
+        assert downstream.getlist("set-cookie") == [cookie_1, cookie_2]
+        assert [v for k, v in items if k.lower() == "set-cookie"] == [cookie_1, cookie_2]
+    finally:
+        clear_upstream_cookie_scopes()
+
+
+@pytest.mark.asyncio
+async def test_runner_isolates_upstream_cookies_across_unrelated_origins() -> None:
+    clear_upstream_cookie_scopes()
+    seen_cookies: dict[str, str | None] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen_cookies[req.url.host] = req.headers.get("cookie")
+        if req.url.host == "a.example.com" and req.url.path == "/login":
+            return httpx.Response(
+                200,
+                headers=[("set-cookie", "session=alice-secret; Path=/")],
+                content=b"ok",
+            )
+        return httpx.Response(200, content=b"ok")
+
+    try:
+        async with _mock_client(httpx.MockTransport(handle)) as client:
+            runner = HttpRunner(client)
+            await runner.run(RunnerRequest("GET", "https://a.example.com/login"))
+            await runner.run(
+                RunnerRequest(
+                    "GET",
+                    "https://a.example.com/profile",
+                    headers={"Cookie": "session=alice-secret"},
+                )
+            )
+            assert seen_cookies["a.example.com"] == "session=alice-secret"
+
+            await runner.run(
+                RunnerRequest(
+                    "GET",
+                    "https://b.example.com/items",
+                    headers={"Cookie": "session=alice-secret"},
+                )
+            )
+            assert seen_cookies["b.example.com"] is None
+    finally:
+        clear_upstream_cookie_scopes()

@@ -24,7 +24,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from jentic_one.shared.dns_cache import resolve_host, resolve_host_blocking
 
@@ -32,6 +32,27 @@ if TYPE_CHECKING:
     from jentic_one.shared.config import EgressConfig
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+class UpstreamUrlInvalidError(ValueError):
+    """Raised when an upstream URL is syntactically invalid or carries forbidden authority parts."""
+
+
+def reject_url_userinfo(raw_url: str) -> None:
+    """Raise :class:`UpstreamUrlInvalidError` if *raw_url* contains URL userinfo."""
+    url = raw_url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or "@" in parsed.netloc
+        or "@" in unquote(parsed.netloc)
+        or "\\" in parsed.netloc
+    ):
+        raise UpstreamUrlInvalidError("upstream URL must not contain userinfo")
+
 
 # Explicitly-listed ranges. Kept alongside the ``is_global`` test in
 # :func:`_is_blocked_address` so the policy never depends solely on the
@@ -136,7 +157,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
     when the host is an IP literal (already validated here).
     """
     if not raw_url or not raw_url.strip():
-        raise ValueError("upstream URL is required")
+        raise UpstreamUrlInvalidError("upstream URL is required")
 
     url = raw_url.strip()
     if not url.startswith(("http://", "https://")):
@@ -145,11 +166,20 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
     parsed = urlparse(url)
 
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"unsupported scheme: {parsed.scheme}")
+        raise UpstreamUrlInvalidError(f"unsupported scheme: {parsed.scheme}")
+
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or "@" in parsed.netloc
+        or "@" in unquote(parsed.netloc)
+        or "\\" in parsed.netloc
+    ):
+        raise UpstreamUrlInvalidError("upstream URL must not contain userinfo")
 
     hostname = parsed.hostname
     if not hostname:
-        raise ValueError("upstream URL has no hostname")
+        raise UpstreamUrlInvalidError("upstream URL has no hostname")
 
     if _normalise_hostname(hostname) in _BLOCKED_HOSTNAMES:
         raise ValueError("upstream URL targets a blocked hostname")
