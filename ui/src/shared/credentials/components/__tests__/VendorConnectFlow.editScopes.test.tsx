@@ -308,7 +308,8 @@ describe('VendorConnectFlow edit-scopes — a person changing scopes', () => {
 		const user = userEvent.setup();
 		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
 		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
-		await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+		await screen.findByText('Waiting for you to approve at Work Gmail…');
+		await user.click(screen.getByRole('button', { name: 'Cancel' }));
 		expect(
 			await screen.findByText('Access to Work Gmail updated', undefined, { timeout: 10_000 }),
 		).toBeInTheDocument();
@@ -326,7 +327,8 @@ describe('VendorConnectFlow edit-scopes — a person changing scopes', () => {
 		const user = userEvent.setup();
 		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
 		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
-		await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+		await screen.findByText('Waiting for you to approve at Work Gmail…');
+		await user.click(screen.getByRole('button', { name: 'Cancel' }));
 		expect(
 			await screen.findByText('Status temporarily unavailable', undefined, {
 				timeout: 10_000,
@@ -342,7 +344,8 @@ describe('VendorConnectFlow edit-scopes — a person changing scopes', () => {
 		const user = userEvent.setup();
 		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
 		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
-		await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+		await screen.findByText('Waiting for you to approve at Work Gmail…');
+		await user.click(screen.getByRole('button', { name: 'Cancel' }));
 		await waitFor(() => expect(onBack).toHaveBeenCalled());
 		const ended = getEndedMockConnectSessions();
 		expect(ended[ended.length - 1]?.outcome).toBe('cancelled');
