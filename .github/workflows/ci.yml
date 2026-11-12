@@ -1284,6 +1284,33 @@ jobs:
           grep -q '"jentic.exe"' "${dist}/scoop/jentic.json" \
             || { echo "::error::scoop manifest does not install jentic.exe"; exit 1; }
 
+      # The Linux packages (nfpms) are built from the same linux binaries. A
+      # broken stanza otherwise only surfaces at tag time; check that every
+      # binary/arch/format is produced, is covered by checksums.txt, and that
+      # the .deb installs the binary into /usr/bin (the location `jenticctl
+      # update` treats as package-owned, cli/internal/update/syspkg.go).
+      - name: Assert Linux packages generated
+        run: |
+          set -euo pipefail
+          dist=""
+          for d in dist cli/dist; do
+            [ -d "$d" ] && { dist="$d"; break; }
+          done
+          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; exit 1; }
+          for bin in jentic jenticctl; do
+            for arch in amd64 arm64; do
+              for fmt in deb rpm apk; do
+                pkg="$(ls "${dist}"/${bin}_*_linux_${arch}.${fmt} 2>/dev/null | head -n1 || true)"
+                test -n "${pkg}" || { echo "::error::no ${bin} ${arch} .${fmt} package generated"; exit 1; }
+                grep -q " $(basename "${pkg}")$" "${dist}/checksums.txt" \
+                  || { echo "::error::$(basename "${pkg}") missing from checksums.txt"; exit 1; }
+              done
+            done
+            deb="$(ls "${dist}"/${bin}_*_linux_amd64.deb | head -n1)"
+            dpkg-deb -c "${deb}" | grep -q " ./usr/bin/${bin}$" \
+              || { echo "::error::${deb} does not install ${bin} into /usr/bin"; dpkg-deb -c "${deb}"; exit 1; }
+          done
+
       - name: Go module + build cache (save, main only)
         if: github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6

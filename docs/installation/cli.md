@@ -30,10 +30,38 @@ binary on `PATH`, and upgrade with the manager's native command (`brew
 upgrade`, `winget upgrade`, `scoop update`). `jenticctl` is not shipped for
 native Windows — use WSL ([windows.md](windows.md)).
 
-Beyond package managers: the [one-line installer script](#one-line-installer-script),
+Beyond package managers: native [Linux packages](#linux-packages-deb--rpm--apk), the
+[one-line installer script](#one-line-installer-script),
 which downloads, sha256-checks, and cosign-verifies for you, and the manual
 path: locked-down hosts, air-gapped transfer, or when you want to verify the
 supply chain yourself.
+
+## Linux packages (.deb / .rpm / .apk)
+
+From the first release after v0.44.0, every release attaches native packages
+for `linux/amd64` and `linux/arm64`, one per binary, so an agent host can
+install `jentic` alone. They are listed in the signed `checksums.txt` like the
+archives (see [Verify](#verify)), and install the binaries to `/usr/bin`.
+
+```bash
+VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest \
+  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')          # or pin a release: VER=X.Y.Z
+: "${VER:?could not resolve the latest version — set VER manually}"
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')    # amd64 | arm64
+BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
+curl -fsSLO "${BASE}/jentic_${VER}_linux_${ARCH}.deb"        # or .rpm / .apk; jenticctl_… for the admin host
+
+sudo apt install "./jentic_${VER}_linux_${ARCH}.deb"                  # Debian / Ubuntu
+sudo dnf install "./jentic_${VER}_linux_${ARCH}.rpm"                  # Fedora / RHEL
+sudo apk add --allow-untrusted "./jentic_${VER}_linux_${ARCH}.apk"    # Alpine
+```
+
+There is no package repository, so `apt upgrade` / `dnf upgrade` don't pick up
+new releases: download and install the newer package the same way.
+`jenticctl update` recognises a package install and leaves the binaries to the
+package manager (`--stack-only` still refreshes the stack). The `.apk` needs
+`--allow-untrusted` because it isn't signed with an Alpine key; the signed
+`checksums.txt` is what vouches for it.
 
 ## One-line installer script
 
@@ -120,7 +148,7 @@ cosign verify-blob \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
 
-# The checksum file covers the archives:
+# The checksum file covers the archives and the Linux packages:
 sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c checksums.txt --ignore-missing
 ```
 

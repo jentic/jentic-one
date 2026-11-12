@@ -37,7 +37,9 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and publishes the package
      channels: the Homebrew cask, a winget manifest PR against
-     `microsoft/winget-pkgs`, and the scoop bucket manifest. The winget/scoop
+     `microsoft/winget-pkgs`, and the scoop bucket manifest. It also attaches
+     `.deb` / `.rpm` / `.apk` packages per binary to the release (no package
+     repository, so nothing to provision). The winget/scoop
      publishes are token-gated: with `WINGET_TOKEN` / `SCOOP_BUCKET_TOKEN`
      unset the entry is skipped (logged, never fails the release) — see the
      one-time setup below.
