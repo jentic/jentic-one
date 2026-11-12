@@ -791,6 +791,7 @@ async def test_post_token_normalizes_httpx_transport_errors(
         {"access_token": ""},
         {"access_token": "   "},
         {"access_token": 12345},
+        {"access_token": "at_ok", "expires_in": None},
         {"access_token": "at_ok", "expires_in": "not-a-number"},
         {"access_token": "at_ok", "expires_in": 0},
         {"access_token": "at_ok", "expires_in": -60},
@@ -812,7 +813,6 @@ def test_validate_oauth_token_payload_rejects_malformed_200_responses(
 @pytest.mark.parametrize(
     ("raw_expires_in", "expected"),
     [
-        (None, None),
         (3600, 3600),
         ("3600", 3600),
         (" 7200 ", 7200),
@@ -830,6 +830,7 @@ def test_parse_oauth_expires_in_accepts_valid_inputs(
 @pytest.mark.parametrize(
     "invalid_expires_in",
     [
+        None,
         0,
         "0",
         -1,
@@ -858,9 +859,8 @@ def test_parse_oauth_expires_in_rejects_malformed_or_non_positive_inputs(
         _true_expiry({"expires_in": invalid_expires_in})
 
 
-def test_true_expiry_omitted_or_null_returns_none() -> None:
+def test_true_expiry_omitted_returns_none() -> None:
     assert _true_expiry({}) is None
-    assert _true_expiry({"expires_in": None}) is None
 
 
 @pytest.mark.parametrize(
@@ -892,7 +892,7 @@ def test_redact_event_scrubs_embedded_json_and_form_secrets(body: str) -> None:
 
 @pytest.mark.asyncio
 async def test_poll_device_authorization_rejects_zero_or_malformed_expires_in() -> None:
-    for bad_expires in (0, -5, "not-a-number", True, "1" + "0" * 100):
+    for bad_expires in (None, 0, -5, "not-a-number", True, "1" + "0" * 100):
         response = httpx.Response(
             200,
             json={"access_token": "at_live", "expires_in": bad_expires},

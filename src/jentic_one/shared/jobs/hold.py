@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -161,7 +161,6 @@ def canonical_query(query: str) -> str:
 # Non-semantic headers excluded when fingerprinting a held request's headers.
 _VOLATILE_HOLD_HEADERS: frozenset[str] = frozenset(
     {
-        "accept-encoding",
         "authorization",
         "b3",
         "connection",
@@ -243,11 +242,26 @@ def canonical_headers(headers: Mapping[str, str] | None) -> list[tuple[str, str]
         if not name or name in _VOLATILE_HOLD_HEADERS:
             continue
         value = raw_value.strip()
+        if name == "accept-encoding":
+            value = value.lower()
+            if value == "identity":
+                # The HTTP runner injects identity when this header is absent.
+                continue
         if name == "content-type":
             value = _canonical_content_type(value)
         out.append((name, value))
     out.sort()
     return out
+
+
+def _canonical_upstream_url(upstream_url: str) -> str:
+    """Canonicalize the query embedded in the complete upstream target."""
+    if not upstream_url:
+        return ""
+    parts = urlsplit(upstream_url)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, canonical_query(parts.query), parts.fragment)
+    )
 
 
 def compute_execution_fingerprint(
@@ -276,7 +290,7 @@ def compute_execution_fingerprint(
         agent_id,
         credential_id,
         method.upper(),
-        upstream_url,
+        _canonical_upstream_url(upstream_url),
         path,
         canonical_query(query),
     ):

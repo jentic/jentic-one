@@ -168,10 +168,7 @@ async def begin_device_authorization(
         user_code = _required_string(data, "user_code")
         verification_uri = _required_string(data, "verification_uri")
         verification_uri_complete = _optional_string(data, "verification_uri_complete")
-        expires_in_parsed = parse_oauth_expires_in(data.get("expires_in", 900))
-        if expires_in_parsed is None:
-            raise ValueError("missing expires_in")
-        expires_in = expires_in_parsed
+        expires_in = parse_oauth_expires_in(data.get("expires_in", 900))
         raw_interval = data.get("interval", 5)
         if isinstance(raw_interval, bool):
             raise ValueError("boolean interval")

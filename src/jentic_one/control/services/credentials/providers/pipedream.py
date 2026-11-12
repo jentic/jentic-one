@@ -79,11 +79,8 @@ async def _validated_pipedream_url(url: str, egress: EgressConfig | None) -> str
 
 def _parse_pipedream_expiry(token_data: dict[str, Any]) -> datetime | None:
     """Parse ``expires_at`` or ``expires_in`` from a Pipedream token response."""
-    if "expires_at" in token_data and token_data["expires_at"] is not None:
-        raw_expires_at = token_data["expires_at"]
-        ts = parse_oauth_expires_in(raw_expires_at)
-        if ts is None:
-            raise ProviderError("Invalid expires_at in token response")
+    if "expires_at" in token_data:
+        ts = parse_oauth_expires_in(token_data["expires_at"])
         try:
             return datetime.fromtimestamp(ts, tz=UTC)
         except (OverflowError, OSError, ValueError) as exc:

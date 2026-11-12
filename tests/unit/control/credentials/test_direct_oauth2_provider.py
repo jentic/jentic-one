@@ -845,7 +845,7 @@ async def test_begin_connect_merges_existing_query_and_overrides_security_params
 @pytest.mark.asyncio()
 @pytest.mark.parametrize(
     "bad_expires_in",
-    ["not-a-number", "", 0, -1, True, False, 12.5, 10**20, "²", "9" * 5_000],
+    [None, "not-a-number", "", 0, -1, True, False, 12.5, 10**20, "²", "9" * 5_000],
 )
 async def test_refresh_rejects_invalid_expires_in(bad_expires_in: object) -> None:
     provider = _make_provider()

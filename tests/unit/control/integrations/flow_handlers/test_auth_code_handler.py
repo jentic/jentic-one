@@ -656,7 +656,7 @@ async def test_non_200_token_response_never_logs_raw_secret_bearing_body(
 @pytest.mark.asyncio()
 @pytest.mark.parametrize(
     "bad_expires_in",
-    ["not-a-number", "", 0, -5, True, False, 3600.5, 10**20, "²", "9" * 5_000],
+    [None, "not-a-number", "", 0, -5, True, False, 3600.5, 10**20, "²", "9" * 5_000],
 )
 async def test_complete_from_callback_rejects_malformed_or_zero_expires_in(
     bad_expires_in: object,
@@ -687,7 +687,6 @@ async def test_complete_from_callback_rejects_malformed_or_zero_expires_in(
     ("payload", "expected_expires_in"),
     [
         ({"access_token": "at_ok"}, None),
-        ({"access_token": "at_ok", "expires_in": None}, None),
         ({"access_token": "at_ok", "expires_in": "3600"}, 3600),
     ],
 )

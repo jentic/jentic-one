@@ -147,15 +147,15 @@ def classify_oauth_token_error(
     return TokenExchangeError(status_code, error_code or "")
 
 
-def parse_oauth_expires_in(raw: object) -> int | None:
-    """Validate and normalize an OAuth ``expires_in`` value in seconds.
+def parse_oauth_expires_in(raw: object) -> int:
+    """Validate and normalize a present OAuth ``expires_in`` value in seconds.
 
-    Returns ``None`` only when ``raw`` is ``None`` (omitted expiry).
-    Raises :class:`ProviderError` when ``raw`` is boolean, non-numeric,
-    non-positive, non-integral, or exceeds :data:`MAX_OAUTH_EXPIRES_IN_SECONDS`.
+    Callers distinguish an omitted field before invoking this parser. Explicit
+    JSON null, boolean, non-numeric, non-positive, non-integral, and unbounded
+    values raise :class:`ProviderError`.
     """
     if raw is None:
-        return None
+        raise ProviderError("Invalid expires_in in OAuth token response")
     if isinstance(raw, bool):
         raise ProviderError("Invalid expires_in in OAuth token response")
 
@@ -189,8 +189,6 @@ def true_oauth_expiry(token_data: Mapping[str, Any]) -> datetime | None:
     if "expires_in" not in token_data:
         return None
     seconds = parse_oauth_expires_in(token_data.get("expires_in"))
-    if seconds is None:
-        return None
     return datetime.now(UTC) + timedelta(seconds=seconds)
 
 
@@ -210,15 +208,14 @@ def validate_oauth_token_payload(raw_data: object, *, status_code: int = 200) ->
 
     normalized: dict[str, str] = {"access_token": access_token}
 
-    if "expires_in" in raw_data and raw_data["expires_in"] is not None:
+    if "expires_in" in raw_data:
         try:
             seconds = parse_oauth_expires_in(raw_data["expires_in"])
         except ProviderError as exc:
             raise TokenExchangeError(
                 status_code, "invalid expires_in", reason="invalid expires_in"
             ) from exc
-        if seconds is not None:
-            normalized["expires_in"] = str(seconds)
+        normalized["expires_in"] = str(seconds)
 
     for optional_key in ("refresh_token", "scope", "token_type"):
         if optional_key in raw_data and raw_data[optional_key] is not None:

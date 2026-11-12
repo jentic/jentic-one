@@ -128,8 +128,6 @@ def _parse_expires_in(raw: object) -> int:
         seconds = parse_oauth_expires_in(raw)
     except ProviderError as exc:
         raise AuthCodeExchangeError("invalid expires_in in token response") from exc
-    if seconds is None:
-        raise AuthCodeExchangeError("invalid expires_in in token response")
     return seconds
 
 
@@ -368,11 +366,7 @@ class AuthCodeFlowHandler:
         if not isinstance(access_token, str) or not access_token.strip():
             raise AuthCodeExchangeError("token endpoint returned no access_token")
 
-        expires_in = (
-            _parse_expires_in(data["expires_in"])
-            if "expires_in" in data and data["expires_in"] is not None
-            else None
-        )
+        expires_in = _parse_expires_in(data["expires_in"]) if "expires_in" in data else None
 
         refresh_token = data.get("refresh_token")
         scope_raw = data.get("scope")

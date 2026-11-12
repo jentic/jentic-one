@@ -121,3 +121,23 @@ def test_cookie_and_semantic_headers_are_part_of_the_hold_fingerprint() -> None:
         cookie="sid=alpha; mode=strict",
     )
     assert base != diff_header
+
+
+def test_upstream_url_query_parameter_order_does_not_split_identical_requests() -> None:
+    first = _fp(None, upstream_url="https://api.example.com/v1/x?a=1&b=2")
+    reordered = _fp(None, upstream_url="https://api.example.com/v1/x?b=2&a=1")
+    different = _fp(None, upstream_url="https://api.example.com/v1/x?a=1&b=3")
+
+    assert first == reordered
+    assert first != different
+
+
+def test_response_representation_negotiation_is_part_of_the_hold_fingerprint() -> None:
+    implicit_identity = _fp(None, headers={})
+    identity = _fp(None, headers={"Accept-Encoding": "identity"})
+    uppercase_identity = _fp(None, headers={"Accept-Encoding": "IDENTITY"})
+    gzip = _fp(None, headers={"Accept-Encoding": "gzip"})
+
+    assert identity == implicit_identity
+    assert uppercase_identity == implicit_identity
+    assert gzip != implicit_identity

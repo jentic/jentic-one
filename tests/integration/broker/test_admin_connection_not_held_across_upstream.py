@@ -604,6 +604,9 @@ async def test_queued_execution_holds_no_admin_connection(
                 "api_name": _API_NAME,
                 "api_version": _API_VERSION,
                 "operation": {"id": "getThing", "path": "/thing", "method": "GET"},
+                "auth_token_sha256": "abcd" * 16,
+                "auth_method": "jwt",
+                "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             },
         )
         session.add(job)
@@ -685,6 +688,9 @@ async def test_queued_execution_completion_failure_never_resends_upstream_or_cre
                 "api_name": _API_NAME,
                 "api_version": _API_VERSION,
                 "operation": {"id": "getThing", "path": "/thing", "method": "GET"},
+                "auth_token_sha256": "abcd" * 16,
+                "auth_method": "jwt",
+                "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             },
         )
         session.add(job)

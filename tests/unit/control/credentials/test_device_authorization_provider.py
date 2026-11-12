@@ -559,7 +559,7 @@ async def test_refresh_refuses_cross_origin_registration_token_endpoint(
 @pytest.mark.asyncio()
 @pytest.mark.parametrize(
     "bad_expires_in",
-    ["not-a-number", "", 0, -10, True, False, 3600.5, 10**20],
+    [None, "not-a-number", "", 0, -10, True, False, 3600.5, 10**20],
 )
 async def test_refresh_rejects_malformed_or_non_positive_expires_in(
     bad_expires_in: object,
@@ -597,16 +597,7 @@ async def test_refresh_rejects_malformed_or_non_positive_expires_in(
 
 
 @pytest.mark.asyncio()
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"access_token": "at_new"},
-        {"access_token": "at_new", "expires_in": None},
-    ],
-)
-async def test_refresh_preserves_omitted_or_null_expires_in(
-    payload: dict[str, object],
-) -> None:
+async def test_refresh_preserves_omitted_expires_in() -> None:
     provider = DeviceAuthorizationConnectProvider()
     ctx = Context(_make_config())
     ctx._control_db = _mock_control_db()
@@ -628,7 +619,9 @@ async def test_refresh_preserves_omitted_or_null_expires_in(
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=payload))
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "at_new"})
+        )
         mock_client_cls.return_value = mock_client
 
         result = await provider.refresh(ctx, token=token_view)

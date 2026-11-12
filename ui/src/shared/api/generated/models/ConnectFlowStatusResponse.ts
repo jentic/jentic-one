@@ -6,11 +6,12 @@
  * Authoritative terminal completion of one connect challenge.
  */
 export type ConnectFlowStatusResponse = {
-	status: ConnectFlowStatusResponse.status;
+    status: ConnectFlowStatusResponse.status;
 };
 export namespace ConnectFlowStatusResponse {
-	export enum status {
-		PENDING = 'pending',
-		CONNECTED = 'connected',
-	}
+    export enum status {
+        PENDING = 'pending',
+        CONNECTED = 'connected',
+    }
 }
+
