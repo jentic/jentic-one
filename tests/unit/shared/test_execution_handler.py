@@ -121,7 +121,9 @@ class _FakeActorStatus:
         self._authority = ActorAuthority(active=active, holds_permission=holds_permission)
         self.calls: list[tuple[str, str, str]] = []
 
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         self.calls.append((actor_id, actor_type, permission))
         return self._authority
 
@@ -800,11 +802,11 @@ async def test_handler_injects_only_after_the_live_read_allows() -> None:
 
     class _OrderedActorStatus(_FakeActorStatus):
         async def authority(
-            self, *, actor_id: str, actor_type: str, permission: str
+            self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
         ) -> ActorAuthority:
             order.append("live_read")
             return await super().authority(
-                actor_id=actor_id, actor_type=actor_type, permission=permission
+                actor_id=actor_id, actor_type=actor_type, permission=permission, **_lineage
             )
 
     class _OrderedInjector(_FakeInjector):

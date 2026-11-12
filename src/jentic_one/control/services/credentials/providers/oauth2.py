@@ -62,10 +62,13 @@ class InvalidGrantError(ProviderError):
 class TokenExchangeError(ProviderError):
     """Raised when a token-endpoint round-trip fails (non-2xx or non-JSON)."""
 
-    def __init__(self, status: int, body: str = "") -> None:
+    def __init__(self, status: int, body: str = "", *, reason: str = "") -> None:
         self.status = status
         self.body = redact_value(body) if body else ""
-        super().__init__(f"Token exchange failed: HTTP {status}")
+        msg = f"Token exchange failed: HTTP {status}"
+        if reason:
+            msg = f"{msg} ({reason})"
+        super().__init__(msg)
 
 
 def sanitize_oauth_error_slug(raw: object) -> str | None:
@@ -197,11 +200,13 @@ _true_expiry = true_oauth_expiry
 def validate_oauth_token_payload(raw_data: object, *, status_code: int = 200) -> dict[str, str]:
     """Validate a 200 OAuth token response object and normalize its fields."""
     if not isinstance(raw_data, dict):
-        raise TokenExchangeError(status_code, "malformed token response")
+        raise TokenExchangeError(
+            status_code, "malformed token response", reason="malformed token response"
+        )
 
     access_token = raw_data.get("access_token")
     if not isinstance(access_token, str) or not access_token.strip():
-        raise TokenExchangeError(status_code, "missing access_token")
+        raise TokenExchangeError(status_code, "missing access_token", reason="missing access_token")
 
     normalized: dict[str, str] = {"access_token": access_token}
 
@@ -209,7 +214,9 @@ def validate_oauth_token_payload(raw_data: object, *, status_code: int = 200) ->
         try:
             seconds = parse_oauth_expires_in(raw_data["expires_in"])
         except ProviderError as exc:
-            raise TokenExchangeError(status_code, "invalid expires_in") from exc
+            raise TokenExchangeError(
+                status_code, "invalid expires_in", reason="invalid expires_in"
+            ) from exc
         if seconds is not None:
             normalized["expires_in"] = str(seconds)
 
@@ -217,7 +224,9 @@ def validate_oauth_token_payload(raw_data: object, *, status_code: int = 200) ->
         if optional_key in raw_data and raw_data[optional_key] is not None:
             val = raw_data[optional_key]
             if not isinstance(val, str):
-                raise TokenExchangeError(status_code, f"invalid {optional_key}")
+                raise TokenExchangeError(
+                    status_code, f"invalid {optional_key}", reason=f"invalid {optional_key}"
+                )
             normalized[optional_key] = val
 
     for key, val in raw_data.items():

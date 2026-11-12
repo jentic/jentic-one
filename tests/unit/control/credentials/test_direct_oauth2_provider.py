@@ -920,7 +920,7 @@ async def test_refresh_rejects_missing_access_token_and_maps_transport_error() -
         mock_client.post = AsyncMock(return_value=httpx.Response(200, json={"scope": "read"}))
         mock_client_cls.return_value = mock_client
 
-        with pytest.raises(ProviderError, match="no access_token"):
+        with pytest.raises(ProviderError, match="access_token"):
             await provider.refresh(ctx, token=token_view)
 
         mock_client.post = AsyncMock(side_effect=httpx.ReadError("connection reset"))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from jentic_one.shared.jobs.hold import (
     APPROVAL_DENIED_TYPE,
     APPROVAL_EXPIRED_TYPE,
@@ -14,8 +16,13 @@ from jentic_one.shared.jobs.hold import (
 )
 
 
-def _fp(body: bytes | None, **overrides: str) -> str:
-    args = {"agent_id": "agnt_1", "credential_id": "cred_1", "method": "POST", "path": "/v1/x"}
+def _fp(body: bytes | None, **overrides: Any) -> str:
+    args: dict[str, Any] = {
+        "agent_id": "agnt_1",
+        "credential_id": "cred_1",
+        "method": "POST",
+        "path": "/v1/x",
+    }
     args.update(overrides)
     return compute_execution_fingerprint(body=body, **args)
 

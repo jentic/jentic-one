@@ -1232,6 +1232,7 @@ def _replay_response(stored: StoredResponse) -> Response:
     dropped = {"cache-control"}
     if stored.body_omitted:
         dropped.add("content-length")
+        dropped.add("content-encoding")
     raw_items = [(k, v) for k, v in source_items if k.lower() not in dropped]
     raw_items.append((JenticHeader.IDEMPOTENT_REPLAYED.value, "true"))
     raw_items.append(("cache-control", PASSTHROUGH_CACHE_CONTROL))

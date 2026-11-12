@@ -437,7 +437,7 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
 
     class _ActorStatus:
         async def authority(
-            self, *, actor_id: str, actor_type: str, permission: str
+            self, *, actor_id: str, actor_type: str, permission: str, **_lineage: object
         ) -> ActorAuthority:
             return ActorAuthority(active=True, holds_permission=True)
 

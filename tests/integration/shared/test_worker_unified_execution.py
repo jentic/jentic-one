@@ -83,7 +83,9 @@ class _StaticAuthorizer:
 class _ActiveActor:
     """Stands in for the broker's live actor read: active, holding the execute permission."""
 
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         return ActorAuthority(active=True, holds_permission=True)
 
 
