@@ -154,6 +154,7 @@ export function EditCredentialSheet({
 			setInitialState(seeded);
 			initialStateRef.current = seeded;
 			setErrors({});
+			updateMutation.reset();
 			return;
 		}
 		const baseline = initialStateRef.current;
@@ -169,6 +170,7 @@ export function EditCredentialSheet({
 		// not a resumable draft and must never survive a close.
 		setState((prev) => ({ ...prev, ...EMPTY_SECRET_FIELDS }));
 		setErrors({});
+		updateMutation.reset();
 	}, [open]);
 
 	useEffect(() => {

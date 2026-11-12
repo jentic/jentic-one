@@ -28,7 +28,10 @@ from jentic_one.broker.web.routers.execute import (
 )
 from jentic_one.shared.config import EncryptionConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
-from jentic_one.shared.http.injection import record_upstream_set_cookie
+from jentic_one.shared.http.injection import (
+    clear_upstream_cookie_scopes,
+    record_upstream_set_cookie,
+)
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
@@ -349,3 +352,83 @@ def test_sync_connection_nominated_cookie_dropped_before_cookie_injection() -> N
     assert "x-hop" not in lowered
     assert "connection" not in lowered
     assert lowered["cookie"] == "session=broker"
+
+
+@pytest.mark.asyncio
+async def test_async_captured_cookie_filters_foreign_pairs_and_survives_worker_scope_reset() -> (
+    None
+):
+    """Cookies filtered at enqueue for the target URL survive worker execution
+    even when the worker runs in a separate process with an empty scope cache."""
+    clear_upstream_cookie_scopes()
+    record_upstream_set_cookie(_URL, "sid=allowed-session; Path=/v1")
+    record_upstream_set_cookie("https://other.example.com/v1", "foreign=leaked; Path=/")
+
+    raw: list[tuple[bytes, bytes]] = [
+        (b"host", b"broker.local:8080"),
+        (b"cookie", b"sid=allowed-session; foreign=leaked; unknown=untracked"),
+    ]
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "server": ("broker.local", 8080),
+            "path": "/api.example.com/v1/things",
+            "raw_path": b"/api.example.com/v1/things",
+            "root_path": "",
+            "query_string": b"page=2",
+            "headers": raw,
+        }
+    )
+    ctx_req = ExecuteRequestContext(
+        upstream_url=_URL,
+        method="POST",
+        trace_id="ab" * 16,
+        api_vendor="example.com",
+        api_name="example",
+        api_version="1",
+    )
+    captured = _captured_cookie(
+        request,
+        _keyed_ctx(),
+        upstream_url=ctx_req.upstream_url,
+        server_variables_unresolved=ctx_req.server_variables_unresolved,
+    )
+    assert captured is not None
+    assert _ENCRYPTION.decrypt(captured) == "sid=allowed-session"
+
+    payload = _async_job_payload(
+        ctx_req,
+        execution_id="exec_worker_sep",
+        origin="api",
+        headers=replay_headers(request.headers),
+        inbound_cookie_enc=captured,
+        auth_token_sha256="abcd" * 16,
+        auth_method="access_token",
+    )
+    assert payload.get("inbound_cookie_scoped") is True
+
+    # Simulate a separate worker process that never saw the Set-Cookie response.
+    clear_upstream_cookie_scopes()
+
+    executor = _RecordingExecutor()
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FixedInjector(
+            InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+        ),
+        execution_authorizer=_AllowAll(),
+        actor_status=_ActiveActor(),
+        encryption=_ENCRYPTION,
+    )
+    await handler.execute(
+        "job_worker_sep",
+        SessionScope(_FakeSession()),
+        payload=payload,
+        created_by="agnt_parity",
+        actor_type="agent",
+    )
+    sent = executor.last_request
+    assert sent is not None
+    assert sent.headers.get("Cookie") == "sid=allowed-session"

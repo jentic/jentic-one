@@ -629,9 +629,9 @@ class SharedStateIdempotencyStore:
             )
         body: bytes | None = None
         if record.get("body_ref"):
-            body = await self._store.get(
-                self._body_slot(caller, key, fingerprint, str(record.get("token", "")))
-            )
+            raw_token = record.get("token")
+            if isinstance(raw_token, str) and raw_token:
+                body = await self._store.get(self._body_slot(caller, key, fingerprint, raw_token))
             if body is None:
                 # Records already DONE at upgrade used the unversioned body key.
                 body = await self._store.get(self._body_slot(caller, key, fingerprint))

@@ -128,7 +128,7 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
-from jentic_one.shared.http.injection import apply_injection
+from jentic_one.shared.http.injection import apply_injection, filter_inbound_cookie
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -1322,6 +1322,8 @@ def _async_job_payload(
         payload["headers"] = dict(headers)
     if inbound_cookie_enc:
         payload[INBOUND_COOKIE_PAYLOAD_KEY] = inbound_cookie_enc
+        if not ctx_req.server_variables_unresolved:
+            payload["inbound_cookie_scoped"] = True
     effective_token_sha = (
         auth_token_sha256
         if auth_token_sha256 is not None
@@ -1362,13 +1364,20 @@ def _async_job_payload(
     return payload
 
 
-def _captured_cookie(request: Request, ctx: Context) -> str | None:
+def _captured_cookie(
+    request: Request,
+    ctx: Context,
+    *,
+    upstream_url: str | None = None,
+    server_variables_unresolved: bool = False,
+) -> str | None:
     """The caller's ``Cookie`` encrypted for an async or held job payload.
 
     The job sits in the admin DB until a worker claims it, so the cookie is
     kept only as platform-key ciphertext. Without an encryption keyset or when
     encryption fails, the request is refused (503) rather than queued without
-    the caller's cookies.
+    the caller's cookies. When the target URL is already resolved, foreign or
+    unscoped cookie pairs are filtered at the web edge before encryption.
     """
     cookie = _inbound_cookie(request)
     if cookie is None:
@@ -1382,6 +1391,10 @@ def _captured_cookie(request: Request, ctx: Context) -> str | None:
             instance=request.url.path,
             pre_send=True,
         )
+    if upstream_url and not server_variables_unresolved:
+        cookie = filter_inbound_cookie(cookie, upstream_url)
+        if cookie is None:
+            return None
     try:
         return ctx.encryption.encrypt(cookie)
     except Exception as exc:
@@ -1450,7 +1463,12 @@ async def _handle_hold(
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
-        inbound_cookie_enc=_captured_cookie(request, ctx),
+        inbound_cookie_enc=_captured_cookie(
+            request,
+            ctx,
+            upstream_url=ctx_req.upstream_url,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+        ),
         identity=identity,
         auth_token_sha256=token_sha256,
         auth_method=auth_method,
@@ -1586,7 +1604,12 @@ async def _handle_async(
         allowed_credential_ids=allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
-        inbound_cookie_enc=_captured_cookie(request, ctx),
+        inbound_cookie_enc=_captured_cookie(
+            request,
+            ctx,
+            upstream_url=ctx_req.upstream_url,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+        ),
         identity=identity,
         auth_token_sha256=token_sha256,
         auth_method=auth_method,

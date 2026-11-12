@@ -292,8 +292,12 @@ async def run_execution(
                 )
         raise
 
+    outcome_error: Exception | None = None
     if on_outcome is not None:
-        await on_outcome(outcome)
+        try:
+            await on_outcome(outcome)
+        except Exception as exc:
+            outcome_error = exc
 
     result = outcome.result
     status = ExecutionStatus.FAILED if result.status_code >= 400 else ExecutionStatus.COMPLETED
@@ -357,6 +361,9 @@ async def run_execution(
                 error_tags=error_tags,
                 origin=origin,
             )
+
+    if outcome_error is not None:
+        raise outcome_error
 
     return outcome
 

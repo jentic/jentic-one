@@ -88,6 +88,10 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
                     "was it created with grant_type=device_code?"
                 )
 
+        actor_id = request.extra.get("actor_id")
+        if not actor_id:
+            raise ProviderError("device flow requires an initiating actor")
+
         # RFC 8628 §3.1: POST the device_authorization endpoint. Public
         # client — no client_secret. Scopes come off the request first
         # (caller may narrow), falling back to whatever the credential
@@ -102,9 +106,6 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
         encrypted_device_code = ctx.encryption.encrypt(result.device_code)
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
         flow_nonce = generate_nonce()
-        actor_id = request.extra.get("actor_id")
-        if not actor_id:
-            raise ProviderError("device flow requires an initiating actor")
 
         async with ctx.control_db.transaction() as session:
             # Serialize with session consent on the credential's sole aux row.

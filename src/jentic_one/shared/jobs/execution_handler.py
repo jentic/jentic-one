@@ -446,6 +446,8 @@ class ExecutionHandler:
             upstream_url,
             injection,
             inbound_cookie=inbound_cookie,
+            inbound_cookie_scoped=bool(payload.get("inbound_cookie_scoped"))
+            and not server_variables_unresolved,
             server_variable_defaults=injected_defaults,
         )
         credential_id = injection.credential_id

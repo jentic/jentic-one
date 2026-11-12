@@ -232,14 +232,37 @@ def _canonical_content_type(value: str) -> str:
     return "; ".join([media_type, *params])
 
 
+def _connection_nominated_hold_headers(headers: Mapping[str, str] | None) -> frozenset[str]:
+    if not headers:
+        return frozenset()
+    nominated: set[str] = set()
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        conn_vals = getlist("connection")
+        if isinstance(conn_vals, list):
+            for val in conn_vals:
+                for token in str(val).split(","):
+                    cleaned = token.strip().lower()
+                    if cleaned:
+                        nominated.add(cleaned)
+    for key, val in headers.items():
+        if key.strip().lower() == "connection":
+            for token in val.split(","):
+                cleaned = token.strip().lower()
+                if cleaned:
+                    nominated.add(cleaned)
+    return frozenset(nominated)
+
+
 def canonical_headers(headers: Mapping[str, str] | None) -> list[tuple[str, str]]:
     """Return sorted ``(lowercase_name, normalised_value)`` pairs for semantic headers."""
     if not headers:
         return []
+    nominated = _connection_nominated_hold_headers(headers)
     out: list[tuple[str, str]] = []
     for raw_name, raw_value in headers.items():
         name = raw_name.strip().lower()
-        if not name or name in _VOLATILE_HOLD_HEADERS:
+        if not name or name in _VOLATILE_HOLD_HEADERS or name in nominated:
             continue
         value = raw_value.strip()
         if name == "accept-encoding":
@@ -298,8 +321,9 @@ def compute_execution_fingerprint(
         digest.update(b"\x00")
     digest.update(canonical_body(body))
 
-    effective_cookie = cookie
-    if effective_cookie is None and headers:
+    nominated = _connection_nominated_hold_headers(headers)
+    effective_cookie = None if "cookie" in nominated else cookie
+    if effective_cookie is None and headers and "cookie" not in nominated:
         cookie_vals = [v for k, v in headers.items() if k.strip().lower() == "cookie" and v]
         if cookie_vals:
             effective_cookie = "; ".join(cookie_vals)

@@ -141,3 +141,17 @@ def test_response_representation_negotiation_is_part_of_the_hold_fingerprint() -
     assert identity == implicit_identity
     assert uppercase_identity == implicit_identity
     assert gzip != implicit_identity
+
+
+def test_connection_nominated_headers_do_not_split_hold_fingerprint() -> None:
+    clean = _fp(None, headers={"Content-Type": "application/json"})
+    with_nominated = _fp(
+        None,
+        headers={
+            "Content-Type": "application/json",
+            "Connection": "X-Hop-Only, Cookie",
+            "X-Hop-Only": "1",
+        },
+        cookie="sid=hop-only",
+    )
+    assert clean == with_nominated

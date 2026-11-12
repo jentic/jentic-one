@@ -131,3 +131,18 @@ def test_response_representation_negotiation_is_part_of_the_fingerprint() -> Non
     implicit_identity = fingerprint(*common, headers={})
     assert identity == implicit_identity
     assert gzip != identity
+
+
+def test_connection_nominated_hop_by_hop_headers_are_excluded_from_fingerprint() -> None:
+    common = ("POST", "https://api.example.com/v1/items", "cred_1", b"")
+    clean = fingerprint(*common, headers={"Content-Type": "application/json"})
+    with_hop = fingerprint(
+        *common,
+        headers={
+            "Content-Type": "application/json",
+            "Connection": "X-Transient-Hop, Cookie",
+            "X-Transient-Hop": "1",
+        },
+        cookie="sid=hop-only",
+    )
+    assert clean == with_hop

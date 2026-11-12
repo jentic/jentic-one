@@ -89,22 +89,26 @@ func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(path, []byte(key)); err != nil {
-		return fmt.Errorf("writing API key %s: %w", path, err)
-	}
 	originPath, err := apiKeyOriginPath(ref)
 	if err != nil {
 		return err
 	}
+	_, keyExistedErr := os.Stat(path)
+	keyExisted := keyExistedErr == nil
 	if origin != "" {
 		if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
-			_ = os.Remove(path)
 			return fmt.Errorf("writing API key origin %s: %w", originPath, err)
 		}
-		return nil
+	} else {
+		if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing stale API key origin %s: %w", originPath, err)
+		}
 	}
-	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing stale API key origin %s: %w", originPath, err)
+	if err := writeFileAtomic(path, []byte(key)); err != nil {
+		if !keyExisted && origin != "" {
+			_ = os.Remove(originPath)
+		}
+		return fmt.Errorf("writing API key %s: %w", path, err)
 	}
 	return nil
 }

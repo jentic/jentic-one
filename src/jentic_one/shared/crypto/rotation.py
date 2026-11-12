@@ -694,6 +694,8 @@ def _inspect_held_job_payload(
     encryption: EncryptionService,
     row_id: Any,
     payload_dict: dict[str, Any],
+    *,
+    raw_payload: Any = None,
 ) -> _RowCandidate:
     """Inspect and prepare re-encryption for a held execution's encrypted payload."""
     before_keys: list[str] = []
@@ -792,7 +794,13 @@ def _inspect_held_job_payload(
             if (values_needing_rotation > 0 and not row_failed)
             else None
         ),
-        original_values={"payload": json.dumps(payload_dict)},
+        original_values={
+            "payload": (
+                raw_payload
+                if isinstance(raw_payload, str)
+                else json.dumps(raw_payload if isinstance(raw_payload, dict) else payload_dict)
+            )
+        },
         values_scanned=values_scanned,
         values_needing_rotation=values_needing_rotation,
         before_keys=before_keys,
@@ -806,6 +814,8 @@ def _inspect_async_job_payload(
     encryption: EncryptionService,
     row_id: Any,
     payload_dict: dict[str, Any],
+    *,
+    raw_payload: Any = None,
 ) -> _RowCandidate:
     """Inspect and prepare re-encryption for an async execution job's encrypted cookie."""
     before_keys: list[str] = []
@@ -860,7 +870,13 @@ def _inspect_async_job_payload(
             if (values_needing_rotation > 0 and not row_failed)
             else None
         ),
-        original_values={"payload": json.dumps(payload_dict)},
+        original_values={
+            "payload": (
+                raw_payload
+                if isinstance(raw_payload, str)
+                else json.dumps(raw_payload if isinstance(raw_payload, dict) else payload_dict)
+            )
+        },
         values_scanned=values_scanned,
         values_needing_rotation=values_needing_rotation,
         before_keys=before_keys,
@@ -981,9 +997,13 @@ async def _rotate_jobs_and_held_executions(
                 continue
 
             if target_held:
-                candidate = _inspect_held_job_payload(encryption, row_id, payload_dict)
+                candidate = _inspect_held_job_payload(
+                    encryption, row_id, payload_dict, raw_payload=raw_payload
+                )
             else:
-                candidate = _inspect_async_job_payload(encryption, row_id, payload_dict)
+                candidate = _inspect_async_job_payload(
+                    encryption, row_id, payload_dict, raw_payload=raw_payload
+                )
 
             if candidate.update_params is not None:
                 pending.append(candidate)

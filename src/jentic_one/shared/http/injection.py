@@ -139,13 +139,20 @@ def record_upstream_set_cookie(upstream_url: str, set_cookie_header: str) -> Non
     _UPSTREAM_COOKIE_SCOPES[key] = [scope]
 
 
-def is_cookie_allowed_for_upstream(cookie_name: str, cookie_value: str, target_url: str) -> bool:
+def is_cookie_allowed_for_upstream(
+    cookie_name: str,
+    cookie_value: str,
+    target_url: str,
+    *,
+    allow_untracked: bool = False,
+) -> bool:
     """Whether ``(cookie_name, cookie_value)`` may be forwarded to ``target_url``."""
     scopes = _UPSTREAM_COOKIE_SCOPES.get((cookie_name, cookie_value))
     if scopes is None:
-        # An unknown pair may be a foreign session after a restart or eviction;
-        # there is no origin evidence that makes it safe to forward.
-        return False
+        # An unknown pair on the live edge may be a foreign session after a
+        # restart or eviction; only cookies already filtered at enqueue/hold for
+        # this target URL may proceed in a separate worker process.
+        return allow_untracked
     parsed_target = _parse_origin_and_path(target_url)
     if parsed_target is None:
         return False
@@ -163,6 +170,7 @@ def filter_inbound_cookie(
     target_url: str,
     *,
     excluded_names: AbstractSet[str] = frozenset(),
+    allow_untracked: bool = False,
 ) -> str | None:
     """Filter caller cookie pairs for ``target_url``, dropping colliding or foreign cookies."""
     if not inbound_cookie or not inbound_cookie.strip():
@@ -185,7 +193,9 @@ def filter_inbound_cookie(
             or unquote_plus(name) in excluded_names
         ):
             continue
-        if target_url and not is_cookie_allowed_for_upstream(name, val, target_url):
+        if target_url and not is_cookie_allowed_for_upstream(
+            name, val, target_url, allow_untracked=allow_untracked
+        ):
             continue
         kept.append(pair)
     return "; ".join(kept) or None
@@ -230,6 +240,7 @@ def apply_injection(
     injection: InjectedAuth,
     *,
     inbound_cookie: str | None = None,
+    inbound_cookie_scoped: bool = False,
     server_variable_defaults: Mapping[str, str] | None = None,
 ) -> tuple[str, dict[str, str]]:
     """Return the outbound ``(url, headers)`` with ``injection`` applied.
@@ -269,7 +280,12 @@ def apply_injection(
         effective_inbound = "; ".join(cookie_vals) or None
 
     injected = dict(injection.headers)
-    cookie = _merge_cookie(effective_inbound, injection.cookies, target_url=url)
+    cookie = _merge_cookie(
+        effective_inbound,
+        injection.cookies,
+        target_url=url,
+        allow_untracked=inbound_cookie_scoped and inbound_cookie is not None,
+    )
     if cookie:
         injected["Cookie"] = cookie
     overridden = {name.lower() for name in injected} | {"cookie", "connection"} | nominated
@@ -279,13 +295,18 @@ def apply_injection(
 
 
 def _merge_cookie(
-    inbound: str | None, cookies: Mapping[str, str], *, target_url: str = ""
+    inbound: str | None,
+    cookies: Mapping[str, str],
+    *,
+    target_url: str = "",
+    allow_untracked: bool = False,
 ) -> str | None:
     """Filtered ``inbound`` followed by the ``name=value`` cookie credentials, or ``None``."""
     filtered_inbound = filter_inbound_cookie(
         inbound,
         target_url,
         excluded_names=set(cookies.keys()),
+        allow_untracked=allow_untracked,
     )
     parts = [filtered_inbound] if filtered_inbound else []
     parts.extend(f"{name}={value}" for name, value in cookies.items())

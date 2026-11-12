@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from jentic_one.broker.core.headers import (
     HOP_BY_HOP_HEADERS,
     SPOOFABLE_HEADERS,
+    connection_nominated_headers,
 )
 
 _SEP = b"\0"
@@ -91,10 +92,11 @@ def canonicalize_semantic_headers(headers: Mapping[str, str] | None) -> list[tup
     """Extract and canonicalize semantic request headers in deterministic order."""
     if not headers:
         return []
+    nominated = connection_nominated_headers(headers)
     canonical: list[tuple[str, str]] = []
     for raw_name, raw_value in headers.items():
         name = raw_name.strip().lower()
-        if not name or name in _VOLATILE_REQUEST_HEADERS:
+        if not name or name in _VOLATILE_REQUEST_HEADERS or name in nominated:
             continue
         value = raw_value.strip()
         if name == "accept-encoding":
@@ -135,8 +137,9 @@ def fingerprint(
         h.update(_SEP)
     h.update(hashlib.sha256(body or b"").digest())
 
-    effective_cookie = cookie
-    if effective_cookie is None and headers:
+    nominated = connection_nominated_headers(headers) if headers else frozenset()
+    effective_cookie = None if "cookie" in nominated else cookie
+    if effective_cookie is None and headers and "cookie" not in nominated:
         cookie_values = [v for k, v in headers.items() if k.strip().lower() == "cookie" and v]
         if cookie_values:
             effective_cookie = "; ".join(cookie_values)

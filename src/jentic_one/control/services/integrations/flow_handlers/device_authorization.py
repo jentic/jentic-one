@@ -114,7 +114,8 @@ class DeviceAuthorizationHandler:
             egress=resolved_control_egress(self._ctx.config),
         )
         encrypted_device_code = self._ctx.encryption.encrypt(result.device_code)
-        expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=result.expires_in)
 
         async with self._ctx.control_db.transaction() as session:
             # Session flows share this aux row with standalone connects. Lock
@@ -128,6 +129,7 @@ class DeviceAuthorizationHandler:
                 locked is not None
                 and locked.flow_nonce is not None
                 and locked.encrypted_device_code is not None
+                and (locked.device_code_expires_at is None or locked.device_code_expires_at > now)
             ):
                 raise DeviceFlowInProgressError()
             await DeviceAuthorizationCredentialRepository.set_transient_state(
