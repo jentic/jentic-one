@@ -250,12 +250,28 @@ case.
 ## What an upgrade never does
 
 - It never rotates the credential-encryption keyset or other generated
-  secrets — rotating would orphan everything already encrypted. Key rotation
-  is its own explicit procedure, and it is narrower than it sounds: add a
-  new entry to `credentials.encryption.entries` and flip `active_id`. New
-  writes use the new key immediately, but a stored secret re-encrypts only
-  when its row is next rewritten — there is no bulk re-encrypt command and
-  no way to check completion. Retired keys therefore stay in the keyset
-  indefinitely; removing an entry makes any secret still encrypted under it
-  permanently unreadable.
+  secrets — rotating during an upgrade without a coordinated keyset rollout
+  would orphan existing ciphertext. Key rotation is an explicit multi-step
+  procedure:
+  1. Add the new key entry to `credentials.encryption.entries` while retaining
+     the old entry, and set `credentials.encryption.active_id` to the new key
+     ID so all new writes use the new key immediately.
+  2. Roll out the updated keyset across every control, broker, admin, and
+     worker replica and allow any in-flight transient token or pending
+     approval write window to drain so no process still encrypts with the old
+     key.
+  3. Run `rotate_encrypted_storage` with `dry_run=True` to inventory remaining
+     ciphertexts by key ID and storage family across `control_db`
+     (`customer_api_keys`, `token_value_credentials` /
+     `bearer_token_credentials`, `basic_credentials` /
+     `basic_auth_credentials`, `sigv4_credentials`,
+     `device_authorization_credentials`, `oauth_client_credentials`,
+     `authorization_code_app_registration_details` / `oauth_app_registrations`,
+     `oauth_tokens`) and `admin_db` (`provider_configs`, async `jobs`
+     encrypted cookies, and `held_executions` encrypted payloads), then run
+     `rotate_encrypted_storage` with `dry_run=False` to re-encrypt all
+     persisted values in bounded, resumable batches.
+  4. Run `verify_key_retired` (or `assert_only_active_key`) and remove the
+     retired entry from `credentials.encryption.entries` only after this
+     completion check passes with zero remaining ciphertexts on the old key.
 - It never migrates *down*. `--check` before, snapshot always.
