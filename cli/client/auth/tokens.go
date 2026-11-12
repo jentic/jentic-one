@@ -22,6 +22,7 @@ import (
 type TokenSet struct {
 	AccessToken string    `json:"access_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	Origin      string    `json:"origin,omitempty"`
 }
 
 // getTokenPath returns the token-state file path for ref, under the XDG STATE dir
@@ -41,10 +42,9 @@ func getTokenPath(ref IdentityRef) (string, error) {
 	return filepath.Join(stateDir, stem+"_tokens.json"), nil
 }
 
-// ReadTokens loads the cached token for ref. A missing, unreadable, or corrupt
-// file yields an error and a nil TokenSet, so callers can treat any failure as
-// "no usable token" and re-exchange without risking a nil dereference.
-func ReadTokens(ref IdentityRef) (*TokenSet, error) {
+// readTokensRaw loads the cached token file for ref without checking the
+// configured environment origin.
+func readTokensRaw(ref IdentityRef) (*TokenSet, error) {
 	path, err := getTokenPath(ref)
 	if err != nil {
 		return nil, err
@@ -57,7 +57,26 @@ func ReadTokens(ref IdentityRef) (*TokenSet, error) {
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return nil, fmt.Errorf("decoding token state %s: %w", path, err)
 	}
+	tokens.Origin = NormalizeOrigin(tokens.Origin)
 	return &tokens, nil
+}
+
+// ReadTokens loads the cached token for ref. A missing, unreadable, corrupt,
+// or cross-origin file yields an error and a nil TokenSet, so callers can
+// treat any failure as "no usable token" and re-exchange without risking a nil
+// dereference.
+func ReadTokens(ref IdentityRef) (*TokenSet, error) {
+	tokens, err := readTokensRaw(ref)
+	if err != nil {
+		return nil, err
+	}
+	if tokens.Origin != "" {
+		if envOrigin := configuredEnvOrigin(ref.Environment); envOrigin != "" && tokens.Origin != envOrigin {
+			return nil, fmt.Errorf("%w: cached token for %s/%s belongs to %s, not %s",
+				ErrOriginMismatch, ref.Identity, ref.Environment, tokens.Origin, envOrigin)
+		}
+	}
+	return tokens, nil
 }
 
 // InvalidateTokens removes the cached token for ref so the next request forces a
@@ -89,7 +108,13 @@ func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(tokens) //nolint:gosec // G117: intentionally persisting the access token to the 0600 state file; this IS the token cache.
+	toSave := *tokens
+	toSave.Origin = NormalizeOrigin(toSave.Origin)
+	if toSave.Origin == "" {
+		toSave.Origin = configuredEnvOrigin(ref.Environment)
+	}
+	tokens.Origin = toSave.Origin
+	data, err := json.Marshal(&toSave) //nolint:gosec // G117: intentionally persisting the access token to the 0600 state file; this IS the token cache.
 	if err != nil {
 		return fmt.Errorf("encoding token state: %w", err)
 	}

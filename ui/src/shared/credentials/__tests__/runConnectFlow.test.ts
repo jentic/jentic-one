@@ -57,11 +57,10 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 			http.get('/credentials/:id', ({ params }) => {
 				if (String(params.id) !== id) return undefined;
 				reads += 1;
-				// runConnectFlow only inspects provider_account_ref / updated_at to
-				// decide "connected", so a minimal partial is enough here.
 				return HttpResponse.json({
 					credential_id: id,
 					provider_account_ref: connected ? 'connected' : null,
+					details: { connected },
 					updated_at: connected ? new Date().toISOString() : null,
 				} as Partial<CredentialRedactedResponse>);
 			}),
@@ -87,6 +86,46 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 
 		const outcome = await flow;
 		expect(outcome.status).toBe('connected');
+	});
+
+	it('keeps polling pending when a concurrent rename/PATCH changes updated_at while details.connected is false', async () => {
+		const id = seedConnectableCredential();
+		let reads = 0;
+		worker.use(
+			http.get('/credentials/:id', ({ params }) => {
+				if (String(params.id) !== id) return undefined;
+				reads += 1;
+				if (reads === 1) {
+					// Baseline read: unconnected
+					return HttpResponse.json({
+						credential_id: id,
+						provider_account_ref: null,
+						details: { connected: false },
+						updated_at: '2026-01-01T00:00:00Z',
+					} as Partial<CredentialRedactedResponse>);
+				}
+				if (reads === 2) {
+					// Poll 1: concurrent rename/PATCH bumped updated_at, still unconnected
+					return HttpResponse.json({
+						credential_id: id,
+						provider_account_ref: null,
+						details: { connected: false },
+						updated_at: '2026-01-01T00:01:00Z',
+					} as Partial<CredentialRedactedResponse>);
+				}
+				// Poll 2: OAuth callback landed, details.connected is now true
+				return HttpResponse.json({
+					credential_id: id,
+					provider_account_ref: null,
+					details: { connected: true },
+					updated_at: '2026-01-01T00:02:00Z',
+				} as Partial<CredentialRedactedResponse>);
+			}),
+		);
+
+		const outcome = await runConnectFlow(id, { pollMs: 25, timeoutMs: 2000 });
+		expect(outcome.status).toBe('connected');
+		expect(reads).toBe(3);
 	});
 
 	it('ignores a message from a foreign origin (no early resolve)', async () => {
@@ -274,6 +313,7 @@ describe('runConnectFlow — device-code branch', () => {
 				return HttpResponse.json({
 					credential_id: id,
 					provider_account_ref: connected ? 'connected' : null,
+					details: { connected },
 					updated_at: connected ? new Date().toISOString() : null,
 				} as Partial<CredentialRedactedResponse>);
 			}),

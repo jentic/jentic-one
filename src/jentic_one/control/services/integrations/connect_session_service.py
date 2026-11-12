@@ -5972,7 +5972,9 @@ class ConnectSessionService:
         the grant and that swap in one commit.
         """
         expires_at = (
-            datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
+            datetime.now(UTC) + timedelta(seconds=tokens.expires_in)
+            if tokens.expires_in is not None
+            else None
         )
         encrypted_access = self._ctx.encryption.encrypt(tokens.access_token)
         encrypted_refresh = (

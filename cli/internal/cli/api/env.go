@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -58,6 +59,7 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())
 
+			originChanged := false
 			if err := config.MutateConfig(func(cfg *config.Config) error {
 				// NAME GUARD: names become key/token file stems (client/auth
 				// Stem, path-traversal guard) — validate at creation.
@@ -70,11 +72,21 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 				}
 				// OVERWRITE GUARD: env add on an existing name would silently wipe
 				// fields no flag expresses — fail unless --force.
-				if _, exists := cfg.Environments[name]; exists && !force {
+				existing, exists := cfg.Environments[name]
+				if exists && !force {
 					return &ux.CodedError{
 						Code:       ux.CodeMissingArgument,
 						Msg:        fmt.Sprintf("environment %q already exists", name),
 						Actionable: "Pass --force to replace it, or choose a different name.",
+					}
+				}
+				if exists && existing.BaseURL != "" && auth.NormalizeOrigin(existing.BaseURL) != auth.NormalizeOrigin(baseURL) {
+					originChanged = true
+					for idName, ident := range cfg.Identities {
+						if ident.Environments != nil {
+							delete(ident.Environments, name)
+							cfg.Identities[idName] = ident
+						}
 					}
 				}
 				cfg.Environments[name] = config.Env{
@@ -85,6 +97,11 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 				return nil
 			}); err != nil {
 				return reportCoded(aud, err)
+			}
+			if originChanged {
+				if err := auth.PurgeEnvironmentCredentials(name); err != nil {
+					return reportCoded(aud, err)
+				}
 			}
 
 			aud.Render(ux.Result{

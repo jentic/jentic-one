@@ -105,7 +105,9 @@ export function EditCredentialSheet({
 		[cred],
 	);
 
-	// Prefill non-secret fields whenever a (different) credential loads.
+	// Prefill non-secret fields whenever a (different) credential loads or the
+	// sheet opens/closes, so cancelling and reopening resets secret fields,
+	// errors, and dirty state back to the stored credential.
 	useEffect(() => {
 		if (!cred) return;
 		const details = credentialDetails(cred);
@@ -131,7 +133,7 @@ export function EditCredentialSheet({
 		setState(seeded);
 		setInitialState(seeded);
 		setErrors({});
-	}, [cred]);
+	}, [cred, open]);
 
 	useEffect(() => {
 		if (open) closeButtonRef.current?.focus();
@@ -275,6 +277,7 @@ export function EditCredentialSheet({
 
 							<div className="space-y-4">
 								<CredentialTypeFields
+									key={open ? 'open' : 'closed'}
 									type={cred.type}
 									state={state}
 									onChange={(p): void => setState((s) => ({ ...s, ...p }))}

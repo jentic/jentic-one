@@ -1183,6 +1183,7 @@ export const credentialsHandlers = [
 				const target = store.find((c) => c.credential_id === id);
 				if (target) {
 					target.provider_account_ref = managed ? `apn_${seq}_mock` : 'connected';
+					target.details = { ...(target.details ?? {}), connected: true };
 					target.updated_at = new Date().toISOString();
 				}
 			}, 600);

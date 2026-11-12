@@ -192,7 +192,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	// soft errors with the default get_started pointer (§3.7 table).
 	_, token, err := s.app.contextSession(cctx, st)
 	if err != nil {
-		s.logger.Warn(toolName+" auth failed", "error", err)
+		s.logger.Warn(toolName+" auth failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
 	agent := st.IdentityName + "@" + st.EnvironmentName
@@ -392,7 +392,7 @@ func stringArg(args map[string]any, name string) string {
 // would be a dead end). Non-resolve codes (an auth failure surfacing inside
 // the inspect call) keep their own default pointers.
 func (s *mcpServer) executeResolveError(ctx context.Context, target string, err error) *mcp.CallToolResult {
-	s.logger.Warn("execute resolve failed", "target", target, "error", err)
+	s.logger.Warn("execute resolve failed", "target", target, "error", redactedErr(err))
 	coded := asCoded(err)
 	if coded.Code != ux.CodeResolveFailed {
 		return s.softError(ctx, err)
@@ -422,7 +422,7 @@ func (s *mcpServer) executeResolveError(ctx context.Context, target string, err 
 // get_execution_result shares this helper for its own transport failures
 // so they surface with hints rather than as a bare INTERNAL_ERROR.
 func (s *mcpServer) executeTransportError(ctx context.Context, err error, retrySafe bool) *mcp.CallToolResult {
-	s.logger.Warn("transport failure", "error", err, "retry_safe", retrySafe)
+	s.logger.Warn("transport failure", "error", redactedErr(err), "retry_safe", retrySafe)
 	coded := asCoded(err)
 	if coded.Code != ux.CodeTransportError {
 		return s.softError(ctx, err)
@@ -892,7 +892,7 @@ func isTerminalJobStatus(status any) bool {
 func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string, reviewURL *string) (map[string]any, *mcp.CallToolResult) {
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
-		s.logger.Warn("get_execution_result failed", "error", err)
+		s.logger.Warn("get_execution_result failed", "error", redactedErr(err))
 		return nil, s.heldPollError(cctx, heldExecutionID, *reviewURL, err)
 	}
 	resp, callErr := client.GetHeldExecutionWithResponse(cctx, heldExecutionID)
@@ -910,7 +910,7 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 				Details: map[string]any{"held_execution_id": heldExecutionID},
 			}, "get_execution_result")
 		}
-		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", err)
+		s.logger.Warn("get_execution_result failed", "held_execution_id", heldExecutionID, "error", redactedErr(err))
 		return nil, s.heldPollError(cctx, heldExecutionID, *reviewURL, err)
 	}
 	if resp.JSON200 == nil {
@@ -956,7 +956,7 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 // agent can relay the link and poll again. The poll is a GET: a transport
 // failure is always retryable (§3.7 transport row).
 func (s *mcpServer) heldPollError(ctx context.Context, heldExecutionID, reviewURL string, err error) *mcp.CallToolResult {
-	coded := asCoded(classifyTransportErr(err))
+	coded := mcpCoded(classifyTransportErr(err))
 	details := map[string]any{"held_execution_id": heldExecutionID}
 	if reviewURL != "" {
 		details["review_url"] = reviewURL
@@ -994,8 +994,8 @@ func (s *mcpServer) attachHeldResult(ctx context.Context, client heldResultClien
 		if errors.As(err, &he) && he.StatusCode == http.StatusConflict {
 			return
 		}
-		s.logger.Warn("get_execution_result: result fetch failed", "held_execution_id", heldExecutionID, "error", err)
-		payload["result_error"] = fmt.Sprintf("the call finished but its result could not be fetched: %v", err)
+		s.logger.Warn("get_execution_result: result fetch failed", "held_execution_id", heldExecutionID, "error", redactedErr(err))
+		payload["result_error"] = fmt.Sprintf("the call finished but its result could not be fetched: %s", redactedErr(err))
 		return
 	}
 	s.attachResultBody(resp.Body, payload)
@@ -1013,7 +1013,7 @@ type heldResultClient interface {
 func (s *mcpServer) jobPollPayload(cctx context.Context, jobID string) (map[string]any, *mcp.CallToolResult) {
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
-		s.logger.Warn("get_execution_result failed", "error", err)
+		s.logger.Warn("get_execution_result failed", "error", redactedErr(err))
 		return nil, s.softError(cctx, err)
 	}
 	resp, jobErr := client.GetJobWithResponse(cctx, jobID)
@@ -1031,7 +1031,7 @@ func (s *mcpServer) jobPollPayload(cctx context.Context, jobID string) (map[stri
 					"get_execution_result again with the exact value.",
 			}, "get_execution_result")
 		}
-		s.logger.Warn("get_execution_result failed", "job_id", jobID, "error", err)
+		s.logger.Warn("get_execution_result failed", "job_id", jobID, "error", redactedErr(err))
 		// §3.7 transport row: a transport failure on the RECOVERY path ("the
 		// control plane is briefly down, poll again") must come back as a
 		// retryable TRANSPORT_ERROR with the get_started pointer, never as
@@ -1071,8 +1071,8 @@ func (s *mcpServer) jobPollPayload(cctx context.Context, jobID string) (map[stri
 func (s *mcpServer) attachJobResult(ctx context.Context, client jobResultClient, jobID string, payload map[string]any) {
 	resp, err := client.GetJobResultWithResponse(ctx, jobID)
 	if err := apiErrorFor(resp, err); err != nil {
-		s.logger.Warn("get_execution_result: result fetch failed", "job_id", jobID, "error", err)
-		payload["result_error"] = fmt.Sprintf("the job completed but its result could not be fetched: %v", err)
+		s.logger.Warn("get_execution_result: result fetch failed", "job_id", jobID, "error", redactedErr(err))
+		payload["result_error"] = fmt.Sprintf("the job completed but its result could not be fetched: %s", redactedErr(err))
 		return
 	}
 	s.attachResultBody(resp.Body, payload)
