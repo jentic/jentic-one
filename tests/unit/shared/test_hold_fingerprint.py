@@ -63,3 +63,53 @@ def test_query_string_is_part_of_the_fingerprint() -> None:
 def test_query_parameter_order_does_not_split_identical_requests() -> None:
     assert _fp(None, query="a=1&b=2") == _fp(None, query="b=2&a=1")
     assert canonical_query("b=2&a=1&a=0") == "a=0&a=1&b=2"
+
+
+def test_cookie_and_semantic_headers_are_part_of_the_hold_fingerprint() -> None:
+    base = compute_execution_fingerprint(
+        agent_id="agnt_1",
+        credential_id="cred_1",
+        method="POST",
+        path="/v1/x",
+        body=b'{"a":1}',
+        headers={"Content-Type": "application/json; charset=utf-8", "Notion-Version": "2022-06-28"},
+        cookie="sid=alpha; mode=strict",
+    )
+    same_with_volatile = compute_execution_fingerprint(
+        agent_id="agnt_1",
+        credential_id="cred_1",
+        method="POST",
+        path="/v1/x",
+        body=b'{"a": 1}',
+        headers={
+            "content-type": 'Application/JSON; CHARSET="UTF-8"',
+            "notion-version": "2022-06-28",
+            "Authorization": "Bearer other-token",
+            "X-Request-Id": "req-2",
+            "Traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        },
+        cookie=" sid=alpha ; mode=strict ",
+    )
+    assert base == same_with_volatile
+
+    diff_cookie = compute_execution_fingerprint(
+        agent_id="agnt_1",
+        credential_id="cred_1",
+        method="POST",
+        path="/v1/x",
+        body=b'{"a":1}',
+        headers={"Content-Type": "application/json; charset=utf-8", "Notion-Version": "2022-06-28"},
+        cookie="sid=beta; mode=strict",
+    )
+    assert base != diff_cookie
+
+    diff_header = compute_execution_fingerprint(
+        agent_id="agnt_1",
+        credential_id="cred_1",
+        method="POST",
+        path="/v1/x",
+        body=b'{"a":1}',
+        headers={"Content-Type": "application/json; charset=utf-8", "Notion-Version": "2025-01-01"},
+        cookie="sid=alpha; mode=strict",
+    )
+    assert base != diff_header

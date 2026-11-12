@@ -6,13 +6,19 @@ worker reads.
 """
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from starlette.requests import Request
 
+from jentic_one.broker.core.errors import AsyncCookieEncryptionUnavailableError
+from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.core.proxy_headers import is_replay_header, replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import _async_job_payload
+from jentic_one.broker.web.routers.execute import _async_job_payload, _captured_cookie
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import OperationInfo
 
 
@@ -175,3 +181,41 @@ def test_any_vendor_version_header_replays(name: str) -> None:
 def test_replay_never_keeps_credentials_hop_by_hop_or_jentic_headers(name: str) -> None:
     assert is_replay_header(name) is False
     assert replay_headers({name: "1"}) == {}
+
+
+def test_payload_carries_auth_channel_lineage_when_present() -> None:
+    ident = Identity(
+        sub="agt_1",
+        actor_type=ActorType.AGENT,
+        auth_token_sha256="deadbeef" * 8,
+        auth_method="access_token",
+        oauth_client_id="client_1",
+        oauth_grant_id="ocg_1",
+    )
+    payload = _async_job_payload(
+        _ctx(),
+        execution_id="exec_1",
+        origin="api",
+        identity=ident,
+    )
+    assert payload["auth_token_sha256"] == "deadbeef" * 8
+    assert payload["auth_method"] == "access_token"
+    assert payload["oauth_client_id"] == "client_1"
+    assert payload["oauth_grant_id"] == "ocg_1"
+
+
+def test_captured_cookie_fails_closed_without_keyset() -> None:
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api.example.com/v1/things",
+            "headers": [(b"cookie", b"sid=secret")],
+        }
+    )
+    ctx = MagicMock()
+    ctx.has_encryption_keyset = False
+
+    with pytest.raises(AsyncCookieEncryptionUnavailableError) as exc:
+        _captured_cookie(req, ctx)
+    assert status_for_broker_error(exc.value) == 503

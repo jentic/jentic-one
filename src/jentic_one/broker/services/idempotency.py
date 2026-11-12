@@ -26,12 +26,16 @@ replays, never refuses claims.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import json
+import secrets
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import structlog
 
@@ -63,8 +67,9 @@ class IdempotencyStateStore(KeyValueStore, AtomicStore, Protocol):
 _KEY_PREFIX = "idem:"
 # Stored bodies live in their own namespace so they have their own budget.
 _BODY_KEY_PREFIX = "idem-body:"
-# Fingerprint characters (hex) a body key carries to bind it to its record.
+# Fingerprint or claim-token characters (hex) a body key carries to bind it to its record.
 _BODY_FINGERPRINT_TAG_LEN = 16
+_CLAIM_TOKEN_BYTES = 8
 # Most serialized header bytes one record carries.
 MAX_RECORD_HEADER_BYTES = 512
 _MAX_STATUS_CODE = 999
@@ -76,10 +81,31 @@ _PRIORITY_HEADERS = ("content-type", "location", "etag", "content-location", "re
 _HEADER_RANK = {name: rank for rank, name in enumerate(_PRIORITY_HEADERS)}
 # How long a released body slot lingers once its body is dropped.
 _RELEASED_BODY_TTL_S = 1.0
-# Record phases. PENDING carries only the fingerprint (no response yet); DONE
-# carries the serialized response and is what a replay re-emits.
+# Record phases. PENDING carries only the fingerprint and owner token (no response yet);
+# DONE carries the serialized response and is what a replay re-emits.
 _PHASE_PENDING = "pending"
 _PHASE_DONE = "done"
+
+# Redis Lua compare-and-set / compare-and-delete for fenced pending claims.
+_REDIS_CAS_LUA = """
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return 0
+end
+local ok, decoded = pcall(cjson.decode, current)
+if not ok or type(decoded) ~= 'table' then
+  return 0
+end
+if decoded['phase'] ~= 'pending' or decoded['fp'] ~= ARGV[1] or decoded['token'] ~= ARGV[2] then
+  return 0
+end
+if ARGV[3] == 'delete' then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+redis.call('SET', KEYS[1], ARGV[4], 'PX', tonumber(ARGV[5]))
+return 1
+"""
 
 
 class IdempotencyState(StrEnum):
@@ -115,6 +141,7 @@ class IdempotencyOutcome:
     state: IdempotencyState
     stored: StoredResponse | None = None
     retry_after_s: int = 0
+    claim_id: str | None = None
 
 
 def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -157,14 +184,25 @@ def _dumps(record: Mapping[str, object]) -> bytes:
     return json.dumps(record, separators=_SEPARATORS).encode()
 
 
-def _tombstone(fingerprint: str, status_code: int) -> bytes:
+def _mint_claim_id() -> str:
+    return secrets.token_hex(_CLAIM_TOKEN_BYTES)
+
+
+def _tombstone(fingerprint: str, status_code: int, token: str = "") -> bytes:
     """A DONE record with only the status: what a retry replays when nothing else fit."""
+    effective_token = token or ("0" * (_CLAIM_TOKEN_BYTES * 2))
     return _dumps(
-        {"phase": _PHASE_DONE, "fp": fingerprint, "status": status_code, "body_omitted": True}
+        {
+            "phase": _PHASE_DONE,
+            "fp": fingerprint,
+            "token": effective_token,
+            "status": status_code,
+            "body_omitted": True,
+        }
     )
 
 
-def _claim(fingerprint: str) -> bytes:
+def _claim(fingerprint: str, token: str = "") -> bytes:
     """The PENDING claim, padded to the size of the largest :func:`_tombstone`.
 
     Promoting the claim to a tombstone is then an overwrite with a value no
@@ -172,9 +210,105 @@ def _claim(fingerprint: str) -> bytes:
     the upstream call has run, a record that stops a retry re-running it can
     always be written.
     """
-    base = {"phase": _PHASE_PENDING, "fp": fingerprint, "pad": ""}
-    pad = len(_tombstone(fingerprint, _MAX_STATUS_CODE)) - len(_dumps(base))
+    effective_token = token or ("0" * (_CLAIM_TOKEN_BYTES * 2))
+    base = {"phase": _PHASE_PENDING, "fp": fingerprint, "token": effective_token, "pad": ""}
+    pad = len(_tombstone(fingerprint, _MAX_STATUS_CODE, effective_token)) - len(_dumps(base))
     return _dumps({**base, "pad": " " * max(0, pad)})
+
+
+class IdempotencyClaimLease:
+    """Fenced lease for an in-flight ``Idempotency-Key`` claim.
+
+    Renews the pending claim periodically while the request is running so a
+    slow call does not outlive its claim, and releases the claim on exit only
+    when the request failed before upstream dispatch occurred.
+    """
+
+    def __init__(
+        self,
+        store: SharedStateIdempotencyStore,
+        caller: str,
+        key: str,
+        fingerprint: str,
+        claim_id: str,
+    ) -> None:
+        self._store = store
+        self._caller = caller
+        self._key = key
+        self._fingerprint = fingerprint
+        self.claim_id = claim_id
+        self.dispatched = False
+        self.completed = False
+        self._task: asyncio.Task[None] | None = None
+
+    def mark_dispatched(self) -> None:
+        """Record that the upstream call is about to be (or has been) dispatched."""
+        self.dispatched = True
+
+    def mark_pre_send_failure(self) -> None:
+        """Record that the call failed before any request bytes were sent upstream."""
+        self.dispatched = False
+
+    async def complete(
+        self,
+        *,
+        status_code: int,
+        headers: dict[str, str],
+        body: bytes,
+    ) -> bool:
+        """Promote the leased claim to ``DONE`` if this lease still owns the slot."""
+        if self.completed:
+            return True
+        ok = await self._store.complete(
+            self._caller,
+            self._key,
+            self._fingerprint,
+            status_code=status_code,
+            headers=headers,
+            body=body,
+            claim_id=self.claim_id,
+        )
+        self.completed = True
+        return ok
+
+    async def _renew_loop(self) -> None:
+        interval = max(0.05, self._store.pending_ttl_s / 2.0)
+        while not self.completed:
+            await asyncio.sleep(interval)
+            if self.completed:
+                return
+            still_owned = await self._store.renew(
+                self._caller,
+                self._key,
+                self._fingerprint,
+                claim_id=self.claim_id,
+            )
+            if not still_owned:
+                return
+
+    async def __aenter__(self) -> IdempotencyClaimLease:
+        self._task = asyncio.create_task(self._renew_loop())
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._task
+            self._task = None
+        if exc_type is not None and not self.completed and not self.dispatched:
+            with contextlib.suppress(Exception):
+                await self._store.release(
+                    self._caller,
+                    self._key,
+                    self._fingerprint,
+                    claim_id=self.claim_id,
+                )
 
 
 class SharedStateIdempotencyStore:
@@ -192,6 +326,28 @@ class SharedStateIdempotencyStore:
         self._pending_ttl = pending_ttl_s
         self._done_ttl = done_ttl_s
         self._max_response_bytes = max_response_bytes
+        self._cas_lock = asyncio.Lock()
+        self._issued_tokens: dict[tuple[str, str, str], deque[str]] = {}
+        self._redis_cas_script: Any = None
+        redis_client = getattr(store, "_redis", None)
+        if redis_client is not None and hasattr(redis_client, "register_script"):
+            self._redis_cas_script = redis_client.register_script(_REDIS_CAS_LUA)
+
+    @property
+    def pending_ttl_s(self) -> float:
+        """Configured pending-claim TTL in seconds."""
+        return self._pending_ttl
+
+    def lease(
+        self,
+        caller: str,
+        key: str,
+        fingerprint: str,
+        claim_id: str | None = None,
+    ) -> IdempotencyClaimLease:
+        """Build a fenced lease context manager for an active claim."""
+        token = claim_id or self._peek_claim_token(caller, key, fingerprint) or _mint_claim_id()
+        return IdempotencyClaimLease(self, caller, key, fingerprint, token)
 
     @staticmethod
     def _caller_segment(caller: str) -> str:
@@ -203,11 +359,156 @@ class SharedStateIdempotencyStore:
         return f"{_KEY_PREFIX}{self._caller_segment(caller)}:{key}"
 
     def _body_slot(self, caller: str, key: str, fingerprint: str) -> str:
-        # Keyed by the request's fingerprint too, so a record only ever reads the
-        # body its own request stored: when a claim expires mid-call and the key
-        # is re-claimed by a different request, the two bodies cannot cross.
+        # Keyed by the start of the fingerprint too, so an expired claim that is
+        # re-claimed with another fingerprint never overwrites this record's body.
         tag = fingerprint[:_BODY_FINGERPRINT_TAG_LEN]
         return f"{_BODY_KEY_PREFIX}{self._caller_segment(caller)}:{key}:{tag}"
+
+    def _record_issued_token(self, caller: str, key: str, fingerprint: str, token: str) -> None:
+        bucket_key = (caller, key, fingerprint)
+        queue = self._issued_tokens.get(bucket_key)
+        if queue is None:
+            queue = deque()
+            self._issued_tokens[bucket_key] = queue
+        queue.append(token)
+        # Bound per-slot token history in case claims expire without completing.
+        while len(queue) > 8:
+            queue.popleft()
+
+    def _peek_claim_token(self, caller: str, key: str, fingerprint: str) -> str | None:
+        queue = self._issued_tokens.get((caller, key, fingerprint))
+        return queue[0] if queue else None
+
+    def _consume_claim_token(
+        self, caller: str, key: str, fingerprint: str, explicit_claim_id: str | None
+    ) -> str | None:
+        bucket_key = (caller, key, fingerprint)
+        queue = self._issued_tokens.get(bucket_key)
+        if explicit_claim_id is not None:
+            if queue is not None:
+                with contextlib.suppress(ValueError):
+                    queue.remove(explicit_claim_id)
+                if not queue:
+                    del self._issued_tokens[bucket_key]
+            return explicit_claim_id
+        if not queue:
+            return None
+        token = queue.popleft()
+        if not queue:
+            del self._issued_tokens[bucket_key]
+        return token
+
+    async def _check_pending_owner(self, slot: str, fingerprint: str, token: str | None) -> bool:
+        """Return True iff *slot* currently holds a PENDING record for *(fingerprint, token)*."""
+        if not token:
+            return False
+        existing = await self._store.get(slot)
+        if existing is None:
+            return False
+        try:
+            record = json.loads(existing)
+        except ValueError:
+            return False
+        return (
+            isinstance(record, dict)
+            and record.get("phase") == _PHASE_PENDING
+            and record.get("fp") == fingerprint
+            and record.get("token") == token
+        )
+
+    async def _cas_set(
+        self,
+        slot: str,
+        *,
+        fingerprint: str,
+        token: str | None,
+        value: bytes,
+        ttl_s: float,
+    ) -> bool:
+        """Atomically overwrite *slot* only while it is PENDING with *(fingerprint, token)*."""
+        if not token:
+            return False
+        key_fn = getattr(self._store, "_k", None)
+        if self._redis_cas_script is not None and callable(key_fn):
+            redis_key = key_fn(slot)
+            ttl_ms = max(1, int(ttl_s * 1000))
+            res = await self._redis_cas_script(
+                keys=[redis_key],
+                args=[fingerprint, token, "set", value, ttl_ms],
+            )
+            return bool(int(res))
+        async with self._cas_lock:
+            if not await self._check_pending_owner(slot, fingerprint, token):
+                return False
+            await self._store.set(slot, value, ttl_s=ttl_s)
+            return True
+
+    async def _cas_delete(
+        self,
+        slot: str,
+        *,
+        fingerprint: str,
+        token: str | None,
+    ) -> bool:
+        """Atomically delete *slot* only while it is PENDING with *(fingerprint, token)*."""
+        if not token:
+            return False
+        key_fn = getattr(self._store, "_k", None)
+        if self._redis_cas_script is not None and callable(key_fn):
+            redis_key = key_fn(slot)
+            res = await self._redis_cas_script(
+                keys=[redis_key],
+                args=[fingerprint, token, "delete", b"", 0],
+            )
+            return bool(int(res))
+        async with self._cas_lock:
+            if not await self._check_pending_owner(slot, fingerprint, token):
+                return False
+            delete_fn = getattr(self._store, "_delete", None)
+            kv = getattr(self._store, "_kv", None)
+            if callable(delete_fn) and isinstance(kv, dict) and slot in kv:
+                delete_fn(slot)
+            else:
+                await self._store.set(slot, b"", ttl_s=0.001)
+            return True
+
+    async def renew(
+        self,
+        caller: str,
+        key: str,
+        fingerprint: str,
+        *,
+        claim_id: str | None = None,
+    ) -> bool:
+        """Extend an in-flight PENDING claim's TTL if *claim_id* still owns it."""
+        token = claim_id or self._peek_claim_token(caller, key, fingerprint)
+        slot = self._slot(caller, key)
+        try:
+            return await self._cas_set(
+                slot,
+                fingerprint=fingerprint,
+                token=token,
+                value=_claim(fingerprint, token or ""),
+                ttl_s=self._pending_ttl,
+            )
+        except StateBackendCapacityError:
+            return False
+
+    async def release(
+        self,
+        caller: str,
+        key: str,
+        fingerprint: str,
+        *,
+        claim_id: str | None = None,
+    ) -> bool:
+        """Release a PENDING claim after a pre-dispatch failure if *claim_id* still owns it."""
+        token = self._consume_claim_token(caller, key, fingerprint, claim_id)
+        slot = self._slot(caller, key)
+        try:
+            return await self._cas_delete(slot, fingerprint=fingerprint, token=token)
+        except StateBackendCapacityError:
+            return False
 
     async def begin(self, caller: str, key: str, fingerprint: str) -> IdempotencyOutcome:
         """Atomically claim ``(caller, key)`` or classify an existing claim.
@@ -224,10 +525,14 @@ class SharedStateIdempotencyStore:
                 retry.
         """
         slot = self._slot(caller, key)
+        claim_id = _mint_claim_id()
         try:
-            claimed = await self._store.set_if_absent(
-                slot, _claim(fingerprint), ttl_s=self._pending_ttl
-            )
+            async with self._cas_lock:
+                claimed = await self._store.set_if_absent(
+                    slot, _claim(fingerprint, claim_id), ttl_s=self._pending_ttl
+                )
+                if claimed:
+                    self._record_issued_token(caller, key, fingerprint, claim_id)
         except StateBackendCapacityError as exc:
             raise IdempotencyUnavailableError(
                 detail=(
@@ -238,7 +543,7 @@ class SharedStateIdempotencyStore:
                 headers={"Retry-After": str(exc.retry_after_s)},
             ) from exc
         if claimed:
-            return IdempotencyOutcome(IdempotencyState.FRESH)
+            return IdempotencyOutcome(IdempotencyState.FRESH, claim_id=claim_id)
 
         existing = await self._store.get(slot)
         if existing is None:
@@ -248,7 +553,12 @@ class SharedStateIdempotencyStore:
                 IdempotencyState.IN_PROGRESS, retry_after_s=self._retry_after()
             )
 
-        record = json.loads(existing)
+        try:
+            record = json.loads(existing)
+        except ValueError:
+            return IdempotencyOutcome(
+                IdempotencyState.IN_PROGRESS, retry_after_s=self._retry_after()
+            )
         if record.get("fp") != fingerprint:
             return IdempotencyOutcome(IdempotencyState.CONFLICT)
         if record.get("phase") != _PHASE_DONE:
@@ -271,24 +581,24 @@ class SharedStateIdempotencyStore:
         status_code: int,
         headers: dict[str, str],
         body: bytes,
-    ) -> None:
+        claim_id: str | None = None,
+    ) -> bool:
         """Promote the pending claim to the stored response on the long TTL.
 
-        The record holds the status, the scrubbed headers (capped at
-        :data:`MAX_RECORD_HEADER_BYTES`) and the fingerprint; the body is
-        stored under its own key (namespace ``idem-body``) so bodies have their
-        own budget and never crowd out claims. A body over
-        ``max_response_bytes``, or one the store refuses, is omitted
-        (``body_omitted``): the replay still prevents a duplicate side effect,
-        only its byte-for-byte body is lost.
-
-        When the store refuses the record too, the claim is overwritten with a
-        status-only tombstone, which is never larger than the claim and so is
-        always accepted while the claim is live. A retry then replays the
-        status instead of running the upstream call again. The tombstone
-        carries no body reference, so a body stored for it is released rather
-        than left spending the caller's ``idem-body`` share.
+        Completion is fenced by the claim's generation owner token (`claim_id`):
+        if the pending claim expired and was reclaimed by a newer request, or
+        was already promoted to ``DONE``, this completion refuses to overwrite
+        the newer record and returns ``False``.
         """
+        token = self._consume_claim_token(caller, key, fingerprint, claim_id)
+        slot = self._slot(caller, key)
+        if not await self._check_pending_owner(slot, fingerprint, token):
+            _logger.warning(
+                "idempotency_stale_claim_rejected",
+                reason="claim_not_owned",
+            )
+            return False
+
         omit = len(body) > self._max_response_bytes
         body_slot = self._body_slot(caller, key, fingerprint)
         body_stored = False
@@ -303,21 +613,47 @@ class SharedStateIdempotencyStore:
         record = {
             "phase": _PHASE_DONE,
             "fp": fingerprint,
+            "token": token,
             "status": status_code,
             "headers": _cap_headers(_scrub_headers(headers)),
             "body_omitted": omit,
             "body_ref": bool(body) and not omit,
         }
-        slot = self._slot(caller, key)
         try:
-            await self._store.set(slot, _dumps(record), ttl_s=self._done_ttl)
-            return
+            promoted = await self._cas_set(
+                slot,
+                fingerprint=fingerprint,
+                token=token,
+                value=_dumps(record),
+                ttl_s=self._done_ttl,
+            )
+            if promoted:
+                return True
+            if body_stored:
+                await self._release_body(body_slot)
+            _logger.warning(
+                "idempotency_stale_claim_rejected",
+                reason="claim_superseded_during_complete",
+            )
+            return False
         except StateBackendCapacityError:
             pass
         if body_stored:
             await self._release_body(body_slot)
         try:
-            await self._store.set(slot, _tombstone(fingerprint, status_code), ttl_s=self._done_ttl)
+            promoted = await self._cas_set(
+                slot,
+                fingerprint=fingerprint,
+                token=token,
+                value=_tombstone(fingerprint, status_code, token or ""),
+                ttl_s=self._done_ttl,
+            )
+            if not promoted:
+                _logger.warning(
+                    "idempotency_stale_claim_rejected",
+                    reason="claim_superseded_before_tombstone",
+                )
+                return False
         except StateBackendCapacityError:
             # Only reachable once the claim itself has expired (the call
             # outlived ``pending_ttl_s``), when there is no claim to overwrite.
@@ -329,8 +665,9 @@ class SharedStateIdempotencyStore:
                     "already expired; a retry with this Idempotency-Key runs again"
                 ),
             )
-            return
+            return False
         _logger.warning("idempotency_record_stored_as_tombstone", reason="store_full")
+        return True
 
     async def _release_body(self, body_slot: str) -> None:
         """Drop a stored body nothing will reference.
@@ -376,6 +713,7 @@ class SharedStateIdempotencyStore:
 
 
 __all__ = [
+    "IdempotencyClaimLease",
     "IdempotencyOutcome",
     "IdempotencyState",
     "IdempotencyStateStore",

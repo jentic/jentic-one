@@ -10,6 +10,7 @@ caller's concern (the runner returns the verbatim upstream result).
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -18,7 +19,13 @@ import structlog
 from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
-from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import (
+    BrokerError,
+    CircuitOpenError,
+    RateLimitExceededError,
+    RunnerSchemeUnsupportedError,
+    RunnerUnavailableError,
+)
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.core.server_timing import ServerTimingStage, stage
@@ -134,6 +141,19 @@ def _api_reference(ctx_req: ExecuteRequestContext) -> APIReference | None:
     )
 
 
+def _is_pre_send_broker_error(exc: BrokerError) -> bool:
+    """Return True when the broker error happened before any request bytes were sent upstream."""
+    return exc.pre_send or isinstance(
+        exc,
+        (
+            CircuitOpenError,
+            RateLimitExceededError,
+            RunnerSchemeUnsupportedError,
+            RunnerUnavailableError,
+        ),
+    )
+
+
 async def run_execution(
     ctx_req: ExecuteRequestContext,
     *,
@@ -151,6 +171,9 @@ async def run_execution(
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
     emit_lifecycle: bool = True,
+    on_dispatched: Callable[[], None] | None = None,
+    on_pre_send_error: Callable[[], None] | None = None,
+    on_outcome: Callable[[ExecutionOutcome], Awaitable[None]] | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -222,9 +245,13 @@ async def run_execution(
             span.set_attribute("operation_id", operation_id or "")
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
+            if on_dispatched is not None:
+                on_dispatched()
             with jentic_tracestate(tracestate_member), stage(ServerTimingStage.UPSTREAM):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
+        if _is_pre_send_broker_error(exc) and on_pre_send_error is not None:
+            on_pre_send_error()
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
         # Committed before the re-raise that maps the BrokerError to HTTP.
         # ``jentic-persist`` is timed here too, so a failed call reports it.
@@ -264,6 +291,9 @@ async def run_execution(
                     session, ctx_req, actor_id=actor_id, actor_type=actor_type
                 )
         raise
+
+    if on_outcome is not None:
+        await on_outcome(outcome)
 
     result = outcome.result
     status = ExecutionStatus.FAILED if result.status_code >= 400 else ExecutionStatus.COMPLETED

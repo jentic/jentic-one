@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from starlette.requests import Request
 
+from jentic_one.broker.core.errors import AsyncCookieEncryptionUnavailableError
 from jentic_one.broker.core.proxy_headers import replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import (
@@ -147,8 +148,9 @@ def test_async_payload_without_a_cookie_has_no_cookie_key() -> None:
     assert INBOUND_COOKIE_PAYLOAD_KEY not in payload
 
 
-def test_async_capture_without_a_keyset_keeps_nothing() -> None:
-    assert _captured_cookie(_request(cookies=["sid=1"]), _keyed_ctx(keyset=False)) is None
+def test_async_capture_without_a_keyset_fails_closed() -> None:
+    with pytest.raises(AsyncCookieEncryptionUnavailableError):
+        _captured_cookie(_request(cookies=["sid=1"]), _keyed_ctx(keyset=False))
 
 
 # --- sync / async parity ----------------------------------------------------

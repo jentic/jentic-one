@@ -180,3 +180,46 @@ def test_unmapped_broker_error_maps_to_500() -> None:
         pass
 
     assert broker_error_problem(_UnmappedError("x"))["status"] == 500
+
+
+@pytest.mark.asyncio
+async def test_authorizer_forwards_auth_channel_lineage_to_actor_status() -> None:
+    class _LineageStatus:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, Any] = {}
+
+        async def authority(self, **kwargs: Any) -> ActorAuthority:
+            self.kwargs = kwargs
+            return ActorAuthority(active=False, holds_permission=False)
+
+    ctx = MagicMock()
+    ctx.config.vendors = VendorRegistryConfig()
+    status = _LineageStatus()
+    authorizer = QueuedExecutionAuthorizer(
+        ctx,
+        actor_status=cast(ActorStatusResolver, status),
+        credential_deriver=_DenyingCredentialDeriver(),
+        agent_rule_evaluator=MagicMock(),
+    )
+
+    verdict = await authorizer.authorize(
+        _request(
+            auth_token_sha256="abcd" * 16,
+            auth_method="access_token",
+            oauth_client_id="cli_1",
+            oauth_grant_id="ocg_1",
+            session_generation=3,
+        )
+    )
+
+    assert verdict.allowed is False
+    assert status.kwargs == {
+        "actor_id": "agt_1",
+        "actor_type": "agent",
+        "permission": "capabilities:execute",
+        "auth_token_sha256": "abcd" * 16,
+        "auth_method": "access_token",
+        "oauth_client_id": "cli_1",
+        "oauth_grant_id": "ocg_1",
+        "session_generation": 3,
+    }

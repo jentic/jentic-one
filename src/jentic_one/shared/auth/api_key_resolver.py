@@ -248,4 +248,6 @@ class ApiKeyResolver:
             permissions=permissions,
             parent_actor_id=row.owner_id,
             active=True,
+            auth_token_sha256=hashlib.sha256(raw_key.encode()).hexdigest(),
+            auth_method="api_key",
         )
