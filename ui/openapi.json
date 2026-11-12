@@ -4073,6 +4073,7 @@
         "examples": [
           {
             "authorize_url": "https://vendor.example.com/oauth/authorize?client_id=…&state=…",
+            "flow_id": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
             "state": "Jq8Yk2mN4pR7sT1vW3xZ"
           }
         ],
@@ -4083,6 +4084,20 @@
               "https://vendor.example.com/oauth/authorize?client_id=…&state=…"
             ],
             "type": "string"
+          },
+          "flow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque identifier for reading this flow's completion status.",
+            "examples": [
+              "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+            ]
           },
           "kind": {
             "const": "authorization_code",
@@ -5810,6 +5825,30 @@
         },
         "required": [
           "token"
+        ],
+        "type": "object"
+      },
+      "ConnectFlowStatusResponse": {
+        "description": "Authoritative terminal completion of one connect challenge.",
+        "examples": [
+          {
+            "status": "connected"
+          }
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "connected"
+            ],
+            "examples": [
+              "connected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
         ],
         "type": "object"
       },
@@ -7665,9 +7704,10 @@
         "type": "object"
       },
       "DeviceAuthorizationConnectChallengeResponse": {
-        "description": "RFC 8628 device-code challenge.\n\nClient shows ``user_code`` at ``verification_uri`` and polls\n``GET /credentials/{id}`` until state moves off ``pending``\n(scanner-driven server-side).",
+        "description": "RFC 8628 device-code challenge.\n\nClient shows ``user_code`` at ``verification_uri`` and polls this flow's\nstatus endpoint while the scanner drives completion server-side.",
         "examples": [
           {
+            "flow_id": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
             "poll_interval_seconds": 5,
             "user_code": "WDJB-MJHT",
             "verification_uri": "https://vendor.example.com/device",
@@ -7675,6 +7715,13 @@
           }
         ],
         "properties": {
+          "flow_id": {
+            "description": "Opaque identifier for reading this flow's completion status.",
+            "examples": [
+              "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+            ],
+            "type": "string"
+          },
           "kind": {
             "const": "device_authorization",
             "default": "device_authorization",
@@ -7724,6 +7771,7 @@
           }
         },
         "required": [
+          "flow_id",
           "user_code",
           "verification_uri"
         ],
@@ -34156,6 +34204,87 @@
         ]
       },
       "summary": "Begin OAuth connect flow"
+    },
+    "/credentials/{credential_id}/connect/{flow_id}/status": {
+      "description": "`GET`: Read OAuth connect flow status.",
+      "get": {
+        "description": "Read one flow's committed outcome, not a credential-wide timestamp.",
+        "operationId": "getConnectFlowStatus",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PathCredentialId"
+          },
+          {
+            "description": "Opaque identifier returned by begin connect.",
+            "examples": {
+              "example": {
+                "summary": "Opaque flow handle",
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque identifier returned by begin connect.",
+              "examples": [
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              ],
+              "title": "Flow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "connected"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectFlowStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Read OAuth connect flow status",
+        "tags": [
+          "Credentials"
+        ]
+      },
+      "summary": "Read OAuth connect flow status"
     },
     "/error": {
       "description": "`GET`: Get a browser authorization error.",

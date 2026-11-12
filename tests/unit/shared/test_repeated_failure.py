@@ -461,6 +461,8 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
         "trace_id": _TRACE,
         "api_vendor": "example",
         "operation": {"id": _OPERATION},
+        "auth_token_sha256": "abcd" * 16,
+        "auth_method": "access_token",
     }
 
     # In production the executor persists the failing ExecutionRecord before the

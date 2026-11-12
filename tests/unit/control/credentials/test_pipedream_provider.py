@@ -259,9 +259,13 @@ async def test_complete_connect_rejects_substituted_account_external_id() -> Non
         {"access_token": "at", "expires_in": -5},
         {"access_token": "at", "expires_in": "invalid"},
         {"access_token": "at", "expires_in": True},
+        {"access_token": "at", "expires_in": "²"},
+        {"access_token": "at", "expires_in": "9" * 5_000},
         {"access_token": "at", "expires_at": 0},
         {"access_token": "at", "expires_at": "invalid"},
         {"access_token": "at", "expires_at": True},
+        {"access_token": "at", "expires_at": "²"},
+        {"access_token": "at", "expires_at": "9" * 5_000},
     ],
 )
 async def test_refresh_rejects_malformed_token_payload(

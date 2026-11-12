@@ -192,25 +192,29 @@ func mergeMappingKeys(dst, src *yaml.Node) error {
 		*dst = *src // fresh/non-mapping document: adopt the typed encoding wholesale
 		return nil
 	}
-	mergeMapping(dstMap, srcMap, false)
+	mergeMapping(dstMap, srcMap, false, "")
 	return nil
 }
 
 // mergeMapping overlays src onto dst. When pruneMissing is true, dst keys absent
-// from src are removed (used one level deep inside a typed map section, where
-// children are entries and deletion must propagate). For each retained key whose
-// value is a typed map SECTION, its children are merged with pruneMissing=true;
-// all other nested mappings merge with pruneMissing=false so per-entry unknown
-// fields survive.
-func mergeMapping(dst, src *yaml.Node, pruneMissing bool) {
+// from src are removed (used for entries of a fully typed map). parentSection
+// tracks the enclosing top-level map through an entry's fields: an identity's
+// environments map is also fully typed, so registration deletions must propagate
+// while unknown fields elsewhere in the entry survive.
+func mergeMapping(dst, src *yaml.Node, pruneMissing bool, parentSection string) {
 	for i := 0; i+1 < len(src.Content); i += 2 {
 		keyNode := src.Content[i]
 		valNode := src.Content[i+1]
-		childPrune := typedMapSections[keyNode.Value]
+		childPrune := typedMapSections[keyNode.Value] ||
+			(parentSection == "identities" && keyNode.Value == "environments")
+		childSection := parentSection
+		if childPrune {
+			childSection = keyNode.Value
+		}
 		if idx := findKey(dst, keyNode.Value); idx >= 0 {
 			dstVal := dst.Content[idx+1]
 			if dstVal.Kind == yaml.MappingNode && valNode.Kind == yaml.MappingNode {
-				mergeMapping(dstVal, valNode, childPrune)
+				mergeMapping(dstVal, valNode, childPrune, childSection)
 			} else {
 				dst.Content[idx+1] = valNode
 			}
@@ -218,9 +222,22 @@ func mergeMapping(dst, src *yaml.Node, pruneMissing bool) {
 			dst.Content = append(dst.Content, keyNode, valNode)
 		}
 	}
+	if parentSection == "identities" && !pruneMissing && findKey(src, "environments") < 0 {
+		removeMappingKey(dst, "environments")
+	}
 	if pruneMissing {
 		pruneKeysNotIn(dst, src)
 	}
+}
+
+func removeMappingKey(mapping *yaml.Node, key string) {
+	kept := mapping.Content[:0]
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value != key {
+			kept = append(kept, mapping.Content[i], mapping.Content[i+1])
+		}
+	}
+	mapping.Content = kept
 }
 
 // pruneKeysNotIn removes every key/value pair from dst whose key is not present in

@@ -1357,6 +1357,8 @@ def _async_job_payload(
         payload["oauth_grant_id"] = effective_grant_id
     if effective_sgen is not None:
         payload["session_generation"] = effective_sgen
+    if identity is not None and identity.expires_at is not None:
+        payload["auth_expires_at"] = identity.expires_at.isoformat()
     return payload
 
 
@@ -1472,6 +1474,7 @@ async def _handle_hold(
                 method=ctx_req.method,
                 path=path,
                 query=parsed_url.query,
+                upstream_url=ctx_req.upstream_url,
                 body=body,
                 headers=request.headers,
                 cookie=_inbound_cookie(request),

@@ -5,11 +5,14 @@
 /**
  * RFC 8628 device-code challenge.
  *
- * Client shows ``user_code`` at ``verification_uri`` and polls
- * ``GET /credentials/{id}`` until state moves off ``pending``
- * (scanner-driven server-side).
+ * Client shows ``user_code`` at ``verification_uri`` and polls this flow's
+ * status endpoint while the scanner drives completion server-side.
  */
 export type DeviceAuthorizationConnectChallengeResponse = {
+    /**
+     * Opaque identifier for reading this flow's completion status.
+     */
+    flow_id: string;
     kind?: string;
     /**
      * Minimum seconds to wait between polls, when the vendor supplies it; null means use your own default.

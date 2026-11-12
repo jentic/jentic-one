@@ -5,14 +5,15 @@ import (
 	"testing"
 )
 
-// TestPurgeMaterial_RemovesAllThreeFiles verifies that PurgeMaterial deletes the
-// key, tokens, and apikey files for a ref (F8-34: identity/context delete must not
-// orphan on-disk secrets).
-func TestPurgeMaterial_RemovesAllThreeFiles(t *testing.T) {
+// TestPurgeMaterial_RemovesAllMaterialFiles verifies that PurgeMaterial deletes the
+// key, tokens, API key, and origin sidecar for a ref (F8-34: identity/context delete
+// must not orphan on-disk secrets).
+func TestPurgeMaterial_RemovesAllMaterialFiles(t *testing.T) {
 	withConfigDir(t)
 	ref := IdentityRef{Identity: "agent", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
 
-	// Materialize all three secret files.
+	// Materialize all credential files.
 	if _, err := GetOrGenerateKey(ref); err != nil {
 		t.Fatalf("GetOrGenerateKey: %v", err)
 	}
@@ -26,7 +27,8 @@ func TestPurgeMaterial_RemovesAllThreeFiles(t *testing.T) {
 	keyPath, _ := KeyPathForImport(ref)
 	tokPath, _ := getTokenPath(ref)
 	akPath, _ := apiKeyPath(ref)
-	for _, p := range []string{keyPath, tokPath, akPath} {
+	akOriginPath, _ := apiKeyOriginPath(ref)
+	for _, p := range []string{keyPath, tokPath, akPath, akOriginPath} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("precondition: expected %s to exist: %v", p, err)
 		}
@@ -36,7 +38,7 @@ func TestPurgeMaterial_RemovesAllThreeFiles(t *testing.T) {
 		t.Fatalf("PurgeMaterial: %v", err)
 	}
 
-	for _, p := range []string{keyPath, tokPath, akPath} {
+	for _, p := range []string{keyPath, tokPath, akPath, akOriginPath} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("expected %s to be removed, stat err = %v", p, err)
 		}

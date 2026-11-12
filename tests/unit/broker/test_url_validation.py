@@ -472,7 +472,7 @@ def test_numeric_ipv4_spellings_are_resolved_then_classified(host: str) -> None:
 @pytest.mark.parametrize(
     "url",
     [
-        "https://other-user:other-password@api.example.com/resource",
+        "https://other-user:other-password@api.example.com/resource",  # pragma: allowlist secret
         "http://user@api.example.com/resource",
         "https://:secret@api.example.com/resource",
         "https://@api.example.com/resource",
@@ -489,7 +489,7 @@ def test_rejects_url_userinfo_sync(url: str) -> None:
 @pytest.mark.parametrize(
     "url",
     [
-        "https://other-user:other-password@api.example.com/resource",
+        "https://other-user:other-password@api.example.com/resource",  # pragma: allowlist secret
         "http://user@api.example.com/resource",
         "https://:secret@api.example.com/resource",
         "https://@api.example.com/resource",

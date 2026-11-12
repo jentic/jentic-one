@@ -61,6 +61,7 @@ from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
     AuthCodeConnectChallengeResponse,
     ConnectChallengeResponse,
+    ConnectFlowStatusResponse,
     ConnectRequestBody,
     CredentialAgentListResponse,
     CredentialAgentResponse,
@@ -1129,6 +1130,35 @@ async def delete_credential(
     return Response(status_code=204)
 
 
+@router.get(
+    "/credentials/{credential_id}/connect/{flow_id}/status",
+    summary="Read OAuth connect flow status",
+    responses=not_found(),
+    response_model=ConnectFlowStatusResponse,
+)
+async def get_connect_flow_status(
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    flow_id: Annotated[
+        str,
+        Path(
+            description="Opaque identifier returned by begin connect.",
+            openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+        ),
+    ],
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: ConnectService = Depends(get_connect_service),
+) -> ConnectFlowStatusResponse:
+    """Read one flow's committed outcome, not a credential-wide timestamp."""
+    return ConnectFlowStatusResponse(
+        status=await svc.get_flow_status(credential_id, flow_id, identity=identity)
+    )
+
+
 @router.post(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
@@ -1181,9 +1211,12 @@ async def connect_credential(
             response, request, ctx, binding, authorize_url=challenge.authorize_url
         )
         return AuthCodeConnectChallengeResponse(
-            authorize_url=challenge.authorize_url, state=challenge.state
+            authorize_url=challenge.authorize_url,
+            state=challenge.state,
+            flow_id=challenge.flow_id,
         )
     return DeviceAuthorizationConnectChallengeResponse(
+        flow_id=challenge.flow_id,
         user_code=challenge.user_code,
         verification_uri=challenge.verification_uri,
         verification_uri_complete=challenge.verification_uri_complete,

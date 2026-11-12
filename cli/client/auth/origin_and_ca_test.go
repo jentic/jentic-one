@@ -8,6 +8,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +101,150 @@ func TestAPIKey_BoundToOriginAndRejectedWhenRepointed(t *testing.T) {
 	}
 	if req.Header.Get("Authorization") != "" {
 		t.Fatalf("Authorization header must not be attached on origin mismatch, got %q", req.Header.Get("Authorization"))
+	}
+}
+
+func TestBearerToken_ExplicitBaseURLIsIndependentOfAmbientEnvironment(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "agent1", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://ambient-a.example.com")
+	if err := SaveTokens(ref, &TokenSet{
+		AccessToken: "tok_explicit_b",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Origin:      "https://explicit-b.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := BearerToken(Credentials{
+		BaseURL:         "https://explicit-b.example.com",
+		IdentityName:    "agent1",
+		EnvironmentName: "prod",
+	})
+	if err != nil || got != "tok_explicit_b" {
+		t.Fatalf("explicit BaseURL credential resolution = %q, %v", got, err)
+	}
+}
+
+func TestOriginBinding_ConfigErrorsFailClosed(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "agent1", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
+	if err := SaveAPIKey(ref, "jak_config_error_test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveTokens(ref, &TokenSet{AccessToken: "tok_config_error", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	configDir, err := config.ConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("environments: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadAPIKey(ref); err == nil {
+		t.Fatal("bound API key must not be read when its configured origin cannot be loaded")
+	}
+	if _, err := ReadTokens(ref); err == nil {
+		t.Fatal("bound token must not be read when its configured origin cannot be loaded")
+	}
+	if err := SaveAPIKey(IdentityRef{Identity: "other", Environment: "prod"}, "jak_unbound_test"); err == nil {
+		t.Fatal("SaveAPIKey must not write an origin-less key when config loading fails")
+	}
+	if err := SaveTokens(IdentityRef{Identity: "other", Environment: "prod"}, &TokenSet{AccessToken: "tok_unbound"}); err == nil {
+		t.Fatal("SaveTokens must not write an origin-less token when config loading fails")
+	}
+}
+
+func TestOriginBinding_MalformedStoredOriginsFailClosed(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "agent1", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-b.example.com")
+
+	keyPath, err := apiKeyPath(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte(`{"api_key":"jak_malformed_origin_test","origin":"://bad"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BearerToken(Credentials{
+		BaseURL:         "https://origin-b.example.com",
+		IdentityName:    ref.Identity,
+		EnvironmentName: ref.Environment,
+	}); err == nil || !strings.Contains(err.Error(), "invalid API key origin") {
+		t.Fatalf("malformed API-key origin fell through to another credential: %v", err)
+	}
+
+	tokenPath, err := getTokenPath(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte(`{"access_token":"tok_malformed_origin","expires_at":"2099-01-01T00:00:00Z","origin":"://bad"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadTokens(ref); err == nil || !strings.Contains(err.Error(), "invalid token origin") {
+		t.Fatalf("malformed token origin was treated as an unbound token: %v", err)
+	}
+}
+
+func TestBearerToken_APIKeyReadFailureDoesNotFallBackToOAuth(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{name: "corrupt envelope", content: `{"api_key":`, wantErr: "decoding API key"},
+		{name: "empty bare key", content: "", wantErr: "is empty"},
+		{name: "empty envelope key", content: `{}`, wantErr: "is empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfigDir(t)
+			ref := IdentityRef{Identity: "agent1", Environment: "prod"}
+			seedEnvironmentBaseURL(t, "prod", "https://origin-b.example.com")
+			keyPath, err := apiKeyPath(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(keyPath, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			creds := Credentials{
+				BaseURL:         "https://origin-b.example.com",
+				IdentityName:    ref.Identity,
+				EnvironmentName: ref.Environment,
+			}
+			if _, err := BearerToken(creds); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("invalid API-key state must surface its read error, got %v", err)
+			}
+			if _, err := ReadAPIKey(ref); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("direct API-key read must surface invalid state, got %v", err)
+			}
+			if CanReExchange(creds) {
+				t.Fatal("invalid API-key state must not permit an OAuth exchange retry")
+			}
+		})
+	}
+}
+
+func TestSaveTokens_RejectsInvalidExplicitOrigin(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "agent1", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
+	if err := SaveTokens(ref, &TokenSet{
+		AccessToken: "tok_invalid_origin",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Origin:      "://bad",
+	}); err == nil {
+		t.Fatal("an invalid explicit token origin must not fall back to the configured environment")
+	}
+}
+
+func TestSaveTokens_NilReturnsError(t *testing.T) {
+	withConfigDir(t)
+	if err := SaveTokens(IdentityRef{Identity: "agent1", Environment: "prod"}, nil); err == nil {
+		t.Fatal("SaveTokens(nil) must return an error")
 	}
 }
 

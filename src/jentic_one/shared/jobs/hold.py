@@ -57,9 +57,8 @@ PROBLEM_CONTENT_TYPE = "application/problem+json"
 ENCRYPTED_PAYLOAD_KEY = "_enc"
 
 #: An async or held execution payload carries the caller's ``Cookie`` under this
-#: key as platform-key ciphertext, so the worker sends the caller's cookies
-#: upstream exactly as the sync route does without the payload ever holding
-#: them in plaintext.
+#: key as platform-key ciphertext, so the worker applies the same upstream-origin
+#: cookie policy as the sync route without the payload holding cookies in plaintext.
 INBOUND_COOKIE_PAYLOAD_KEY = "inbound_cookie_enc"
 
 #: What the agent is told to do with a held 202.
@@ -258,18 +257,29 @@ def compute_execution_fingerprint(
     method: str,
     path: str,
     query: str = "",
+    upstream_url: str = "",
     body: bytes | None,
     headers: Mapping[str, str] | None = None,
     cookie: str | None = None,
 ) -> str:
-    """SHA-256 over ``(agent_id, credential_id, method, path, query, body, cookie, headers)``.
+    """Hash the caller, credential, upstream target, operation, and request content.
+
+    The complete ``upstream_url`` separates approvals for different resolved
+    origins even when their server-relative paths and credentials match.
 
     The query, body, cookie, and semantic headers are canonicalised
     (:func:`canonical_query`, :func:`canonical_body`, :func:`canonical_cookie`,
     :func:`canonical_headers`).
     """
     digest = hashlib.sha256()
-    for part in (agent_id, credential_id, method.upper(), path, canonical_query(query)):
+    for part in (
+        agent_id,
+        credential_id,
+        method.upper(),
+        upstream_url,
+        path,
+        canonical_query(query),
+    ):
         digest.update(part.encode())
         digest.update(b"\x00")
     digest.update(canonical_body(body))
@@ -370,6 +380,7 @@ async def file_hold(
     method: str,
     path: str,
     query: str = "",
+    upstream_url: str = "",
     body: bytes | None,
     headers: Mapping[str, str] | None = None,
     cookie: str | None = None,
@@ -397,6 +408,7 @@ async def file_hold(
         method=method,
         path=path,
         query=query,
+        upstream_url=upstream_url,
         body=body,
         headers=headers,
         cookie=cookie,

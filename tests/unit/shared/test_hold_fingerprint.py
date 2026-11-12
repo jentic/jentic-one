@@ -42,6 +42,7 @@ def test_identity_fields_are_part_of_the_fingerprint() -> None:
     assert base != _fp(None, credential_id="cred_2")
     assert base != _fp(None, path="/v1/y")
     assert base == _fp(None, method="post")
+    assert base != _fp(None, upstream_url="https://eu.api.example.com/v1/x")
 
 
 def test_non_json_body_is_fingerprinted_verbatim() -> None:

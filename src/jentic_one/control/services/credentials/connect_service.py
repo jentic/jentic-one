@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 
 import structlog
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import (
+    ConnectNonceRepository,
     CredentialRepository,
     OAuthClientCredentialRepository,
     OAuthTokenRepository,
@@ -24,6 +26,7 @@ from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
     StateError,
     consume_callback_state,
+    decode_state,
 )
 from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -100,7 +103,31 @@ class ConnectService:
             browser_host=browser_binding.host if browser_binding else None,
         )
 
-        return await provider.begin_connect(self._ctx, api=api, request=enriched_request)
+        challenge = await provider.begin_connect(self._ctx, api=api, request=enriched_request)
+        if challenge.kind == "authorization_code":
+            state = decode_state(
+                self._ctx.config.credentials.connect.state_secret.get_secret_value(),
+                challenge.state,
+            )
+            if state.session_id is None:
+                challenge.flow_id = state.nonce
+        return challenge
+
+    async def get_flow_status(
+        self, credential_id: str, flow_id: str, *, identity: Identity
+    ) -> Literal["pending", "connected"]:
+        """Return only the requested visible flow's terminal completion state."""
+        access_filters = build_access_filters(identity, Credential)
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+            if credential is None:
+                raise CredentialNotFoundError(credential_id)
+            connected = await ConnectNonceRepository.is_completed(
+                session, nonce=flow_id, credential_id=credential_id
+            )
+        return "connected" if connected else "pending"
 
     async def complete(
         self,
@@ -218,16 +245,15 @@ class ConnectService:
                 if result.provider_account_ref is not None:
                     credential.provider_account_ref = result.provider_account_ref
 
-                # Always bump `updated_at` on the credential row when a connect
-                # completes, regardless of whether `provider_account_ref` changed.
-                # The SPA polls `GET /credentials/{id}` and uses `updated_at` (or a
-                # `provider_account_ref` change) as the "the connection completed"
-                # signal so it can close the OAuth popup. `direct_oauth2` stores
-                # tokens in a sibling table and returns no `provider_account_ref`,
-                # so without this explicit touch the credentials row never changes
-                # and the SPA's polling loop times out, leaving the popup stuck on
-                # `{"status":"connected"}`.
+                # Keep the credential snapshot fresh for ordinary cache consumers.
+                # Connect completion itself is correlated through the nonce below,
+                # not inferred from this row's timestamp or account reference.
                 credential.updated_at = dt.datetime.now(dt.UTC)
+                await ConnectNonceRepository.mark_completed(
+                    session,
+                    nonce=state.nonce,
+                    credential_id=state.credential_id,
+                )
                 await session.flush()
         except Exception:
             await self._emit_connect_telemetry(

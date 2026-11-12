@@ -20,7 +20,8 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from jentic_one.control.repos import CredentialRepository
+from jentic_one.control.repos import ConnectNonceRepository, CredentialRepository
+from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
@@ -50,6 +51,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
     ProvisionResult,
     RefreshResult,
 )
+from jentic_one.control.services.credentials.state import generate_nonce
 from jentic_one.control.services.credentials.token_endpoint import same_origin
 from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.shared.config import resolved_control_egress
@@ -99,8 +101,38 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
         )
         encrypted_device_code = ctx.encryption.encrypt(result.device_code)
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
+        flow_nonce = generate_nonce()
+        actor_id = request.extra.get("actor_id")
+        if not actor_id:
+            raise ProviderError("device flow requires an initiating actor")
 
         async with ctx.control_db.transaction() as session:
+            # Serialize with session consent on the credential's sole aux row.
+            # A live session owns the shared scanner path even if its vendor
+            # response is already in flight, so a standalone code must never
+            # replace that session's transient state.
+            locked = await DeviceAuthorizationCredentialRepository.get_by_credential(
+                session, credential_id, for_update=True
+            )
+            if locked is None:
+                raise NotConnectableError(
+                    f"credential {credential_id!r} has no device-flow row — "
+                    "was it created with grant_type=device_code?"
+                )
+            live_session = await ConnectSessionRepository.get_live_by_credential(
+                session, credential_id
+            )
+            if live_session is not None:
+                raise NotConnectableError(
+                    "a connect session is already in progress for this credential"
+                )
+            await ConnectNonceRepository.register(
+                session,
+                nonce=flow_nonce,
+                credential_id=credential_id,
+                expires_at=expires_at,
+                created_by=actor_id,
+            )
             await DeviceAuthorizationCredentialRepository.set_transient_state(
                 session,
                 credential_id,
@@ -111,9 +143,11 @@ class DeviceAuthorizationConnectProvider(OAuth2Provider):
                 poll_interval_seconds=result.interval,
                 device_code_expires_at=expires_at,
                 granted_scopes=list(scopes),
+                flow_nonce=flow_nonce,
             )
 
         return DeviceAuthorizationChallenge(
+            flow_id=flow_nonce,
             user_code=result.user_code,
             verification_uri=result.verification_uri,
             verification_uri_complete=result.verification_uri_complete,

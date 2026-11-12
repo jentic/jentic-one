@@ -486,6 +486,15 @@ class SessionClosedError(PointsAtAccessError):
         self.session_id = session_id
 
 
+class DeviceFlowInProgressError(ConnectSessionServiceError):
+    """A standalone device flow owns the credential's shared transient state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a standalone device connection is already in progress for this credential"
+        )
+
+
 class ConnectOpenError(ConnectSessionServiceError):
     """The agent already has an open connect session for this target; amend that one."""
 

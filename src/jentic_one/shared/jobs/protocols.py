@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
@@ -83,6 +83,20 @@ class CredentialInjector(Protocol):
         ...
 
 
+def auth_lineage_is_current(
+    token_sha256: str | None, method: str | None, expires_at: datetime | None
+) -> bool:
+    """Whether deferred work carries a complete, unexpired caller credential."""
+    if not token_sha256 or not method:
+        return False
+    if method == "jwt" and expires_at is None:
+        return False
+    if expires_at is None:
+        return True
+    aware = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
+    return aware > datetime.now(UTC)
+
+
 @dataclass(frozen=True, slots=True)
 class QueuedExecutionRequest:
     """What the worker knows about a queued execution when it re-authorizes it.
@@ -129,6 +143,7 @@ class QueuedExecutionRequest:
     oauth_client_id: str | None = None
     oauth_grant_id: str | None = None
     session_generation: int | None = None
+    auth_expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

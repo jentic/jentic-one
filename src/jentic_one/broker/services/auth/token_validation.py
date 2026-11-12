@@ -42,6 +42,7 @@ path's ``unknown_token`` / ``token_inactive`` / ``token_expired`` refusals are
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -232,6 +233,8 @@ class JwtTokenValidator:
             permissions=permissions,
             expires_at=expires_at,
             active=True,
+            auth_token_sha256=hashlib.sha256(token.encode()).hexdigest(),
+            auth_method="jwt",
         )
 
 

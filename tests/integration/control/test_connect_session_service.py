@@ -36,6 +36,7 @@ from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
+from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
 from jentic_one.control.core.schema.connect_session_revisions import ConnectSessionRevision
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
@@ -57,9 +58,18 @@ from jentic_one.control.repos.connect_session_repo import ConnectSessionReposito
 from jentic_one.control.repos.connect_session_revision_repo import (
     ConnectSessionRevisionRepository,
 )
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
 from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.providers.base import NotConnectableError
+from jentic_one.control.services.credentials.schemas.connect import (
+    ConnectRequest,
+    DeviceAuthorizationChallenge,
+)
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
@@ -83,6 +93,7 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
     ConnectOpenError,
+    DeviceFlowInProgressError,
     EditBindingNotFoundError,
     EditOpenError,
     InvalidPollTokenError,
@@ -172,6 +183,7 @@ _AGENT_IDENTITY = Identity(
 async def clean_session_tables(control_db: DatabaseSession) -> AsyncGenerator[None, None]:
     """Reset every table this test file writes to, before and after."""
     tables = (
+        ConnectNonce,
         ConnectSessionOutcome,
         ConnectSessionRevision,
         ConnectSession,
@@ -1076,6 +1088,226 @@ async def test_advance_polling_credential_advances_a_re_connect_of_a_connected_c
     # ``DeviceAuthorizationHandler.advance`` — the previous
     # ``state != "pending"`` gate would have returned before this.
     advance_mock.assert_awaited_once_with(credential.id)
+
+
+async def test_standalone_device_finalise_uses_the_polled_generation(
+    integration_context: Context,
+    clean_session_tables: None,
+) -> None:
+    """A reconnect cannot consume the grant or completion of an older poll."""
+    ctx = integration_context
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type=CredentialType.OAUTH2,
+            name="standalone device credential",
+            api_vendor="foo",
+            api_name="bar",
+            api_version="v1",
+            provider="device_authorization",
+            created_by=_USER_ID,
+            state="pending",
+            catalog_api_id="example.com/catalog-api",
+        )
+        await DeviceAuthorizationCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            client_id="public-client",
+            token_url="https://idp.example.com/token",
+            authorization_endpoint="https://idp.example.com/device/code",
+            requested_scopes=["read"],
+            created_by=_USER_ID,
+        )
+
+    connect = ConnectService(ctx)
+    catalog_importer = AsyncMock()
+    scanner = ConnectSessionService(ctx, catalog_auto_importer=catalog_importer)
+    first_begin = df.BeginResult(
+        device_code="device-code-a",
+        user_code="CODE-A",
+        verification_uri="https://idp.example.com/device",
+        verification_uri_complete=None,
+        expires_in=900,
+        interval=1,
+    )
+    second_begin = df.BeginResult(
+        device_code="device-code-b",
+        user_code="CODE-B",
+        verification_uri="https://idp.example.com/device",
+        verification_uri_complete=None,
+        expires_in=900,
+        interval=1,
+    )
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=first_begin)):
+        first = await connect.begin(
+            credential.id, ConnectRequest(scopes=["read"]), identity=_USER_IDENTITY
+        )
+    assert isinstance(first, DeviceAuthorizationChallenge)
+    assert (
+        await connect.get_flow_status(credential.id, first.flow_id, identity=_USER_IDENTITY)
+        == "pending"
+    )
+
+    second: DeviceAuthorizationChallenge | None = None
+
+    async def replace_flow_during_poll(**_: object) -> df.PollResult:
+        nonlocal second
+        replacement = await connect.begin(
+            credential.id, ConnectRequest(scopes=["read"]), identity=_USER_IDENTITY
+        )
+        assert isinstance(replacement, DeviceAuthorizationChallenge)
+        second = replacement
+        return df.PollResult(status="success", access_token="grant-a", expires_in=3600)
+
+    with (
+        patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=second_begin)),
+        patch.object(df, "poll_device_authorization", new=replace_flow_during_poll),
+        patch.object(connect_session_service._logger, "info") as log_info,
+    ):
+        await scanner.advance_polling_credential(credential.id)
+
+    catalog_importer.ensure_imported.assert_not_awaited()
+    assert all(
+        call.args[0] != "credential.device_authorization.connected"
+        for call in log_info.call_args_list
+    )
+    assert second is not None
+    async with ctx.control_db.session() as session:
+        assert await OAuthTokenRepository.get_by_credential(session, credential.id) is None
+        current = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential.id
+        )
+        assert current is not None
+        assert current.flow_nonce == second.flow_id
+        assert current.encrypted_device_code is not None
+    assert (
+        await connect.get_flow_status(credential.id, first.flow_id, identity=_USER_IDENTITY)
+        == "pending"
+    )
+    assert (
+        await connect.get_flow_status(credential.id, second.flow_id, identity=_USER_IDENTITY)
+        == "pending"
+    )
+
+    with patch.object(
+        df,
+        "poll_device_authorization",
+        new=AsyncMock(
+            return_value=df.PollResult(status="success", access_token="grant-b", expires_in=3600)
+        ),
+    ):
+        await scanner.advance_polling_credential(credential.id)
+
+    catalog_importer.ensure_imported.assert_awaited_once_with(
+        api_id="example.com/catalog-api", initiator_actor_id=_USER_ID
+    )
+    assert (
+        await connect.get_flow_status(credential.id, first.flow_id, identity=_USER_IDENTITY)
+        == "pending"
+    )
+    assert (
+        await connect.get_flow_status(credential.id, second.flow_id, identity=_USER_IDENTITY)
+        == "connected"
+    )
+    async with ctx.control_db.session() as session:
+        assert await OAuthTokenRepository.get_by_credential(session, credential.id) is not None
+        nonces = (
+            (
+                await session.execute(
+                    select(ConnectNonce).where(ConnectNonce.credential_id == credential.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_nonce = {row.nonce: row for row in nonces}
+        assert by_nonce[first.flow_id].completed_at is None
+        assert by_nonce[second.flow_id].completed_at is not None
+        current = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential.id
+        )
+        assert current is not None
+        assert current.encrypted_device_code is None
+
+
+async def test_standalone_device_terminal_uses_the_polled_generation(
+    integration_context: Context,
+    clean_session_tables: None,
+) -> None:
+    """A superseded poll cannot fail or clear the replacement device flow."""
+    ctx = integration_context
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type=CredentialType.OAUTH2,
+            name="standalone terminal race credential",
+            api_vendor="foo",
+            api_name="bar",
+            api_version="v1",
+            provider="device_authorization",
+            created_by=_USER_ID,
+            state="pending",
+        )
+        await DeviceAuthorizationCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            client_id="public-client",
+            token_url="https://idp.example.com/token",
+            authorization_endpoint="https://idp.example.com/device/code",
+            requested_scopes=["read"],
+            created_by=_USER_ID,
+        )
+
+    connect = ConnectService(ctx)
+    scanner = ConnectSessionService(ctx)
+    begins = [
+        df.BeginResult(
+            device_code=f"device-code-{generation}",
+            user_code=f"CODE-{generation.upper()}",
+            verification_uri="https://idp.example.com/device",
+            verification_uri_complete=None,
+            expires_in=900,
+            interval=1,
+        )
+        for generation in ("a", "b")
+    ]
+    second: DeviceAuthorizationChallenge | None = None
+
+    async def deny_after_replacement(**_: object) -> df.PollResult:
+        nonlocal second
+        replacement = await connect.begin(
+            credential.id, ConnectRequest(scopes=["read"]), identity=_USER_IDENTITY
+        )
+        assert isinstance(replacement, DeviceAuthorizationChallenge)
+        second = replacement
+        return df.PollResult(status="denied")
+
+    with (
+        patch.object(df, "begin_device_authorization", new=AsyncMock(side_effect=begins)),
+        patch.object(df, "poll_device_authorization", new=deny_after_replacement),
+    ):
+        first = await connect.begin(
+            credential.id, ConnectRequest(scopes=["read"]), identity=_USER_IDENTITY
+        )
+        assert isinstance(first, DeviceAuthorizationChallenge)
+        await scanner.advance_polling_credential(credential.id)
+
+    assert second is not None
+    async with ctx.control_db.session() as session:
+        current_credential = await CredentialRepository.get_by_id(session, credential.id)
+        assert current_credential is not None
+        assert current_credential.state == "pending"
+        current = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential.id
+        )
+        assert current is not None
+        assert current.flow_nonce == second.flow_id
+        assert current.encrypted_device_code is not None
+    for flow_id in (first.flow_id, second.flow_id):
+        assert (
+            await connect.get_flow_status(credential.id, flow_id, identity=_USER_IDENTITY)
+            == "pending"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3040,6 +3272,130 @@ async def _connected_device_credential(ctx: Context, svc: ConnectSessionService)
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
     assert row is not None and row.state == "connected"
     return row.credential_id
+
+
+async def test_standalone_device_begin_cannot_replace_a_live_session_flow(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """A standalone begin cannot take a session's grant or transient state."""
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, identity=_USER_IDENTITY
+    )
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        await svc.confirm(
+            created.session_id,
+            revision_id=await _revision(ctx, created.session_id),
+            poll_token=created.poll_token,
+            confirmed_scopes=["read:user"],
+            permission_rules=[],
+            identity=_USER_IDENTITY,
+            browser_binding=_BINDING.claim,
+        )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+    credential_id = row.credential_id
+
+    connect = ConnectService(ctx)
+    refused: NotConnectableError | None = None
+
+    async def begin_standalone_during_poll(**_: object) -> df.PollResult:
+        nonlocal refused
+        try:
+            await connect.begin(
+                credential_id, ConnectRequest(scopes=["read:user"]), identity=_USER_IDENTITY
+            )
+        except NotConnectableError as exc:
+            refused = exc
+        return df.PollResult(status="success", access_token="session-grant", expires_in=3600)
+
+    echo = identity_echo.IdentityEchoResult(display="octo", raw={"login": "octo"})
+    with (
+        patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)),
+        patch.object(df, "poll_device_authorization", new=begin_standalone_during_poll),
+        patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
+    ):
+        await svc.advance_polling_target(credential_id)
+
+    assert refused is not None
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+        result = await session.execute(
+            select(ConnectNonce).where(ConnectNonce.credential_id == credential_id)
+        )
+        nonces = result.scalars().all()
+    assert row is not None and row.state == "connected"
+    assert nonces == []
+
+
+async def test_edit_device_begin_cannot_replace_a_standalone_flow(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    """An edit confirm leaves an in-flight standalone flow and its grant intact."""
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    credential_id = await _connected_device_credential(ctx, svc)
+    edit = await svc.create_edit_session(
+        credential_id=credential_id,
+        agent_id=_AGENT_ID,
+        identity=_AGENT_IDENTITY,
+        request=EditRequest(add_scopes=["repo"]),
+    )
+    connect = ConnectService(ctx)
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)):
+        standalone = await connect.begin(
+            credential_id, ConnectRequest(scopes=["read:user"]), identity=_USER_IDENTITY
+        )
+    assert isinstance(standalone, DeviceAuthorizationChallenge)
+
+    refused: DeviceFlowInProgressError | None = None
+
+    async def confirm_edit_during_poll(**_: object) -> df.PollResult:
+        nonlocal refused
+        try:
+            await svc.confirm_edit(
+                edit.session_id,
+                poll_token=None,
+                identity=_USER_IDENTITY,
+                revision_id=edit.revision_id,
+                permission_rules=[_READ_RULE],
+                resume=False,
+                confirmed_scopes=["read:user", "repo"],
+            )
+        except DeviceFlowInProgressError as exc:
+            refused = exc
+        return df.PollResult(status="success", access_token="standalone-grant", expires_in=3600)
+
+    with (
+        patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=_DEVICE_BEGIN)),
+        patch.object(df, "poll_device_authorization", new=confirm_edit_during_poll),
+    ):
+        await svc.advance_polling_target(credential_id)
+
+    assert refused is not None
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, edit.session_id)
+        current = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
+    assert row is not None and row.state == "created"
+    assert current is not None
+    assert current.flow_nonce == standalone.flow_id
+    assert current.encrypted_device_code is None
+    assert (
+        await connect.get_flow_status(credential_id, standalone.flow_id, identity=_USER_IDENTITY)
+        == "connected"
+    )
 
 
 async def _token_scope(ctx: Context, credential_id: str) -> str | None:

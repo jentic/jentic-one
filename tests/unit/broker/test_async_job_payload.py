@@ -5,6 +5,7 @@ this one holds the broker's ``_async_job_payload`` to the payload contract the
 worker reads.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -211,6 +212,7 @@ def test_replay_preserves_semantic_and_content_negotiation_headers(name: str) ->
 
 
 def test_payload_carries_auth_channel_lineage_when_present() -> None:
+    expires_at = datetime(2026, 11, 12, 19, 0, tzinfo=UTC)
     ident = Identity(
         sub="agt_1",
         actor_type=ActorType.AGENT,
@@ -218,6 +220,7 @@ def test_payload_carries_auth_channel_lineage_when_present() -> None:
         auth_method="access_token",
         oauth_client_id="client_1",
         oauth_grant_id="ocg_1",
+        expires_at=expires_at,
     )
     payload = _async_job_payload(
         _ctx(),
@@ -229,6 +232,7 @@ def test_payload_carries_auth_channel_lineage_when_present() -> None:
     assert payload["auth_method"] == "access_token"
     assert payload["oauth_client_id"] == "client_1"
     assert payload["oauth_grant_id"] == "ocg_1"
+    assert payload["auth_expires_at"] == expires_at.isoformat()
 
 
 def test_captured_cookie_fails_closed_without_keyset() -> None:

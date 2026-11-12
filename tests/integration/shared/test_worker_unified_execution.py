@@ -130,6 +130,8 @@ def _payload() -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
+        "auth_token_sha256": "0" * 64,
+        "auth_method": "opaque",
         # The resolved operation rides the payload as one dict.
         "operation": {"id": "op_widgets", "path": "/v1/widgets", "method": "GET"},
     }

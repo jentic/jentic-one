@@ -129,6 +129,7 @@ def _make_dfc(
         datetime.now(UTC) + timedelta(minutes=30)
     )
     row.granted_scopes = granted_scopes or ["repo"]
+    row.flow_nonce = None
     return row
 
 
@@ -553,6 +554,10 @@ _SET_TRANSIENT = (
     "jentic_one.control.services.integrations.flow_handlers.device_authorization."
     "DeviceAuthorizationCredentialRepository.set_transient_state"
 )
+_GET_BY_CREDENTIAL = (
+    "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+    "DeviceAuthorizationCredentialRepository.get_by_credential"
+)
 
 
 @pytest.mark.asyncio()
@@ -561,6 +566,11 @@ async def test_begin_reaches_control_egress_allowlisted_endpoint_pinned() -> Non
     sent: list[httpx.Request] = []
     with (
         patch(_SET_TRANSIENT, new_callable=AsyncMock),
+        patch(
+            _GET_BY_CREDENTIAL,
+            new_callable=AsyncMock,
+            return_value=MagicMock(flow_nonce=None, encrypted_device_code=None),
+        ),
         patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
         patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _vendor(sent)),
     ):

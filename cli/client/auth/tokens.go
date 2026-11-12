@@ -2,9 +2,11 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/client/config"
@@ -57,7 +59,11 @@ func readTokensRaw(ref IdentityRef) (*TokenSet, error) {
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return nil, fmt.Errorf("decoding token state %s: %w", path, err)
 	}
-	tokens.Origin = NormalizeOrigin(tokens.Origin)
+	rawOrigin := strings.TrimSpace(tokens.Origin)
+	tokens.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" && tokens.Origin == "" {
+		return nil, fmt.Errorf("invalid token origin in %s", path)
+	}
 	return &tokens, nil
 }
 
@@ -71,7 +77,11 @@ func ReadTokens(ref IdentityRef) (*TokenSet, error) {
 		return nil, err
 	}
 	if tokens.Origin != "" {
-		if envOrigin := configuredEnvOrigin(ref.Environment); envOrigin != "" && tokens.Origin != envOrigin {
+		envOrigin, err := configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return nil, err
+		}
+		if envOrigin != "" && tokens.Origin != envOrigin {
 			return nil, fmt.Errorf("%w: cached token for %s/%s belongs to %s, not %s",
 				ErrOriginMismatch, ref.Identity, ref.Environment, tokens.Origin, envOrigin)
 		}
@@ -104,14 +114,25 @@ func InvalidateTokens(ref IdentityRef) error {
 // exchange, never an invalid state (contrast config.MutateConfig, which locks
 // because it mutates stateful status fields).
 func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
+	if tokens == nil {
+		return errors.New("tokens must not be nil")
+	}
 	path, err := getTokenPath(ref)
 	if err != nil {
 		return err
 	}
 	toSave := *tokens
-	toSave.Origin = NormalizeOrigin(toSave.Origin)
+	rawOrigin := strings.TrimSpace(toSave.Origin)
+	toSave.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" && toSave.Origin == "" {
+		return errors.New("invalid token origin")
+	}
 	if toSave.Origin == "" {
-		toSave.Origin = configuredEnvOrigin(ref.Environment)
+		envOrigin, err := configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return err
+		}
+		toSave.Origin = envOrigin
 	}
 	tokens.Origin = toSave.Origin
 	data, err := json.Marshal(&toSave) //nolint:gosec // G117: intentionally persisting the access token to the 0600 state file; this IS the token cache.

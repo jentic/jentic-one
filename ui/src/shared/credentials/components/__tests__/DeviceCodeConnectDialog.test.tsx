@@ -14,6 +14,7 @@ import type { DeviceAuthorizationChallengeResponse } from '@/shared/credentials/
 describe('DeviceCodeConnectDialog', () => {
 	const challenge: DeviceAuthorizationChallengeResponse = {
 		kind: 'device_authorization',
+		flow_id: 'flow-device-1',
 		user_code: 'ABCD-1234',
 		verification_uri: 'https://idp.example.com/device',
 		verification_uri_complete: 'https://idp.example.com/device?user_code=ABCD-1234',

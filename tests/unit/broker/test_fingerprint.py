@@ -121,3 +121,13 @@ def test_different_cookies_and_semantic_headers_differ() -> None:
         server_variables={"region": "eu"},
     )
     assert base != diff_server_vars
+
+
+def test_response_representation_negotiation_is_part_of_the_fingerprint() -> None:
+    """A replay cannot return compressed bytes to a caller requesting identity."""
+    common = ("POST", "https://api.example.com/v1/items", "cred_1", b"")
+    gzip = fingerprint(*common, headers={"Accept-Encoding": "gzip"})
+    identity = fingerprint(*common, headers={"Accept-Encoding": "identity"})
+    implicit_identity = fingerprint(*common, headers={})
+    assert identity == implicit_identity
+    assert gzip != identity

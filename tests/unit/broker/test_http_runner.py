@@ -433,7 +433,7 @@ async def test_runner_rejects_url_userinfo_without_dispatching() -> None:
             await runner.run(
                 RunnerRequest(
                     method="GET",
-                    url="https://other:secret@api.example.com/resource",
+                    url="https://other:secret@api.example.com/resource",  # pragma: allowlist secret
                     headers={"Authorization": "Bearer centrally-injected"},
                 )
             )
@@ -441,7 +441,7 @@ async def test_runner_rejects_url_userinfo_without_dispatching() -> None:
             async with runner.stream(
                 RunnerRequest(
                     method="GET",
-                    url="https://other:secret@api.example.com/resource",
+                    url="https://other:secret@api.example.com/resource",  # pragma: allowlist secret
                     headers={"Authorization": "Bearer centrally-injected"},
                 )
             ):

@@ -89,6 +89,24 @@ class PollResult:
     token_type: str | None = None
 
 
+def _required_string(data: dict[str, object], field: str) -> str:
+    """Read a required non-empty string without coercing malformed JSON values."""
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"missing or invalid {field}")
+    return value
+
+
+def _optional_string(data: dict[str, object], field: str) -> str | None:
+    """Read an optional string, accepting absence and JSON null but no coercion."""
+    value = data.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"invalid {field}")
+    return value
+
+
 async def begin_device_authorization(
     *,
     authorization_endpoint: str,
@@ -146,9 +164,10 @@ async def begin_device_authorization(
         )
 
     try:
-        device_code = str(data["device_code"])
-        user_code = str(data["user_code"])
-        verification_uri = str(data["verification_uri"])
+        device_code = _required_string(data, "device_code")
+        user_code = _required_string(data, "user_code")
+        verification_uri = _required_string(data, "verification_uri")
+        verification_uri_complete = _optional_string(data, "verification_uri_complete")
         expires_in_parsed = parse_oauth_expires_in(data.get("expires_in", 900))
         if expires_in_parsed is None:
             raise ValueError("missing expires_in")
@@ -157,17 +176,14 @@ async def begin_device_authorization(
         if isinstance(raw_interval, bool):
             raise ValueError("boolean interval")
         interval = int(raw_interval)
-        if interval < 0:
-            raise ValueError("negative interval")
+        if interval < 1:
+            raise ValueError("interval must be at least one second")
     except (KeyError, TypeError, ValueError, OverflowError, ProviderError) as exc:
         # Never echo the parsed body — it carries the device_code.
         raise DeviceAuthorizationUpstreamError(
             response.status_code, "malformed device authorization response"
         ) from exc
 
-    verification_uri_complete = (
-        str(data["verification_uri_complete"]) if "verification_uri_complete" in data else None
-    )
     return BeginResult(
         device_code=device_code,
         user_code=user_code,
@@ -248,15 +264,21 @@ async def poll_device_authorization(
             raise DeviceAuthorizationUpstreamError(
                 response.status_code, "invalid expires_in"
             ) from exc
+        try:
+            refresh_token = _optional_string(data, "refresh_token")
+            scope = _optional_string(data, "scope")
+            token_type = _optional_string(data, "token_type")
+        except ValueError as exc:
+            raise DeviceAuthorizationUpstreamError(
+                response.status_code, "malformed token response"
+            ) from exc
         return PollResult(
             status="success",
             access_token=raw_access_token,
-            refresh_token=(
-                str(data["refresh_token"]) if data.get("refresh_token") is not None else None
-            ),
-            scope=str(data["scope"]) if data.get("scope") is not None else None,
+            refresh_token=refresh_token,
+            scope=scope,
             expires_in=expires_in,
-            token_type=str(data["token_type"]) if data.get("token_type") is not None else None,
+            token_type=token_type,
         )
 
     error = sanitize_oauth_error_slug(data.get("error")) if isinstance(data, dict) else None

@@ -116,6 +116,16 @@ class IdempotencyUnavailableError(BrokerError):
     """
 
 
+class IdempotencyCompletionError(BrokerError):
+    """The upstream ran, but its idempotent outcome could not be recorded (500).
+
+    This is an indeterminate execution outcome, not a retryable pre-dispatch
+    refusal. It deliberately carries no ``Retry-After`` hint.
+    """
+
+    default_type = "idempotency_completion_failed"
+
+
 class InvalidRevisionPinError(BrokerError):
     """A ``Jentic-Revision`` pin that fails the spec regex / is unknown / is archived (422).
 

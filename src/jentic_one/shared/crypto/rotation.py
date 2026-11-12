@@ -26,7 +26,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from jentic_one.shared.crypto.encryption import DecryptionError, EncryptionService
 from jentic_one.shared.db import DatabaseSession
@@ -307,6 +308,7 @@ class _RowCandidate:
     after_keys_if_written: list[str]
     after_keys_if_skipped: list[str]
     failures: list[RotationFailure]
+    original_values: dict[str, Any] = field(default_factory=dict)
 
 
 def _apply_candidate_stats(
@@ -360,14 +362,40 @@ async def _flush_write_batch(
         return
     can_write = (not dry_run) and (max_batches is None or report.batches_executed < max_batches)
     if can_write:
-        stmt = text(update_sql)
         async with db.transaction() as session:
             for item in pending:
                 assert item.update_params is not None
-                await session.execute(stmt, item.update_params)
+                predicates = " AND ".join(
+                    f"(CAST({column} AS TEXT) = CAST(:original_{column} AS TEXT) "
+                    f"OR ({column} IS NULL AND :original_{column} IS NULL))"
+                    for column in item.original_values
+                )
+                if not predicates:
+                    raise ValueError("rotation update has no optimistic-concurrency predicate")
+                stmt = text(f"{update_sql} AND {predicates}")
+                params = {
+                    **item.update_params,
+                    **{
+                        f"original_{column}": value
+                        for column, value in item.original_values.items()
+                    },
+                }
+                result = await session.execute(stmt, params)
+                written = isinstance(result, CursorResult) and result.rowcount == 1
+                if not written:
+                    item.failures.append(
+                        RotationFailure(
+                            database=stats.database,
+                            family=stats.family,
+                            table=stats.table,
+                            row_id=str(item.row_id),
+                            column=", ".join(item.original_values),
+                            key_id=None,
+                            error="row changed during rotation; rerun to retry",
+                        )
+                    )
+                _apply_candidate_stats(report, stats, item, written=written)
         report.batches_executed += 1
-        for item in pending:
-            _apply_candidate_stats(report, stats, item, written=True)
     else:
         for item in pending:
             _apply_candidate_stats(report, stats, item, written=False)
@@ -467,6 +495,7 @@ async def _rotate_column_spec(
                     if (values_needing_rotation > 0 and not row_failed)
                     else None
                 ),
+                original_values={col: row[idx] for idx, col in enumerate(spec.columns, start=1)},
                 values_scanned=values_scanned,
                 values_needing_rotation=values_needing_rotation,
                 before_keys=before_keys,
@@ -622,6 +651,9 @@ async def _rotate_provider_configs(
                     if (values_needing_rotation > 0 and not row_failed)
                     else None
                 ),
+                original_values={
+                    "config_json": json.dumps(raw_json) if isinstance(raw_json, dict) else raw_json
+                },
                 values_scanned=values_scanned,
                 values_needing_rotation=values_needing_rotation,
                 before_keys=before_keys,
@@ -760,6 +792,7 @@ def _inspect_held_job_payload(
             if (values_needing_rotation > 0 and not row_failed)
             else None
         ),
+        original_values={"payload": json.dumps(payload_dict)},
         values_scanned=values_scanned,
         values_needing_rotation=values_needing_rotation,
         before_keys=before_keys,
@@ -827,12 +860,21 @@ def _inspect_async_job_payload(
             if (values_needing_rotation > 0 and not row_failed)
             else None
         ),
+        original_values={"payload": json.dumps(payload_dict)},
         values_scanned=values_scanned,
         values_needing_rotation=values_needing_rotation,
         before_keys=before_keys,
         after_keys_if_written=after_written,
         after_keys_if_skipped=after_skipped,
         failures=failures,
+    )
+
+
+def _is_missing_held_table_error(exc: OperationalError | ProgrammingError) -> bool:
+    """Whether the dialect reports that the optional held-execution table is absent."""
+    message = str(exc.orig).lower()
+    return "held_executions" in message and (
+        "does not exist" in message or "no such table" in message
     )
 
 
@@ -883,19 +925,13 @@ async def _rotate_jobs_and_held_executions(
                     rows = (
                         await session.execute(q, {"after_id": after_id, "limit": batch_size})
                     ).all()
-            except OperationalError:
-                if not use_held_subquery:
+            except (OperationalError, ProgrammingError) as exc:
+                if not use_held_subquery or not _is_missing_held_table_error(exc):
                     raise
                 use_held_subquery = False
-                if after_id is None:
-                    rows = (await session.execute(first_jobs_only, {"limit": batch_size})).all()
-                else:
-                    rows = (
-                        await session.execute(
-                            paged_jobs_only,
-                            {"after_id": after_id, "limit": batch_size},
-                        )
-                    ).all()
+                # PostgreSQL aborts the current transaction after this error.
+                # Leave this session and issue the compatibility query in a new one.
+                continue
 
         if not rows:
             break

@@ -386,19 +386,26 @@ func (s *mcpServer) noteClient(ci *mcp.Implementation) {
 
 // refreshActiveState reloads the active environment's URLs/CA path from disk
 // when a long-running MCP process holds a disk-backed context, so an operator
-// `jentic env add --force` repoint takes effect on the next tool call.
+// `jentic env add --force` repoint takes effect on the next tool call. If the
+// environment can no longer be resolved, it degrades the state rather than
+// retaining credentials and routing for an origin that is no longer configured.
 func refreshActiveState(ctx context.Context) context.Context {
 	st := clictx.ActiveContext(ctx)
 	if st == nil || st.InjectedBearerToken != "" {
 		return ctx
 	}
+	deactivate := func() context.Context {
+		stCopy := *st
+		stCopy.ResolvedState = nil
+		return clictx.WithActiveState(ctx, &stCopy)
+	}
 	cfg, err := sdkconfig.Load()
 	if err != nil {
-		return ctx
+		return deactivate()
 	}
 	env, ok := cfg.Environments[st.EnvironmentName]
 	if !ok || env.BaseURL == "" {
-		return ctx
+		return deactivate()
 	}
 	if env.BaseURL == st.BaseURL && env.BrokerURL == st.BrokerURL && env.CACertPath == st.CACertPath {
 		return ctx
@@ -456,37 +463,18 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 // mirroring the CLI envelopes' schema_version (13 §2/§6).
 const mcpSchemaVersion = "1"
 
-// hasStructuredProblemDetail reports whether he carries a standard problem-
-// details or OAuth string field rather than falling back to the raw body.
-func hasStructuredProblemDetail(he *HTTPError) bool {
-	if he == nil {
-		return false
-	}
-	p := he.Fields()
-	for _, k := range []string{"detail", "title", "error_description", "error"} {
-		if v, ok := p[k].(string); ok && v != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// redactedErr funnels an error's message through the ux redaction backstop
-// before it is written to the MCP log file. The log is an output surface like
-// stderr — and HTTPError.Error() embeds the raw upstream response body when no
-// structured problem-details field is present — so unstructured response bodies
-// are replaced with [REDACTED] and structured diagnostics pass through
-// ux.RedactBytes.
+// redactedErr funnels an error's message through the ux redaction backstop.
+// HTTP response bodies and problem-detail strings are upstream-controlled, so
+// only the status survives; the caller's log message supplies the local context.
 func redactedErr(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
 	var he *HTTPError
-	if errors.As(err, &he) && he != nil && he.Body != "" && !hasStructuredProblemDetail(he) {
-		msg = strings.ReplaceAll(msg, he.Body, "[REDACTED]")
+	if errors.As(err, &he) && he != nil {
+		return fmt.Sprintf("http %d: [REDACTED]", he.StatusCode)
 	}
-	return string(ux.RedactBytes([]byte(msg)))
+	return string(ux.RedactBytes([]byte(err.Error())))
 }
 
 // softError converts a failure into an isError tool result carrying the SAME
@@ -574,11 +562,13 @@ func mcpCoded(err error) *ux.CodedError {
 				Actionable: "call get_started to diagnose this machine's setup and relay its instruction to your operator",
 			}
 		}
-		if httpErr.Body != "" && !hasStructuredProblemDetail(httpErr) {
-			var coded *ux.CodedError
-			if !errors.As(err, &coded) {
-				return &ux.CodedError{Code: ux.CodeInternalError, Msg: redactedErr(err)}
-			}
+		coded := asCoded(err)
+		return &ux.CodedError{
+			Code:       coded.Code,
+			Msg:        fmt.Sprintf("control plane request failed (http %d)", httpErr.StatusCode),
+			Actionable: coded.Actionable,
+			Details:    coded.Details,
+			Cause:      coded.Cause,
 		}
 	}
 	return asCoded(err)

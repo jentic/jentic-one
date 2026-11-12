@@ -60,11 +60,13 @@ describe('EditCredentialSheet reset on close/reopen', () => {
 		await user.click(screen.getByRole('button', { name: 'Show password' }));
 		expect(tokenInput).toHaveAttribute('type', 'text');
 
+		await user.type(await screen.findByLabelText(/^Name/), ' Draft');
 		await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
 		// Reopen the sheet for the same credential.
 		await user.click(screen.getByRole('button', { name: 'Reopen sheet' }));
 
+		expect(await screen.findByLabelText(/^Name/)).toHaveValue('Stripe Key Draft');
 		const reopenedTokenInput = await screen.findByLabelText(/^Token/);
 		expect(reopenedTokenInput).toHaveValue('');
 		expect(reopenedTokenInput).toHaveAttribute('type', 'password');
@@ -81,5 +83,88 @@ describe('EditCredentialSheet reset on close/reopen', () => {
 			name: 'Stripe Key Renamed',
 		});
 		expect(bodies[0]).not.toHaveProperty('token');
+
+		// A successful save establishes a clean baseline even if the query has not
+		// returned a new credential object by the time the sheet is reopened.
+		await user.click(screen.getByRole('button', { name: 'Reopen sheet' }));
+		expect(await screen.findByLabelText(/^Name/)).toHaveValue('Stripe Key Renamed');
+		expect(await screen.findByLabelText(/^Token/)).toHaveValue('');
+		expect(screen.getByRole('button', { name: /^Save/ })).toBeDisabled();
+		expect(bodies).toHaveLength(1);
+	});
+
+	it('rebases a delayed refetch and sends the second rename against the committed name', async () => {
+		const cred = makeMockCredential({
+			name: 'Original',
+			type: CredentialType.BEARER_TOKEN,
+			provider: 'static',
+		});
+		resetCredentialsStore([cred]);
+		const bodies: Record<string, unknown>[] = [];
+		let detailReads = 0;
+		let release!: () => void;
+		const delayed = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		worker.use(
+			http.get('/credentials/:id', async () => {
+				detailReads += 1;
+				if (detailReads > 1) await delayed;
+				return HttpResponse.json({ ...cred, name: 'Original', updated_at: null });
+			}),
+			http.patch('/credentials/:id', async ({ request }) => {
+				const body = (await request.json()) as Record<string, unknown>;
+				bodies.push(body);
+				return HttpResponse.json({ ...cred, name: body.name });
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<Host credentialId={cred.credential_id} />);
+		const name = await screen.findByLabelText(/^Name/);
+		await user.clear(name);
+		await user.type(name, 'First save');
+		await user.click(screen.getByRole('button', { name: /^Save/ }));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		await user.click(screen.getByRole('button', { name: 'Reopen sheet' }));
+		expect(await screen.findByLabelText(/^Name/)).toHaveValue('First save');
+		await waitFor(() => expect(detailReads).toBeGreaterThanOrEqual(2));
+		release();
+		const reopened = await screen.findByLabelText(/^Name/);
+		await user.clear(reopened);
+		await user.type(reopened, 'Second save');
+		await user.click(screen.getByRole('button', { name: /^Save/ }));
+		await waitFor(() => expect(bodies).toHaveLength(2));
+		expect(bodies[1]).toEqual({ type: CredentialType.BEARER_TOKEN, name: 'Second save' });
+	});
+
+	it('preserves ordinary dirty drafts and blank secrets across an unrelated refetch', async () => {
+		const cred = makeMockCredential({
+			name: 'Server name',
+			type: CredentialType.BEARER_TOKEN,
+			provider: 'static',
+			updated_at: '2026-01-01T00:00:00Z',
+		});
+		resetCredentialsStore([cred]);
+		let reads = 0;
+		worker.use(
+			http.get('/credentials/:id', () => {
+				reads += 1;
+				return HttpResponse.json({
+					...cred,
+					updated_at: reads > 1 ? '2026-01-01T00:02:00Z' : cred.updated_at,
+				});
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<Host credentialId={cred.credential_id} />);
+		const name = await screen.findByLabelText(/^Name/);
+		await user.clear(name);
+		await user.type(name, 'Unsaved ordinary draft');
+		await user.type(await screen.findByLabelText(/^Token/), 'transient-secret');
+		await user.click(screen.getByRole('button', { name: 'Cancel' }));
+		await user.click(screen.getByRole('button', { name: 'Reopen sheet' }));
+		await waitFor(() => expect(reads).toBeGreaterThan(1));
+		expect(await screen.findByLabelText(/^Name/)).toHaveValue('Unsaved ordinary draft');
+		expect(await screen.findByLabelText(/^Token/)).toHaveValue('');
 	});
 });

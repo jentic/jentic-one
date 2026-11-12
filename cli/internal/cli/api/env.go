@@ -35,6 +35,9 @@ func newEnvCmd(app *app) *cobra.Command {
 	return cmd
 }
 
+// purgeEnvironmentCredentials is a package-private seam for pre-commit failure tests.
+var purgeEnvironmentCredentials = auth.PurgeEnvironmentCredentials
+
 func newEnvAddCmd(_ *app) *cobra.Command {
 	var (
 		baseURL   string
@@ -59,29 +62,47 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())
 
-			originChanged := false
+			// NAME GUARD: names become key/token file stems (client/auth
+			// Stem, path-traversal guard) — validate at creation.
+			if !config.ValidName(name) {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("invalid environment name %q (allowed: ^[a-z0-9][a-z0-9-]{0,63}$)", name),
+					Actionable: "Choose a name of lowercase letters, digits and hyphens.",
+				})
+			}
+
+			before, err := config.Load()
+			if err != nil {
+				return reportCoded(aud, err)
+			}
+			existing, exists := before.Environments[name]
+			previousOrigin := auth.NormalizeOrigin(existing.BaseURL)
+			originChanged := force && exists && previousOrigin != auth.NormalizeOrigin(baseURL)
+			if originChanged {
+				// Purge before persistence so a removal failure leaves the old origin and
+				// registrations intact. A later config-write failure can only cause
+				// conservative credential loss, never disclosure to the new origin.
+				if err := purgeEnvironmentCredentials(name); err != nil {
+					return reportCoded(aud, err)
+				}
+			}
+
 			if err := config.MutateConfig(func(cfg *config.Config) error {
-				// NAME GUARD: names become key/token file stems (client/auth
-				// Stem, path-traversal guard) — validate at creation.
-				if !config.ValidName(name) {
-					return &ux.CodedError{
-						Code:       ux.CodeMissingArgument,
-						Msg:        fmt.Sprintf("invalid environment name %q (allowed: ^[a-z0-9][a-z0-9-]{0,63}$)", name),
-						Actionable: "Choose a name of lowercase letters, digits and hyphens.",
-					}
+				current, currentExists := cfg.Environments[name]
+				if force && (currentExists != exists || (exists && auth.NormalizeOrigin(current.BaseURL) != previousOrigin)) {
+					return fmt.Errorf("environment %q changed while the update was being prepared; retry the command", name)
 				}
 				// OVERWRITE GUARD: env add on an existing name would silently wipe
 				// fields no flag expresses — fail unless --force.
-				existing, exists := cfg.Environments[name]
-				if exists && !force {
+				if currentExists && !force {
 					return &ux.CodedError{
 						Code:       ux.CodeMissingArgument,
 						Msg:        fmt.Sprintf("environment %q already exists", name),
 						Actionable: "Pass --force to replace it, or choose a different name.",
 					}
 				}
-				if exists && existing.BaseURL != "" && auth.NormalizeOrigin(existing.BaseURL) != auth.NormalizeOrigin(baseURL) {
-					originChanged = true
+				if originChanged {
 					for idName, ident := range cfg.Identities {
 						if ident.Environments != nil {
 							delete(ident.Environments, name)
@@ -97,11 +118,6 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 				return nil
 			}); err != nil {
 				return reportCoded(aud, err)
-			}
-			if originChanged {
-				if err := auth.PurgeEnvironmentCredentials(name); err != nil {
-					return reportCoded(aud, err)
-				}
 			}
 
 			aud.Render(ux.Result{

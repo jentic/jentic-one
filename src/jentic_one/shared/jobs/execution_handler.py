@@ -5,8 +5,9 @@ issue its own ``httpx`` calls. It resolves credentials
 (via the injected ``CredentialInjector``), applies them to the outbound
 URL/headers through the same ``shared.http.injection.apply_injection`` the sync
 router uses (headers **and** query **and** cookies — an ``apiKey in: query``/
-``cookie`` credential is never dropped, and the caller's own cookies captured at
-enqueue are kept), then dispatches through the injected ``UpstreamExecutor`` — the broker
+``cookie`` credential is never dropped, and origin-scoped upstream cookies captured
+at enqueue are kept when the worker retains their scope evidence), then dispatches
+through the injected ``UpstreamExecutor`` — the broker
 adapter over the **same** composed runner the sync path uses (circuit breaker +
 per-host bulkhead + response-size cap + error-origin enrichment), with the
 ``executions`` row persisted by the pipeline. The handler keeps only the
@@ -37,6 +38,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Callable
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -71,6 +73,7 @@ from jentic_one.shared.jobs.protocols import (
     QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecutor,
+    auth_lineage_is_current,
 )
 from jentic_one.shared.jobs.queued_denials import (
     inactive_actor_problem,
@@ -312,6 +315,15 @@ class ExecutionHandler:
         oauth_client_id = _optional_str(payload.get("oauth_client_id"))
         oauth_grant_id = _optional_str(payload.get("oauth_grant_id"))
         session_generation = _optional_int(payload.get("session_generation"))
+        raw_auth_expires_at = _optional_str(payload.get("auth_expires_at"))
+        try:
+            auth_expires_at = (
+                datetime.fromisoformat(raw_auth_expires_at)
+                if raw_auth_expires_at is not None
+                else None
+            )
+        except ValueError:
+            auth_expires_at = None
 
         body: bytes | None = None
         body_b64 = payload.get("body_b64")
@@ -362,6 +374,7 @@ class ExecutionHandler:
                     oauth_client_id=oauth_client_id,
                     oauth_grant_id=oauth_grant_id,
                     session_generation=session_generation,
+                    auth_expires_at=auth_expires_at,
                 )
             )
             # One live read of the actor's rows (liveness + the execute
@@ -384,6 +397,7 @@ class ExecutionHandler:
                     oauth_client_id=oauth_client_id,
                     oauth_grant_id=oauth_grant_id,
                     session_generation=session_generation,
+                    auth_expires_at=auth_expires_at,
                 )
             if not verdict.allowed:
                 return await self._deny(
@@ -578,6 +592,7 @@ class ExecutionHandler:
         oauth_client_id: str | None = None,
         oauth_grant_id: str | None = None,
         session_generation: int | None = None,
+        auth_expires_at: datetime | None = None,
     ) -> tuple[Identity | None, QueuedExecutionVerdict]:
         """Re-read the actor right before injection: the identity to inject for, or a denial.
 
@@ -603,6 +618,7 @@ class ExecutionHandler:
             oauth_client_id=oauth_client_id,
             oauth_grant_id=oauth_grant_id,
             session_generation=session_generation,
+            auth_expires_at=auth_expires_at,
         )
         if denial is None:
             identity = Identity(
@@ -638,37 +654,25 @@ class ExecutionHandler:
         oauth_client_id: str | None = None,
         oauth_grant_id: str | None = None,
         session_generation: int | None = None,
+        auth_expires_at: datetime | None = None,
     ) -> _PreInjectionDenial | None:
         """Why the live read refuses the actor, or ``None`` when it may still execute."""
         try:
             ActorTypeEnum(actor_type)
         except ValueError:
             return "actor_type_retired", inactive_actor_problem
-        has_lineage = any(
-            v is not None
-            for v in (
-                auth_token_sha256,
-                auth_method,
-                oauth_client_id,
-                oauth_grant_id,
-                session_generation,
-            )
+        if not auth_lineage_is_current(auth_token_sha256, auth_method, auth_expires_at):
+            return "auth_lineage_missing_or_expired", inactive_actor_problem
+        authority = await actor_status.authority(
+            actor_id=created_by,
+            actor_type=actor_type,
+            permission=BROKER_EXECUTE_PERMISSION,
+            auth_token_sha256=auth_token_sha256,
+            auth_method=auth_method,
+            oauth_client_id=oauth_client_id,
+            oauth_grant_id=oauth_grant_id,
+            session_generation=session_generation,
         )
-        if has_lineage:
-            authority = await actor_status.authority(
-                actor_id=created_by,
-                actor_type=actor_type,
-                permission=BROKER_EXECUTE_PERMISSION,
-                auth_token_sha256=auth_token_sha256,
-                auth_method=auth_method,
-                oauth_client_id=oauth_client_id,
-                oauth_grant_id=oauth_grant_id,
-                session_generation=session_generation,
-            )
-        else:
-            authority = await actor_status.authority(
-                actor_id=created_by, actor_type=actor_type, permission=BROKER_EXECUTE_PERMISSION
-            )
         if not authority.active:
             return "actor_inactive", inactive_actor_problem
         if not authority.holds_permission:

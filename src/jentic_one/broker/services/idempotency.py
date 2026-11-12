@@ -18,10 +18,10 @@ Two TTLs guard against a poison-pill (a pending claim must be short):
 Per-caller keyspace (``idem:{caller}:{key}``) stops one caller replaying
 another's response; ``caller`` is the resolved ``actor_id``, never the raw
 token. A record is small and bounded (status, fingerprint, capped headers);
-the response body is a separate ``idem-body:{caller}:{key}:{tag}`` entry
-(``tag`` is the start of the request fingerprint), so on the memory backend
-bodies spend their own budget and a full body budget only drops bodies from
-replays, never refuses claims.
+the response body is a separate ``idem-body:{caller}:{key}:{tag}:{claim}`` entry
+(``tag`` is the start of the request fingerprint and ``claim`` is its generation),
+so on the memory backend bodies spend their own budget and a full body budget only
+drops bodies from replays, never refuses claims.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import structlog
 
-from jentic_one.broker.core.errors import IdempotencyUnavailableError
+from jentic_one.broker.core.errors import IdempotencyCompletionError, IdempotencyUnavailableError
 from jentic_one.broker.core.headers import SENSITIVE_RESPONSE_HEADERS, extract_header_items
 from jentic_one.broker.core.proxy_headers import ResponseHeaderMap
 from jentic_one.shared.state.backend import (
@@ -271,6 +271,7 @@ class IdempotencyClaimLease:
         self.claim_id = claim_id
         self.dispatched = False
         self.completed = False
+        self._completion_error: IdempotencyCompletionError | None = None
         self._task: asyncio.Task[None] | None = None
 
     def mark_dispatched(self) -> None:
@@ -288,20 +289,46 @@ class IdempotencyClaimLease:
         headers: Mapping[str, str] | Iterable[tuple[str, str]],
         body: bytes,
     ) -> bool:
-        """Promote the leased claim to ``DONE`` if this lease still owns the slot."""
+        """Promote the leased claim to ``DONE`` or report an indeterminate execution.
+
+        A false store result means the upstream response has no durable replay
+        record. It is never a successful completion: the caller must not mistake
+        the upstream response for a safely retryable idempotent result.
+        """
         if self.completed:
+            if self._completion_error is not None:
+                raise self._completion_error
             return True
-        ok = await self._store.complete(
-            self._caller,
-            self._key,
-            self._fingerprint,
-            status_code=status_code,
-            headers=headers,
-            body=body,
-            claim_id=self.claim_id,
-        )
+        # This is a terminal completion attempt, including when the backend
+        # fails. Renewal must stop; only a new caller claim may retry the key.
         self.completed = True
-        return ok
+        try:
+            ok = await self._store.complete(
+                self._caller,
+                self._key,
+                self._fingerprint,
+                status_code=status_code,
+                headers=headers,
+                body=body,
+                claim_id=self.claim_id,
+            )
+        except Exception as exc:
+            self._completion_error = IdempotencyCompletionError(
+                detail=(
+                    "The upstream request was dispatched, but its idempotent outcome "
+                    "could not be recorded; verify upstream state before retrying"
+                )
+            )
+            raise self._completion_error from exc
+        if not ok:
+            self._completion_error = IdempotencyCompletionError(
+                detail=(
+                    "The upstream request was dispatched, but its idempotent outcome "
+                    "could not be recorded; verify upstream state before retrying"
+                )
+            )
+            raise self._completion_error
+        return True
 
     async def _renew_loop(self) -> None:
         interval = max(0.05, self._store.pending_ttl_s / 2.0)
@@ -390,11 +417,14 @@ class SharedStateIdempotencyStore:
     def _slot(self, caller: str, key: str) -> str:
         return f"{_KEY_PREFIX}{self._caller_segment(caller)}:{key}"
 
-    def _body_slot(self, caller: str, key: str, fingerprint: str) -> str:
-        # Keyed by the start of the fingerprint too, so an expired claim that is
-        # re-claimed with another fingerprint never overwrites this record's body.
+    def _body_slot(
+        self, caller: str, key: str, fingerprint: str, claim_id: str | None = None
+    ) -> str:
+        # The generation is part of new keys: a stale completion must never
+        # overwrite or release the body of the claim that replaced it.
         tag = fingerprint[:_BODY_FINGERPRINT_TAG_LEN]
-        return f"{_BODY_KEY_PREFIX}{self._caller_segment(caller)}:{key}:{tag}"
+        base = f"{_BODY_KEY_PREFIX}{self._caller_segment(caller)}:{key}:{tag}"
+        return base if claim_id is None else f"{base}:{claim_id}"
 
     def _record_issued_token(self, caller: str, key: str, fingerprint: str, token: str) -> None:
         bucket_key = (caller, key, fingerprint)
@@ -599,7 +629,12 @@ class SharedStateIdempotencyStore:
             )
         body: bytes | None = None
         if record.get("body_ref"):
-            body = await self._store.get(self._body_slot(caller, key, fingerprint))
+            body = await self._store.get(
+                self._body_slot(caller, key, fingerprint, str(record.get("token", "")))
+            )
+            if body is None:
+                # Records already DONE at upgrade used the unversioned body key.
+                body = await self._store.get(self._body_slot(caller, key, fingerprint))
         return IdempotencyOutcome(
             IdempotencyState.REPLAY, stored=self._decode_response(record, body)
         )
@@ -632,7 +667,7 @@ class SharedStateIdempotencyStore:
             return False
 
         omit = len(body) > self._max_response_bytes
-        body_slot = self._body_slot(caller, key, fingerprint)
+        body_slot = self._body_slot(caller, key, fingerprint, token or "")
         body_stored = False
         if body and not omit:
             try:

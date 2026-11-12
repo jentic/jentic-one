@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, text
 
 from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
@@ -183,9 +182,8 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
 
     svc = ConnectService(ctx)
 
-    # Snapshot the credential's updated_at before completing the flow — the
-    # SPA polls this field to detect connect completion for `direct_oauth2`,
-    # so the connect path must bump it.
+    # Snapshot cache-freshness metadata so the test can verify that a
+    # successful connect refreshes the ordinary credential read.
     async with ctx.control_db.session() as session:
         snapshot = await CredentialRepository.get_by_id(session, credential_id)
         assert snapshot is not None
@@ -200,6 +198,19 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
     assert isinstance(challenge, AuthCodeChallenge)
     assert "https://idp.example.com/authorize" in challenge.authorize_url
     assert challenge.state
+    assert challenge.flow_id
+    concurrent = await svc.begin(
+        credential_id,
+        ConnectRequest(scopes=["read"]),
+        identity=_OWNER,
+        browser_binding=_BINDING.claim,
+    )
+    assert isinstance(concurrent, AuthCodeChallenge)
+    assert concurrent.flow_id
+    assert concurrent.flow_id != challenge.flow_id
+    assert await svc.get_flow_status(credential_id, challenge.flow_id, identity=_OWNER) == "pending"
+    with pytest.raises(CredentialNotFoundError):
+        await svc.get_flow_status(credential_id, challenge.flow_id, identity=_OTHER_USER)
 
     token_response = {
         "access_token": "at_fresh_123",
@@ -232,10 +243,21 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         credential = await CredentialRepository.get_by_id(session, credential_id)
         assert credential is not None
         assert credential.provider_account_ref is None
-        # `updated_at` must bump on a successful connect — the SPA's polling
-        # loop relies on it for direct_oauth2 (which returns no
-        # `provider_account_ref`) to close the OAuth popup.
+        # Successful token persistence also refreshes ordinary credential
+        # metadata; exact per-flow completion is asserted below.
         assert credential.updated_at > updated_at_before
+
+    assert (
+        await svc.get_flow_status(credential_id, challenge.flow_id, identity=_OWNER) == "connected"
+    )
+    assert (
+        await svc.get_flow_status(credential_id, concurrent.flow_id, identity=_OWNER) == "pending"
+    )
+    other_credential_id = await _create_oauth2_credential(ctx)
+    assert (
+        await svc.get_flow_status(other_credential_id, challenge.flow_id, identity=_OWNER)
+        == "pending"
+    )
 
 
 async def test_direct_oauth2_derived_redirect_uri_round_trips(
@@ -622,6 +644,7 @@ async def test_pipedream_standalone_http_router_flow_end_to_end(
     app.dependency_overrides[shared_deps.resolve_identity] = lambda: _OWNER
 
     posted_token_payloads: list[dict[str, str]] = []
+    router_client_cls = httpx.AsyncClient
 
     with patch("httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
@@ -662,30 +685,42 @@ async def test_pipedream_standalone_http_router_flow_end_to_end(
         mock_client_cls.return_value = mock_client
 
         # 1. Missing account_id fails and does not connect the credential.
-        with TestClient(app, follow_redirects=False) as tc:
-            begin_1 = tc.post(f"/credentials/{credential_id}/connect", json={})
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_1 = await tc.post(f"/credentials/{credential_id}/connect", json={})
             assert begin_1.status_code == 200
             state_1 = begin_1.json()["state"]
             assert posted_token_payloads
             assert state_1 in posted_token_payloads[-1]["success_redirect_uri"]
-            missing_cb = tc.get("/credentials/oauth/callback", params={"state": state_1})
+            missing_cb = await tc.get("/credentials/oauth/callback", params={"state": state_1})
             assert "status=error" in missing_cb.headers["location"]
 
         # 2. Malformed account_id fails.
-        with TestClient(app, follow_redirects=False) as tc:
-            begin_2 = tc.post(f"/credentials/{credential_id}/connect", json={})
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_2 = await tc.post(f"/credentials/{credential_id}/connect", json={})
             state_2 = begin_2.json()["state"]
-            malformed_cb = tc.get(
+            malformed_cb = await tc.get(
                 "/credentials/oauth/callback",
                 params={"state": state_2, "account_id": "../bad/id"},
             )
             assert "status=error" in malformed_cb.headers["location"]
 
         # 3. Substituted account belonging to another credential/user fails.
-        with TestClient(app, follow_redirects=False) as tc:
-            begin_3 = tc.post(f"/credentials/{credential_id}/connect", json={})
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_3 = await tc.post(f"/credentials/{credential_id}/connect", json={})
             state_3 = begin_3.json()["state"]
-            sub_cb = tc.get(
+            sub_cb = await tc.get(
                 "/credentials/oauth/callback",
                 params={"state": state_3, "account_id": "acct_wrong_owner"},
             )
@@ -697,20 +732,22 @@ async def test_pipedream_standalone_http_router_flow_end_to_end(
             assert cred.provider_account_ref is None
 
         # 4. Intended account succeeds and replay is rejected.
-        with TestClient(app, follow_redirects=False) as tc:
-            begin_4 = tc.post(f"/credentials/{credential_id}/connect", json={})
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_4 = await tc.post(f"/credentials/{credential_id}/connect", json={})
             state_4 = begin_4.json()["state"]
-            cookies = dict(tc.cookies)
-            ok_cb = tc.get(
+            ok_cb = await tc.get(
                 "/credentials/oauth/callback",
                 params={"state": state_4, "account_id": "acct_intended"},
             )
             assert "status=ok" in ok_cb.headers["location"]
 
-            replay_cb = tc.get(
+            replay_cb = await tc.get(
                 "/credentials/oauth/callback",
                 params={"state": state_4, "account_id": "acct_wrong_owner"},
-                cookies=cookies,
             )
             assert "status=error" in replay_cb.headers["location"]
 

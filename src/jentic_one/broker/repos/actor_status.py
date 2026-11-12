@@ -248,7 +248,11 @@ class ActorStatusResolver:
         effective_client_id = oauth_client_id
         effective_grant_id = oauth_grant_id
 
-        if auth_token_sha256 is not None:
+        if auth_token_sha256 is not None and auth_method == "jwt":
+            # JWTs are self-contained: their expiry is checked by the worker,
+            # and the actor/live-permission check above supplies liveness.
+            pass
+        elif auth_token_sha256 is not None:
             if auth_method == "api_key":
                 key_row = (
                     await session.execute(

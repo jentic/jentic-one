@@ -5,7 +5,7 @@ The sync router (``_apply_injection``) and the async worker
 ``shared.http.injection.apply_injection``. The parity tests pin that a call
 sent inline and the same call sent with ``Prefer: respond-async`` reach the
 upstream with identical URL and headers, for header, query and cookie
-credentials, with and without the caller's own cookies.
+credentials, with and without upstream-scoped cookies.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from jentic_one.broker.web.routers.execute import (
 )
 from jentic_one.shared.config import EncryptionConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
+from jentic_one.shared.http.injection import record_upstream_set_cookie
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
@@ -52,6 +53,11 @@ _ENCRYPTION = EncryptionService(
 
 
 def _request(*, cookies: list[str] | None = None) -> Request:
+    # These fixtures model cookies returned by this upstream on an earlier call.
+    # Unknown cookies are intentionally rejected; isolation is covered separately.
+    for cookie in cookies or []:
+        for pair in cookie.split(";"):
+            record_upstream_set_cookie(_URL, f"{pair.strip()}; Path=/")
     raw: list[tuple[bytes, bytes]] = [
         (b"host", b"broker.local:8080"),
         (b"content-type", b"application/json"),
@@ -210,6 +216,8 @@ async def _async_outbound(
         origin="api",
         headers=replay_headers(request.headers),
         inbound_cookie_enc=_captured_cookie(request, _keyed_ctx()),
+        auth_token_sha256="abcd" * 16,
+        auth_method="access_token",
     )
     if held:
         payload = {ENCRYPTED_PAYLOAD_KEY: _ENCRYPTION.encrypt(json.dumps(payload))}
@@ -306,7 +314,7 @@ async def test_sync_async_and_held_strip_colliding_query_and_cookie_names() -> N
     url = "https://api.example.com/v1/things?api_key=caller1&page=2&%61pi_key=caller2"
     injection = InjectedAuth(
         headers={"Authorization": "Bearer broker"},
-        query_params={"api_key": "broker"},
+        query_params={"api_key": "broker"},  # pragma: allowlist secret
         cookies={"session": "broker"},
     )
     req = _request(cookies=["session=caller1; sid=keep; %73ession=caller2"])

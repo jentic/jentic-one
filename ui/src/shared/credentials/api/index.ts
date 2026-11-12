@@ -15,6 +15,7 @@ import {
 	connectCredential,
 	createCredential,
 	deleteCredential,
+	getConnectFlowStatus,
 	getCredential,
 	getProviders,
 	listCredentialAgents,
@@ -285,10 +286,9 @@ export type ConnectOutcome =
  * The backend callback (`GET /credentials/oauth/callback`) persists the
  * connection server-side, then 303-redirects the popup to the public
  * `/oauth/connected` route (which self-closes) rather than signalling the SPA
- * directly. So the robust signal is to (1) begin the flow, (2) open the
- * provider/Pipedream authorize URL in a popup, then (3) wait for the credential
- * to report a connection (a `provider_account_ref` appears, or the credential
- * otherwise updates) or the popup to close.
+ * directly. So the opener (1) begins the flow, (2) opens the
+ * provider/Pipedream authorize URL in a popup, then (3) waits for this exact
+ * challenge's status to report connected and the credential to be usable.
  *
  * The wait is poll-based, but the `/oauth/connected` page also posts an
  * advisory `postMessage` to this opener (#598). When that arrives we re-read
@@ -315,7 +315,7 @@ export async function runConnectFlow(
 	// Otherwise a `status: 'error'` message (which never flips the credential to
 	// connected) would turn the loop into a tight request storm until the
 	// deadline. The message is never treated as the source of truth — the opener
-	// always re-reads `GET /credentials/{id}` for the authoritative outcome.
+	// re-reads the credential and the exact flow's status for the outcome.
 	let signalled = false;
 	let wake: (() => void) | null = null;
 	let popup: Window | null = null;
@@ -333,35 +333,17 @@ export async function runConnectFlow(
 
 	try {
 		const challenge = await connectCredential(id, body ?? undefined);
+		if (signal?.aborted) return { status: 'cancelled' };
 
-		const before = await getCredential(id).catch(() => null);
-		// If the baseline read failed we have no reference point, so we can't tell
-		// a *fresh* connection from a credential that was already connected. Don't
-		// let a transient baseline failure make the first tick a false positive —
-		// require a real baseline before trusting the `updated_at`/ref deltas.
-		const haveBaseline = before !== null;
-
-		const isConnected = (next: CredentialRedactedResponse | null): boolean => {
-			if (!next) return false;
-			if (!haveBaseline) return false;
-			const nextDetails = credentialDetails(next);
-			const nextConnected =
-				nextDetails.connected === true || Boolean(next.provider_account_ref);
-			if (!nextConnected) return false;
-
-			const beforeDetails = before ? credentialDetails(before) : {};
-			const beforeConnected =
-				beforeDetails.connected === true || Boolean(before?.provider_account_ref);
-			if (!beforeConnected) return true;
-
-			return (
-				(Boolean(next.provider_account_ref) &&
-					next.provider_account_ref !== before?.provider_account_ref) ||
-				nextDetails.token_expires_at !== beforeDetails.token_expires_at ||
-				(nextDetails.connected === true &&
-					Boolean(next.updated_at) &&
-					next.updated_at !== before?.updated_at)
-			);
+		const readConnection = async (): Promise<CredentialRedactedResponse | null> => {
+			const [next, flowStatus] = await Promise.all([
+				getCredential(id).catch(() => null),
+				getConnectFlowStatus(id, challenge.flow_id).catch(() => null),
+			]);
+			if (signal?.aborted || !next || flowStatus?.status !== 'connected') return null;
+			const details = credentialDetails(next);
+			if (details.connected !== true && !next.provider_account_ref) return null;
+			return next;
 		};
 
 		// Sleep up to `tickMs`, but resolve early if an advisory message
@@ -414,12 +396,10 @@ export async function runConnectFlow(
 					// User cancelled (the device dialog's Cancel button aborts
 					// the signal) — stop polling, no error.
 					if (signal?.aborted) return { status: 'cancelled' };
-					const next = await getCredential(id).catch(() => null);
-					if (isConnected(next)) {
-						return {
-							status: 'connected',
-							credential: next as CredentialRedactedResponse,
-						};
+					const next = await readConnection();
+					if (signal?.aborted) return { status: 'cancelled' };
+					if (next) {
+						return { status: 'connected', credential: next };
 					}
 				}
 				return { status: 'timeout' };
@@ -464,20 +444,25 @@ export async function runConnectFlow(
 				activePopup.close();
 				return { status: 'cancelled' };
 			}
-			const next = await getCredential(id).catch(() => null);
-			if (isConnected(next)) {
+			const next = await readConnection();
+			if (signal?.aborted) {
 				activePopup.close();
-				return { status: 'connected', credential: next as CredentialRedactedResponse };
+				return { status: 'cancelled' };
+			}
+			if (next) {
+				activePopup.close();
+				return { status: 'connected', credential: next };
 			}
 			if (activePopup.closed) {
 				// The user closed the popup. Do one last read in case the callback
 				// landed right before they closed it.
-				const last = await getCredential(id).catch(() => null);
-				if (isConnected(last)) {
-					return {
-						status: 'connected',
-						credential: last as CredentialRedactedResponse,
-					};
+				const last = await readConnection();
+				if (signal?.aborted) {
+					activePopup.close();
+					return { status: 'cancelled' };
+				}
+				if (last) {
+					return { status: 'connected', credential: last };
 				}
 				return { status: 'cancelled' };
 			}

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,16 @@ func apiKeyPath(ref IdentityRef) (string, error) {
 	return filepath.Join(stateDir, stem+".apikey"), nil
 }
 
+// apiKeyOriginPath returns the sidecar that binds a bare legacy-compatible API
+// key file to its issuing origin.
+func apiKeyOriginPath(ref IdentityRef) (string, error) {
+	path, err := apiKeyPath(ref)
+	if err != nil {
+		return "", err
+	}
+	return path + ".origin", nil
+}
+
 // SaveAPIKey persists a jak_* API key credential for ref (0600), recording the
 // configured origin of ref.Environment when available. It is the V2
 // successor to V1's per-profile `apikey` file: the credential is a first-class
@@ -53,33 +64,53 @@ func SaveAPIKey(ref IdentityRef, key string) error {
 
 // SaveAPIKeyForOrigin persists a jak_* API key credential for ref bound to
 // rawOrigin (falling back to ref.Environment's configured base_url origin when
-// rawOrigin is empty).
+// rawOrigin is empty). The credential file stays bare for mixed-version CLI
+// compatibility; the origin lives in a separate non-secret sidecar.
 func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 	key = strings.TrimSpace(key)
 	if !strings.HasPrefix(key, APIKeyPrefix) {
 		return fmt.Errorf("API key must start with %q", APIKeyPrefix)
 	}
+	var origin string
+	if rawOrigin != "" {
+		origin = NormalizeOrigin(rawOrigin)
+		if origin == "" {
+			return errors.New("invalid API key origin")
+		}
+	} else {
+		var err error
+		origin, err = configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return err
+		}
+	}
+
 	path, err := apiKeyPath(ref)
 	if err != nil {
 		return err
 	}
-	origin := NormalizeOrigin(rawOrigin)
-	if origin == "" {
-		origin = configuredEnvOrigin(ref.Environment)
-	}
-	rec := apiKeyRecord{APIKey: key, Origin: origin}
-	data, err := json.Marshal(rec) //nolint:gosec // G117: intentionally persisting the API key to the 0600 state file.
-	if err != nil {
-		return fmt.Errorf("encoding API key: %w", err)
-	}
-	if err := writeFileAtomic(path, data); err != nil {
+	if err := writeFileAtomic(path, []byte(key)); err != nil {
 		return fmt.Errorf("writing API key %s: %w", path, err)
+	}
+	originPath, err := apiKeyOriginPath(ref)
+	if err != nil {
+		return err
+	}
+	if origin != "" {
+		if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
+			_ = os.Remove(path)
+			return fmt.Errorf("writing API key origin %s: %w", originPath, err)
+		}
+		return nil
+	}
+	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale API key origin %s: %w", originPath, err)
 	}
 	return nil
 }
 
 // readAPIKeyRecord loads the stored API key and its recorded origin for ref.
-// Accepts both the JSON envelope and a bare jak_* string on disk.
+// Accepts bare keys with an origin sidecar and JSON-envelope credential files.
 func readAPIKeyRecord(ref IdentityRef) (*apiKeyRecord, error) {
 	path, err := apiKeyPath(ref)
 	if err != nil {
@@ -90,19 +121,44 @@ func readAPIKeyRecord(ref IdentityRef) (*apiKeyRecord, error) {
 		return nil, err
 	}
 	trimmed := strings.TrimSpace(string(data))
-	if trimmed == "" {
-		return &apiKeyRecord{}, nil
-	}
 	if strings.HasPrefix(trimmed, "{") {
 		var rec apiKeyRecord
 		if err := json.Unmarshal([]byte(trimmed), &rec); err != nil {
 			return nil, fmt.Errorf("decoding API key %s: %w", path, err)
 		}
 		rec.APIKey = strings.TrimSpace(rec.APIKey)
-		rec.Origin = NormalizeOrigin(rec.Origin)
+		if rec.APIKey == "" {
+			return nil, fmt.Errorf("stored API key in %s is empty", path)
+		}
+		rawOrigin := strings.TrimSpace(rec.Origin)
+		rec.Origin = NormalizeOrigin(rawOrigin)
+		if rawOrigin != "" && rec.Origin == "" {
+			return nil, fmt.Errorf("invalid API key origin in %s", path)
+		}
 		return &rec, nil
 	}
-	return &apiKeyRecord{APIKey: trimmed}, nil
+
+	rec := &apiKeyRecord{APIKey: trimmed}
+	if rec.APIKey == "" {
+		return nil, fmt.Errorf("stored API key in %s is empty", path)
+	}
+	originPath, err := apiKeyOriginPath(ref)
+	if err != nil {
+		return nil, err
+	}
+	originData, err := os.ReadFile(originPath) //nolint:gosec // path is StateDir()/<validated-stem>.apikey.origin, not user input.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return rec, nil
+		}
+		return nil, fmt.Errorf("reading API key origin %s: %w", originPath, err)
+	}
+	rawOrigin := strings.TrimSpace(string(originData))
+	rec.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" && rec.Origin == "" {
+		return nil, fmt.Errorf("invalid API key origin in %s", originPath)
+	}
+	return rec, nil
 }
 
 // ReadAPIKey loads the API-key credential for ref, or an error if none exists
@@ -113,7 +169,11 @@ func ReadAPIKey(ref IdentityRef) (string, error) {
 		return "", err
 	}
 	if rec.Origin != "" {
-		if envOrigin := configuredEnvOrigin(ref.Environment); envOrigin != "" && rec.Origin != envOrigin {
+		envOrigin, err := configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return "", err
+		}
+		if envOrigin != "" && rec.Origin != envOrigin {
 			return "", fmt.Errorf("%w: stored API key for %s/%s belongs to %s, not %s",
 				ErrOriginMismatch, ref.Identity, ref.Environment, rec.Origin, envOrigin)
 		}
@@ -130,6 +190,13 @@ func InvalidateAPIKey(ref IdentityRef) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing API key %s: %w", path, err)
+	}
+	originPath, err := apiKeyOriginPath(ref)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing API key origin %s: %w", originPath, err)
 	}
 	return nil
 }
@@ -153,16 +220,24 @@ func PurgeEnvironmentCredentials(envName string) error {
 	}
 	tokSuffix := "_" + envName + "_tokens.json"
 	akSuffix := "_" + envName + ".apikey"
+	akOriginSuffix := akSuffix + ".origin"
 	var firstErr error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasSuffix(name, tokSuffix) && !strings.HasSuffix(name, akSuffix) {
+		if !strings.HasSuffix(name, tokSuffix) && !strings.HasSuffix(name, akSuffix) && !strings.HasSuffix(name, akOriginSuffix) {
 			continue
 		}
 		fullPath := filepath.Join(stateDir, name)
+		if strings.HasSuffix(name, akOriginSuffix) {
+			keyPath := strings.TrimSuffix(fullPath, ".origin")
+			if _, err := os.Stat(keyPath); err == nil || !os.IsNotExist(err) {
+				// A surviving key keeps its origin binding when its removal failed.
+				continue
+			}
+		}
 		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) && firstErr == nil {
 			firstErr = fmt.Errorf("removing credential %s: %w", fullPath, err)
 		}

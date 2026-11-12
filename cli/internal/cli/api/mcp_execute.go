@@ -393,7 +393,7 @@ func stringArg(args map[string]any, name string) string {
 // the inspect call) keep their own default pointers.
 func (s *mcpServer) executeResolveError(ctx context.Context, target string, err error) *mcp.CallToolResult {
 	s.logger.Warn("execute resolve failed", "target", target, "error", redactedErr(err))
-	coded := asCoded(err)
+	coded := mcpCoded(err)
 	if coded.Code != ux.CodeResolveFailed {
 		return s.softError(ctx, err)
 	}
@@ -817,7 +817,7 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 
 	// The call deadline covers the wait on top of the control-plane budget,
 	// so a full wait still leaves room for the last poll.
-	cctx, cancel := context.WithTimeout(ctx, mcpCallTimeout+wait)
+	cctx, cancel := context.WithTimeout(refreshActiveState(ctx), mcpCallTimeout+wait)
 	defer cancel()
 
 	poll, target := s.jobPollPayload, jobID
@@ -834,7 +834,7 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 	if soft != nil {
 		return soft, nil
 	}
-	return s.result(cctx, payload), nil
+	return s.result(refreshActiveState(cctx), payload), nil
 }
 
 // pollPayloadFunc reads one poll payload for a held execution or job id; a
@@ -852,7 +852,7 @@ func (s *mcpServer) pollUntilFinished(
 	}
 	deadline := time.Now().Add(wait)
 	for {
-		payload, soft := poll(ctx, id)
+		payload, soft := poll(refreshActiveState(ctx), id)
 		if soft != nil || isTerminalJobStatus(payload["status"]) {
 			return payload, soft
 		}
@@ -995,7 +995,7 @@ func (s *mcpServer) attachHeldResult(ctx context.Context, client heldResultClien
 			return
 		}
 		s.logger.Warn("get_execution_result: result fetch failed", "held_execution_id", heldExecutionID, "error", redactedErr(err))
-		payload["result_error"] = fmt.Sprintf("the call finished but its result could not be fetched: %s", redactedErr(err))
+		payload["result_error"] = "the call finished but its result could not be fetched: " + redactedErr(err)
 		return
 	}
 	s.attachResultBody(resp.Body, payload)
@@ -1072,7 +1072,7 @@ func (s *mcpServer) attachJobResult(ctx context.Context, client jobResultClient,
 	resp, err := client.GetJobResultWithResponse(ctx, jobID)
 	if err := apiErrorFor(resp, err); err != nil {
 		s.logger.Warn("get_execution_result: result fetch failed", "job_id", jobID, "error", redactedErr(err))
-		payload["result_error"] = fmt.Sprintf("the job completed but its result could not be fetched: %s", redactedErr(err))
+		payload["result_error"] = "the job completed but its result could not be fetched: " + redactedErr(err)
 		return
 	}
 	s.attachResultBody(resp.Body, payload)

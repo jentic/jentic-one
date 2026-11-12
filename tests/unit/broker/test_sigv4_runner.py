@@ -198,7 +198,7 @@ async def test_sigv4_runner_rejects_url_userinfo_before_signing_or_dispatch() ->
     for signing in (_MATERIAL, None):
         req = RunnerRequest(
             method="GET",
-            url="https://user:pass@x.aoss.amazonaws.com/",
+            url="https://user:pass@x.aoss.amazonaws.com/",  # pragma: allowlist secret
             headers={"Authorization": "Bearer injected"},
             signing=signing,
         )

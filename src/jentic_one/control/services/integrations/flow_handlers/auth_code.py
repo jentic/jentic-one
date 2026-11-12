@@ -24,7 +24,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -40,6 +40,8 @@ from jentic_one.control.repos.oauth_app_registration_repo import (
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
+from jentic_one.control.services.credentials.providers.base import ProviderError
+from jentic_one.control.services.credentials.providers.oauth2 import parse_oauth_expires_in
 from jentic_one.control.services.credentials.schemas.connect import ConnectState
 from jentic_one.control.services.credentials.state import (
     OAUTH_CALLBACK_PATH,
@@ -121,24 +123,13 @@ def _merge_authorize_url(base_url: str, params: dict[str, str]) -> str:
 
 
 def _parse_expires_in(raw: object) -> int:
-    """Parse a positive integer ``expires_in`` value or raise ``AuthCodeExchangeError``."""
-    if isinstance(raw, bool):
-        raise AuthCodeExchangeError("invalid expires_in in token response")
-    if isinstance(raw, int):
-        seconds = raw
-    elif isinstance(raw, str):
-        stripped = raw.strip()
-        if not stripped or not stripped.lstrip("+-").isdigit():
-            raise AuthCodeExchangeError("invalid expires_in in token response")
-        seconds = int(stripped)
-    else:
-        raise AuthCodeExchangeError("invalid expires_in in token response")
-    if seconds <= 0:
-        raise AuthCodeExchangeError("invalid expires_in in token response")
+    """Parse a bounded positive ``expires_in`` value for the embedded flow."""
     try:
-        _ = datetime.now(UTC) + timedelta(seconds=seconds)
-    except (OverflowError, ValueError) as exc:
+        seconds = parse_oauth_expires_in(raw)
+    except ProviderError as exc:
         raise AuthCodeExchangeError("invalid expires_in in token response") from exc
+    if seconds is None:
+        raise AuthCodeExchangeError("invalid expires_in in token response")
     return seconds
 
 

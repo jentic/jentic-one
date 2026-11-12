@@ -15,14 +15,23 @@ import {
 	setConnectAutoCompletes,
 } from '@/shared/credentials/mocks/handlers';
 
+function stubFlowStatus(connected: () => boolean): void {
+	worker.use(
+		http.get('/credentials/:id/connect/:flowId/status', () =>
+			HttpResponse.json({ status: connected() ? 'connected' : 'pending' }),
+		),
+	);
+}
+
 /**
  * `runConnectFlow` is the single opener-side chokepoint for the OAuth connect
- * round-trip. After PR #548 it learns the outcome by polling the credential;
- * #598 adds an *advisory* `postMessage` from the `/oauth/connected` popup page
- * so the opener can re-read immediately instead of waiting for the next poll
- * tick. These tests pin the message contract: the opener re-reads on a valid,
- * same-origin message, ignores foreign-origin messages, and never trusts the
- * message payload as the source of truth (the credentials API stays canonical).
+ * round-trip. It learns the outcome by polling the exact flow status and then
+ * reading the connected credential; #598 adds an *advisory* `postMessage` from
+ * the `/oauth/connected` popup page so the opener can re-read immediately
+ * instead of waiting for the next poll tick. These tests pin the message
+ * contract: the opener re-reads on a valid, same-origin message, ignores
+ * foreign-origin messages, and never trusts the message payload as the source
+ * of truth (the credentials API stays canonical).
  */
 describe('runConnectFlow — advisory postMessage (#598)', () => {
 	let fakePopup: { closed: boolean; close: () => void };
@@ -52,6 +61,7 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// The "callback landed" effect: once the popup signals, the credential is
 		// connected. We flip the mock to report a connection on the next read.
 		let connected = false;
+		stubFlowStatus(() => connected);
 		let reads = 0;
 		worker.use(
 			http.get('/credentials/:id', ({ params }) => {
@@ -70,12 +80,10 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// is broken, the test would hang past its timeout rather than resolve fast.
 		const flow = runConnectFlow(id, { pollMs: 60_000, timeoutMs: 120_000 });
 
-		// Simulate the popup completing then posting its advisory signal, once
-		// the flow's baseline read has been served (a flip before it would make
-		// the baseline look connected already, so no later read could differ).
-		// The listener is attached before the connect POST, so it is live by then,
-		// and one message wakes the 60 s poll wait.
-		await vi.waitFor(() => expect(reads).toBe(1));
+		// Simulate the popup completing then posting its advisory signal before
+		// the first scheduled poll. The listener is attached before the connect
+		// POST, and one message wakes the 60 s poll wait.
+		await vi.waitFor(() => expect(window.open).toHaveBeenCalled());
 		connected = true;
 		window.dispatchEvent(
 			new MessageEvent('message', {
@@ -86,39 +94,22 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 
 		const outcome = await flow;
 		expect(outcome.status).toBe('connected');
+		expect(reads).toBe(1);
 	});
 
-	it('keeps polling pending when a concurrent rename/PATCH changes updated_at while details.connected is false', async () => {
+	it('does not treat a rename of an already-connected credential as this flow completing', async () => {
 		const id = seedConnectableCredential();
 		let reads = 0;
+		stubFlowStatus(() => reads >= 3);
 		worker.use(
 			http.get('/credentials/:id', ({ params }) => {
 				if (String(params.id) !== id) return undefined;
 				reads += 1;
-				if (reads === 1) {
-					// Baseline read: unconnected
-					return HttpResponse.json({
-						credential_id: id,
-						provider_account_ref: null,
-						details: { connected: false },
-						updated_at: '2026-01-01T00:00:00Z',
-					} as Partial<CredentialRedactedResponse>);
-				}
-				if (reads === 2) {
-					// Poll 1: concurrent rename/PATCH bumped updated_at, still unconnected
-					return HttpResponse.json({
-						credential_id: id,
-						provider_account_ref: null,
-						details: { connected: false },
-						updated_at: '2026-01-01T00:01:00Z',
-					} as Partial<CredentialRedactedResponse>);
-				}
-				// Poll 2: OAuth callback landed, details.connected is now true
 				return HttpResponse.json({
 					credential_id: id,
 					provider_account_ref: null,
 					details: { connected: true },
-					updated_at: '2026-01-01T00:02:00Z',
+					updated_at: reads === 1 ? '2026-01-01T00:00:00Z' : '2026-01-01T00:01:00Z',
 				} as Partial<CredentialRedactedResponse>);
 			}),
 		);
@@ -126,6 +117,114 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		const outcome = await runConnectFlow(id, { pollMs: 25, timeoutMs: 2000 });
 		expect(outcome.status).toBe('connected');
 		expect(reads).toBe(3);
+	});
+
+	it("does not complete one challenge from another challenge's connected status", async () => {
+		const id = seedConnectableCredential();
+		const requestedFlows: string[] = [];
+		worker.use(
+			http.get('/credentials/:id', () =>
+				HttpResponse.json({
+					credential_id: id,
+					details: { connected: true },
+				} as Partial<CredentialRedactedResponse>),
+			),
+			http.get('/credentials/:id/connect/:flowId/status', ({ params }) => {
+				const flowId = String(params.flowId);
+				requestedFlows.push(flowId);
+				return HttpResponse.json({
+					status: flowId === 'other-flow' ? 'connected' : 'pending',
+				});
+			}),
+		);
+		fakePopup.closed = true;
+		const outcome = await runConnectFlow(id, { pollMs: 10, timeoutMs: 1000 });
+		expect(outcome.status).toBe('cancelled');
+		expect(requestedFlows.length).toBeGreaterThan(0);
+		expect(new Set(requestedFlows).size).toBe(1);
+		expect(requestedFlows[0]).not.toBe('other-flow');
+	});
+
+	it('honors abort after a deferred popup status read', async () => {
+		const id = seedConnectableCredential();
+		const controller = new AbortController();
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let requested = 0;
+		worker.use(
+			http.get('/credentials/:id/connect/:flowId/status', async () => {
+				requested += 1;
+				await pending;
+				return HttpResponse.json({ status: 'connected' });
+			}),
+			http.get('/credentials/:id', () =>
+				HttpResponse.json({ credential_id: id, details: { connected: true } }),
+			),
+		);
+		const flow = runConnectFlow(id, { pollMs: 1, signal: controller.signal });
+		await vi.waitFor(() => expect(requested).toBe(1));
+		controller.abort();
+		release();
+		expect(await flow).toEqual({ status: 'cancelled' });
+		expect(fakePopup.close).toHaveBeenCalled();
+	});
+
+	it('honors abort after a deferred begin-connect response', async () => {
+		const id = seedConnectableCredential();
+		const controller = new AbortController();
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let begins = 0;
+		worker.use(
+			http.post('/credentials/:id/connect', async () => {
+				begins += 1;
+				await pending;
+				return HttpResponse.json({
+					kind: 'authorization_code',
+					flow_id: 'deferred-flow',
+					authorize_url: 'https://vendor.example.test/oauth/authorize',
+				});
+			}),
+		);
+		const flow = runConnectFlow(id, { pollMs: 1, signal: controller.signal });
+		await vi.waitFor(() => expect(begins).toBe(1));
+		controller.abort();
+		release();
+		expect(await flow).toEqual({ status: 'cancelled' });
+		expect(window.open).not.toHaveBeenCalled();
+	});
+
+	it('honors abort after the popup-final status read', async () => {
+		const id = seedConnectableCredential();
+		const controller = new AbortController();
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let reads = 0;
+		worker.use(
+			http.get('/credentials/:id', () =>
+				HttpResponse.json({ credential_id: id, details: { connected: true } }),
+			),
+			http.get('/credentials/:id/connect/:flowId/status', async () => {
+				reads += 1;
+				if (reads === 2) {
+					fakePopup.closed = true;
+					await pending;
+				}
+				return HttpResponse.json({ status: 'pending' });
+			}),
+		);
+		const flow = runConnectFlow(id, { pollMs: 1, signal: controller.signal });
+		await vi.waitFor(() => expect(reads).toBe(2));
+		controller.abort();
+		release();
+		expect(await flow).toEqual({ status: 'cancelled' });
+		expect(fakePopup.close).toHaveBeenCalled();
 	});
 
 	it('ignores a message from a foreign origin (no early resolve)', async () => {
@@ -214,8 +313,8 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		);
 
 		// pollMs 50, timeout 600 → a correctly-paced loop reads ~12 times
-		// (600/50) + the initial `before` read. A latched busy-loop would fire
-		// hundreds of back-to-back requests. We post an error message early to
+		// (600/50). A latched busy-loop would fire hundreds of back-to-back
+		// requests. We post an error message early to
 		// trip the latch, which must not be permanent.
 		const flow = runConnectFlow(id, { pollMs: 50, timeoutMs: 600 });
 
@@ -229,7 +328,7 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 
 		const outcome = await flow;
 		expect(outcome.status).toBe('timeout');
-		// Generous ceiling: correct pacing is ~13 reads; a busy-loop would be
+		// Generous ceiling: correct pacing is ~12 reads; a busy-loop would be
 		// orders of magnitude higher. 40 leaves slack for timing jitter while
 		// still failing hard on a regression to the latched behaviour.
 		expect(reads).toBeLessThan(40);
@@ -277,6 +376,7 @@ describe('runConnectFlow — device-code branch', () => {
 				if (String(params.id) !== id) return undefined;
 				return HttpResponse.json({
 					kind: 'device_authorization',
+					flow_id: 'flow-device-1',
 					user_code: 'ABCD-1234',
 					verification_uri: 'https://idp.example.com/device',
 					verification_uri_complete: 'https://idp.example.com/device?user_code=ABCD-1234',
@@ -305,6 +405,7 @@ describe('runConnectFlow — device-code branch', () => {
 		const windowOpen = vi.spyOn(window, 'open');
 
 		let connected = false;
+		stubFlowStatus(() => connected);
 		let reads = 0;
 		worker.use(
 			http.get('/credentials/:id', ({ params }) => {
@@ -333,9 +434,8 @@ describe('runConnectFlow — device-code branch', () => {
 		});
 
 		// Simulate the human approving at the vendor and the scanner
-		// vaulting the token — the credential flips connected server-side,
-		// after the flow's baseline read (a flip before it would make the
-		// baseline look connected already, so no poll could see a change).
+		// vaulting the token — the exact flow status flips connected server-side
+		// after the first poll read.
 		await vi.waitFor(() => expect(reads).toBe(1));
 		connected = true;
 
@@ -390,6 +490,38 @@ describe('runConnectFlow — device-code branch', () => {
 		expect(outcome.status).toBe('cancelled');
 		// Resolved via the abort, not by waiting out pollMs/timeoutMs.
 		expect(Date.now() - startedAt).toBeLessThan(5000);
+		expect(cleanupCalls).toBe(1);
+	});
+
+	it('honors abort after a deferred device credential read and runs cleanup', async () => {
+		const id = seedDeviceCodeCredential();
+		stubDeviceCodeConnectResponse(id);
+		stubFlowStatus(() => true);
+		const controller = new AbortController();
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let reads = 0;
+		let cleanupCalls = 0;
+		worker.use(
+			http.get('/credentials/:id', async () => {
+				reads += 1;
+				if (reads === 1) await pending;
+				return HttpResponse.json({ credential_id: id, details: { connected: true } });
+			}),
+		);
+		const flow = runConnectFlow(id, {
+			pollMs: 1,
+			signal: controller.signal,
+			onDeviceAuthorizationChallenge: () => () => {
+				cleanupCalls += 1;
+			},
+		});
+		await vi.waitFor(() => expect(reads).toBe(1));
+		controller.abort();
+		release();
+		expect(await flow).toEqual({ status: 'cancelled' });
 		expect(cleanupCalls).toBe(1);
 	});
 

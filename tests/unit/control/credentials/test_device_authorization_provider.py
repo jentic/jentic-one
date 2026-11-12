@@ -225,6 +225,15 @@ async def test_begin_connect_seeds_transient_state_and_returns_challenge() -> No
             new=seed_mock,
         ),
         patch(
+            "jentic_one.control.services.credentials.providers.device_authorization.ConnectNonceRepository.register",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.control.services.credentials.providers.device_authorization.ConnectSessionRepository.get_live_by_credential",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
             "jentic_one.control.services.credentials.providers.device_authorization.df.begin_device_authorization",
             new_callable=AsyncMock,
             return_value=device_result,
@@ -233,7 +242,7 @@ async def test_begin_connect_seeds_transient_state_and_returns_challenge() -> No
         challenge = await provider.begin_connect(
             ctx,
             api=MagicMock(),
-            request=ConnectRequest(extra={"credential_id": "cred_1"}),
+            request=ConnectRequest(extra={"credential_id": "cred_1", "actor_id": "usr_1"}),
         )
 
     assert isinstance(challenge, DeviceAuthorizationChallenge)

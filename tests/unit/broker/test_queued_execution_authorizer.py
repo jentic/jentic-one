@@ -7,6 +7,7 @@ the DB-backed behaviour is covered by
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -28,7 +29,9 @@ class _FakeActorStatus:
         self._scoped = scoped
         self.calls: list[tuple[str, str, str]] = []
 
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         self.calls.append((actor_id, actor_type, permission))
         return ActorAuthority(active=self._active, holds_permission=self._scoped)
 
@@ -84,6 +87,8 @@ def _request(**overrides: Any) -> QueuedExecutionRequest:
         "api_name": "things",
         "api_version": "v1",
         "credential_id": "cred_1",
+        "auth_token_sha256": "abcd" * 16,
+        "auth_method": "access_token",
     }
     fields.update(overrides)
     return QueuedExecutionRequest(**fields)
@@ -180,6 +185,47 @@ def test_unmapped_broker_error_maps_to_500() -> None:
         pass
 
     assert broker_error_problem(_UnmappedError("x"))["status"] == 500
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lineage",
+    [
+        {"auth_token_sha256": None},
+        {"auth_method": None},
+        {"auth_method": "jwt"},
+        {"auth_method": "jwt", "auth_expires_at": datetime.now(UTC) - timedelta(seconds=1)},
+    ],
+    ids=["missing-hash", "missing-method", "jwt-without-expiry", "expired-jwt"],
+)
+async def test_authorizer_rejects_invalid_lineage_before_actor_status(
+    lineage: dict[str, Any],
+) -> None:
+    deriver = _DenyingCredentialDeriver()
+    authorizer, status = _authorizer(active=True, deriver=deriver)
+
+    verdict = await authorizer.authorize(_request(**lineage))
+
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "unauthorized"
+    assert status.calls == []
+    assert deriver.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_authorizer_accepts_unexpired_jwt_lineage_before_actor_status() -> None:
+    deriver = _DenyingCredentialDeriver()
+    authorizer, status = _authorizer(active=True, deriver=deriver)
+
+    verdict = await authorizer.authorize(
+        _request(auth_method="jwt", auth_expires_at=datetime.now(UTC) + timedelta(minutes=1))
+    )
+
+    assert status.calls == [("agt_1", "agent", "capabilities:execute")]
+    assert deriver.calls == 1
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "action_denied"
 
 
 @pytest.mark.asyncio

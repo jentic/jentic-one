@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -152,38 +153,46 @@ func NormalizeOrigin(rawURL string) string {
 
 // configuredEnvOrigin returns the normalized origin for envName from the XDG
 // config when present, or "" when no config or environment entry exists.
-func configuredEnvOrigin(envName string) string {
+func configuredEnvOrigin(envName string) (string, error) {
 	if envName == "" {
-		return ""
+		return "", nil
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("resolving environment %q origin: %w", envName, err)
 	}
 	env, ok := cfg.Environments[envName]
 	if !ok {
-		return ""
+		return "", nil
 	}
-	return NormalizeOrigin(env.BaseURL)
+	return NormalizeOrigin(env.BaseURL), nil
 }
 
-// targetOriginFor resolves the expected backend origin for creds, verifying
-// that an explicit BaseURL agrees with the configured environment origin when
-// both are present.
+// targetOriginFor resolves the expected backend origin for creds. An explicit
+// BaseURL is authoritative for headless SDK callers; config supplies the origin
+// only when the caller leaves BaseURL empty.
 func targetOriginFor(creds Credentials) (string, error) {
-	envOrigin := configuredEnvOrigin(creds.EnvironmentName)
 	if creds.BaseURL != "" {
 		baseOrigin := NormalizeOrigin(creds.BaseURL)
 		if baseOrigin == "" {
 			return "", fmt.Errorf("invalid base URL %q", creds.BaseURL)
 		}
-		if envOrigin != "" && baseOrigin != envOrigin {
-			return "", fmt.Errorf("%w: environment %q points at %s, not %s",
-				ErrOriginMismatch, creds.EnvironmentName, envOrigin, baseOrigin)
-		}
 		return baseOrigin, nil
 	}
-	return envOrigin, nil
+	return configuredEnvOrigin(creds.EnvironmentName)
+}
+
+// readStoredAPIKey distinguishes an absent key from a key whose binding cannot
+// be trusted. Only absence selects the OAuth exchange fallback.
+func readStoredAPIKey(ref IdentityRef) (*apiKeyRecord, error) {
+	rec, err := readAPIKeyRecord(ref)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading stored API key for %s/%s: %w", ref.Identity, ref.Environment, err)
+	}
+	return rec, nil
 }
 
 // BearerToken resolves the Authorization bearer value for creds: the injected
@@ -214,7 +223,11 @@ func BearerToken(creds Credentials) (string, error) {
 	// the on-disk credential is the signal; we only treat a missing-file error
 	// as "no API key, fall through to OAuth" — a cross-origin key is refused
 	// fail-closed so a repointed environment never sends the old backend's key.
-	if rec, err := readAPIKeyRecord(creds.IdentityRef()); err == nil && rec != nil && rec.APIKey != "" {
+	rec, err := readStoredAPIKey(creds.IdentityRef())
+	if err != nil {
+		return "", err
+	}
+	if rec != nil && rec.APIKey != "" {
 		if rec.Origin != "" && targetOrigin != "" && rec.Origin != targetOrigin {
 			return "", fmt.Errorf("%w: stored API key for %s/%s belongs to %s, not %s",
 				ErrOriginMismatch, creds.IdentityName, creds.EnvironmentName, rec.Origin, targetOrigin)
@@ -290,7 +303,11 @@ func RefreshBearerToken(creds Credentials) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rec, err := readAPIKeyRecord(creds.IdentityRef()); err == nil && rec != nil && rec.APIKey != "" {
+	rec, err := readStoredAPIKey(creds.IdentityRef())
+	if err != nil {
+		return "", err
+	}
+	if rec != nil && rec.APIKey != "" {
 		if rec.Origin != "" && targetOrigin != "" && rec.Origin != targetOrigin {
 			return "", fmt.Errorf("%w: stored API key for %s/%s belongs to %s, not %s",
 				ErrOriginMismatch, creds.IdentityName, creds.EnvironmentName, rec.Origin, targetOrigin)
@@ -311,8 +328,6 @@ func CanReExchange(creds Credentials) bool {
 	if creds.InjectedBearerToken != "" {
 		return false
 	}
-	if rec, err := readAPIKeyRecord(creds.IdentityRef()); err == nil && rec != nil && rec.APIKey != "" {
-		return false
-	}
-	return true
+	rec, err := readStoredAPIKey(creds.IdentityRef())
+	return err == nil && (rec == nil || rec.APIKey == "")
 }

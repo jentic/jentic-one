@@ -99,7 +99,7 @@ def record_upstream_set_cookie(upstream_url: str, set_cookie_header: str) -> Non
     parsed_target = _parse_origin_and_path(upstream_url)
     if parsed_target is None:
         return
-    _, host_port, _ = parsed_target
+    _, host_port, request_path = parsed_target
 
     segments = [seg.strip() for seg in set_cookie_header.split(";") if seg.strip()]
     if not segments or "=" not in segments[0]:
@@ -110,7 +110,8 @@ def record_upstream_set_cookie(upstream_url: str, set_cookie_header: str) -> Non
     if not cookie_name:
         return
 
-    cookie_path = "/"
+    # RFC 6265 §5.1.4 default-path: omit the final request-path segment.
+    cookie_path = request_path.rsplit("/", 1)[0] or "/"
     secure = False
     for attr in segments[1:]:
         attr_name, has_eq, attr_val = attr.partition("=")
@@ -142,7 +143,9 @@ def is_cookie_allowed_for_upstream(cookie_name: str, cookie_value: str, target_u
     """Whether ``(cookie_name, cookie_value)`` may be forwarded to ``target_url``."""
     scopes = _UPSTREAM_COOKIE_SCOPES.get((cookie_name, cookie_value))
     if scopes is None:
-        return True
+        # An unknown pair may be a foreign session after a restart or eviction;
+        # there is no origin evidence that makes it safe to forward.
+        return False
     parsed_target = _parse_origin_and_path(target_url)
     if parsed_target is None:
         return False

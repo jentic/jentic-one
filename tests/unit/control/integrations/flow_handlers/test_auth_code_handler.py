@@ -51,6 +51,7 @@ from jentic_one.shared.redaction import redact_event
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 _STATE_SECRET = "test-state-secret"  # pragma: allowlist secret
+_LIVE_CLIENT_SECRET = "live-cs"  # pragma: allowlist secret
 
 
 def _make_context(
@@ -607,7 +608,8 @@ async def test_begin_merges_existing_query_and_overrides_security_params(
     ("body_text", "expected_error_slug"),
     [
         (
-            '{"error":"invalid_grant","access_token":"live-secret-at","refresh_token":"live-secret-rt","client_secret":"live-cs","code":"live-code"}',
+            '{"error":"invalid_grant","access_token":"live-secret-at","refresh_token":"live-secret-rt",'
+            f'"client_secret":"{_LIVE_CLIENT_SECRET}","code":"live-code"}}',
             "invalid_grant",
         ),
         (
@@ -654,7 +656,7 @@ async def test_non_200_token_response_never_logs_raw_secret_bearing_body(
 @pytest.mark.asyncio()
 @pytest.mark.parametrize(
     "bad_expires_in",
-    ["not-a-number", "", 0, -5, True, False, 3600.5, 10**20],
+    ["not-a-number", "", 0, -5, True, False, 3600.5, 10**20, "²", "9" * 5_000],
 )
 async def test_complete_from_callback_rejects_malformed_or_zero_expires_in(
     bad_expires_in: object,

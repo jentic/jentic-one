@@ -43,6 +43,7 @@ let seq = 0;
 // e2e exercise the abandoned-connect path deterministically. Defaults to true
 // so existing flows (mocked dev, other specs) still auto-complete.
 let connectAutoCompletes = true;
+const connectFlowCompletions = new Map<string, string>();
 
 /** Toggle whether the mocked connect flow auto-completes. For tests. */
 export function setConnectAutoCompletes(value: boolean): void {
@@ -101,6 +102,7 @@ export function resetCredentialsStore(seed: Credential[] = []): void {
 	store = [...seed];
 	seq = seed.length;
 	connectAutoCompletes = true;
+	connectFlowCompletions.clear();
 }
 
 /** Append credentials to the current store, keeping what is already there. */
@@ -999,9 +1001,29 @@ const connectSessionsHandlers = [
 	}),
 
 	http.get('/connect-sessions/:sessionId/status', ({ params, request }) => {
+		if (!connectSessionsStore.some((s) => s.session_id === String(params.sessionId))) {
+			return undefined;
+		}
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
 		return HttpResponse.json(gated.status);
+	}),
+
+	http.get('/connect-sessions/:sessionId/status', ({ params, request }) => {
+		const ended = endedConnectSessions.find((s) => s.session_id === String(params.sessionId));
+		if (!ended || new URL(request.url).searchParams.get('poll_token') !== ended.poll_token) {
+			return problem(
+				403,
+				'Forbidden',
+				'Unknown session or invalid poll token.',
+				'invalid_poll_token',
+			);
+		}
+		return HttpResponse.json(
+			ended.outcome === 'applied' || ended.outcome === 'connected'
+				? { ...ended.status, status: ended.outcome, error_code: null }
+				: { ...ended.status, status: 'failed', error_code: ended.outcome },
+		);
 	}),
 
 	http.post('/connect-sessions/:sessionId\\:cancel', ({ params, request }) => {
@@ -1115,6 +1137,14 @@ export const credentialsHandlers = [
 		});
 	}),
 
+	http.get('/credentials/:id/connect/:flowId/status', ({ params }) => {
+		const cred = store.find((c) => c.credential_id === String(params.id));
+		const completion = connectFlowCompletions.get(String(params.flowId));
+		return HttpResponse.json({
+			status: cred && completion && completion === cred.updated_at ? 'connected' : 'pending',
+		});
+	}),
+
 	http.get('/credentials/:id', ({ params }) => {
 		const cred = store.find((c) => c.credential_id === params.id);
 		if (!cred) return new HttpResponse(null, { status: 404 });
@@ -1170,6 +1200,7 @@ export const credentialsHandlers = [
 
 	http.post('/credentials/:id/connect', async ({ params }) => {
 		const id = String(params.id);
+		const flowId = `flow_${++seq}`;
 		const cred = store.find((c) => c.credential_id === id);
 		const managed = cred?.provider === 'pipedream';
 
@@ -1185,6 +1216,7 @@ export const credentialsHandlers = [
 					target.provider_account_ref = managed ? `apn_${seq}_mock` : 'connected';
 					target.details = { ...(target.details ?? {}), connected: true };
 					target.updated_at = new Date().toISOString();
+					connectFlowCompletions.set(flowId, target.updated_at);
 				}
 			}, 600);
 		}
@@ -1194,6 +1226,7 @@ export const credentialsHandlers = [
 			: `https://provider.example.com/oauth/authorize?credential=${id}&state=mock-state`;
 		return HttpResponse.json({
 			kind: 'authorization_code',
+			flow_id: flowId,
 			authorize_url: authorizeUrl,
 			state: 'mock-state',
 		});

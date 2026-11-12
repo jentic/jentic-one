@@ -32,7 +32,6 @@ _VOLATILE_REQUEST_HEADERS: frozenset[str] = (
     | SPOOFABLE_HEADERS
     | frozenset(
         {
-            "accept-encoding",
             "authorization",
             "b3",
             "content-length",
@@ -98,6 +97,13 @@ def canonicalize_semantic_headers(headers: Mapping[str, str] | None) -> list[tup
         if not name or name in _VOLATILE_REQUEST_HEADERS:
             continue
         value = raw_value.strip()
+        if name == "accept-encoding":
+            value = value.lower()
+            if value == "identity":
+                # The HTTP runner injects identity when this header is absent.
+                # Omitting the explicit default keeps equivalent retries on the
+                # same fingerprint without changing fingerprints that omit it.
+                continue
         if name == "content-type":
             value = _normalize_content_type(value)
         canonical.append((name, value))

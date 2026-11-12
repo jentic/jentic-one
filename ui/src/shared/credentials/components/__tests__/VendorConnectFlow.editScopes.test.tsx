@@ -4,6 +4,7 @@ import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import {
+	getEndedMockConnectSessions,
 	getMockConnectSessions,
 	resetConnectSessionsStore,
 	resetCredentialsStore,
@@ -169,6 +170,176 @@ describe('VendorConnectFlow edit-scopes — a person changing scopes', () => {
 		// Both are open: the agent's request waits on its review.
 		expect(getMockConnectSessions().map((s) => s.session_id)).toContain(open.session_id);
 		expect(getMockConnectSessions()).toHaveLength(2);
+	});
+
+	it('gates dismissal, inline Cancel, and duplicate starts while the edit session is starting', async () => {
+		seedBinding({ scope_catalog: CATALOG });
+		const onBack = vi.fn();
+		const dismissHandlers: Array<(() => void) | null> = [];
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let starts = 0;
+		worker.use(
+			http.post('/integrations:edit-connection', async () => {
+				starts += 1;
+				await pending;
+				const session = seedMockAgentConnectSession({
+					agent_id: 'agnt_1',
+					credential_id: 'cred_gmail',
+					vendor_key: 'gmail',
+					resolved_flow: 'edit',
+					edit: getMockConnectSessions()[0]?.edit,
+				});
+				return HttpResponse.json(
+					{
+						session_id: session.session_id,
+						poll_token: session.poll_token,
+						status: 'consenting',
+						challenge: {
+							kind: 'authorization_code',
+							authorize_url: 'https://vendor.example.test/oauth/authorize',
+						},
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="edit-scopes"
+				agentId="agnt_1"
+				credentialId="cred_gmail"
+				credentialName="Work Gmail"
+				vendorKey="gmail"
+				onBack={onBack}
+				onDone={vi.fn()}
+				onRegisterDismiss={(handler): void => {
+					dismissHandlers.push(handler);
+				}}
+			/>,
+		);
+		const user = userEvent.setup();
+		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
+		await waitFor(() => expect(starts).toBe(1));
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Sign in and save' })).toBeDisabled();
+		const dismiss = dismissHandlers[dismissHandlers.length - 1];
+		expect(dismiss).toEqual(expect.any(Function));
+		dismiss?.();
+		expect(onBack).not.toHaveBeenCalled();
+		release();
+		await waitFor(() => expect(window.open).toHaveBeenCalledTimes(1));
+		expect(starts).toBe(1);
+	});
+
+	it('cancels a session whose start response arrives after direct unmount', async () => {
+		seedBinding({ scope_catalog: CATALOG });
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const session = seedMockAgentConnectSession({
+			agent_id: 'agnt_1',
+			credential_id: 'cred_gmail',
+			vendor_key: 'gmail',
+			resolved_flow: 'edit',
+		});
+		worker.use(
+			http.post('/integrations:edit-connection', async () => {
+				await pending;
+				return HttpResponse.json(
+					{
+						session_id: session.session_id,
+						poll_token: session.poll_token,
+						status: 'consenting',
+						challenge: {
+							kind: 'authorization_code',
+							authorize_url: 'https://vendor.example.test/oauth/authorize',
+						},
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+		const view = renderWithProviders(
+			<VendorConnectFlow
+				mode="edit-scopes"
+				agentId="agnt_1"
+				credentialId="cred_gmail"
+				credentialName="Work Gmail"
+				vendorKey="gmail"
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
+		view.unmount();
+		release();
+		await waitFor(() =>
+			expect(getEndedMockConnectSessions().map((s) => s.session_id)).toContain(
+				session.session_id,
+			),
+		);
+		expect(window.open).not.toHaveBeenCalled();
+	});
+
+	it('renders an applied edit after cancellation loses the finalise race', async () => {
+		seedBinding({ scope_catalog: CATALOG });
+		let cancelRequested = false;
+		worker.use(
+			http.post('/connect-sessions/:sessionId\\:cancel', () => {
+				cancelRequested = true;
+				return new HttpResponse(null, { status: 204 });
+			}),
+			http.get('/connect-sessions/:sessionId/status', () =>
+				HttpResponse.json(
+					cancelRequested
+						? { status: 'applied', error_code: null }
+						: { status: 'polling', error_code: null },
+				),
+			),
+		);
+		const { onBack } = renderEdit();
+		const user = userEvent.setup();
+		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
+		await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+		expect(await screen.findByText('Access to Work Gmail updated')).toBeInTheDocument();
+		expect(onBack).not.toHaveBeenCalled();
+	});
+
+	it('keeps the session open for a retry when cancel cannot reread its outcome', async () => {
+		seedBinding({ scope_catalog: CATALOG });
+		worker.use(
+			http.get('/connect-sessions/:sessionId/status', () =>
+				HttpResponse.json({ detail: 'Status temporarily unavailable' }, { status: 500 }),
+			),
+		);
+		const { onBack } = renderEdit();
+		const user = userEvent.setup();
+		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
+		await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+		expect(await screen.findByText('Status temporarily unavailable')).toBeInTheDocument();
+		expect(onBack).not.toHaveBeenCalled();
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+	});
+
+	it('closes after an authoritative cancelled outcome', async () => {
+		seedBinding({ scope_catalog: CATALOG });
+		const { onBack } = renderEdit();
+		const user = userEvent.setup();
+		await user.click(await screen.findByText('gmail.send', { selector: 'code' }));
+		await user.click(screen.getByRole('button', { name: 'Sign in and save' }));
+		await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+		await waitFor(() => expect(onBack).toHaveBeenCalled());
+		const ended = getEndedMockConnectSessions();
+		expect(ended[ended.length - 1]?.outcome).toBe('cancelled');
 	});
 
 	it('says when the credential’s scopes can’t change', async () => {

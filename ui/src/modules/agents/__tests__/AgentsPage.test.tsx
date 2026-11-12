@@ -1718,9 +1718,9 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('connecting from the inventory sheet clears the dashed tile and gap hint', async () => {
-		// The mocked backend flips a mutable fixture once the connect starts, like
-		// the provider callback. The cleared hint proves the DRAINED join was
-		// invalidated, not just the sheet's.
+		// The mocked backend completes this exact flow after the connect starts,
+		// like the provider callback. The cleared hint proves the DRAINED join
+		// was invalidated, not just the sheet's.
 		let connectRequested = false;
 		let connected = false;
 		const stripeCred = (): Credential =>
@@ -1767,19 +1767,26 @@ describe('AgentsPage — flat agents surface', () => {
 			http.get('/credentials/:id', ({ params }) => {
 				if (params.id !== 'cred_stripe_oauth') return undefined;
 				const response = HttpResponse.json(stripeCred());
-				// The first read after the connect POST is the flow's baseline. The
-				// user "completes" the hosted sign-in once it is served, so the
-				// baseline sees the unconnected credential and the next poll the
-				// connected one — however late the baseline read lands.
+				// The first read after the connect POST captures the pending credential.
+				// The hosted sign-in then completes both this flow and the credential, so
+				// a later poll must observe the flow status and usable credential together.
 				if (connectRequested) connected = true;
 				return response;
 			}),
 			http.post('/credentials/:id/connect', () => {
 				connectRequested = true;
 				return HttpResponse.json({
+					kind: 'authorization_code',
+					flow_id: 'flow_mock',
 					authorize_url: 'https://provider.example.com/oauth/authorize?state=mock',
 					state: 'mock',
 				});
+			}),
+			http.get('/credentials/:id/connect/:flowId/status', ({ params }) => {
+				if (params.id !== 'cred_stripe_oauth' || params.flowId !== 'flow_mock') {
+					return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
+				}
+				return HttpResponse.json({ status: connected ? 'connected' : 'pending' });
 			}),
 		);
 		seedCredentialBindings([

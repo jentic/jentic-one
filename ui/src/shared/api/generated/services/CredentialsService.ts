@@ -10,6 +10,7 @@ import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
 import type { BindingAccessResponse } from '../models/BindingAccessResponse';
+import type { ConnectFlowStatusResponse } from '../models/ConnectFlowStatusResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
@@ -587,6 +588,43 @@ export class CredentialsService {
                 403: `Forbidden`,
                 404: `Not Found`,
                 409: `Credential is not connectable`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Read OAuth connect flow status
+     * Read one flow's committed outcome, not a credential-wide timestamp.
+     * @returns ConnectFlowStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static getConnectFlowStatus({
+        credentialId,
+        flowId,
+    }: {
+        /**
+         * ID of the credential.
+         */
+        credentialId: string,
+        /**
+         * Opaque identifier returned by begin connect.
+         */
+        flowId: string,
+    }): CancelablePromise<ConnectFlowStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/credentials/{credential_id}/connect/{flow_id}/status',
+            path: {
+                'credential_id': credentialId,
+                'flow_id': flowId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

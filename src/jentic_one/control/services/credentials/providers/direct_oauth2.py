@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -22,6 +22,7 @@ from jentic_one.control.services.credentials.providers.oauth2 import (
     InvalidGrantError,
     OAuth2Provider,
     TokenExchangeError,
+    true_oauth_expiry,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
@@ -53,37 +54,13 @@ __all__ = [
 ]
 
 
-def _parse_positive_seconds(raw: object) -> int:
-    """Parse a positive integer second count from a JSON field or raise ``ProviderError``."""
-    if isinstance(raw, bool):
-        raise ProviderError("Invalid expires_in in token response")
-    if isinstance(raw, int):
-        seconds = raw
-    elif isinstance(raw, str):
-        stripped = raw.strip()
-        if not stripped or not stripped.lstrip("+-").isdigit():
-            raise ProviderError("Invalid expires_in in token response")
-        seconds = int(stripped)
-    else:
-        raise ProviderError("Invalid expires_in in token response")
-    if seconds <= 0:
-        raise ProviderError("Invalid expires_in in token response")
-    return seconds
-
-
 def _true_expiry(token_data: dict[str, Any]) -> datetime | None:
     """The access token's true expiry from an RFC 6749 ``expires_in`` response.
 
     No safety margin is subtracted: the broker's refresher applies
     ``expiry_skew_seconds`` once, at comparison time.
     """
-    if "expires_in" not in token_data or token_data["expires_in"] is None:
-        return None
-    seconds = _parse_positive_seconds(token_data["expires_in"])
-    try:
-        return datetime.now(UTC) + timedelta(seconds=seconds)
-    except (OverflowError, ValueError) as exc:
-        raise ProviderError("Invalid expires_in in token response") from exc
+    return true_oauth_expiry(token_data)
 
 
 def _merge_authorize_url(base_url: str, params: dict[str, str]) -> str:

@@ -40,6 +40,7 @@ describe('useDeviceAwareConnect', () => {
 			http.post('/credentials/:id/connect', () =>
 				HttpResponse.json({
 					kind: 'device_authorization',
+					flow_id: 'flow-device-1',
 					user_code: 'WXYZ-9876',
 					verification_uri: 'https://github.com/login/device',
 					verification_uri_complete: null,

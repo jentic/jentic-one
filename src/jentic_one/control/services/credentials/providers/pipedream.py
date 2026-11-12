@@ -11,10 +11,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
 
 from jentic_one.control.services.credentials.providers.base import ProviderError
-from jentic_one.control.services.credentials.providers.direct_oauth2 import (
-    _parse_positive_seconds,
-    _true_expiry,
-)
+from jentic_one.control.services.credentials.providers.direct_oauth2 import _true_expiry
+from jentic_one.control.services.credentials.providers.oauth2 import parse_oauth_expires_in
 from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectCallback,
@@ -83,7 +81,9 @@ def _parse_pipedream_expiry(token_data: dict[str, Any]) -> datetime | None:
     """Parse ``expires_at`` or ``expires_in`` from a Pipedream token response."""
     if "expires_at" in token_data and token_data["expires_at"] is not None:
         raw_expires_at = token_data["expires_at"]
-        ts = _parse_positive_seconds(raw_expires_at)
+        ts = parse_oauth_expires_in(raw_expires_at)
+        if ts is None:
+            raise ProviderError("Invalid expires_at in token response")
         try:
             return datetime.fromtimestamp(ts, tz=UTC)
         except (OverflowError, OSError, ValueError) as exc:

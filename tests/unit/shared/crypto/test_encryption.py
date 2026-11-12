@@ -331,7 +331,7 @@ async def _seed_all_encrypted_families(
             Sigv4Credential(
                 id="sigv4_1",
                 credential_id=c_sigv4.id,
-                access_key_id="AKIAIOSFODNN7EXAMPLE",
+                access_key_id="AKIAIOSFODNN7EXAMPLE",  # pragma: allowlist secret
                 encrypted_secret_access_key=v1_svc.encrypt("sigv4-secret-key"),
                 encrypted_session_token=v1_svc.encrypt("sigv4-session-token"),
                 region="us-east-1",

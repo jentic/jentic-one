@@ -65,6 +65,8 @@ from jentic_one.shared.redaction import REDACTED, redact_event, redact_value
 _KEY_B64 = base64.b64encode(b"\x11" * 32).decode()
 _OTHER_KEY_B64 = base64.b64encode(b"\x22" * 32).decode()
 _CRED_ID = "cred_test"
+_URL_SECRET = "SECRET_REFRESH_VALUE"  # pragma: allowlist secret
+_DUMMY_CLIENT_SECRET = "dummy-live-client-secret"  # pragma: allowlist secret
 
 
 class _DummyOAuth2Provider(OAuth2Provider):
@@ -482,13 +484,13 @@ async def test_invalid_grant_raises_refresh_invalid_grant(sqlite_ctx: MagicMock)
     "raised",
     [
         ProviderError("idp said: refresh_token=SECRET_REFRESH_VALUE"),
-        httpx.ConnectError("connect failed near https://user:SECRET_REFRESH_VALUE@idp.example/t"),
+        httpx.ConnectError(f"connect failed near https://user:{_URL_SECRET}@idp.example/t"),
         httpx.ReadError("read failed: access_token=SECRET_REFRESH_VALUE"),
         httpx.WriteError("write failed: client_secret=SECRET_REFRESH_VALUE"),
         httpx.RemoteProtocolError("protocol error: Bearer SECRET_REFRESH_VALUE"),
         httpx.PoolTimeout("pool timeout"),
         httpx.DecodingError("decode error"),
-        httpx.InvalidURL("invalid url https://user:SECRET_REFRESH_VALUE@idp.example/t"),
+        httpx.InvalidURL(f"invalid url https://user:{_URL_SECRET}@idp.example/t"),
     ],
 )
 async def test_transport_and_provider_errors_map_to_transient_and_redact_secrets(
@@ -866,7 +868,7 @@ def test_true_expiry_omitted_or_null_returns_none() -> None:
     [
         '{"access_token":"dummy-live-access-token","error":"unexpected"}',
         '{"refresh_token":"dummy-live-refresh-token","error":"unexpected"}',
-        '{"client_secret":"dummy-live-client-secret","error":"unexpected"}',
+        f'{{"client_secret":"{_DUMMY_CLIENT_SECRET}","error":"unexpected"}}',
         '{"code":"dummy-live-auth-code","error":"unexpected"}',
         '{"device_code":"dummy-live-device-code","error":"unexpected"}',
         '{"access_token":"dummy-live-truncated-token',

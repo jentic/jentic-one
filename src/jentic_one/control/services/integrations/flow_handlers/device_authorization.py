@@ -24,6 +24,7 @@ from jentic_one.control.repos.oauth_app_registration_repo import (
 )
 from jentic_one.control.services.credentials.state import BrowserBindingClaim
 from jentic_one.control.services.integrations import device_authorization
+from jentic_one.control.services.integrations.errors import DeviceFlowInProgressError
 from jentic_one.control.services.integrations.flow_handlers.base import (
     BeginResult,
     DeviceAuthorizationBeginResult,
@@ -116,6 +117,19 @@ class DeviceAuthorizationHandler:
         expires_at = datetime.now(UTC) + timedelta(seconds=result.expires_in)
 
         async with self._ctx.control_db.transaction() as session:
+            # Session flows share this aux row with standalone connects. Lock
+            # it before taking ownership so a standalone begin either commits
+            # first and is refused here, or waits and then sees this live
+            # session in its own reciprocal guard.
+            locked = await DeviceAuthorizationCredentialRepository.get_by_credential(
+                session, row.credential_id, for_update=True
+            )
+            if (
+                locked is not None
+                and locked.flow_nonce is not None
+                and locked.encrypted_device_code is not None
+            ):
+                raise DeviceFlowInProgressError()
             await DeviceAuthorizationCredentialRepository.set_transient_state(
                 session,
                 row.credential_id,
@@ -169,6 +183,7 @@ class DeviceAuthorizationHandler:
                 kind="expired",
                 error_code="device_code_expired",
                 terminal_detail="device_code expired",
+                flow_nonce=dfc.flow_nonce,
             )
 
         # RFC 8628 poll-interval rate limit — atomic claim so two scanner
@@ -190,6 +205,7 @@ class DeviceAuthorizationHandler:
                 credential_id,
                 now=now,
                 min_last_polled_at=min_last_polled_at,
+                flow_nonce=dfc.flow_nonce,
             )
         if not claimed:
             return StatusReport(kind="pending")
@@ -206,6 +222,7 @@ class DeviceAuthorizationHandler:
                 kind="failed",
                 error_code=error_code,
                 terminal_detail=f"vendor {exc.status}",
+                flow_nonce=dfc.flow_nonce if dfc is not None else None,
             )
 
     async def _poll_vendor(
@@ -224,6 +241,7 @@ class DeviceAuthorizationHandler:
                 kind="failed",
                 error_code="registration_inactive",
                 terminal_detail="oauth_app_registration is inactive",
+                flow_nonce=dfc.flow_nonce,
             )
         client_id, token_endpoint = endpoints
         device_code = self._ctx.encryption.decrypt(dfc.encrypted_device_code)
@@ -258,12 +276,14 @@ class DeviceAuthorizationHandler:
                 kind="failed",
                 error_code="access_denied",
                 terminal_detail="access_denied",
+                flow_nonce=dfc.flow_nonce,
             )
         if result.status == "expired":
             return StatusReport(
                 kind="expired",
                 error_code="expired_token",
                 terminal_detail="expired_token",
+                flow_nonce=dfc.flow_nonce,
             )
         if result.status != "success":
             # Exhaustive: a new/unknown status from ``poll_device_authorization``
@@ -273,12 +293,14 @@ class DeviceAuthorizationHandler:
                 kind="failed",
                 error_code="vendor_error",
                 terminal_detail=f"unknown poll status {result.status!r}",
+                flow_nonce=dfc.flow_nonce,
             )
 
         # success
         assert result.access_token is not None
         return StatusReport(
             kind="success",
+            flow_nonce=dfc.flow_nonce,
             tokens=SuccessTokens(
                 access_token=result.access_token,
                 refresh_token=result.refresh_token,
