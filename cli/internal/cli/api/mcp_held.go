@@ -215,7 +215,7 @@ func (s *mcpServer) answerHeld(
 func (s *mcpServer) resumeHeld(ctx context.Context, req *mcp.CallToolRequest, agent string) (*mcp.CallToolResult, error) {
 	st, err := openHeldState(req.Params.RequestState, agent)
 	if err != nil {
-		s.logger.Warn("held requestState refused", "error", err)
+		s.logger.Warn("held requestState refused", "error", redactedErr(err))
 		return nil, invalidParams(errors.New("invalid or expired requestState"))
 	}
 	s.logHeldFrontDoor(req, "url_elicitation_retry", st.HeldExecutionID)

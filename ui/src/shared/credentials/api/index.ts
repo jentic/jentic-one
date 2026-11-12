@@ -22,18 +22,19 @@ import {
 	updateCredential,
 } from './client';
 import type { ProviderDiscoveryResponse } from '@/shared/api';
-import type {
-	AuthCodeChallengeResponse,
-	ConnectChallengeResponse,
-	ConnectRequestBody,
-	CredentialAgentListResponse,
-	CredentialAgentResponse,
-	CredentialCreateRequest,
-	CredentialCreateResponse,
-	CredentialListResponse,
-	CredentialRedactedResponse,
-	CredentialUpdateRequest,
-	DeviceAuthorizationChallengeResponse,
+import {
+	credentialDetails,
+	type AuthCodeChallengeResponse,
+	type ConnectChallengeResponse,
+	type ConnectRequestBody,
+	type CredentialAgentListResponse,
+	type CredentialAgentResponse,
+	type CredentialCreateRequest,
+	type CredentialCreateResponse,
+	type CredentialListResponse,
+	type CredentialRedactedResponse,
+	type CredentialUpdateRequest,
+	type DeviceAuthorizationChallengeResponse,
 } from './types';
 import {
 	isHttpsVendorUrl,
@@ -343,15 +344,24 @@ export async function runConnectFlow(
 		const isConnected = (next: CredentialRedactedResponse | null): boolean => {
 			if (!next) return false;
 			if (!haveBaseline) return false;
-			if (
-				next.provider_account_ref &&
-				next.provider_account_ref !== before?.provider_account_ref
-			) {
-				return true;
-			}
-			// Direct OAuth2 stores tokens without a provider_account_ref; fall back to
-			// an updated_at bump as the "something changed" signal.
-			return !!next.updated_at && next.updated_at !== before?.updated_at;
+			const nextDetails = credentialDetails(next);
+			const nextConnected =
+				nextDetails.connected === true || Boolean(next.provider_account_ref);
+			if (!nextConnected) return false;
+
+			const beforeDetails = before ? credentialDetails(before) : {};
+			const beforeConnected =
+				beforeDetails.connected === true || Boolean(before?.provider_account_ref);
+			if (!beforeConnected) return true;
+
+			return (
+				(Boolean(next.provider_account_ref) &&
+					next.provider_account_ref !== before?.provider_account_ref) ||
+				nextDetails.token_expires_at !== beforeDetails.token_expires_at ||
+				(nextDetails.connected === true &&
+					Boolean(next.updated_at) &&
+					next.updated_at !== before?.updated_at)
+			);
 		};
 
 		// Sleep up to `tickMs`, but resolve early if an advisory message

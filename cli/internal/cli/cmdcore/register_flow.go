@@ -64,11 +64,19 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 		}
 	}
 
+	// Both Dynamic Client Registration and the approval-wait token exchange
+	// ride the environment's SEC-20 CA-pinned client when ca_cert_path is
+	// configured, failing closed on a broken bundle (#1205).
+	hc, err := clictx.AuthHTTPClient(ctx, cfg.Environments[envName].CACertPath)
+	if err != nil {
+		return err
+	}
+
 	clientID := reg.ClientID
 	claimToken := ""
 	if clientID == "" {
 		a.registerProgress(ctx, st.Infof("Registering agent %q with %s ...", clientName, baseURL))
-		r, rerr := auth.Register(baseURL, clientName, auth.PublicKeyToJWKS(pub))
+		r, rerr := auth.RegisterWithClient(hc, baseURL, clientName, auth.PublicKeyToJWKS(pub))
 		if rerr != nil {
 			// AGT-21: DCR is the most common failure point (control plane
 			// unreachable / TLS / 4xx). Surface it as a coded TRANSPORT_ERROR so
@@ -106,17 +114,7 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	// token. No-op on the OSS default (empty token).
 	a.presentClaimAffordance(ctx, baseURL, clientID, claimToken)
 
-	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName}
-	// The approval wait proves approval by MINTING (the exact credential path
-	// every data command uses), so the mint must ride the same transport those
-	// commands will: the SEC-20 CA-pinned client when this environment declares
-	// ca_cert_path, fail closed on a broken bundle (#1205). cfg was loaded
-	// above; an env registered without a custom CA yields the default client.
-	hc, err := clictx.AuthHTTPClient(ctx, cfg.Environments[envName].CACertPath)
-	if err != nil {
-		return err
-	}
-	creds.HTTPClient = hc
+	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName, HTTPClient: hc}
 	if err := a.waitForApproval(ctx, creds, clientID, timeout, claimToken != ""); err != nil {
 		return err
 	}

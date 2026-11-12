@@ -96,7 +96,7 @@ func (s *mcpServer) registerResources() {
 			// The content is compiled in via go:embed; a read failure is a
 			// build-time programming error. Skip rather than panic so the
 			// session still boots.
-			s.logger.Error("skill resource skipped: bundled read failed", "skill", name, "error", err)
+			s.logger.Error("skill resource skipped: bundled read failed", "skill", name, "error", redactedErr(err))
 			continue
 		}
 		meta := skillgen.ParseDocMeta(raw)
@@ -303,7 +303,7 @@ func (s *mcpServer) skillDocFor(ctx context.Context, name string) (skillDoc, err
 		}
 	}
 	if !errors.Is(err, errNoBackend) {
-		s.logger.Info("skill resource: hosted copy unusable, serving bundled", "skill", name, "error", err)
+		s.logger.Info("skill resource: hosted copy unusable, serving bundled", "skill", name, "error", redactedErr(err))
 	}
 	raw, err := skillgen.RawBundled(name)
 	if err != nil {
@@ -360,7 +360,7 @@ func (s *mcpServer) handleSkillIndexResource(ctx context.Context, req *mcp.ReadR
 		}
 	}
 	if !errors.Is(err, errNoBackend) {
-		s.logger.Info("skill index: hosted copy unusable, serving bundled manifest", "error", err)
+		s.logger.Info("skill index: hosted copy unusable, serving bundled manifest", "error", redactedErr(err))
 	}
 
 	raw, err := bundledSkillIndex()

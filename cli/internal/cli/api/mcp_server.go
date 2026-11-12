@@ -22,6 +22,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -383,11 +384,39 @@ func (s *mcpServer) noteClient(ci *mcp.Implementation) {
 	s.clientInfo.Store(ci)
 }
 
+// refreshActiveState reloads the active environment's URLs/CA path from disk
+// when a long-running MCP process holds a disk-backed context, so an operator
+// `jentic env add --force` repoint takes effect on the next tool call.
+func refreshActiveState(ctx context.Context) context.Context {
+	st := clictx.ActiveContext(ctx)
+	if st == nil || st.InjectedBearerToken != "" {
+		return ctx
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		return ctx
+	}
+	env, ok := cfg.Environments[st.EnvironmentName]
+	if !ok || env.BaseURL == "" {
+		return ctx
+	}
+	if env.BaseURL == st.BaseURL && env.BrokerURL == st.BrokerURL && env.CACertPath == st.CACertPath {
+		return ctx
+	}
+	rsCopy := *st.ResolvedState
+	rsCopy.BaseURL = env.BaseURL
+	rsCopy.BrokerURL = env.BrokerURL
+	rsCopy.CACertPath = env.CACertPath
+	stCopy := *st
+	stCopy.ResolvedState = &rsCopy
+	return clictx.WithActiveState(ctx, &stCopy)
+}
+
 // callContext derives the per-call context every handler uses: the session
 // context's values (ActiveState, transport hook) with this call's deadline.
 // Control-plane-only tools get the 30s mcpCallTimeout.
 func (s *mcpServer) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, mcpCallTimeout)
+	return context.WithTimeout(refreshActiveState(ctx), mcpCallTimeout)
 }
 
 // executeCallContext is callContext for the execute family: the broker leg
@@ -395,7 +424,7 @@ func (s *mcpServer) callContext(ctx context.Context) (context.Context, context.C
 // mcpExecuteCallTimeout instead of the control-plane deadline (which would
 // silently cap the advertised 60s execute ceiling at 30s).
 func (s *mcpServer) executeCallContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, mcpExecuteCallTimeout)
+	return context.WithTimeout(refreshActiveState(ctx), mcpExecuteCallTimeout)
 }
 
 // result builds the one tool-result shape every tool returns: the payload
@@ -427,13 +456,37 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 // mirroring the CLI envelopes' schema_version (13 §2/§6).
 const mcpSchemaVersion = "1"
 
+// hasStructuredProblemDetail reports whether he carries a standard problem-
+// details or OAuth string field rather than falling back to the raw body.
+func hasStructuredProblemDetail(he *HTTPError) bool {
+	if he == nil {
+		return false
+	}
+	p := he.Fields()
+	for _, k := range []string{"detail", "title", "error_description", "error"} {
+		if v, ok := p[k].(string); ok && v != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // redactedErr funnels an error's message through the ux redaction backstop
 // before it is written to the MCP log file. The log is an output surface like
-// stderr — and HTTPError.Error() embeds the raw upstream response body — so
-// every failure-logging site must apply the same guarantee ReportError's
-// stderr path does, not write err verbatim.
+// stderr — and HTTPError.Error() embeds the raw upstream response body when no
+// structured problem-details field is present — so unstructured response bodies
+// are replaced with [REDACTED] and structured diagnostics pass through
+// ux.RedactBytes.
 func redactedErr(err error) string {
-	return string(ux.RedactBytes([]byte(err.Error())))
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	var he *HTTPError
+	if errors.As(err, &he) && he != nil && he.Body != "" && !hasStructuredProblemDetail(he) {
+		msg = strings.ReplaceAll(msg, he.Body, "[REDACTED]")
+	}
+	return string(ux.RedactBytes([]byte(msg)))
 }
 
 // softError converts a failure into an isError tool result carrying the SAME
@@ -512,13 +565,20 @@ func (s *mcpServer) softErrorExtra(ctx context.Context, err error, nextTool stri
 // catch-all with no next_tool pointer.
 func mcpCoded(err error) *ux.CodedError {
 	var httpErr *HTTPError
-	if errors.As(err, &httpErr) &&
-		(httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
-		return &ux.CodedError{
-			Code: ux.CodeNotAuthenticated,
-			Msg: fmt.Sprintf("the control plane rejected this agent's credentials (%v) — "+
-				"the identity may have been revoked or disabled", err),
-			Actionable: "call get_started to diagnose this machine's setup and relay its instruction to your operator",
+	if errors.As(err, &httpErr) && httpErr != nil {
+		if httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden {
+			return &ux.CodedError{
+				Code: ux.CodeNotAuthenticated,
+				Msg: fmt.Sprintf("the control plane rejected this agent's credentials (%s) — "+
+					"the identity may have been revoked or disabled", redactedErr(err)),
+				Actionable: "call get_started to diagnose this machine's setup and relay its instruction to your operator",
+			}
+		}
+		if httpErr.Body != "" && !hasStructuredProblemDetail(httpErr) {
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) {
+				return &ux.CodedError{Code: ux.CodeInternalError, Msg: redactedErr(err)}
+			}
 		}
 	}
 	return asCoded(err)

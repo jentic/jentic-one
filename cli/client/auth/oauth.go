@@ -61,8 +61,12 @@ func noFollowRedirects(*http.Request, []*http.Request) error { return http.ErrUs
 // the never-follow-redirects posture (#1207), enforced here at the mint's
 // single choke point so no caller-supplied client can silently reintroduce
 // redirect-following on a token POST.
-func exchangeClient(creds Credentials) *http.Client {
-	hc := creds.HTTPClient
+// authClient resolves the *http.Client an auth-server call (token exchange,
+// DCR registration, or token revocation) rides. A caller-supplied base client
+// wins when set — carrying the environment's SEC-20 CA-pinned transport and
+// attribution hook (#1205) — and is copied so the shared client is never
+// mutated, enforcing exchangeTimeout when unset and noFollowRedirects (#1207).
+func authClient(hc *http.Client) *http.Client {
 	if hc == nil {
 		return httpClient
 	}
@@ -72,6 +76,10 @@ func exchangeClient(creds Credentials) *http.Client {
 	}
 	cp.CheckRedirect = noFollowRedirects
 	return &cp
+}
+
+func exchangeClient(creds Credentials) *http.Client {
+	return authClient(creds.HTTPClient)
 }
 
 // PendingError indicates the agent is registered but not yet approved: the token
@@ -278,6 +286,7 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 	return &TokenSet{
 		AccessToken: body.AccessToken,
 		ExpiresAt:   renewalDeadline(time.Now(), body.ExpiresIn),
+		Origin:      NormalizeOrigin(creds.BaseURL),
 	}, nil
 }
 

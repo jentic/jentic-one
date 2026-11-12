@@ -40,6 +40,13 @@ type RegistrationResult struct {
 // hold it to the same TLS/loopback invariant as tokenEndpoint. requireSecureHost
 // keeps the two call sites from drifting.
 func Register(baseURL, clientName string, jwks JWKS) (*RegistrationResult, error) {
+	return RegisterWithClient(nil, baseURL, clientName, jwks)
+}
+
+// RegisterWithClient performs RFC 7591 Dynamic Client Registration using hc
+// when non-nil (so an environment's custom CA bundle and attribution transport
+// hook apply to DCR just like token exchange).
+func RegisterWithClient(hc *http.Client, baseURL, clientName string, jwks JWKS) (*RegistrationResult, error) {
 	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid base URL %q: %w", baseURL, err)
@@ -59,7 +66,7 @@ func Register(baseURL, clientName string, jwks JWKS) (*RegistrationResult, error
 		return nil, fmt.Errorf("encoding registration request: %w", err)
 	}
 
-	resp, err := httpClient.Post(u.String(), "application/json", bytes.NewReader(reqBody))
+	resp, err := authClient(hc).Post(u.String(), "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("registration request failed: %w", err)
 	}
@@ -95,6 +102,13 @@ func Register(baseURL, clientName string, jwks JWKS) (*RegistrationResult, error
 // failures are returned so callers can warn. Same TLS/loopback invariant as
 // the other auth-server routes (F1).
 func RevokeToken(baseURL, accessToken, token string) error {
+	return RevokeTokenWithClient(nil, baseURL, accessToken, token)
+}
+
+// RevokeTokenWithClient revokes a token (RFC 7009) at baseURL's /oauth/revoke
+// endpoint using hc when non-nil (so an environment's custom CA bundle and
+// attribution transport hook apply to revocation just like token exchange).
+func RevokeTokenWithClient(hc *http.Client, baseURL, accessToken, token string) error {
 	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
 		return fmt.Errorf("invalid base URL %q: %w", baseURL, err)
@@ -115,7 +129,7 @@ func RevokeToken(baseURL, accessToken, token string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := httpClient.Do(req)
+	resp, err := authClient(hc).Do(req)
 	if err != nil {
 		return fmt.Errorf("revoke request failed: %w", err)
 	}
