@@ -19,7 +19,7 @@ import contextlib
 import hashlib
 import json
 import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -946,10 +946,15 @@ async def _handle(
         nonlocal assembled_response
         assembled_response = _assemble_response(outcome_exec, ctx_req)
         if claim_lease is not None:
+            raw_pairs = [
+                (k.decode("latin-1"), v.decode("latin-1"))
+                for k, v in assembled_response.raw_headers
+                if k.decode("latin-1").lower() != "content-length"
+            ]
             with stage(ServerTimingStage.IDEMPOTENCY):
                 await claim_lease.complete(
                     status_code=assembled_response.status_code,
-                    headers=dict(assembled_response.headers),
+                    headers=raw_pairs,
                     body=outcome_exec.result.body,
                 )
 
@@ -1166,6 +1171,27 @@ def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> s
     return None
 
 
+def _set_raw_response_headers(
+    response: Response, header_items: Sequence[tuple[str, str]]
+) -> Response:
+    """Populate ``response.raw_headers`` preserving repeated fields and ``content-length``."""
+    encoded: list[tuple[bytes, bytes]] = []
+    has_content_type = any(k.lower() == "content-type" for k, _ in header_items)
+    has_content_length = any(k.lower() == "content-length" for k, _ in header_items)
+    for raw_k, raw_v in response.raw_headers:
+        lower_k = raw_k.lower()
+        if (lower_k == b"content-type" and not has_content_type) or (
+            lower_k == b"content-length" and not has_content_length
+        ):
+            encoded.append((raw_k, raw_v))
+    for k, v in header_items:
+        encoded.append((k.lower().encode("latin-1"), v.encode("latin-1")))
+    response.raw_headers = encoded
+    if hasattr(response, "_headers"):
+        delattr(response, "_headers")
+    return response
+
+
 def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext) -> Response:
     result = outcome.result
     metadata = _metadata_headers(ctx_req, outcome.context.execution_id)
@@ -1176,13 +1202,17 @@ def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext
     if hint is not None:
         metadata[JenticHeader.HINT.value] = hint
 
-    passthrough = passthrough_response_headers(result.headers)
-    return Response(
+    passthrough = passthrough_response_headers(result.headers, upstream_url=ctx_req.upstream_url)
+    meta_lower = {k.lower() for k in metadata}
+    raw_items = [(k, v) for k, v in passthrough.raw_headers if k.lower() not in meta_lower] + list(
+        metadata.items()
+    )
+    response = Response(
         content=result.body,
         status_code=result.status_code,
         media_type=result.content_type,
-        headers={**passthrough, **metadata},
     )
+    return _set_raw_response_headers(response, raw_items)
 
 
 def _replay_response(stored: StoredResponse) -> Response:
@@ -1196,19 +1226,22 @@ def _replay_response(stored: StoredResponse) -> Response:
     """
     # A replay re-emits a passthrough body, so it carries the passthrough
     # Cache-Control whatever the stored record holds (#1835).
-    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
-    headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
-    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
+    source_items = (
+        list(stored.header_items) if stored.header_items else list(stored.headers.items())
+    )
+    dropped = {"cache-control"}
     if stored.body_omitted:
-        headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
-        # The stored content-length described the original (uncached) body; drop
-        # it so the ASGI server recomputes it for the empty replay body.
-        headers.pop("content-length", None)
-    return Response(
+        dropped.add("content-length")
+    raw_items = [(k, v) for k, v in source_items if k.lower() not in dropped]
+    raw_items.append((JenticHeader.IDEMPOTENT_REPLAYED.value, "true"))
+    raw_items.append(("cache-control", PASSTHROUGH_CACHE_CONTROL))
+    if stored.body_omitted:
+        raw_items.append((JenticHeader.IDEMPOTENCY_BODY_OMITTED.value, "true"))
+    response = Response(
         content=stored.body,
         status_code=stored.status_code,
-        headers=headers,
     )
+    return _set_raw_response_headers(response, raw_items)
 
 
 def _extract_request_auth_lineage(

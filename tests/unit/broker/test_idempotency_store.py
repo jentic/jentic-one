@@ -547,3 +547,36 @@ async def test_claim_lease_renews_in_flight_and_releases_only_on_pre_send_error(
     # Dispatched call that raised is NOT released early -> still IN_PROGRESS.
     in_flight = await store.begin("agent-1", "key-lease", "fp-1")
     assert in_flight.state is IdempotencyState.IN_PROGRESS
+
+
+@pytest.mark.asyncio
+async def test_repeated_non_sensitive_headers_survive_replay_while_set_cookie_is_scrubbed() -> None:
+    backend = MemoryStateBackend(clock=_Clock())
+    store = _store(backend)
+    first = await store.begin("agent-1", "key-multi", "fp-multi")
+    assert first.state is IdempotencyState.FRESH
+    await store.complete(
+        "agent-1",
+        "key-multi",
+        "fp-multi",
+        status_code=200,
+        headers=[
+            ("content-type", "application/json"),
+            ("x-custom-tag", "alpha"),
+            ("x-custom-tag", "beta"),
+            ("set-cookie", "a=1; Path=/"),
+            ("set-cookie", "b=2; Path=/"),
+        ],
+        body=b'{"ok":true}',
+        claim_id=first.claim_id,
+    )
+    replay = await store.begin("agent-1", "key-multi", "fp-multi")
+    assert replay.state is IdempotencyState.REPLAY
+    assert replay.stored is not None
+    assert replay.stored.header_items == (
+        ("content-type", "application/json"),
+        ("x-custom-tag", "alpha"),
+        ("x-custom-tag", "beta"),
+    )
+    assert all(k.lower() != "set-cookie" for k, _ in replay.stored.header_items)
+    assert "set-cookie" not in {k.lower() for k in replay.stored.headers}

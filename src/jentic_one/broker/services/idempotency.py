@@ -32,7 +32,7 @@ import contextlib
 import json
 import secrets
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -40,7 +40,8 @@ from typing import Any, Protocol, runtime_checkable
 import structlog
 
 from jentic_one.broker.core.errors import IdempotencyUnavailableError
-from jentic_one.broker.core.headers import SENSITIVE_RESPONSE_HEADERS
+from jentic_one.broker.core.headers import SENSITIVE_RESPONSE_HEADERS, extract_header_items
+from jentic_one.broker.core.proxy_headers import ResponseHeaderMap
 from jentic_one.shared.state.backend import (
     AtomicStore,
     KeyValueStore,
@@ -132,6 +133,7 @@ class StoredResponse:
     headers: dict[str, str]
     body: bytes
     body_omitted: bool
+    header_items: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +160,17 @@ def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _scrub_header_items(
+    headers: Mapping[str, str] | Iterable[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Drop sensitive and per-exchange headers while preserving repeated fields."""
+    return [
+        (k, v)
+        for k, v in extract_header_items(headers)
+        if k.lower() not in SENSITIVE_RESPONSE_HEADERS and k.lower() not in _PER_EXCHANGE_HEADERS
+    ]
+
+
 def _cap_headers(headers: dict[str, str]) -> dict[str, str]:
     """Keep headers (:data:`_PRIORITY_HEADERS` first) while their JSON stays within the cap.
 
@@ -178,6 +191,25 @@ def _cap_headers(headers: dict[str, str]) -> dict[str, str]:
         kept[name] = value
         used += cost
     return kept
+
+
+def _cap_header_items(items: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Keep header pairs (:data:`_PRIORITY_HEADERS` first) while their JSON stays within the cap."""
+    indexed = list(enumerate(items))
+    ordered = sorted(
+        indexed,
+        key=lambda iv: (_HEADER_RANK.get(iv[1][0].lower(), len(_PRIORITY_HEADERS)), iv[0]),
+    )
+    kept_indexed: list[tuple[int, tuple[str, str]]] = []
+    used = 2  # the enclosing ``{}`` / ``[]``
+    for idx, (name, value) in ordered:
+        cost = len(json.dumps({name: value}, separators=_SEPARATORS)) - 1
+        if used + cost > MAX_RECORD_HEADER_BYTES:
+            continue
+        kept_indexed.append((idx, (name, value)))
+        used += cost
+    kept_indexed.sort(key=lambda iv: iv[0])
+    return [pair for _, pair in kept_indexed]
 
 
 def _dumps(record: Mapping[str, object]) -> bytes:
@@ -253,7 +285,7 @@ class IdempotencyClaimLease:
         self,
         *,
         status_code: int,
-        headers: dict[str, str],
+        headers: Mapping[str, str] | Iterable[tuple[str, str]],
         body: bytes,
     ) -> bool:
         """Promote the leased claim to ``DONE`` if this lease still owns the slot."""
@@ -579,7 +611,7 @@ class SharedStateIdempotencyStore:
         fingerprint: str,
         *,
         status_code: int,
-        headers: dict[str, str],
+        headers: Mapping[str, str] | Iterable[tuple[str, str]],
         body: bytes,
         claim_id: str | None = None,
     ) -> bool:
@@ -610,12 +642,20 @@ class SharedStateIdempotencyStore:
             except StateBackendCapacityError:
                 omit = True
                 _logger.warning("idempotency_body_not_stored", reason="body_budget_full")
-        record = {
+        scrubbed_items = _scrub_header_items(headers)
+        capped_items = _cap_header_items(scrubbed_items)
+        capped_dict = _cap_headers(dict(capped_items))
+        lower_counts: dict[str, int] = {}
+        for k, _ in capped_items:
+            lk = k.lower()
+            lower_counts[lk] = lower_counts.get(lk, 0) + 1
+        has_repeats = any(c > 1 for c in lower_counts.values())
+        record: dict[str, object] = {
             "phase": _PHASE_DONE,
             "fp": fingerprint,
             "token": token,
             "status": status_code,
-            "headers": _cap_headers(_scrub_headers(headers)),
+            "headers": [[k, v] for k, v in capped_items] if has_repeats else capped_dict,
             "body_omitted": omit,
             "body_ref": bool(body) and not omit,
         }
@@ -691,11 +731,17 @@ class SharedStateIdempotencyStore:
     def _decode_response(record: dict[str, object], body: bytes | None) -> StoredResponse:
         status = record.get("status")
         raw_headers = record.get("headers")
-        headers = (
-            {str(k): str(v) for k, v in raw_headers.items()}
-            if isinstance(raw_headers, dict)
-            else {}
-        )
+        header_items: list[tuple[str, str]] = []
+        if isinstance(raw_headers, list):
+            for entry in raw_headers:
+                if isinstance(entry, list | tuple) and len(entry) == 2:
+                    header_items.append((str(entry[0]), str(entry[1])))
+            headers: dict[str, str] = ResponseHeaderMap(header_items, raw_headers=header_items)
+        elif isinstance(raw_headers, dict):
+            header_items = [(str(k), str(v)) for k, v in raw_headers.items()]
+            headers = dict(header_items)
+        else:
+            headers = {}
         omitted = bool(record.get("body_omitted"))
         body_b64 = record.get("body_b64")
         if isinstance(body_b64, str) and body_b64:
@@ -709,6 +755,7 @@ class SharedStateIdempotencyStore:
             headers=headers,
             body=body or b"",
             body_omitted=omitted,
+            header_items=tuple(header_items),
         )
 
 
