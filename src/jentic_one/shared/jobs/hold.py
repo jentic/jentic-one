@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -158,6 +159,98 @@ def canonical_query(query: str) -> str:
     return urlencode(sorted(parse_qsl(query, keep_blank_values=True)))
 
 
+# Non-semantic headers excluded when fingerprinting a held request's headers.
+_VOLATILE_HOLD_HEADERS: frozenset[str] = frozenset(
+    {
+        "accept-encoding",
+        "authorization",
+        "b3",
+        "connection",
+        "content-length",
+        "cookie",
+        "date",
+        "forwarded",
+        "host",
+        "idempotency-key",
+        "jentic-credential-id",
+        "jentic-credential-name",
+        "jentic-revision",
+        "jentic-toolkit-id",
+        "keep-alive",
+        "mcp-session-id",
+        "prefer",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "traceparent",
+        "tracestate",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "user-agent",
+        "via",
+        "x-amzn-trace-id",
+        "x-b3-flags",
+        "x-b3-parentspanid",
+        "x-b3-sampled",
+        "x-b3-spanid",
+        "x-b3-traceid",
+        "x-correlation-id",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-port",
+        "x-forwarded-proto",
+        "x-jentic-api-key",
+        "x-real-ip",
+        "x-request-id",
+    }
+)
+
+
+def canonical_cookie(cookie: str | None) -> str:
+    """Return a whitespace-normalised cookie string preserving pair order."""
+    if not cookie:
+        return ""
+    return "; ".join(segment.strip() for segment in cookie.split(";") if segment.strip())
+
+
+def _canonical_content_type(value: str) -> str:
+    segments = [seg.strip() for seg in value.split(";") if seg.strip()]
+    if not segments:
+        return ""
+    media_type = segments[0].lower()
+    params: list[str] = []
+    for seg in segments[1:]:
+        if "=" in seg:
+            k, v = seg.split("=", 1)
+            k_norm = k.strip().lower()
+            v_norm = v.strip()
+            if k_norm == "charset":
+                v_norm = v_norm.strip('"').lower()
+            params.append(f"{k_norm}={v_norm}")
+        else:
+            params.append(seg.lower())
+    params.sort()
+    return "; ".join([media_type, *params])
+
+
+def canonical_headers(headers: Mapping[str, str] | None) -> list[tuple[str, str]]:
+    """Return sorted ``(lowercase_name, normalised_value)`` pairs for semantic headers."""
+    if not headers:
+        return []
+    out: list[tuple[str, str]] = []
+    for raw_name, raw_value in headers.items():
+        name = raw_name.strip().lower()
+        if not name or name in _VOLATILE_HOLD_HEADERS:
+            continue
+        value = raw_value.strip()
+        if name == "content-type":
+            value = _canonical_content_type(value)
+        out.append((name, value))
+    out.sort()
+    return out
+
+
 def compute_execution_fingerprint(
     *,
     agent_id: str,
@@ -166,18 +259,45 @@ def compute_execution_fingerprint(
     path: str,
     query: str = "",
     body: bytes | None,
+    headers: Mapping[str, str] | None = None,
+    cookie: str | None = None,
 ) -> str:
-    """SHA-256 over ``(agent_id, credential_id, method, path, query, body)``.
+    """SHA-256 over ``(agent_id, credential_id, method, path, query, body, cookie, headers)``.
 
-    The query and body are canonicalised (:func:`canonical_query`,
-    :func:`canonical_body`).
+    The query, body, cookie, and semantic headers are canonicalised
+    (:func:`canonical_query`, :func:`canonical_body`, :func:`canonical_cookie`,
+    :func:`canonical_headers`).
     """
     digest = hashlib.sha256()
     for part in (agent_id, credential_id, method.upper(), path, canonical_query(query)):
         digest.update(part.encode())
         digest.update(b"\x00")
     digest.update(canonical_body(body))
+
+    effective_cookie = cookie
+    if effective_cookie is None and headers:
+        cookie_vals = [v for k, v in headers.items() if k.strip().lower() == "cookie" and v]
+        if cookie_vals:
+            effective_cookie = "; ".join(cookie_vals)
+
+    norm_cookie = canonical_cookie(effective_cookie)
+    if norm_cookie:
+        digest.update(b"\x00cookie\x00")
+        digest.update(norm_cookie.encode())
+
+    norm_headers = canonical_headers(headers)
+    if norm_headers:
+        digest.update(b"\x00headers")
+        for name, value in norm_headers:
+            digest.update(b"\x00")
+            digest.update(name.encode())
+            digest.update(b"\x00")
+            digest.update(value.encode())
+
     return digest.hexdigest()
+
+
+compute_hold_fingerprint = compute_execution_fingerprint
 
 
 async def _pending_by_fingerprint(session: AsyncSession, fingerprint: str) -> HeldExecution | None:
@@ -251,6 +371,8 @@ async def file_hold(
     path: str,
     query: str = "",
     body: bytes | None,
+    headers: Mapping[str, str] | None = None,
+    cookie: str | None = None,
     trace_id: str | None,
     execution_id: str,
     payload: dict[str, Any],
@@ -276,6 +398,8 @@ async def file_hold(
         path=path,
         query=query,
         body=body,
+        headers=headers,
+        cookie=cookie,
     )
     await _lock_agent_holds(session, agent_id)
     existing = await _pending_by_fingerprint(session, fingerprint)

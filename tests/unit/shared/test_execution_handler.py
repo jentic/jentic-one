@@ -339,7 +339,7 @@ async def test_handler_without_injector_still_sends_the_captured_cookie() -> Non
 
 
 @pytest.mark.asyncio
-async def test_handler_without_a_keyset_drops_the_captured_cookie() -> None:
+async def test_handler_without_a_keyset_fails_closed_on_captured_cookie() -> None:
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
@@ -356,17 +356,21 @@ async def test_handler_without_a_keyset_drops_the_captured_cookie() -> None:
             actor_type="user",
         )
 
-    assert result.body["status"] == "completed"
-    req = executor.last_request
-    assert req is not None
-    assert req.headers == {}
-    assert any(e["event"] == "queued_execution_cookie_undecryptable" for e in logs)
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 503
+    assert result.body["problem"]["type"] == "queued_cookie_undecryptable"
+    assert executor.last_request is None
+    assert any(
+        e["event"] == "queued_execution_cookie_undecryptable"
+        and e.get("reason") == "no_encryption_keyset"
+        for e in logs
+    )
 
 
 @pytest.mark.asyncio
-async def test_handler_with_a_different_key_drops_the_captured_cookie() -> None:
-    """A cookie encrypted under a key the worker no longer holds (rotated out
-    while the job sat queued) is dropped like a missing keyset, not retried."""
+async def test_handler_with_a_different_key_fails_closed_on_captured_cookie() -> None:
+    """A cookie encrypted under a key the worker no longer holds fails closed
+    without dispatching the request upstream without its cookies."""
     worker_encryption = EncryptionService(
         EncryptionConfig.model_validate(
             {
@@ -391,10 +395,10 @@ async def test_handler_with_a_different_key_drops_the_captured_cookie() -> None:
             actor_type="user",
         )
 
-    assert result.body["status"] == "completed"
-    req = executor.last_request
-    assert req is not None
-    assert "Cookie" not in req.headers
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 503
+    assert result.body["problem"]["type"] == "queued_cookie_undecryptable"
+    assert executor.last_request is None
     assert any(
         e["event"] == "queued_execution_cookie_undecryptable"
         and e.get("reason") == "decryption_failed"

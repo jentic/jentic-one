@@ -74,11 +74,33 @@ class QueuedExecutionAuthorizer:
 
         # One read answers both gates (liveness, then the execute permission),
         # in the sync edge's order: authentication before scope.
-        authority = await self._actor_status.authority(
-            actor_id=request.actor_id,
-            actor_type=request.actor_type,
-            permission=BROKER_EXECUTE_PERMISSION,
+        has_lineage = any(
+            v is not None
+            for v in (
+                request.auth_token_sha256,
+                request.auth_method,
+                request.oauth_client_id,
+                request.oauth_grant_id,
+                request.session_generation,
+            )
         )
+        if has_lineage:
+            authority = await self._actor_status.authority(
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+                permission=BROKER_EXECUTE_PERMISSION,
+                auth_token_sha256=request.auth_token_sha256,
+                auth_method=request.auth_method,
+                oauth_client_id=request.oauth_client_id,
+                oauth_grant_id=request.oauth_grant_id,
+                session_generation=request.session_generation,
+            )
+        else:
+            authority = await self._actor_status.authority(
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+                permission=BROKER_EXECUTE_PERMISSION,
+            )
         if not authority.active:
             logger.info(
                 "queued_execution_denied",

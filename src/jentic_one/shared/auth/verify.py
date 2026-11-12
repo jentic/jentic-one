@@ -162,8 +162,16 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     sub = claims["sub"]
     parent_actor_id = claims.get("parent_actor_id")
 
+    sgen_raw = claims.get(SESSION_GENERATION_CLAIM, 0)
+    session_generation = (
+        int(sgen_raw)
+        if actor_type == ActorType.USER
+        and isinstance(sgen_raw, int)
+        and not isinstance(sgen_raw, bool)
+        else None
+    )
     if actor_type == ActorType.USER:
-        await _ensure_user_accepts_token(ctx, str(sub), claims.get(SESSION_GENERATION_CLAIM, 0))
+        await _ensure_user_accepts_token(ctx, str(sub), sgen_raw)
 
     embedded_permissions = claims.get("permissions")
     if embedded_permissions is not None and isinstance(embedded_permissions, list):
@@ -190,4 +198,6 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
         must_change_password=claims.get("must_change_password", False),
         actor_type=actor_type,
         parent_actor_id=parent_actor_id,
+        auth_method="jwt",
+        session_generation=session_generation,
     )

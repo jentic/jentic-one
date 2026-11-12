@@ -121,6 +121,14 @@ class QueuedExecutionRequest:
     # the request and names what was denied without the concrete request path.
     trace_id: str | None = None
     operation_path: str | None = None
+    # Optional authentication-channel lineage captured at enqueue or hold filing
+    # so the worker revalidates the submitting token, API key, OAuth client/grant,
+    # or login session generation before running the execution.
+    auth_token_sha256: str | None = None
+    auth_method: str | None = None
+    oauth_client_id: str | None = None
+    oauth_grant_id: str | None = None
+    session_generation: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +187,16 @@ class ActorStatusReader(Protocol):
     """
 
     async def authority(
-        self, *, actor_id: str, actor_type: str, permission: str
+        self,
+        *,
+        actor_id: str,
+        actor_type: str,
+        permission: str,
+        auth_token_sha256: str | None = None,
+        auth_method: str | None = None,
+        oauth_client_id: str | None = None,
+        oauth_grant_id: str | None = None,
+        session_generation: int | None = None,
     ) -> ActorAuthority: ...
 
 

@@ -247,6 +247,12 @@ class ApprovalHoldUnavailableError(BrokerError):
     """
 
 
+class AsyncCookieEncryptionUnavailableError(BrokerError):
+    """An async or held call carries a Cookie header that cannot be encrypted at rest (503)."""
+
+    default_type = "async_cookie_encryption_unavailable"
+
+
 class CredentialIdentityMismatchError(BrokerError):
     """Bound, but no bound credential's identity covers this API (403).
 
