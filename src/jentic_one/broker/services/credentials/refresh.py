@@ -31,9 +31,22 @@ from jentic_one.control.services.credentials.providers.base import (
     UnknownProviderError,
 )
 from jentic_one.control.services.credentials.providers.direct_oauth2 import InvalidGrantError
+from jentic_one.control.services.credentials.providers.oauth2 import (
+    parse_oauth_expires_in,
+    true_oauth_expiry,
+)
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.redaction import redact_value
+
+_true_expiry = true_oauth_expiry
+
+__all__ = [
+    "TokenRefresher",
+    "parse_oauth_expires_in",
+    "true_oauth_expiry",
+]
 
 logger = structlog.get_logger(__name__)
 
@@ -134,19 +147,19 @@ class TokenRefresher:
             if advisory_lock:
                 await OAuthTokenRepository.acquire_refresh_lock(session, resolved.credential_id)
             row = await OAuthTokenRepository.get_by_credential(session, resolved.credential_id)
+            has_account_ref = bool(resolved.provider_account_ref) and (
+                self._ctx.providers.mints_from_account_ref(resolved.provider)
+            )
+            mints_without_row = False
             if row is None or row.revoked_at is not None:
-                mints_from_ref = (
-                    row is None
-                    and bool(resolved.provider_account_ref)
-                    and self._ctx.providers.mints_from_account_ref(resolved.provider)
-                )
-                if not mints_from_ref:
+                if not (row is None and has_account_ref):
                     logger.warning(
                         "refresh_grant_missing",
                         credential_id=resolved.credential_id,
                         revoked=row is not None,
                     )
                     raise RefreshInvalidGrantError(resolved.credential_id)
+                mints_without_row = True
                 resolved = resolved.model_copy(
                     update={
                         "encrypted_access_token": None,
@@ -171,6 +184,15 @@ class TokenRefresher:
                     and (row.expires_at is None or row.expires_at > now)
                 ):
                     return self._ctx.encryption.decrypt(row.encrypted_access_token)
+                if not has_account_ref and (
+                    row.encrypted_refresh_token is None or not row.encrypted_refresh_token.strip()
+                ):
+                    logger.warning(
+                        "refresh_grant_missing",
+                        credential_id=resolved.credential_id,
+                        revoked=False,
+                    )
+                    raise RefreshInvalidGrantError(resolved.credential_id)
                 resolved = resolved.model_copy(
                     update={
                         "encrypted_access_token": row.encrypted_access_token,
@@ -180,6 +202,9 @@ class TokenRefresher:
                 )
 
             fresh_token = await self._do_refresh(resolved, caller)
+
+            if mints_without_row:
+                return fresh_token.access_token
 
             encrypted_access = self._ctx.encryption.encrypt(fresh_token.access_token)
             encrypted_refresh = (
@@ -200,6 +225,7 @@ class TokenRefresher:
                     "refresh_token_row_missing",
                     credential_id=resolved.credential_id,
                 )
+                raise RefreshInvalidGrantError(resolved.credential_id)
 
             return fresh_token.access_token
 
@@ -212,9 +238,18 @@ class TokenRefresher:
             ) from exc
 
         async def _decrypt_refresh_token() -> str:
-            if resolved.encrypted_refresh_token is None:
-                raise ProviderError("No refresh token available")
-            return self._ctx.encryption.decrypt(resolved.encrypted_refresh_token)
+            if (
+                resolved.encrypted_refresh_token is None
+                or not resolved.encrypted_refresh_token.strip()
+            ):
+                raise InvalidGrantError("No refresh token available")
+            try:
+                plaintext = self._ctx.encryption.decrypt(resolved.encrypted_refresh_token)
+            except DecryptionError as exc:
+                raise InvalidGrantError("No refresh token available") from exc
+            if not plaintext or not plaintext.strip():
+                raise InvalidGrantError("No refresh token available")
+            return plaintext
 
         token_view = OAuthTokenView(
             credential_id=resolved.credential_id,
@@ -226,6 +261,8 @@ class TokenRefresher:
 
         try:
             result = await provider.refresh(self._ctx, token=token_view)
+            if not isinstance(result.access_token, str) or not result.access_token.strip():
+                raise ProviderError("Provider refresh returned no access_token")
         except InvalidGrantError as exc:
             logger.warning(
                 "refresh_invalid_grant",
@@ -233,7 +270,7 @@ class TokenRefresher:
                 provider=resolved.provider,
             )
             raise RefreshInvalidGrantError(resolved.credential_id) from exc
-        except (httpx.TimeoutException, httpx.ConnectError, ProviderError) as exc:
+        except (httpx.HTTPError, httpx.InvalidURL, ProviderError) as exc:
             # The exception text (httpx transport message, IdP error body) can
             # quote request material, so only its class reaches the caller; the
             # server-side log keeps a redacted copy for diagnosis. ``from None``
