@@ -154,8 +154,8 @@ func SwapImageTag(ref, version string) (string, error) {
 }
 
 // IsOperatorTagPin reports whether ref carries a tag this tool did not choose
-// itself — not a release version, and not the "latest" fallback it writes for a
-// non-release install.
+// itself — not a canonical X.Y.Z release version, and not the "latest" fallback
+// it writes for a non-release install.
 //
 // Such a tag is an operator's own `install --image-tag` choice. An update still
 // moves it to the target release, because refusing would leave that stack with
@@ -166,21 +166,24 @@ func IsOperatorTagPin(ref string) bool {
 	if digest != "" || tag == "" || tag == "latest" {
 		return false
 	}
-	return releaseTag(tag) == ""
+	return releaseTag(tag) == "" || strings.ContainsAny(tag, "-+")
 }
 
-// SplitImageRef splits an image reference into its repository and whichever of
-// a tag or a digest pins it. A ':' inside a registry host ("localhost:5000/app")
-// is not a tag separator, so only a ':' after the last '/' counts.
+// SplitImageRef splits an image reference into its repository, optional tag,
+// and optional digest. A ':' inside a registry host ("localhost:5000/app") is
+// not a tag separator, so only a ':' after the last '/' counts. Both tag and
+// digest are returned when a reference carries both ("repo:tag@sha256:...");
+// callers must check digest first because Docker resolves @digest over :tag.
 func SplitImageRef(ref string) (repo, tag, digest string) {
 	if i := strings.Index(ref, "@"); i >= 0 {
-		return ref[:i], "", ref[i+1:]
+		digest = ref[i+1:]
+		ref = ref[:i]
 	}
 	slash := strings.LastIndex(ref, "/")
 	if i := strings.LastIndex(ref, ":"); i > slash {
-		return ref[:i], ref[i+1:], ""
+		return ref[:i], ref[i+1:], digest
 	}
-	return ref, "", ""
+	return ref, "", digest
 }
 
 // applyRef joins a repo with a bare tag or an @sha256: digest.

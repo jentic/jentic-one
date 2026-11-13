@@ -22,6 +22,7 @@ resolver answers with the pinning transport (``shared/dns_cache``).
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
@@ -33,16 +34,31 @@ if TYPE_CHECKING:
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
+# RFC 3986 §3.1 scheme syntax anchored before ``://`` so ``host:port/path``
+# inputs (colon followed by digits, never ``://``) still receive the default
+# ``https://`` prefix while explicit non-HTTP(S) schemes are rejected (#1897).
+_SCHEME_PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
+
 
 class UpstreamUrlInvalidError(ValueError):
     """Raised when an upstream URL is syntactically invalid or carries forbidden authority parts."""
 
 
+def with_default_scheme(raw_url: str) -> str:
+    """Normalise an HTTP(S) scheme, default scheme-less input to https, and reject others."""
+    url = raw_url.strip()
+    match = _SCHEME_PREFIX_RE.match(url)
+    if match is not None:
+        scheme = match.group(1).lower()
+        if scheme not in ("http", "https"):
+            raise UpstreamUrlInvalidError(f"unsupported scheme: {scheme}")
+        return f"{scheme}://{url[match.end() :]}"
+    return f"https://{url}"
+
+
 def reject_url_userinfo(raw_url: str) -> None:
     """Raise :class:`UpstreamUrlInvalidError` if *raw_url* contains URL userinfo."""
-    url = raw_url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
+    url = with_default_scheme(raw_url)
     parsed = urlparse(url)
     if (
         parsed.username is not None
@@ -159,10 +175,7 @@ def _check_url_without_dns(raw_url: str, egress: EgressConfig | None) -> tuple[s
     if not raw_url or not raw_url.strip():
         raise UpstreamUrlInvalidError("upstream URL is required")
 
-    url = raw_url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-
+    url = with_default_scheme(raw_url)
     parsed = urlparse(url)
 
     if parsed.scheme not in ("http", "https"):

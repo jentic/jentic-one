@@ -46,11 +46,16 @@ func (a *app) logoutContextE(ctx context.Context, st *clictx.ActiveState) error 
 	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
 	tokens, err := auth.ReadTokens(ref)
 	if err == nil && tokens != nil && tokens.AccessToken != "" && st.BaseURL != "" {
-		// Best-effort revoke; report but do not fail on server/transport errors.
+		// Best-effort revoke; revoking the refresh token when present revokes the
+		// full token family on the server. Report but do not fail on errors.
+		tokToRevoke := tokens.AccessToken
+		if tokens.RefreshToken != "" {
+			tokToRevoke = tokens.RefreshToken
+		}
 		hc, hcErr := clictx.AuthHTTPClient(ctx, st.CACertPath)
 		if hcErr != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("warning: revoke failed: %v", hcErr))
-		} else if revErr := auth.RevokeTokenWithClient(hc, st.BaseURL, tokens.AccessToken, tokens.AccessToken); revErr != nil {
+		} else if revErr := auth.RevokeTokenWithClient(hc, st.BaseURL, tokens.AccessToken, tokToRevoke); revErr != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("warning: revoke failed: %v", revErr))
 		}
 	}

@@ -26,8 +26,10 @@ from jentic_one.shared.http.injection import (
 )
 
 # Restore the scheme's doubled slash that Starlette collapses (``https:/x`` →
-# ``https://x``) — applied to the *raw* path only.
-_SCHEME_RE = re.compile(r"^(https?):/([^/])")
+# ``https://x``) and normalise RFC 3986 §3.1 scheme names to lower-case while
+# leaving host, path, and query bytes untouched (#1897).
+_COLLAPSED_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):/(?!/)")
+_EXPLICIT_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
 
 # Response framing header dropped on passthrough: the ASGI server recomputes
 # ``content-length`` from the actual body bytes (or uses chunked transfer on
@@ -173,8 +175,11 @@ def reconstruct_upstream_url(scope: Mapping[str, Any]) -> str:
     query_string = scope.get("query_string", b"").decode("latin-1")
 
     raw_path = raw_path.lstrip("/")
-    url = _SCHEME_RE.sub(r"\1://\2", raw_path)
-    if not url.startswith(("http://", "https://")):
+    url = _COLLAPSED_SCHEME_RE.sub(lambda m: f"{m.group(1).lower()}://", raw_path, count=1)
+    scheme_match = _EXPLICIT_SCHEME_RE.match(url)
+    if scheme_match is not None:
+        url = f"{scheme_match.group(1).lower()}://{url[scheme_match.end() :]}"
+    else:
         url = f"https://{url}"
     if query_string:
         url = f"{url}?{query_string}"

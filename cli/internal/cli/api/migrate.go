@@ -36,26 +36,28 @@ const migratedMarkerName = "MIGRATED"
 // XDG config exists yet.
 //
 // Semantics are COPY, not move: idempotent, leaves a MIGRATED marker, never
-// deletes the legacy tree by default (so downgrading the binary keeps working);
-// --purge-legacy removes the legacy tree once the downgrade path is no longer
-// needed. Cached refresh tokens are dropped, not migrated (BC-6).
+// deletes the legacy tree by default (so recovery and downgrading keep working);
+// --purge-legacy removes the legacy tree after the operator verifies that the
+// migrated context authenticates (#1384). Cached access and refresh tokens are
+// carried into XDG state without clobbering newer V2 tokens on re-runs.
 func newMigrateCmd(app *app) *cobra.Command {
 	var purgeLegacy bool
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate legacy ~/.jentic profiles to the XDG context model",
 		Long: "migrate copies each legacy profile into an Environment + Identity +\n" +
-			"Context under ~/.config/jentic, and copies key/token material into the XDG\n" +
-			"layout. It is idempotent and non-destructive (the legacy tree survives for\n" +
-			"downgrade); --purge-legacy removes the old tree afterwards. Cached refresh\n" +
-			"tokens are intentionally dropped.",
+			"Context under ~/.config/jentic, and copies key/token material (including\n" +
+			"cached access and refresh tokens) into the XDG layout. It is idempotent and\n" +
+			"non-destructive by default so the legacy tree remains available for recovery\n" +
+			"or downgrade. Verify that a migrated context authenticates (for example,\n" +
+			"`jentic whoami`) before passing --purge-legacy to delete the legacy tree.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			aud := ux.FromContext(cmd.Context())
 			// --purge-legacy is destructive (deletes ~/.jentic). Gate it behind the
 			// Audience confirmation so agents must pass --yes and humans get a [y/N].
 			if purgeLegacy {
-				ok, cerr := aud.AskConfirm("Delete the legacy ~/.jentic tree after migrating? This removes the downgrade path.")
+				ok, cerr := aud.AskConfirm("Delete the legacy ~/.jentic tree? Confirm that your migrated context authenticates (`jentic whoami`) first — this removes the recovery and downgrade copy.")
 				if cerr != nil {
 					return reportCoded(aud, cerr)
 				}
@@ -94,7 +96,7 @@ func newMigrateCmd(app *app) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&purgeLegacy, "purge-legacy", false, "Delete the legacy ~/.jentic profile tree after a successful migration")
+	cmd.Flags().BoolVar(&purgeLegacy, "purge-legacy", false, "Delete the legacy ~/.jentic profile tree (run only after verifying migrated authentication)")
 	// --yes is consumed by the root interceptor (Audience assumeYes); bind it so
 	// the lookup finds it, without a dead local (F8-23).
 	cmd.Flags().BoolP("yes", "y", false, "Proceed without interactive confirmation")
@@ -113,8 +115,8 @@ func (r migrateResult) message() string {
 	if len(r.contexts) == 0 {
 		return "nothing to migrate (no legacy profiles found)"
 	}
-	msg := fmt.Sprintf("migrated %d context(s); key material was COPIED (legacy originals kept). "+
-		"Re-run with --purge-legacy to remove the old tree once you no longer need to downgrade.", len(r.contexts))
+	msg := fmt.Sprintf("migrated %d context(s); key and token material was COPIED (legacy originals kept). "+
+		"Verify an authenticated command succeeds (for example, `jentic whoami`) before removing the legacy store.", len(r.contexts))
 	if r.purged {
 		msg = fmt.Sprintf("migrated %d context(s) and purged the legacy tree.", len(r.contexts))
 	}
@@ -167,6 +169,7 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 		envURL   string
 		identity string
 		idType   string
+		agentID  string
 		isActive bool
 		copyKey  func() error
 	}
@@ -200,20 +203,25 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 			envName := envNameFromURL(baseURL)
 			identName := ctxName
 			idType := "agent"
+			agentID := strings.TrimSpace(meta.AgentID)
 			if meta.isAPIKey() {
 				idType = "user"
+				agentID = ""
 			}
 
 			ref := auth.IdentityRef{Identity: identName, Environment: envName}
 			pCopy := p // capture
+			metaCopy := meta
+			baseURLCopy := baseURL
 			plans = append(plans, pending{
 				context:  ctxName,
 				env:      envName,
 				envURL:   baseURL,
 				identity: identName,
 				idType:   idType,
+				agentID:  agentID,
 				isActive: name == defaultProfile,
-				copyKey:  func() error { return copyProfileMaterial(pCopy, meta, ref) },
+				copyKey:  func() error { return copyProfileMaterial(pCopy, metaCopy, ref, baseURLCopy) },
 			})
 		}
 	}
@@ -225,8 +233,8 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 		return res, nil
 	}
 
-	// Copy key material first (outside the lock) — it is idempotent and a failure
-	// here should not leave a half-written config.yaml.
+	// Copy key/token material first (outside the lock) — it is idempotent and a
+	// failure here should not leave a half-written config.yaml.
 	for _, pl := range plans {
 		if err := pl.copyKey(); err != nil {
 			return res, fmt.Errorf("copying material for %q: %w", pl.context, err)
@@ -236,12 +244,8 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 	if err := sdkconfig.MutateConfig(func(x *sdkconfig.Config) error {
 		for _, pl := range plans {
 			x.Environments[pl.env] = mergeEnv(x.Environments[pl.env], pl.envURL, broker)
-			x.Identities[pl.identity] = sdkconfig.Identity{Type: pl.idType}
-			x.Contexts[pl.context] = sdkconfig.Context{
-				Environment: pl.env,
-				Identity:    pl.identity,
-				Mode:        "human", // migrated contexts default to human; agent contexts are opt-in
-			}
+			x.Identities[pl.identity] = mergeIdentity(x.Identities[pl.identity], pl.idType, pl.env, pl.agentID)
+			x.Contexts[pl.context] = mergeContext(x.Contexts[pl.context], pl.env, pl.identity)
 			if pl.isActive && x.ActiveContext == "" {
 				x.ActiveContext = pl.context
 			}
@@ -295,22 +299,58 @@ func mergeEnv(existing sdkconfig.Env, baseURL, broker string) sdkconfig.Env {
 	return existing
 }
 
+// mergeIdentity preserves existing per-environment registrations on re-runs
+// and records the legacy profile's agent_id when no registration exists for
+// envName yet (#1384).
+func mergeIdentity(existing sdkconfig.Identity, idType, envName, agentID string) sdkconfig.Identity {
+	if existing.Type == "" {
+		existing.Type = idType
+	}
+	if idType == "agent" && agentID != "" && envName != "" {
+		if existing.Environments == nil {
+			existing.Environments = make(map[string]sdkconfig.EnvRegState)
+		}
+		reg := existing.Environments[envName]
+		if reg.ClientID == "" {
+			existing.Environments[envName] = sdkconfig.EnvRegState{
+				ClientID: agentID,
+				Status:   "approved",
+			}
+		}
+	}
+	return existing
+}
+
+// mergeContext preserves a user-configured context mode on re-runs while
+// defaulting newly migrated contexts to human mode.
+func mergeContext(existing sdkconfig.Context, envName, identName string) sdkconfig.Context {
+	mode := existing.Mode
+	if mode == "" {
+		mode = "human"
+	}
+	return sdkconfig.Context{
+		Environment: envName,
+		Identity:    identName,
+		Mode:        mode,
+	}
+}
+
 // copyProfileMaterial copies one legacy profile's secret material into the XDG
 // layout: the Ed25519 key -> keys/<stem>.key, the API key -> <stem>.apikey, and
-// the access token -> <stem>_tokens.json (dropping the refresh token, BC-6). All
-// copies are idempotent (overwrite in place) and skip absent material.
-func copyProfileMaterial(p *legacyProfile, meta *legacyMeta, ref auth.IdentityRef) error {
+// cached access/refresh tokens -> <stem>_tokens.json (#1384). Re-runs preserve
+// any newer material already present in XDG and skip absent legacy files.
+func copyProfileMaterial(p *legacyProfile, meta *legacyMeta, ref auth.IdentityRef, baseURL string) error {
 	// Ed25519 signing key (DCR identities).
 	if !meta.isAPIKey() {
 		if err := copyLegacyKey(p, ref); err != nil {
 			return err
 		}
-		if err := copyLegacyAccessToken(p, ref); err != nil {
+		if err := copyLegacyTokens(p, ref, baseURL); err != nil {
 			return err
 		}
 		return nil
 	}
-	// API-key identities: copy the jak_* credential.
+	// API-key identities: copy the jak_* credential when XDG holds none yet.
 	key, err := p.loadAPIKey()
 	if err != nil {
 		return fmt.Errorf("reading legacy API key: %w", err)
@@ -318,15 +358,16 @@ func copyProfileMaterial(p *legacyProfile, meta *legacyMeta, ref auth.IdentityRe
 	if key == "" {
 		return nil
 	}
-	if err := auth.SaveAPIKey(ref, key); err != nil {
-		return err
+	if existing, rerr := auth.ReadAPIKey(ref); rerr == nil && existing != "" {
+		return nil
 	}
-	return nil
+	return auth.SaveAPIKey(ref, key)
 }
 
 // copyLegacyKey reads the legacy PKCS#8 PEM agent.key, validates it is Ed25519,
 // and writes it under the XDG keys dir via the SDK helper so the destination
-// stem and perms match what auth reads back.
+// stem and perms match what auth reads back. An existing valid XDG key is left
+// intact so re-running migrate never clobbers a key rotated in V2.
 func copyLegacyKey(p *legacyProfile, ref auth.IdentityRef) error {
 	data, err := os.ReadFile(p.keyPath())
 	if err != nil {
@@ -335,20 +376,15 @@ func copyLegacyKey(p *legacyProfile, ref auth.IdentityRef) error {
 		}
 		return fmt.Errorf("reading legacy key: %w", err)
 	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return errors.New("legacy key is not valid PEM")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return fmt.Errorf("parsing legacy key: %w", err)
-	}
-	if _, ok := parsed.(ed25519.PrivateKey); !ok {
-		return errors.New("legacy key is not Ed25519")
+	if err := validateEd25519PEM(data, "legacy key"); err != nil {
+		return err
 	}
 	dst, err := auth.KeyPathForImport(ref)
 	if err != nil {
 		return err
+	}
+	if existing, rerr := os.ReadFile(dst); rerr == nil && validateEd25519PEM(existing, "migrated key") == nil { //nolint:gosec // dst is <config>/keys/<validated-stem>.key from KeyPathForImport.
+		return nil
 	}
 	//nolint:gosec // dst is <config>/keys/<validated-stem>.key (KeyPathForImport re-validates via Stem's path-traversal guard); the 0600 key is the migration target.
 	if err := os.WriteFile(dst, data, 0o600); err != nil {
@@ -357,20 +393,66 @@ func copyLegacyKey(p *legacyProfile, ref auth.IdentityRef) error {
 	return nil
 }
 
-// copyLegacyAccessToken copies the (non-expired-or-not) access token into the
-// XDG token state, DROPPING the refresh token (BC-6). A missing/empty token is
-// not an error — the JWT-bearer grant re-mints from the key on next use.
-func copyLegacyAccessToken(p *legacyProfile, ref auth.IdentityRef) error {
+func validateEd25519PEM(data []byte, label string) error {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return errors.New(label + " is not valid PEM")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", label, err)
+	}
+	if _, ok := parsed.(ed25519.PrivateKey); !ok {
+		return errors.New(label + " is not Ed25519")
+	}
+	return nil
+}
+
+// copyLegacyTokens copies cached access and refresh tokens (mapping
+// access_expires_at -> expires_at) into the XDG token state (#1384). Empty or
+// whitespace-only token strings normalize to absent, and an existing rotated V2
+// token set in XDG is never clobbered on re-runs.
+func copyLegacyTokens(p *legacyProfile, ref auth.IdentityRef, baseURL string) error {
 	toks, err := p.loadTokens()
 	if err != nil {
 		return fmt.Errorf("reading legacy tokens: %w", err)
 	}
-	if toks == nil || toks.AccessToken == "" {
+	if toks == nil {
 		return nil
 	}
+	accessToken := strings.TrimSpace(toks.AccessToken)
+	refreshToken := strings.TrimSpace(toks.RefreshToken)
+	if accessToken == "" && refreshToken == "" {
+		return nil
+	}
+	targetOrigin := auth.NormalizeOrigin(baseURL)
+
+	if existing, rerr := auth.ReadTokens(ref); rerr == nil && existing != nil {
+		sameOrigin := existing.Origin == "" || targetOrigin == "" || existing.Origin == targetOrigin
+		if sameOrigin && (existing.AccessToken != "" || existing.RefreshToken != "") {
+			// Backfill a missing refresh token only when XDG holds the exact
+			// unrotated legacy access token; any rotated or newer V2 token set
+			// stays untouched.
+			if existing.AccessToken == accessToken &&
+				existing.RefreshToken == "" &&
+				refreshToken != "" &&
+				!existing.ExpiresAt.After(toks.AccessExpiresAt) {
+				repaired := *existing
+				repaired.RefreshToken = refreshToken
+				if repaired.Origin == "" {
+					repaired.Origin = targetOrigin
+				}
+				return auth.SaveTokens(ref, &repaired)
+			}
+			return nil
+		}
+	}
+
 	return auth.SaveTokens(ref, &auth.TokenSet{
-		AccessToken: toks.AccessToken,
-		ExpiresAt:   toks.AccessExpiresAt,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    toks.AccessExpiresAt,
+		Origin:       targetOrigin,
 	})
 }
 

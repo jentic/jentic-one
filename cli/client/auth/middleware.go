@@ -236,22 +236,19 @@ func BearerToken(creds Credentials) (string, error) {
 	}
 
 	// 3. DISK-BASED TOKEN STATE. Treat missing/corrupt/expired/cross-origin
-	// uniformly as "needs exchange"; we never dereference tokens unless it is
-	// non-nil, same-origin, and unexpired.
+	// uniformly as needing rotation or exchange; we never return a cached token
+	// unless it is non-nil, same-origin, non-empty, and unexpired.
 	tokens, err := readTokensRaw(creds.IdentityRef())
 	originMismatch := tokens != nil && tokens.Origin != "" && targetOrigin != "" && tokens.Origin != targetOrigin
 	if originMismatch {
 		_ = InvalidateTokens(creds.IdentityRef())
 	}
-	needsExchange := err != nil || tokens == nil || originMismatch || time.Now().After(tokens.ExpiresAt)
+	needsExchange := err != nil || tokens == nil || originMismatch || tokens.AccessToken == "" || time.Now().After(tokens.ExpiresAt)
 	if needsExchange {
 		// Singleflight (local-MCP §3.7.1): N concurrent callers hitting one
-		// expiry instant share ONE mint instead of racing N parallel
-		// exchanges. Mint-fresh is already concurrency-safe (V2 has no
-		// refresh tokens; SaveTokens is documented last-writer-wins), so this
-		// is purely an efficiency guard for long-lived concurrent embedders
-		// (the `jentic mcp` server) — every waiter gets the winner's
-		// independently valid token.
+		// expiry instant share ONE rotation/mint instead of racing N parallel
+		// requests (critical when rotating a single-use refresh token, where
+		// concurrent reuse would trigger server-side family revocation).
 		//
 		// Waiters are uncancellable today: BearerToken takes no context, so a
 		// caller whose own deadline fires still blocks here until the
@@ -260,8 +257,34 @@ func BearerToken(creds Credentials) (string, error) {
 		// to mintGroup.DoChan and select on ctx.Done() so a cancelled caller
 		// stops waiting without cancelling the shared flight.
 		v, xerr, _ := mintGroup.Do(mintKey(creds), func() (any, error) {
+			cur, cerr := readTokensRaw(creds.IdentityRef())
+			curMismatch := cur != nil && cur.Origin != "" && targetOrigin != "" && cur.Origin != targetOrigin
+			if curMismatch {
+				_ = InvalidateTokens(creds.IdentityRef())
+			}
+			if cerr == nil && cur != nil && !curMismatch && cur.AccessToken != "" && !time.Now().After(cur.ExpiresAt) {
+				return cur, nil
+			}
+			var refreshErr error
+			if cerr == nil && cur != nil && !curMismatch && cur.RefreshToken != "" {
+				refreshed, rerr := performRefreshExchange(creds, cur.RefreshToken)
+				if rerr == nil {
+					if serr := SaveTokens(creds.IdentityRef(), refreshed); serr != nil {
+						return nil, serr
+					}
+					return refreshed, nil
+				}
+				var statusErr *refreshHTTPStatusError
+				if !errors.As(rerr, &statusErr) {
+					return nil, fmt.Errorf("failed to authenticate: %w", rerr)
+				}
+				refreshErr = rerr
+			}
 			newTokens, xerr := performOAuthExchange(creds)
 			if xerr != nil {
+				if refreshErr != nil && errors.Is(xerr, ErrNotRegistered) {
+					return nil, fmt.Errorf("failed to authenticate (token refresh failed: %w): %w", refreshErr, xerr)
+				}
 				return nil, fmt.Errorf("failed to authenticate: %w", xerr)
 			}
 			if serr := SaveTokens(creds.IdentityRef(), newTokens); serr != nil {

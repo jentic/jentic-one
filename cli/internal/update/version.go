@@ -26,8 +26,9 @@ type semver struct {
 
 // parseSemver parses a version string of the form "[v]MAJOR.MINOR.PATCH" into a
 // semver. A leading "v" is optional. Anything that is not a clean three-part
-// numeric version (a branch name, "dev", a SHA, or a pre-release) fails to
-// parse and callers treat that as "unknown".
+// numeric version (a branch name, "dev", a SHA, a mutable tag such as "latest"
+// or "canary", or a pre-release/build suffix) fails to parse and callers treat
+// that as "unknown".
 func parseSemver(s string) (semver, bool) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "v")
@@ -37,6 +38,9 @@ func parseSemver(s string) (semver, bool) {
 	}
 	nums := make([]int, 3)
 	for i, p := range parts {
+		if p == "" || strings.TrimLeft(p, "0123456789") != "" {
+			return semver{}, false
+		}
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
 			return semver{}, false
@@ -44,6 +48,25 @@ func parseSemver(s string) (semver, bool) {
 		nums[i] = n
 	}
 	return semver{major: nums[0], minor: nums[1], patch: nums[2]}, true
+}
+
+// CompareReleaseVersion compares two clean release versions ("[v]MAJOR.MINOR.PATCH")
+// and returns (-1, true), (0, true), or (1, true) as a is older than, equal to,
+// or newer than b.
+//
+// When either version is not a clean three-part numeric release — e.g. "latest",
+// "canary", a branch or SHA, or a pre-release such as "1.2.3-rc.1" — it returns
+// (0, false) so callers treat the pair as uncomparable rather than stale (#2017).
+func CompareReleaseVersion(a, b string) (int, bool) {
+	av, ok := parseSemver(a)
+	if !ok {
+		return 0, false
+	}
+	bv, ok := parseSemver(b)
+	if !ok {
+		return 0, false
+	}
+	return compareSemver(av, bv), true
 }
 
 // compareSemver returns -1, 0, or 1 as a is less than, equal to, or greater

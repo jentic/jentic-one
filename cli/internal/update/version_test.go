@@ -52,6 +52,36 @@ func TestCompareSemver(t *testing.T) {
 	}
 }
 
+// Pins #2017: only two clean X.Y.Z release versions can be ordered; mutable
+// tags ("latest", "canary"), prereleases ("1.2.3-rc.1"), build metadata, and
+// branch refs report ok=false ("cannot compare") rather than reading as older.
+func TestCompareReleaseVersion(t *testing.T) {
+	cases := []struct {
+		a, b    string
+		wantCmp int
+		wantOK  bool
+	}{
+		{"0.43.0", "v0.44.0", -1, true},
+		{"v0.44.0", "0.44.0", 0, true},
+		{"0.45.0", "v0.44.0", 1, true},
+		{"latest", "v0.44.0", 0, false},
+		{"canary", "v0.44.0", 0, false},
+		{"1.2.3-rc.1", "v1.2.3", 0, false},
+		{"0.45.0-rc1", "v0.44.0", 0, false},
+		{"0.44.0+ci.7", "v0.44.0", 0, false},
+		{"0.43.0", "main", 0, false},
+		{"+1.2.3", "v1.2.3", 0, false},
+		{"", "v0.44.0", 0, false},
+	}
+	for _, tc := range cases {
+		cmp, ok := CompareReleaseVersion(tc.a, tc.b)
+		if ok != tc.wantOK || cmp != tc.wantCmp {
+			t.Errorf("CompareReleaseVersion(%q, %q) = (%d, %v), want (%d, %v)",
+				tc.a, tc.b, cmp, ok, tc.wantCmp, tc.wantOK)
+		}
+	}
+}
+
 func TestNewerAvailable(t *testing.T) {
 	cases := []struct {
 		installed, latest string
