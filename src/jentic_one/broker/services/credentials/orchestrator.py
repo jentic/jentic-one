@@ -52,7 +52,11 @@ from jentic_one.broker.services.credentials.errors import (
 )
 from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
-from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import (
+    CredentialCandidateFilter,
+    CredentialResolver,
+    ResolvedCredential,
+)
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProtocol
@@ -65,6 +69,7 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
+from jentic_one.shared.models.api_identity import CredentialScope
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
 from jentic_one.shared.schemas import APIReference
@@ -86,11 +91,13 @@ class CredentialService:
         ctx: Context,
         *,
         connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
+        candidate_scopes_out: dict[str, CredentialScope] | None = None,
     ) -> None:
         self._ctx = ctx
         # Shared OAuth-app registrations the 424 directive may suggest; ``None``
         # reads them from the control DB on the denial path.
         self._connect_registrations = connect_registrations
+        self._candidate_scopes_out = candidate_scopes_out
 
     async def inject(
         self,
@@ -308,6 +315,7 @@ class CredentialService:
         server_variables_unresolved: bool = False,
         method: str = "",
         path: str = "",
+        candidate_filter: CredentialCandidateFilter | None = None,
     ) -> ResolvedCredential | None:
         """Resolve-only credential selection — no refresh, decrypt, or audit.
 
@@ -320,7 +328,9 @@ class CredentialService:
         :meth:`inject` as ``preresolved`` to avoid resolving twice.
 
         ``method`` / ``path`` are the request's, for the 424 directive's
-        ``suggested_rules``.
+        ``suggested_rules``. ``candidate_filter`` narrows policy-applicable ties
+        after credential-side applicability and specificity checks; explicit
+        credential IDs bypass it.
 
         Returns ``None`` when the API tuple has no vendor (no credential path).
         """
@@ -337,6 +347,7 @@ class CredentialService:
             server_variables_unresolved=server_variables_unresolved,
             method=method,
             path=path,
+            candidate_filter=candidate_filter,
         )
 
     async def _resolve_mapped(
@@ -351,6 +362,7 @@ class CredentialService:
         server_variables_unresolved: bool = False,
         method: str = "",
         path: str = "",
+        candidate_filter: CredentialCandidateFilter | None = None,
     ) -> ResolvedCredential:
         """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
 
@@ -359,7 +371,12 @@ class CredentialService:
         (424/400/409).
         """
         try:
-            return await CredentialResolver(self._ctx).resolve(
+            resolver = (
+                CredentialResolver(self._ctx, candidate_scopes_out=self._candidate_scopes_out)
+                if self._candidate_scopes_out is not None
+                else CredentialResolver(self._ctx)
+            )
+            return await resolver.resolve(
                 api=api,
                 caller=identity.sub,
                 credential_name=credential_name,
@@ -367,6 +384,7 @@ class CredentialService:
                 allowed_credential_ids=allowed_credential_ids,
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
+                candidate_filter=candidate_filter,
             )
         except CredentialServerVariableMismatchError as exc:
             # Ordered before the generic 424: a credential exists here, so the

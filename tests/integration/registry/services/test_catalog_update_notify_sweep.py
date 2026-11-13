@@ -11,28 +11,57 @@ digest-based dedupe against persisted state — the parts unit mocks can't catch
 from __future__ import annotations
 
 import hashlib
+import json
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
+from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
+from jentic_one.registry.core.schema.operations import Operation
+from jentic_one.registry.core.schema.servers import Server
+from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.services.catalog.fetch import ConditionalFetch
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.errors import (
+    HostChangeRequiresOperatorError,
+    RevisionStateConflictError,
+)
+from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.registry.services.revision_service import RevisionService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.models import (
+    ORIGIN_CATALOG,
+    ActorType,
+    ApiRevisionState,
+    StoredCredentialType,
+)
 from jentic_one.shared.models.events import EventType
 
 pytestmark = pytest.mark.integration
 
 _SWEEP = "jentic_one.registry.services.catalog.service"
 _SPEC_URL = "https://raw.githubusercontent.com/jentic/x/main/openapi.json"
+_OTHER_SPEC_URL = "https://raw.githubusercontent.com/jentic/x/main/other-openapi.json"
+_IMPORT_VENDOR = "notify-test-com"
+_CLEAN_VENDORS = ("notify-test.com", _IMPORT_VENDOR)
+_WRITER = Identity(sub="usr_notify_writer", actor_type=ActorType.USER, permissions=["apis:write"])
+_ADMIN = Identity(sub="usr_notify_admin", actor_type=ActorType.USER, permissions=["org:admin"])
 
 
 @pytest.fixture()
@@ -41,13 +70,49 @@ async def clean_state(
 ) -> AsyncGenerator[None, None]:
     async def _wipe() -> None:
         async with registry_db.session() as session:
+            api_ids = select(Api.id).where(Api.vendor.in_(_CLEAN_VENDORS))
+            rev_ids = select(ApiRevision.id).where(
+                (ApiRevision.source_url.in_([_SPEC_URL, _OTHER_SPEC_URL]))
+                | (ApiRevision.api_id.in_(api_ids))
+            )
             await session.execute(delete(CatalogUpdateCheck))
-            await session.execute(delete(ApiRevision).where(ApiRevision.source_url == _SPEC_URL))
-            await session.execute(delete(Api).where(Api.vendor == "notify-test.com"))
+            await session.execute(
+                delete(OperationURLIndex).where(OperationURLIndex.revision_id.in_(rev_ids))
+            )
+            await session.execute(delete(Server).where(Server.revision_id.in_(rev_ids)))
+            await session.execute(delete(Operation).where(Operation.revision_id.in_(rev_ids)))
+            await session.execute(delete(SpecFile).where(SpecFile.revision_id.in_(rev_ids)))
+            await session.execute(
+                update(Api).where(Api.vendor.in_(_CLEAN_VENDORS)).values(current_revision_id=None)
+            )
+            await session.execute(
+                delete(ApiRevision).where(
+                    (ApiRevision.source_url.in_([_SPEC_URL, _OTHER_SPEC_URL]))
+                    | (ApiRevision.api_id.in_(api_ids))
+                )
+            )
+            await session.execute(delete(Api).where(Api.vendor.in_(_CLEAN_VENDORS)))
+            await session.commit()
+        async with integration_context.control_db.session() as session:
+            await session.execute(
+                delete(Credential).where(Credential.api_vendor.in_(_CLEAN_VENDORS))
+            )
             await session.commit()
         async with integration_context.admin_db.session() as session:
+            agent_ids = select(Agent.id).where(Agent.name.like("notify-test-agent%"))
             await session.execute(
-                delete(Event).where(Event.type == EventType.CATALOG_UPDATE_AVAILABLE)
+                delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id.in_(agent_ids))
+            )
+            await session.execute(delete(Agent).where(Agent.name.like("notify-test-agent%")))
+            await session.execute(
+                delete(Event).where(
+                    Event.type.in_(
+                        [
+                            EventType.CATALOG_UPDATE_AVAILABLE,
+                            EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
+                        ]
+                    )
+                )
             )
             await session.commit()
 
@@ -571,3 +636,381 @@ async def test_sweep_marks_notified_after_successful_emit_and_dedupes(
         await svc._run_update_notify_sweep()
 
     assert len(await _events(integration_context)) == 1  # deduped, not re-emitted
+
+
+# ── #1490: held catalog draft promotion resolves update_available ────────────
+
+
+def _openapi_spec(host: str, *, marker: str) -> str:
+    return json.dumps(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "Widgets", "version": "v1", "description": marker},
+            "servers": [{"url": f"https://{host}/v1"}],
+            "paths": {
+                "/widgets": {
+                    "get": {
+                        "operationId": "listWidgets",
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+        }
+    )
+
+
+def _catalog_source(
+    host: str,
+    *,
+    marker: str,
+    name: str = "widgets",
+    source_url: str = _SPEC_URL,
+    origin: str | None = ORIGIN_CATALOG,
+) -> dict[str, Any]:
+    source: dict[str, Any] = {
+        "type": "inline",
+        "content": _openapi_spec(host, marker=marker),
+        "filename": "openapi.json",
+        "source_url": source_url,
+        "vendor": _IMPORT_VENDOR,
+        "api_name": name,
+        "version": "v1",
+        "submitted_by": _WRITER.sub,
+    }
+    if origin is not None:
+        source["origin"] = origin
+    return source
+
+
+async def _run_import(ctx: Context, source: dict[str, Any]) -> dict[str, Any]:
+    result = await ImportHandler(ctx).execute(
+        job_id=f"job_{uuid.uuid4().hex[:20]}",
+        db=None,
+        payload={"sources": [source]},
+        created_by=_WRITER.sub,
+    )
+    revision: dict[str, Any] = result.body["revisions"][0]
+    return revision
+
+
+async def _bind_api_credential(ctx: Context, *, name: str = "widgets") -> None:
+    credential_id = generate_ksuid("cred")
+    async with ctx.control_db.session() as session:
+        session.add(
+            Credential(
+                id=credential_id,
+                type=StoredCredentialType.API_KEY,
+                name=f"cred-{name}",
+                api_vendor=_IMPORT_VENDOR,
+                api_name=name,
+                api_version="v1",
+                created_by=_WRITER.sub,
+            )
+        )
+        await session.commit()
+    async with ctx.admin_db.session() as session:
+        agent = Agent(name=f"notify-test-agent-{name}", registered_by=_WRITER.sub)
+        session.add(agent)
+        await session.flush()
+        session.add(AgentCredentialBinding(agent_id=agent.id, credential_id=credential_id))
+        await session.commit()
+
+
+async def test_promote_held_catalog_draft_resolves_update_available(
+    integration_context: Context, clean_state: None
+) -> None:
+    """Pins #1490: promoting a held catalog draft clears its open update-available state.
+
+    Covers the full held-reimport lifecycle:
+    1. A catalog API with bound credentials is notified of an upstream update by the sweep.
+    2. A non-admin re-import fetches upstream bytes (including when upstream moved past the
+       sweep-notified digest before the re-import) and is held as a DRAFT due to a server
+       host change; ``update_available`` stays open while held and across a refused promote.
+       The sweep then observes and notifies the held draft's exact digest.
+    3. Once an ``org:admin`` promotes the notified catalog draft, ``update_available`` clears on
+       the returned ``ApiView``, ``outdated_api_ids``, and ``outdated_spec_urls``, and a
+       subsequent sweep observing the promoted digest does not re-emit.
+    """
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    base = await _run_import(
+        integration_context, _catalog_source("old.notify-test.com", marker="v1")
+    )
+    assert base["state"] == ApiRevisionState.IMPORTED
+    await _bind_api_credential(integration_context)
+
+    async with integration_context.registry_db.session() as session:
+        api = (
+            await session.execute(
+                select(Api).where(Api.vendor == _IMPORT_VENDOR, Api.name == "widgets")
+            )
+        ).scalar_one()
+
+    # Sweep notifies for an upstream change ("sha256:v2-notified").
+    notified = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:v2-notified"
+    )
+    catalog_svc = CatalogService(integration_context)
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=notified):
+        await catalog_svc._run_update_notify_sweep()
+
+    async with integration_context.registry_db.session() as session:
+        assert api.id in await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert _SPEC_URL in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+
+    # Non-admin re-imports from catalog; upstream is at v3 with a host change, so the
+    # revision is held as a DRAFT. While held (and on refused promote), update stays open.
+    held_source = _catalog_source("new.notify-test.com", marker="v3")
+    held_digest = hashlib.sha256(held_source["content"].encode()).hexdigest()
+    held = await _run_import(integration_context, held_source)
+    assert held["state"] == ApiRevisionState.DRAFT
+    assert held["held_for_review"] is True
+
+    rev_svc = RevisionService(integration_context)
+    with pytest.raises(HostChangeRequiresOperatorError):
+        await rev_svc.promote(
+            _IMPORT_VENDOR, "widgets", "v1", held["revision_id"], identity=_WRITER
+        )
+
+    async with integration_context.registry_db.session() as session:
+        assert api.id in await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert _SPEC_URL in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+
+    # Promoting a digest other than the outstanding notification leaves the update open.
+    async with integration_context.registry_db.transaction() as session:
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+        assert check is not None
+        check.last_notified_digest = held_digest
+
+    # Operator promotes the notified held catalog draft → update_available clears everywhere.
+    view = await rev_svc.promote(
+        _IMPORT_VENDOR, "widgets", "v1", held["revision_id"], identity=_ADMIN
+    )
+    assert view.current_revision_id == held["revision_id"]
+    assert view.update_available is False
+
+    async with integration_context.registry_db.session() as session:
+        assert api.id not in await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert _SPEC_URL not in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+        assert check is not None
+        assert check.last_notified_digest == held_digest
+        assert check.last_notified_event_class == EventType.CATALOG_UPDATE_AVAILABLE
+
+    # Repeated promote on the already-imported revision is rejected as a state conflict.
+    with pytest.raises(RevisionStateConflictError):
+        await rev_svc.promote(_IMPORT_VENDOR, "widgets", "v1", held["revision_id"], identity=_ADMIN)
+
+    # Next sweep observing the promoted digest sees it in sync and emits no second event.
+    async with integration_context.registry_db.transaction() as session:
+        check_row = await CatalogUpdateCheckRepository.get(session, api.id)
+        assert check_row is not None
+        check_row.last_checked_at = None
+    in_sync = ConditionalFetch(
+        not_modified=False,
+        etag='"v3"',
+        content=held_source["content"].encode(),
+        digest=held_digest,
+    )
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=in_sync):
+        await catalog_svc._run_update_notify_sweep()
+    assert len(await _events(integration_context)) == 1
+
+
+@pytest.mark.parametrize(
+    "draft_matches_notified", [False, True], ids=["distinct-digest", "matching-digest"]
+)
+async def test_promote_catalog_draft_resolves_only_matching_notified_digest(
+    integration_context: Context, clean_state: None, draft_matches_notified: bool
+) -> None:
+    """Promoting a catalog draft resolves only its exact outstanding notification."""
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    await _run_import(integration_context, _catalog_source("old.notify-test.com", marker="v1"))
+    await _bind_api_credential(integration_context)
+    async with integration_context.registry_db.session() as session:
+        api = (
+            await session.execute(
+                select(Api).where(Api.vendor == _IMPORT_VENDOR, Api.name == "widgets")
+            )
+        ).scalar_one()
+
+    notified_source = _catalog_source("new.notify-test.com", marker="v2")
+    notified_digest = hashlib.sha256(notified_source["content"].encode()).hexdigest()
+    notified = ConditionalFetch(
+        not_modified=False,
+        etag='"v2"',
+        content=notified_source["content"].encode(),
+        digest=notified_digest,
+    )
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=notified):
+        await CatalogService(integration_context)._run_update_notify_sweep()
+
+    draft_source = (
+        notified_source
+        if draft_matches_notified
+        else _catalog_source("new.notify-test.com", marker="v3")
+    )
+    draft_digest = hashlib.sha256(draft_source["content"].encode()).hexdigest()
+    assert (draft_digest == notified_digest) is draft_matches_notified
+    draft = await _run_import(integration_context, draft_source)
+    assert draft["state"] == ApiRevisionState.DRAFT
+
+    view = await RevisionService(integration_context).promote(
+        _IMPORT_VENDOR, "widgets", "v1", draft["revision_id"], identity=_ADMIN
+    )
+
+    expect_update = not draft_matches_notified
+    assert view.update_available is expect_update
+    async with integration_context.registry_db.session() as session:
+        outdated_ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+    assert (api.id in outdated_ids) is expect_update
+    assert check is not None
+    assert check.last_notified_digest == notified_digest
+    assert check.last_notified_event_class == EventType.CATALOG_UPDATE_AVAILABLE
+
+
+async def test_promote_catalog_draft_leaves_unrelated_and_conflict_checks_open(
+    integration_context: Context, clean_state: None
+) -> None:
+    """Pins #1490: promoting a catalog draft leaves other APIs and overlay conflicts open."""
+    await _run_import(
+        integration_context,
+        _catalog_source("old.notify-test.com", marker="v1", name="widgets", source_url=_SPEC_URL),
+    )
+    await _run_import(
+        integration_context,
+        _catalog_source(
+            "old.notify-test.com", marker="v1-other", name="other", source_url=_OTHER_SPEC_URL
+        ),
+    )
+    await _run_import(
+        integration_context,
+        _catalog_source(
+            "old.notify-test.com",
+            marker="v1-conflict",
+            name="conflicted",
+            source_url=_OTHER_SPEC_URL,
+        ),
+    )
+    await _bind_api_credential(integration_context, name="widgets")
+    await _bind_api_credential(integration_context, name="conflicted")
+    widgets_draft_source = _catalog_source(
+        "new.notify-test.com", marker="v3-widgets", name="widgets"
+    )
+    widgets_draft_digest = hashlib.sha256(widgets_draft_source["content"].encode()).hexdigest()
+
+    async with integration_context.registry_db.transaction() as session:
+        apis = {
+            a.name: a
+            for a in (
+                await session.execute(select(Api).where(Api.vendor == _IMPORT_VENDOR))
+            ).scalars()
+        }
+        now = datetime.now(UTC)
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=apis["widgets"].id,
+            spec_url=_SPEC_URL,
+            etag='"v2"',
+            digest="sha256:v2-widgets",
+            checked_at=now,
+            notified_digest=widgets_draft_digest,
+            notified_event_class=EventType.CATALOG_UPDATE_AVAILABLE,
+        )
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=apis["other"].id,
+            spec_url=_OTHER_SPEC_URL,
+            etag='"v2"',
+            digest="sha256:v2-other",
+            checked_at=now,
+            notified_digest="sha256:v2-other",
+            notified_event_class=EventType.CATALOG_UPDATE_AVAILABLE,
+        )
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=apis["conflicted"].id,
+            spec_url=_OTHER_SPEC_URL,
+            etag='"v2"',
+            digest="sha256:v2-conflict",
+            checked_at=now,
+            notified_digest="sha256:v2-conflict",
+            notified_event_class=EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
+        )
+
+    held_widgets = await _run_import(integration_context, widgets_draft_source)
+    held_conflict = await _run_import(
+        integration_context,
+        _catalog_source(
+            "new.notify-test.com",
+            marker="v3-conflict",
+            name="conflicted",
+            source_url=_OTHER_SPEC_URL,
+        ),
+    )
+
+    rev_svc = RevisionService(integration_context)
+    widgets_view = await rev_svc.promote(
+        _IMPORT_VENDOR, "widgets", "v1", held_widgets["revision_id"], identity=_ADMIN
+    )
+    conflict_view = await rev_svc.promote(
+        _IMPORT_VENDOR, "conflicted", "v1", held_conflict["revision_id"], identity=_ADMIN
+    )
+
+    assert widgets_view.update_available is False
+    assert conflict_view.update_available is True
+
+    async with integration_context.registry_db.session() as session:
+        outdated_ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        conflict_check = await CatalogUpdateCheckRepository.get(session, apis["conflicted"].id)
+        other_check = await CatalogUpdateCheckRepository.get(session, apis["other"].id)
+
+    assert apis["widgets"].id not in outdated_ids
+    assert apis["other"].id in outdated_ids
+    assert apis["conflicted"].id in outdated_ids
+    assert other_check is not None
+    assert other_check.last_notified_digest == "sha256:v2-other"
+    assert conflict_check is not None
+    assert conflict_check.last_notified_digest == "sha256:v2-conflict"
+    assert conflict_check.last_notified_event_class == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+
+
+async def test_promote_non_catalog_draft_does_not_resolve_update_available(
+    integration_context: Context, clean_state: None
+) -> None:
+    """Pins #1490: promoting a manual (non-catalog) draft leaves update_available open."""
+    await _run_import(integration_context, _catalog_source("old.notify-test.com", marker="v1"))
+    async with integration_context.registry_db.transaction() as session:
+        api = (
+            await session.execute(
+                select(Api).where(Api.vendor == _IMPORT_VENDOR, Api.name == "widgets")
+            )
+        ).scalar_one()
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=api.id,
+            spec_url=_SPEC_URL,
+            etag='"v2"',
+            digest="sha256:v2-upstream",
+            checked_at=datetime.now(UTC),
+            notified_digest="sha256:v2-upstream",
+            notified_event_class=EventType.CATALOG_UPDATE_AVAILABLE,
+        )
+
+    manual_draft = await _run_import(
+        integration_context,
+        _catalog_source("old.notify-test.com", marker="manual-upload", origin=None),
+    )
+    assert manual_draft["state"] == ApiRevisionState.DRAFT
+
+    view = await RevisionService(integration_context).promote(
+        _IMPORT_VENDOR, "widgets", "v1", manual_draft["revision_id"], identity=_WRITER
+    )
+    assert view.update_available is True
+
+    async with integration_context.registry_db.session() as session:
+        assert api.id in await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+        assert check is not None
+        assert check.last_notified_digest == "sha256:v2-upstream"
+        assert check.last_notified_event_class == EventType.CATALOG_UPDATE_AVAILABLE

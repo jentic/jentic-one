@@ -8,6 +8,11 @@ import threading
 from pathlib import Path
 from typing import Any, cast
 
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    _fcntl = None  # type: ignore[assignment]
+
 import structlog
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -147,25 +152,35 @@ def _oneshot_cache_key(st: os.stat_result, path: Path) -> tuple[int, int, int, s
     return (st.st_dev, st.st_ino, st.st_ctime_ns, str(path))
 
 
+def _open_nonblocking(file: str, flags: int) -> int:
+    """Open *file* with ``O_NONBLOCK`` so a writer-less named FIFO never hangs on open."""
+    return os.open(file, flags | getattr(os, "O_NONBLOCK", 0))
+
+
+def _clear_nonblocking(fd: int) -> None:
+    """Restore blocking mode on *fd* before draining so streaming writers read to EOF."""
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    if not nonblock or _fcntl is None:
+        return
+    fl = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+    if fl & nonblock:
+        _fcntl.fcntl(fd, _fcntl.F_SETFL, fl & ~nonblock)
+
+
 def _read_config_text(path: Path) -> str:
     """Read the config document, caching one-shot sources (pipes, /dev/fd)."""
-    # Cache lookup by stat identity happens before open(): opening a named FIFO
-    # whose writer has gone blocks forever, and a cache hit must not reopen it.
-    st = os.stat(path)
-    if stat.S_ISFIFO(st.st_mode) or stat.S_ISSOCK(st.st_mode):
-        key = _oneshot_cache_key(st, path)
-        with _ONESHOT_CACHE_LOCK:
-            if key in _ONESHOT_CONFIG_CACHE:
-                # "Why didn't my config change take effect" needs a trail: a
-                # one-shot source is served from the process cache, not re-read.
-                _logger.info("oneshot_config_cache_reused", source=str(path))
-                return _ONESHOT_CONFIG_CACHE[key]
-    with path.open() as f:
-        fst = os.fstat(f.fileno())
+    # Open with O_NONBLOCK and inspect the opened descriptor via os.fstat(fd):
+    # opening a writer-less named FIFO returns at once instead of hanging, and
+    # avoiding any pre-open os.stat(path) eliminates the macOS /dev/fd/N EBADF
+    # race when concurrent threads open the same descriptor path (#1803).
+    with open(path, encoding="utf-8", opener=_open_nonblocking) as f:
+        fd = f.fileno()
+        fst = os.fstat(fd)
         # Decide "one-shot" from the opened fd itself: FIFOs, sockets, and any
         # non-seekable stream can be read exactly once. Seekable sources are
         # regular files (wherever the path points) and are re-read every load.
         if f.seekable() and not (stat.S_ISFIFO(fst.st_mode) or stat.S_ISSOCK(fst.st_mode)):
+            _clear_nonblocking(fd)
             # /dev/fd/N re-opens share the underlying file offset on macOS (dup
             # semantics), so rewind before reading.
             f.seek(0)
@@ -176,10 +191,13 @@ def _read_config_text(path: Path) -> str:
             # Stat inside the lock: a loader that waited here while another
             # drained a still-streaming source must see the post-drain ctime
             # the drainer stored, not the one from before the lock.
-            key = _oneshot_cache_key(os.fstat(f.fileno()), path)
+            key = _oneshot_cache_key(os.fstat(fd), path)
             if key in _ONESHOT_CONFIG_CACHE:
+                # "Why didn't my config change take effect" needs a trail: a
+                # one-shot source is served from the process cache, not re-read.
                 _logger.info("oneshot_config_cache_reused", source=str(path))
                 return _ONESHOT_CONFIG_CACHE[key]
+            _clear_nonblocking(fd)
             text = f.read()
             if not text.strip():
                 # Caching an empty read would pin the process to a broken
@@ -193,7 +211,7 @@ def _read_config_text(path: Path) -> str:
             # Every write bumps the ctime, so the stored key is taken after the
             # drain, once the writer has closed: later loads see the same
             # frozen identity.
-            key = _oneshot_cache_key(os.fstat(f.fileno()), path)
+            key = _oneshot_cache_key(os.fstat(fd), path)
             return _ONESHOT_CONFIG_CACHE.setdefault(key, text)
 
 
@@ -207,21 +225,27 @@ def load_config(path: Path | None = None) -> AppConfig:
     Raises ConfigError on validation failure.
     """
     file_data: dict[str, Any] = {}
+    raw_text: str | None = None
 
     config_path = path
     if config_path is None:
         env_path = os.environ.get("JENTIC_CONFIG_FILE")
         if env_path:
             config_path = Path(env_path)
-        else:
-            default_path = Path("jentic-one.yaml")
-            if default_path.exists():
-                config_path = default_path
 
     if config_path is not None:
-        if not config_path.exists():
-            raise ConfigError(f"Config file not found: {config_path}")
-        loaded = yaml.safe_load(_read_config_text(config_path))
+        try:
+            raw_text = _read_config_text(config_path)
+        except FileNotFoundError as e:
+            raise ConfigError(f"Config file not found: {config_path}") from e
+    else:
+        try:
+            raw_text = _read_config_text(Path("jentic-one.yaml"))
+        except FileNotFoundError:
+            raw_text = None
+
+    if raw_text is not None:
+        loaded = yaml.safe_load(raw_text)
         if isinstance(loaded, dict):
             file_data = loaded
 

@@ -26,6 +26,8 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from jentic.problem_details import ProblemDetailException
+from starlette import exceptions as starlette_exceptions
+from starlette.applications import Starlette
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -42,6 +44,7 @@ from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     AsyncCookieEncryptionUnavailableError,
+    BrokerError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     PayloadTooLargeError,
@@ -57,6 +60,7 @@ from jentic_one.broker.core.headers import (
     header_safe_value,
 )
 from jentic_one.broker.core.idempotency import fingerprint
+from jentic_one.broker.core.problem import discovery_error_problem, status_for_broker_error
 from jentic_one.broker.core.proxy_headers import (
     PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
@@ -86,6 +90,9 @@ from jentic_one.broker.services.execution.authorization import (
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
+    ServerErrorClassifier,
+    UnmappedFailure,
+    UnmappedFailureRecorder,
     default_broker,
     run_execution,
 )
@@ -94,6 +101,9 @@ from jentic_one.broker.services.execution.streaming_persistence import (
 )
 from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome as _persist_streaming_outcome,
+)
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _persist_unmapped_failure as _persist_unmapped_failure,
 )
 from jentic_one.broker.services.execution.streaming_persistence import (
     _streaming_persist_failures as _streaming_persist_failures,
@@ -118,6 +128,13 @@ from jentic_one.broker.web.deps import (
     RequireExecuteAccess,
     get_repeated_failure_counter,
 )
+from jentic_one.broker.web.errors import (
+    handle_broker_error,
+    handle_database_unavailable,
+    handle_discovery_error,
+    handle_http_exception,
+    handle_validation,
+)
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
@@ -130,7 +147,7 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.discovery.errors import OperationNotFoundError
+from jentic_one.shared.discovery.errors import DiscoveryError, OperationNotFoundError
 from jentic_one.shared.events import (
     emit_event_best_effort,
     mint_trace_id,
@@ -163,6 +180,11 @@ from jentic_one.shared.url import has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.errors import (
+    request_validation_error_handler,
+    state_backend_capacity_error_handler,
+    unhandled_exception_handler,
+)
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
@@ -180,6 +202,89 @@ _unregistered_url_handled = _meter.create_counter(
 router = APIRouter()
 
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _unmapped_failure_recorder(
+    request: Request, ctx: Context, ctx_req: ExecuteRequestContext, identity: Identity
+) -> UnmappedFailureRecorder:
+    """Schedule a buffered unmapped-failure write without delaying its 500."""
+    background_tasks = get_background_tasks(request.app)
+    timeout_s = ctx.config.broker.streaming_persist_timeout_s
+
+    async def _record(failure: UnmappedFailure) -> None:
+        if background_tasks is None:
+            logger.warning(
+                "unmapped_failure_record_skipped",
+                execution_id=failure.execution_id,
+                trace_id=ctx_req.trace_id,
+                reason="no_background_task_registry",
+            )
+            return
+        background_tasks.spawn(
+            _persist_unmapped_failure(
+                failure,
+                ctx,
+                ctx_req,
+                identity.sub,
+                identity.actor_type.value,
+                origin=identity.origin.value,
+                repeated_failure_counter=get_repeated_failure_counter(request),
+            ),
+            kind="unmapped_failure_persist",
+            timeout_s=timeout_s,
+            log_fields={"execution_id": failure.execution_id, "trace_id": ctx_req.trace_id},
+        )
+
+    return _record
+
+
+_FIXED_STATUS_BY_HANDLER: dict[object, int] = {
+    handle_validation: 422,
+    request_validation_error_handler: 422,
+    state_backend_capacity_error_handler: 503,
+    handle_database_unavailable: 503,
+    unhandled_exception_handler: 500,
+}
+
+
+def _handler_maps_to_server_error(
+    handler: object, exc: Exception, *, use_declared_status: bool
+) -> bool:
+    """Classify one selected handler using only its identity and exception metadata."""
+    if handler is handle_broker_error and isinstance(exc, BrokerError):
+        return status_for_broker_error(exc) == 500
+    if handler is handle_discovery_error and isinstance(exc, DiscoveryError):
+        return int(discovery_error_problem(exc)["status"]) == 500
+    if handler is handle_http_exception and isinstance(exc, starlette_exceptions.HTTPException):
+        return exc.status_code == 500
+    fixed_status = _FIXED_STATUS_BY_HANDLER.get(handler)
+    if fixed_status is not None:
+        return fixed_status == 500
+    status_code: object = getattr(exc, "status_code", None) if use_declared_status else None
+    return not isinstance(status_code, int) or status_code == 500
+
+
+def _server_error_classifier(app: Starlette) -> ServerErrorClassifier:
+    """Match Starlette's handler precedence without invoking the selected handler.
+
+    A class-level extension handler declares a non-500 response with
+    ``exc.status_code``. A status-code registration only selects a handler; it
+    does not establish that handler's response status, so an unknown one fails
+    safe to generic 500 auditing.
+    """
+    handlers = app.exception_handlers
+
+    def _is_server_error(exc: Exception) -> bool:
+        if isinstance(exc, starlette_exceptions.HTTPException) and exc.status_code in handlers:
+            return _handler_maps_to_server_error(
+                handlers[exc.status_code], exc, use_declared_status=False
+            )
+        for cls in type(exc).__mro__:
+            if cls in handlers:
+                return _handler_maps_to_server_error(handlers[cls], exc, use_declared_status=True)
+        return True
+
+    return _is_server_error
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -587,6 +692,7 @@ async def _handle(
             server_variables_unresolved=ctx_req.server_variables_unresolved,
             trace_id=ctx_req.trace_id,
             operation_path=resolved.operation.path,
+            spec_operation_id=resolved.operation.operation_id,
         )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
@@ -779,6 +885,8 @@ async def _execute_buffered(
         on_dispatched=on_dispatched,
         on_pre_send_error=on_pre_send_error,
         on_outcome=on_outcome,
+        on_unmapped_failure=_unmapped_failure_recorder(request, ctx, ctx_req, identity),
+        is_server_error=_server_error_classifier(request.app),
     )
 
 
@@ -1365,8 +1473,7 @@ async def _handle_async(
         )
 
     metadata = _metadata_headers(ctx_req, execution_id)
-    base = ctx.config.broker.jobs_api_base_url
-    job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
+    job_url = build_link(request, f"/jobs/{job_id}")
 
     resp_body = AsyncQueuedResponse(
         job_id=job_id,

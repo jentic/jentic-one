@@ -9,8 +9,15 @@ copy/verify/sweep transactions are integration-tested against real databases
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
+from jentic_one.control.repos.service_account_migration_repo import (
+    ServiceAccountMigrationRepository,
+    _coerce_utc_datetime,
+    _service_account_id_of,
+)
 from jentic_one.control.services.service_account_migration import (
     RetirementProblem,
     ServiceAccountMigrationService,
@@ -95,3 +102,35 @@ def test_retirement_error_names_every_service_account_once() -> None:
     assert message.startswith("Refusing to retire the service accounts (theme-8 Phase 4)")
     assert "2 service account(s) failed verification (sva_a, sva_b)" in message
     assert "Nothing was swept or dropped" in message
+
+
+def test_successor_agent_name_is_deterministic() -> None:
+    assert ServiceAccountMigrationRepository.successor_agent_name("sva_abc123") == (
+        "service-account:sva_abc123"
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"service_account_id": "sva_1", "status": "active"}, "sva_1"),
+        ('{"service_account_id": "sva_2", "status": "disabled"}', "sva_2"),
+        ("not-json", None),
+        ({"service_account_id": ""}, None),
+        ({"status": "active"}, None),
+        (["sva_1"], None),
+        (None, None),
+    ],
+)
+def test_service_account_id_of_audit_payload(payload: object, expected: str | None) -> None:
+    """Pins #1444: audit payload extraction handles decoded JSONB and SQLite JSON text."""
+    assert _service_account_id_of(payload) == expected
+
+
+def test_coerce_utc_datetime_normalizes_postgres_and_sqlite_shapes() -> None:
+    aware = dt.datetime(2026, 11, 13, 12, 30, 45, tzinfo=dt.UTC)
+    assert _coerce_utc_datetime(aware) == aware
+    assert _coerce_utc_datetime("2026-11-13 12:30:45") == aware
+    assert _coerce_utc_datetime("2026-11-13T12:30:45+00:00") == aware
+    assert _coerce_utc_datetime("not-a-timestamp") is None
+    assert _coerce_utc_datetime(None) is None

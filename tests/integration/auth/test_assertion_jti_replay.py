@@ -56,13 +56,6 @@ async def clean_jtis(
     await _clean()
 
 
-@pytest.fixture()
-async def second_auth_process(integration_config: AppConfig) -> AsyncGenerator[Context, None]:
-    """An independent Context (own pools, own state backend): a second auth process."""
-    async with Context(integration_config) as ctx:
-        yield ctx
-
-
 def _keypair() -> tuple[Ed25519PrivateKey, dict[str, Any]]:
     key = Ed25519PrivateKey.generate()
     jwk = OKPAlgorithm().to_jwk(key.public_key())

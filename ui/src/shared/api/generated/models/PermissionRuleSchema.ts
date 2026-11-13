@@ -27,7 +27,7 @@ export type PermissionRuleSchema = {
      */
     methods?: (Array<string> | null);
     /**
-     * OpenAPI operation IDs to match. None matches all operations.
+     * OpenAPI operationIds to match by exact string equality (survives revision promotion; existing `op_…` registry operation IDs also match their revision). None matches all operations.
      */
     operations?: (Array<string> | null);
     /**

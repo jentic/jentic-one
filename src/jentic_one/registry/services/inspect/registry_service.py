@@ -64,6 +64,7 @@ class RegistryService:
         return ResolveResult(
             operation=OperationInfo(
                 id=hit.operation_id,
+                operation_id=op_ctx.operation_id,
                 path=op_ctx.path,
                 method=op_ctx.method,
                 relative_path=(

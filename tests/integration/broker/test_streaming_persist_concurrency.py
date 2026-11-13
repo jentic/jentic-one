@@ -198,7 +198,7 @@ async def test_streaming_persist_failure_is_counted_and_releases_slot(
     ) as failures:
         # Same primary key → IntegrityError inside the admin transaction.
         await _persist(bounded_ctx, execution_id)
-        failures.assert_called_once_with(1, {"reason": "write_error"})
+        failures.assert_called_once_with(1, {"kind": "streaming", "reason": "write_error"})
 
     assert pending_spy["waiting"] == 0
     assert pending_spy["in_flight"] == 0

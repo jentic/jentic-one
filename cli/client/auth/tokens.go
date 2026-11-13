@@ -12,19 +12,16 @@ import (
 	"github.com/jentic/jentic-one/cli/client/config"
 )
 
-// TokenSet is the cached access token for an identity+environment.
+// TokenSet is the cached OAuth token state for an identity+environment (#1384).
 //
-// We deliberately do NOT store a refresh token. With the RFC 7523 JWT-bearer
-// grant (oauth.go) the CLI can always mint a fresh access token from the
-// env-scoped Ed25519 key with no user interaction, so a refresh token would be
-// dead weight — and persisting one would be a needless long-lived secret on disk.
-// On expiry we simply re-run the assertion exchange. (If the backend ever issues
-// a human-interactive grant that genuinely needs refresh, add the field back THEN
-// and use it in performOAuthExchange; don't store what you won't use.)
+// Both token fields carry `redact:"true"` so the CLI's typed redaction layer
+// scrubs them fail-closed if a TokenSet ever reaches an Audience render or file
+// marshal path, while SaveTokens persists the raw values to the 0600 state file.
 type TokenSet struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	Origin      string    `json:"origin,omitempty"`
+	AccessToken  string    `json:"access_token" redact:"true"`
+	RefreshToken string    `json:"refresh_token,omitempty" redact:"true"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	Origin       string    `json:"origin,omitempty"`
 }
 
 // getTokenPath returns the token-state file path for ref, under the XDG STATE dir
@@ -59,6 +56,8 @@ func readTokensRaw(ref IdentityRef) (*TokenSet, error) {
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return nil, fmt.Errorf("decoding token state %s: %w", path, err)
 	}
+	tokens.AccessToken = strings.TrimSpace(tokens.AccessToken)
+	tokens.RefreshToken = strings.TrimSpace(tokens.RefreshToken)
 	rawOrigin := strings.TrimSpace(tokens.Origin)
 	tokens.Origin = NormalizeOrigin(rawOrigin)
 	if rawOrigin != "" && tokens.Origin == "" {
@@ -122,6 +121,8 @@ func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
 		return err
 	}
 	toSave := *tokens
+	toSave.AccessToken = strings.TrimSpace(toSave.AccessToken)
+	toSave.RefreshToken = strings.TrimSpace(toSave.RefreshToken)
 	rawOrigin := strings.TrimSpace(toSave.Origin)
 	toSave.Origin = NormalizeOrigin(rawOrigin)
 	if rawOrigin != "" && toSave.Origin == "" {
@@ -134,6 +135,8 @@ func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
 		}
 		toSave.Origin = envOrigin
 	}
+	tokens.AccessToken = toSave.AccessToken
+	tokens.RefreshToken = toSave.RefreshToken
 	tokens.Origin = toSave.Origin
 	data, err := json.Marshal(&toSave) //nolint:gosec // G117: intentionally persisting the access token to the 0600 state file; this IS the token cache.
 	if err != nil {

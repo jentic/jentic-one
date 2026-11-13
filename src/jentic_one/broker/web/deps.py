@@ -23,6 +23,7 @@ from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.broker.core.server_timing import ServerTimingStage, stage_end, stage_start
 from jentic_one.broker.services.auth import CompositeTokenValidator
 from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
+from jentic_one.broker.services.jobs import BrokerJobService
 from jentic_one.shared.auth.api_key_resolver import (
     RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
     is_retired_service_account_key,
@@ -43,7 +44,7 @@ from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state.backend import StateBackendCapacityError
 from jentic_one.shared.web.auth import extract_credential
-from jentic_one.shared.web.deps import derive_origin
+from jentic_one.shared.web.deps import derive_origin, get_ctx
 
 _logger = structlog.get_logger(__name__)
 
@@ -275,8 +276,15 @@ def get_repeated_failure_counter(request: Request) -> RepeatedFailureCounter | N
     return getattr(request.app.state, "broker_repeated_failure_counter", None)
 
 
+def get_broker_job_service(ctx: Context = Depends(get_ctx)) -> BrokerJobService:
+    """Provide the caller-scoped broker job service."""
+    return BrokerJobService(ctx)
+
+
 RequireBrokerIdentity = Annotated[Identity, Depends(require_broker_identity)]
+RequireJobAccess = Annotated[Identity, Depends(require_execute_permission)]
 RequireExecuteAccess = Annotated[Identity, Depends(require_execute_within_rate_limit)]
+BrokerJobServiceDep = Annotated[BrokerJobService, Depends(get_broker_job_service)]
 CredentialDeriver = Annotated[CredentialDeriverProtocol, Depends(get_credential_deriver)]
 AgentRuleEvaluatorDep = Annotated[AgentRuleEvaluatorProtocol, Depends(get_agent_rule_evaluator)]
 HttpRunnerDep = Annotated[UpstreamRunner, Depends(get_http_runner)]

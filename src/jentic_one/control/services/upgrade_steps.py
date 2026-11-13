@@ -51,6 +51,9 @@ import structlog
 
 from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
+from jentic_one.control.services.credential_identity_repair import (
+    CredentialIdentityRepairService,
+)
 from jentic_one.control.services.rule_set_curation import (
     CrossOwnerAttachment,
     RuleSetCurationResult,
@@ -59,6 +62,7 @@ from jentic_one.control.services.rule_set_curation import (
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.models.credential_identity_repair import RepairRunResult
 
 logger = structlog.get_logger(__name__)
 
@@ -98,6 +102,12 @@ class UpgradeStepSpec:
 
 
 RULE_SETS_MARK_CURATED = "rule_sets_mark_curated"
+CREDENTIAL_IDENTITY_REPAIR = "credential_identity_repair"
+
+#: Runs above this size persist their full planned backup before any live mutation.
+_PREPARED_BACKUP_ROW_THRESHOLD = 200
+#: Maximum per-row operator warning/conflict lines emitted on stderr per run.
+_IDENTITY_REPAIR_WARNING_LIMIT = 50
 
 
 #: Leads the per-binding warnings of ``rule_sets_mark_curated``.
@@ -163,9 +173,80 @@ async def _mark_curated_rule_sets(ctx: Context) -> UpgradeStepOutcome:
     )
 
 
+async def _repair_credential_identities(ctx: Context) -> UpgradeStepOutcome:
+    service = CredentialIdentityRepairService(ctx)
+
+    async def _persist_prepared_backup(planned: RepairRunResult) -> None:
+        planned_rows = (
+            planned.repaired_apis + planned.repaired_credentials + planned.repaired_connect_sessions
+        )
+        if planned_rows <= _PREPARED_BACKUP_ROW_THRESHOLD:
+            return
+        prepared_summary: dict[str, Any] = {
+            "backup_state": "prepared",
+            "apis_scanned": planned.apis_scanned,
+            "credentials_scanned": planned.credentials_scanned,
+            "planned_rows": planned_rows,
+            "backup": planned.backup,
+        }
+        async with ctx.control_db.transaction() as session:
+            await UpgradeStepRepository.record_run(
+                session,
+                name=CREDENTIAL_IDENTITY_REPAIR,
+                tool_version=__version__,
+                summary=prepared_summary,
+                created_by=_LEDGER_ACTOR,
+            )
+
+    result = await service.run(before_apply=_persist_prepared_backup)
+    total_repaired = (
+        result.repaired_apis + result.repaired_credentials + result.repaired_connect_sessions
+    )
+    summary: dict[str, Any] = {
+        "apis_scanned": result.apis_scanned,
+        "credentials_scanned": result.credentials_scanned,
+        "repaired_apis": result.repaired_apis,
+        "repaired_credentials": result.repaired_credentials,
+        "repaired_connect_sessions": result.repaired_connect_sessions,
+        "unresolvable_count": result.unresolvable_count,
+        "conflict_count": result.conflict_count,
+    }
+    if total_repaired > 0:
+        summary["backup"] = result.backup
+        summary["backup_state"] = "applied"
+
+    warning_findings = [f for f in result.findings if f.category in ("conflict", "unresolvable")]
+    lines = [f.format_operator_line() for f in warning_findings[:_IDENTITY_REPAIR_WARNING_LIMIT]]
+    if len(warning_findings) > _IDENTITY_REPAIR_WARNING_LIMIT:
+        lines.append(
+            f"...and {len(warning_findings) - _IDENTITY_REPAIR_WARNING_LIMIT} more "
+            "(run `jentic_one repair-credential-identities --dry-run` for the full report)"
+        )
+
+    if result.failed_closed:
+        return UpgradeStepOutcome(
+            name=CREDENTIAL_IDENTITY_REPAIR,
+            action="failed",
+            summary=summary,
+            failed=True,
+            warnings=tuple(lines),
+        )
+    return UpgradeStepOutcome(
+        name=CREDENTIAL_IDENTITY_REPAIR,
+        action="performed",
+        summary=summary,
+        warnings=tuple(lines),
+    )
+
+
 #: Every step, in run order.
 STEPS: tuple[UpgradeStepSpec, ...] = (
     UpgradeStepSpec(name=RULE_SETS_MARK_CURATED, run=_mark_curated_rule_sets, repeatable=True),
+    UpgradeStepSpec(
+        name=CREDENTIAL_IDENTITY_REPAIR,
+        run=_repair_credential_identities,
+        repeatable=True,
+    ),
 )
 
 #: Names of deleted steps that ``--skip-upgrade-step`` still accepts (as a

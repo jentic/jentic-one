@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import builtins
 import copy
+import errno
+import importlib.util
 import io
 import os
 import threading
@@ -1564,6 +1566,162 @@ def test_oneshot_cache_survives_writes_after_open(
         if not any(t.is_alive() for t in threads):
             os.close(read_fd)
         _ONESHOT_CONFIG_CACHE.clear()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("fcntl") is None
+    or not hasattr(os, "O_NONBLOCK")
+    or not Path("/dev/fd").is_dir(),
+    reason="requires POSIX fcntl, O_NONBLOCK, and /dev/fd",
+)
+def test_load_config_concurrent_dev_fd_opens_do_not_race(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """Pins #1803: unsynchronised concurrent loads of /dev/fd/N must not fail with
+    EBADF or a misleading 'Config file not found' error on macOS."""
+    doc = yaml.dump(sample_config_dict).encode()
+    workers = 4
+    rounds = 60
+    timeout_s = 10.0
+
+    def open_fd_count() -> int:
+        return len(os.listdir("/dev/fd"))
+
+    baseline_fds = open_fd_count()
+
+    for _ in range(rounds):
+        read_fd, write_fd = os.pipe()
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        os.write(write_fd, doc)
+        os.close(write_fd)
+
+        start_barrier = threading.Barrier(workers, timeout=timeout_s)
+        results: list[AppConfig] = []
+        errors: list[BaseException] = []
+        results_lock = threading.Lock()
+
+        def worker(
+            p: Path = pipe_path,
+            b: threading.Barrier = start_barrier,
+            lock: threading.Lock = results_lock,
+            out: list[AppConfig] = results,
+            errs: list[BaseException] = errors,
+        ) -> None:
+            try:
+                b.wait()
+                cfg = load_config(p)
+                with lock:
+                    out.append(cfg)
+            except BaseException as exc:
+                with lock:
+                    errs.append(exc)
+
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
+        try:
+            for t in threads:
+                t.start()
+            deadline = time.monotonic() + timeout_s
+            for t in threads:
+                t.join(max(0.0, deadline - time.monotonic()))
+                assert not t.is_alive(), f"concurrent load_config timed out on {pipe_path}"
+            assert errors == [], f"concurrent load_config failed: {errors!r}"
+            assert len(results) == workers
+            assert {cfg.databases.registry.name for cfg in results} == {
+                sample_config_dict["databases"]["registry"]["name"]
+            }
+        finally:
+            if not any(t.is_alive() for t in threads):
+                os.close(read_fd)
+            _ONESHOT_CONFIG_CACHE.clear()
+
+    assert open_fd_count() == baseline_fds
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("fcntl") is None
+    or not hasattr(os, "mkfifo")
+    or not hasattr(os, "O_NONBLOCK"),
+    reason="requires POSIX fcntl, mkfifo, and O_NONBLOCK",
+)
+def test_load_config_named_fifo_does_not_hang_without_writer(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+) -> None:
+    """Pins #1803: opening a named FIFO never hangs when no writer is attached,
+    and a cached FIFO hit returns without blocking after its writer has closed."""
+
+    def call_bounded(target_path: Path, timeout_s: float = 2.0) -> AppConfig:
+        out: list[AppConfig] = []
+        err: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                out.append(load_config(target_path))
+            except BaseException as exc:
+                err.append(exc)
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(timeout_s)
+        assert not t.is_alive(), f"load_config({target_path}) blocked for >{timeout_s}s"
+        if err:
+            raise err[0]
+        return out[0]
+
+    empty_fifo = tmp_path / "empty.fifo"
+    os.mkfifo(empty_fifo)
+    with pytest.raises(ConfigError, match="yielded no content"):
+        call_bounded(empty_fifo)
+
+    seeded_fifo = tmp_path / "seeded.fifo"
+    os.mkfifo(seeded_fifo)
+    doc = yaml.dump(sample_config_dict).encode()
+
+    def write_once() -> None:
+        wfd = os.open(seeded_fifo, os.O_WRONLY)
+        try:
+            os.write(wfd, doc)
+        finally:
+            os.close(wfd)
+
+    writer = threading.Thread(target=write_once, daemon=True)
+    writer.start()
+    try:
+        first = call_bounded(seeded_fifo, timeout_s=5.0)
+        writer.join(5.0)
+        assert not writer.is_alive()
+        # Writer is gone; repeat load must hit the one-shot cache without blocking.
+        second = call_bounded(seeded_fifo)
+        assert first.databases.registry.name == second.databases.registry.name
+    finally:
+        writer.join(1.0)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        PermissionError(errno.EACCES, "Permission denied"),
+        OSError(errno.EBADF, "Bad file descriptor"),
+    ],
+)
+def test_load_config_propagates_non_missing_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exc: OSError
+) -> None:
+    """Pins #1803: non-FileNotFoundError OSErrors (including EBADF) must surface with
+    their real cause instead of being collapsed into 'Config file not found'."""
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("databases: {}\n")
+    real_os_open = os.open
+
+    def fail_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(file, str | os.PathLike) and os.fspath(file) == str(cfg):
+            raise exc
+        return real_os_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", fail_open)
+    with pytest.raises(type(exc)) as caught:
+        load_config(cfg)
+    assert caught.value.errno == exc.errno
 
 
 def test_broker_jobs_api_base_url_defaults_to_none(config_file: Path):

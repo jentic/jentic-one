@@ -427,13 +427,13 @@ async def test_curation_step_reruns_and_warns(
     await _attach(svc, cross, alice_set.id, _ADMIN)
     steps = UpgradeStepService(integration_context, steps=STEPS)
 
-    (first,) = await steps.run()
+    first = next(o for o in await steps.run() if o.name == RULE_SETS_MARK_CURATED)
     # An older release redeployed on this schema creates an admin's set uncurated.
     async with integration_context.control_db.transaction() as session:
         later = await PermissionRuleSetRepository.create(
             session, name="curation-later", description=None, created_by=_ADMIN.sub
         )
-    (second,) = await steps.run()
+    second = next(o for o in await steps.run() if o.name == RULE_SETS_MARK_CURATED)
 
     async with integration_context.control_db.session() as session:
         reread = await PermissionRuleSetRepository.get_by_id(session, later.id)

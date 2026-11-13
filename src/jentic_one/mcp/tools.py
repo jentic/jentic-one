@@ -1172,8 +1172,9 @@ def _held_poller(env: CallEnv) -> Callable[[str], Awaitable[dict[str, Any]]]:
 async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
     """The poll payload for one job (Go: ``handleGetExecutionResult`` body).
 
-    ``{job_id, kind, status, error?, execution_id?, result?}`` — the result
-    rides once the job is ``completed``.
+    ``{job_id, kind, status, error?, execution_id?, result?}`` — the stored
+    result rides once the job reaches ``completed``, or ``failed`` with an
+    actionable result row.
     """
     require_permissions(env.identity, ["jobs:read"])
     _require_db(env.ctx, "admin", "job polling")
@@ -1215,24 +1216,26 @@ async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
         payload["error"] = job.error
     if job.execution_id:
         payload["execution_id"] = job.execution_id
-    if job.status == _JOB_COMPLETED:
+    if job.status in (_JOB_COMPLETED, _JOB_FAILED):
         await _attach_job_result(env, job_id, payload)
     return payload
 
 
 async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any]) -> None:
-    """Attach the completed job's result, size-capped (Go: ``attachJobResult``).
+    """Attach a finished job's stored result, size-capped (Go: ``attachJobResult``).
 
-    A result fetch failure degrades to a ``result_error`` note rather than
-    failing the poll — the status the model asked for is already in hand.
+    A failed job with no stored result row raises ``JobNotCompletedError`` and
+    attaches nothing. Any other result fetch failure (such as an expired result)
+    degrades to a ``result_error`` note rather than failing the poll — the
+    status the model asked for is already in hand.
     """
     try:
         view = await JobResultService(env.ctx).get(job_id, identity=env.identity)
     except JobNotCompletedError:
-        # A failed job without a recorded problem body has no result to attach.
+        # A failed job with no stored result row has nothing to attach.
         return
     except Exception as exc:
-        payload["result_error"] = f"the job completed but its result could not be fetched: {exc}"
+        payload["result_error"] = f"the job finished but its result could not be fetched: {exc}"
         return
     _attach_result_view(view, payload)
 

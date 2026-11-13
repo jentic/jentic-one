@@ -197,6 +197,11 @@ agent's binding covering the API is suspended), several → resolution disambigu
 `Jentic-Credential-Id` with a `409`) — and the winning binding's permission
 rules are evaluated **default-deny**: no matching rule, no call
 ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).
+A rule denial records `PBAC_DENIED`; a served API with no usable binding records
+the same event with reason `no_credential_binding`. Both carry the actor, API,
+operation id, method and spec path template, never the concrete request path,
+query, headers or credential material. An API no credential serves instead keeps
+its `CREDENTIAL_BINDING_UNSERVED` provisioning signal.
 Rule paths match the request path **relative to the API's server URL** — the
 spec's path (`/widgets/42`), normalized, never the full upstream path with
 the server's base path (`/eu/widgets/42` for a server `http://host/{region}`).
@@ -254,10 +259,10 @@ job (`build_queued_execution_authorizer`).
 Executions land as append-only `ExecutionRecord` rows in the admin DB
 ([`shared/executions/ingest.py`](../../src/jentic_one/shared/executions/ingest.py)): status, duration, operation and API
 identity, HTTP status, actor, origin, and the credential used (by id and
-name, never the secret). On the buffered and async paths the write happens
-before the response. On the streaming fast path every outcome — completed,
-failed partway through the body, or cut off by a client disconnect — writes
-exactly one record, and the write is **best-effort** and never holds the
+name, never the secret). Ordinary buffered outcomes and `BrokerError` failures,
+and async executions, persist inline. On the streaming fast path every outcome —
+completed, failed partway through the body, or cut off by a client disconnect —
+writes exactly one record, and the write is **best-effort** and never holds the
 response: it is handed to the app's background-task registry
 ([`shared/web/background_tasks.py`](../../src/jentic_one/shared/web/background_tasks.py))
 and bounded by `broker.streaming_persist_timeout_s`; on shutdown the registry
@@ -265,14 +270,44 @@ drains for up to `services.background_task_drain_timeout_s` before the
 databases close. A database failure, timeout, or shutdown cancellation is
 logged and counted (`broker.streaming_execution.persist_failures`,
 `app.background_tasks`, [monitoring.md](../operations/monitoring.md)) but does
-not fail the call, so a call can, rarely, lack its record. Concurrent streaming
-persists are capped per process (`broker.streaming_persist_max_concurrency`,
+not change the response, so a call can, rarely, lack its record.
+
+A buffered failure with no dedicated non-500 exception handler also schedules
+its audit write on that registry, then re-raises the original exception so the
+client still receives the generic 500. Its one `FAILED` record and
+`EXECUTION_FAILED` event carry only `server_error: <ExceptionClass>`, truncated
+to the record's 128-character error limit — never the exception message. The
+record carries full elapsed duration and no HTTP status, including when a
+post-response stage fails after an upstream response; the execution increments
+`broker.executions.total` once and emits no `broker.execution.duration_ms`
+sample. This background write uses task kind `unmapped_failure_persist` and
+persistence-metric attribute `kind="unmapped_failure"`, versus
+`streaming_execution_persist` and `kind="streaming"` for streaming outcomes.
+A write error or persistence cancellation is counted without starting another
+execution-failure write. A slot-wait timeout is also counted and propagated to
+the supervisor, so `app.background_tasks` reports `outcome="failed"`, never
+`completed`, for that abandoned record.
+
+Status classification never invokes an exception handler to probe its response.
+It follows Starlette's status-code registration first, exception-class MRO second
+precedence, and applies the same metadata rules to an `Exception` override as to
+any other class-level extension. Built-in handlers use pure status mappings. A
+class-level extension handler that returns a non-500 response must declare that
+status on the exception's `status_code` attribute. When a specifically handled
+exception has no declared status, the broker fails safe and audits it as a
+generic 500. A status-code registration selects a handler but does not declare
+its response status, so an unknown status-specific handler also fails safe; the
+extension handler itself runs only for the actual response.
+
+Concurrent off-request execution persists are capped per process
+(`broker.streaming_persist_max_concurrency`,
 clamped to `databases.admin.pool_max - 1`, the admin base pool less one;
 SQLAlchemy's default overflow can open up to 10 connections beyond `pool_max`).
 An excess persist waits for a slot for at most
 `broker.streaming_persist_acquire_timeout_s` and is then abandoned and counted
 (`reason="backlog_timeout"`); the queue is visible as
-`broker.streaming_execution.persist_pending`. The wait never touches admission:
+`broker.streaming_execution.persist_pending`, partitioned by the same `kind`
+attribute as the failure counter. The wait never touches admission:
 a request releases its admission slot as soon as its response is complete or its
 client disconnects, so persists queued behind a stalled admin database count
 neither toward `broker.admission.in_flight` nor toward `/ready` saturation. The

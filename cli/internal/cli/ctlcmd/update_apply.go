@@ -20,6 +20,7 @@ type updatePlan struct {
 	ctlTarget    string
 	cliVersion   string
 	stackVersion string
+	stackImg     dockerStackImageState
 	pinned       bool
 	latestKnown  bool
 	brewManaged  bool
@@ -98,7 +99,11 @@ func (a *app) applyUpdate(ctx context.Context, plan updatePlan) error {
 	if plan.doStack {
 		if err := rebuildStack(a, ctx, plan.manifest.Mode, plan.manifest.DB, plan.ref, plan.pinned, preflighted); err != nil {
 			if cliUpdated {
-				return newStackDivergedError(err, cliTargetLabel(plan.brewManaged, cliLanded), plan.ref, plan.stackVersion, stackRetryCommand(plan.ref, plan.pinned))
+				priorStack := plan.stackVersion
+				if plan.stackImg.lagsRecord {
+					priorStack = plan.stackImg.releaseTag
+				}
+				return newStackDivergedError(err, cliTargetLabel(plan.brewManaged, cliLanded), plan.ref, priorStack, stackRetryCommand(plan.ref, plan.pinned))
 			}
 			return err
 		}

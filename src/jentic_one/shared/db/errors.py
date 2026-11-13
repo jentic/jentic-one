@@ -9,12 +9,21 @@ class DatabaseIntegrityError(Exception):
         self.detail = detail
 
 
+DB_UNAVAILABLE_RETRY_AFTER_S = 5
+
+
 class DatabaseUnavailableError(Exception):
     """Raised when a transient database failure persists after retries."""
 
-    def __init__(self, detail: str = "") -> None:
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        retry_after_s: int = DB_UNAVAILABLE_RETRY_AFTER_S,
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
+        self.retry_after_s = retry_after_s
 
 
 class DatabaseCommitOutcomeUnknownError(DatabaseUnavailableError):

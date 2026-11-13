@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import socket
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ import pytest
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.url_validation import (
     UpstreamUrlInvalidError,
+    reject_url_userinfo,
     validate_upstream_url,
     validate_upstream_url_async,
 )
@@ -499,3 +501,92 @@ def test_rejects_url_userinfo_sync(url: str) -> None:
 async def test_rejects_url_userinfo_async(url: str) -> None:
     with pytest.raises(UpstreamUrlInvalidError, match="userinfo"):
         await validate_upstream_url_async(url)
+
+
+@pytest.mark.parametrize(
+    ("raw_url", "expected"),
+    [
+        ("HTTPS://api.example.com/v1/Items?Foo=Bar", "https://api.example.com/v1/Items?Foo=Bar"),
+        ("Https://api.example.com/v1", "https://api.example.com/v1"),
+        ("HTTP://api.example.com/v1", "http://api.example.com/v1"),
+        ("Http://api.example.com/v1", "http://api.example.com/v1"),
+        ("example.com:8443/v1", "https://example.com:8443/v1"),
+    ],
+)
+def test_mixed_case_http_scheme_and_host_port_normalised_sync(raw_url: str, expected: str) -> None:
+    """Pins #1897: mixed-case HTTP(S) schemes normalise to lower-case; host:port gets https://."""
+    with patch(
+        "jentic_one.shared.url_validation.socket.getaddrinfo",
+        return_value=_resolving_to("93.184.216.34"),
+    ):
+        assert validate_upstream_url(raw_url) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_url", "expected"),
+    [
+        ("HTTPS://api.example.com/v1/Items?Foo=Bar", "https://api.example.com/v1/Items?Foo=Bar"),
+        ("Http://api.example.com/v1", "http://api.example.com/v1"),
+        ("localhost:8080/foo", "https://localhost:8080/foo"),
+    ],
+)
+async def test_mixed_case_http_scheme_and_host_port_normalised_async(
+    raw_url: str, expected: str
+) -> None:
+    egress = EgressConfig(
+        allowed_private_subnets=["127.0.0.0/8"],
+        allowed_internal_domains=["localhost"],
+    )
+    with patch(
+        "jentic_one.shared.dns_cache.socket.getaddrinfo",
+        return_value=_resolving_to("127.0.0.1" if "localhost" in raw_url else "93.184.216.34"),
+    ):
+        assert await validate_upstream_url_async(raw_url, egress) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw_url", "expected_scheme"),
+    [
+        ("ftp://files.example.com/x", "ftp"),
+        ("FTP://files.example.com/x", "ftp"),
+        ("ws://echo.example.com/socket", "ws"),
+        ("wss://echo.example.com/socket", "wss"),
+        ("gopher://gopher.example.com/1", "gopher"),
+        ("file:///etc/passwd", "file"),
+        ("git+https://github.com/org/repo", "git+https"),
+        ("custom-1.0://example.com/p", "custom-1.0"),
+    ],
+)
+def test_rejects_non_http_schemes_with_unsupported_scheme_sync(
+    raw_url: str, expected_scheme: str
+) -> None:
+    """Pins #1897: explicit non-http(s) scheme:// URLs fail with unsupported scheme."""
+    with pytest.raises(
+        UpstreamUrlInvalidError,
+        match=rf"unsupported scheme: {re.escape(expected_scheme)}",
+    ):
+        validate_upstream_url(raw_url)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_url",
+    [
+        "ftp://files.example.com/x",
+        "FTP://files.example.com/x",
+        "ws://echo.example.com/socket",
+        "file:///etc/passwd",
+        "git+https://github.com/org/repo",
+    ],
+)
+async def test_rejects_non_http_schemes_with_unsupported_scheme_async(raw_url: str) -> None:
+    with pytest.raises(UpstreamUrlInvalidError, match="unsupported scheme"):
+        await validate_upstream_url_async(raw_url)
+
+
+def test_rejects_mixed_case_scheme_userinfo() -> None:
+    """Pins #1897: mixed-case HTTPS:// must not hide userinfo behind a prepended scheme."""
+    bad_url = "HTTPS://user:secret@api.example.com/resource"  # pragma: allowlist secret
+    with pytest.raises(UpstreamUrlInvalidError, match="userinfo"):
+        reject_url_userinfo(bad_url)

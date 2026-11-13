@@ -17,10 +17,12 @@ from sqlalchemy import delete, select, text
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos.oauth_client_repo import (
     OAuthClientRepository,
     redirect_uris_fingerprint,
 )
+from jentic_one.admin.repos.user_repo import UserRepository
 from jentic_one.admin.services.errors import ConflictError, InvalidInputError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.token_service import TokenService
@@ -52,6 +54,26 @@ async def clean_oauth_clients(
     await _clean()
     yield
     await _clean()
+
+
+@pytest.fixture()
+async def resolver_user(integration_context: Context) -> AsyncGenerator[str, None]:
+    """An active USER actor for the client-gate token resolution test."""
+    user_id = "usr_resolver_test"
+    async with integration_context.admin_db.transaction() as session:
+        await session.execute(delete(User).where(User.id == user_id))
+        await UserRepository.create(
+            session,
+            id=user_id,
+            email=f"{user_id}@oauth-client.test",
+            first_name="Resolver",
+            last_name="Test",
+            active=True,
+            created_by=_ADMIN.sub,
+        )
+    yield user_id
+    async with integration_context.admin_db.transaction() as session:
+        await session.execute(delete(User).where(User.id == user_id))
 
 
 async def _audit_entries_for(ctx: Context, target_id: str) -> list[AuditEntry]:
@@ -225,7 +247,7 @@ async def test_update_cannot_activate_a_denied_row(
 
 
 async def test_token_minted_while_approved_stops_resolving_after_deny(
-    integration_context: Context, clean_oauth_clients: None
+    integration_context: Context, clean_oauth_clients: None, resolver_user: str
 ) -> None:
     """The auth-surface resolver leg of the approval gate (PR #1218 MAJOR-1): a
     token issued while the client was approved must stop resolving once the
@@ -237,17 +259,16 @@ async def test_token_minted_while_approved_stops_resolving_after_deny(
     created = await svc.create(name="resolver-app", redirect_uris=_REDIRECT_URIS, identity=_ADMIN)
 
     access_token, _refresh = await token_svc.issue_pair(
-        "usr_resolver_test",
+        resolver_user,
         ActorType.USER,
         ["openid"],
         oauth_client_id=created.client_id,
     )
 
-    # While approved+active the token resolves (actor liveness is a separate
-    # gate — the user row is absent here, so only the None/not-None verdict
-    # of the *client* gate is under test).
+    # While approved+active the token resolves with its active USER actor.
     resolved = await token_svc.resolve_access_token(access_token)
     assert resolved is not None
+    assert resolved.active is True
 
     await svc.deny(created.id, identity=_ADMIN)
     assert await token_svc.resolve_access_token(access_token) is None

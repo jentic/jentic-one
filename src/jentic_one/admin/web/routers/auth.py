@@ -16,6 +16,7 @@ from jentic_one.admin.web.deps import (
     get_invite_service,
     get_user_service,
 )
+from jentic_one.admin.web.ratelimit import check_login_rate_limit
 from jentic_one.admin.web.schemas.auth import (
     ChangePasswordRequest,
     CreateAdminRequest,
@@ -27,12 +28,24 @@ from jentic_one.admin.web.schemas.auth import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.auth import extract_credential
-from jentic_one.shared.web.openapi_responses import PUBLIC_ERROR_RESPONSES, gone
+from jentic_one.shared.web.openapi_responses import (
+    PUBLIC_ERROR_RESPONSES,
+    gone,
+    too_many_requests,
+)
 
 router = APIRouter()
 
 
-@router.post("/auth/login", summary="Log in")
+@router.post(
+    "/auth/login",
+    summary="Log in",
+    responses={
+        **PUBLIC_ERROR_RESPONSES,
+        **too_many_requests("Too many login attempts from this client network."),
+    },
+    dependencies=[Depends(check_login_rate_limit)],
+)
 async def login(
     body: LoginRequest,
     auth_svc: AuthService = Depends(get_auth_service),

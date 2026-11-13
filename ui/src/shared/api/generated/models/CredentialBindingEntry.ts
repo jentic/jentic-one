@@ -28,6 +28,10 @@ export type CredentialBindingEntry = {
      */
     serves?: Array<ServedApiRef>;
     /**
+     * Lifecycle state of the bound credential (`pending`, `connected` or `failed`); null if the credential cannot be resolved.
+     */
+    state?: (string | null);
+    /**
      * Whether the binding is suspended; the agent cannot execute through it until resumed.
      */
     suspended?: boolean;

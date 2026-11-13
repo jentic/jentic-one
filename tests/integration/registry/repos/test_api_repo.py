@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
+import sys
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -316,6 +321,36 @@ _postgres_only = pytest.mark.skipif(
 )
 
 _RACE_IDENTITY = {"vendor": "race.example.com", "name": "new-api", "version": "1.0.0"}
+_RACE_TIMEOUT_S = 5.0
+_RACE_POLL_ATTEMPTS = 500
+_RACE_POLL_INTERVAL_S = 0.01
+
+
+class _PrePidFailureError(RuntimeError):
+    """Sentinel raised before ``b_pid`` is resolved in helper failure tests."""
+
+
+class _UnexpectedUpsertError(RuntimeError):
+    """Sentinel raised inside ``upsert_b`` after ``b_pid`` resolves."""
+
+
+@asynccontextmanager
+async def _assert_clean_async_tasks() -> AsyncGenerator[None, None]:
+    """Assert that the block leaves no pending child tasks or unretrieved loop exceptions."""
+    loop = asyncio.get_running_loop()
+    baseline_tasks = set(asyncio.all_tasks(loop))
+    unhandled: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    try:
+        yield
+    finally:
+        loop.set_exception_handler(previous_handler)
+    gc.collect()
+    await asyncio.sleep(0)
+    leaked_tasks = [t for t in asyncio.all_tasks(loop) - baseline_tasks if not t.done()]
+    assert leaked_tasks == []
+    assert unhandled == []
 
 
 async def _race_upsert_behind_uncommitted_insert(
@@ -323,6 +358,11 @@ async def _race_upsert_behind_uncommitted_insert(
     *,
     a_kwargs: dict[str, str],
     b_kwargs: dict[str, str],
+    before_b_pid: Callable[[AsyncSession], Awaitable[None]] | None = None,
+    b_action: Callable[[AsyncSession], Awaitable[Api]] | None = None,
+    b_pid_timeout_s: float = _RACE_TIMEOUT_S,
+    poll_attempts: int = _RACE_POLL_ATTEMPTS,
+    poll_interval_s: float = _RACE_POLL_INTERVAL_S,
 ) -> tuple[Api, asyncio.Task[Api]]:
     """Run upsert B while transaction A's insert of the same new identity is uncommitted.
 
@@ -330,34 +370,88 @@ async def _race_upsert_behind_uncommitted_insert(
     its own transaction, records its backend pid, and upserts; its locking read
     cannot see A's row. A commits only once ``pg_blocking_pids`` shows B's own
     backend waiting on A. Returns A's row and B's (finished) task.
+
+    Any failure before ``b_pid`` resolves propagates directly to ``b_pid``, waits
+    on ``b_pid`` and ``task_b`` are bounded by timeouts, and incomplete exits
+    cancel and await ``task_b`` so no background task or unretrieved exception
+    outlives the helper.
     """
     b_pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
 
     async def upsert_b() -> Api:
-        async with registry_db.transaction() as session:
-            b_pid.set_result((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one())
-            return await ApiRepository.upsert(session, **_RACE_IDENTITY, **b_kwargs)
+        try:
+            async with registry_db.transaction() as session:
+                if before_b_pid is not None:
+                    await before_b_pid(session)
+                pid = (await session.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+                b_pid.set_result(pid)
+                if b_action is not None:
+                    return await b_action(session)
+                return await ApiRepository.upsert(session, **_RACE_IDENTITY, **b_kwargs)
+        except asyncio.CancelledError:
+            if not b_pid.done():
+                b_pid.cancel()
+            raise
+        except BaseException as exc:
+            if not b_pid.done():
+                b_pid.set_exception(exc)
+                b_pid.exception()
+            raise
 
-    async with registry_db.transaction() as session_a:
-        api_a = await ApiRepository.upsert(session_a, **_RACE_IDENTITY, **a_kwargs)
-        task_b = asyncio.create_task(upsert_b())
-        pid = await b_pid
-        async with registry_db.session() as probe:
-            for _ in range(500):
-                blocked = (
-                    await probe.execute(
-                        text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"), {"pid": pid}
-                    )
-                ).scalar_one()
-                if blocked:
-                    break
-                await asyncio.sleep(0.01)
-            else:
-                pytest.fail("upsert B never blocked on transaction A")
-        assert not task_b.done()
+    task_b: asyncio.Task[Api] | None = None
+    cancelled_by_cleanup = False
+    completed = False
+    try:
+        async with registry_db.transaction() as session_a:
+            api_a = await ApiRepository.upsert(session_a, **_RACE_IDENTITY, **a_kwargs)
+            task_b = asyncio.create_task(upsert_b())
+            try:
+                async with asyncio.timeout(b_pid_timeout_s):
+                    pid = await b_pid
+                async with registry_db.session() as probe:
+                    for _ in range(poll_attempts):
+                        if task_b.done():
+                            await task_b
+                            pytest.fail("upsert B finished without blocking on transaction A")
+                        blocked = (
+                            await probe.execute(
+                                text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"),
+                                {"pid": pid},
+                            )
+                        ).scalar_one()
+                        if blocked:
+                            break
+                        await asyncio.sleep(poll_interval_s)
+                    else:
+                        pytest.fail("upsert B never blocked on transaction A")
+                assert not task_b.done()
+            except BaseException:
+                if not task_b.done():
+                    cancelled_by_cleanup = task_b.cancel()
+                raise
 
-    await asyncio.wait([task_b])
-    return api_a, task_b
+        async with asyncio.timeout(_RACE_TIMEOUT_S):
+            await asyncio.wait([task_b])
+        completed = True
+        return api_a, task_b
+    finally:
+        if task_b is not None and not completed:
+            active_exc = sys.exception()
+            if not cancelled_by_cleanup and not task_b.done():
+                cancelled_by_cleanup = task_b.cancel()
+            try:
+                async with asyncio.timeout(_RACE_TIMEOUT_S):
+                    await task_b
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if not cancelled_by_cleanup or (current is not None and current.cancelling() > 0):
+                    raise
+            except BaseException as task_exc:
+                if task_exc is not active_exc:
+                    raise
+            finally:
+                # Drop the frame reference so GC runs Task.__del__ once the caller unwinds.
+                task_b = None
 
 
 @_postgres_only
@@ -368,13 +462,14 @@ async def test_upsert_of_new_identity_waits_for_concurrent_insert(
     identity must resolve to that row once it commits, not fail on
     ``uq_apis_vendor_name_version``.
     """
-    api_a, task_b = await _race_upsert_behind_uncommitted_insert(
-        registry_db,
-        a_kwargs={"catalog_api_id": "race.example.com", "created_by": "usr_a"},
-        b_kwargs={"display_name": "From B", "created_by": "usr_b"},
-    )
+    async with _assert_clean_async_tasks():
+        api_a, task_b = await _race_upsert_behind_uncommitted_insert(
+            registry_db,
+            a_kwargs={"catalog_api_id": "race.example.com", "created_by": "usr_a"},
+            b_kwargs={"display_name": "From B", "created_by": "usr_b"},
+        )
+        api_b = task_b.result()
 
-    api_b = task_b.result()
     assert api_b.id == api_a.id
     # The re-read keeps the joined-eager relationship loaded (no async lazy load).
     assert api_b.current_revision is None
@@ -404,13 +499,15 @@ async def test_upsert_losing_new_identity_race_enforces_catalog_guard(
     first: the loser of the insert race raises CatalogApiIdConflictError, and
     the winner's catalog id is left untouched.
     """
-    _api_a, task_b = await _race_upsert_behind_uncommitted_insert(
-        registry_db,
-        a_kwargs={"catalog_api_id": "race.example.com/a", "created_by": "usr_a"},
-        b_kwargs={"catalog_api_id": "race.example.com/b", "created_by": "usr_b"},
-    )
+    async with _assert_clean_async_tasks():
+        _api_a, task_b = await _race_upsert_behind_uncommitted_insert(
+            registry_db,
+            a_kwargs={"catalog_api_id": "race.example.com/a", "created_by": "usr_a"},
+            b_kwargs={"catalog_api_id": "race.example.com/b", "created_by": "usr_b"},
+        )
+        exc = task_b.exception()
+        del task_b
 
-    exc = task_b.exception()
     assert isinstance(exc, CatalogApiIdConflictError)
     assert exc.stored_id == "race.example.com/a"
     async with registry_db.session() as session:
@@ -418,3 +515,141 @@ async def test_upsert_losing_new_identity_race_enforces_catalog_guard(
             await session.execute(select(Api).where(Api.vendor == _RACE_IDENTITY["vendor"]))
         ).scalar_one()
     assert stored.catalog_api_id == "race.example.com/a"
+
+
+@_postgres_only
+async def test_upsert_race_helper_propagates_failure_before_b_pid(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Pins #2025: a failure in task B before b_pid resolves surfaces promptly without hanging."""
+
+    async def fail_before_pid(_session: AsyncSession) -> None:
+        raise _PrePidFailureError("injected failure before set_result")
+
+    async with _assert_clean_async_tasks(), asyncio.timeout(1.0):
+        with pytest.raises(_PrePidFailureError, match="injected failure before set_result"):
+            await _race_upsert_behind_uncommitted_insert(
+                registry_db,
+                a_kwargs={"created_by": "usr_a"},
+                b_kwargs={"created_by": "usr_b"},
+                before_b_pid=fail_before_pid,
+                b_pid_timeout_s=5.0,
+            )
+
+    async with registry_db.session() as session:
+        rows = list(
+            (
+                await session.execute(select(Api).where(Api.vendor == _RACE_IDENTITY["vendor"]))
+            ).scalars()
+        )
+    assert rows == []
+
+
+@_postgres_only
+async def test_upsert_race_helper_times_out_and_cancels_stalled_b_pid(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Pins #2025: a stalled task B before b_pid resolves times out and cancels task B cleanly."""
+    stalled = asyncio.Event()
+    cancelled = False
+    finished = False
+
+    async def stall_before_pid(_session: AsyncSession) -> None:
+        nonlocal cancelled, finished
+        try:
+            await stalled.wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            finished = True
+
+    async with _assert_clean_async_tasks(), asyncio.timeout(1.0):
+        with pytest.raises(TimeoutError):
+            await _race_upsert_behind_uncommitted_insert(
+                registry_db,
+                a_kwargs={"created_by": "usr_a"},
+                b_kwargs={"created_by": "usr_b"},
+                before_b_pid=stall_before_pid,
+                b_pid_timeout_s=0.05,
+            )
+
+    assert cancelled is True
+    assert finished is True
+
+
+@_postgres_only
+async def test_upsert_race_helper_cancels_task_b_on_poll_failure(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """Pins #2025: poll failure cancels and awaits task B without leaking tasks or warnings."""
+    never_blocks_on_a = asyncio.Event()
+    cancelled = False
+    finished = False
+
+    async def idle_in_tx(_session: AsyncSession) -> Api:
+        nonlocal cancelled, finished
+        try:
+            await never_blocks_on_a.wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            finished = True
+        raise AssertionError("unreachable")
+
+    async with _assert_clean_async_tasks(), asyncio.timeout(1.0):
+        with pytest.raises(pytest.fail.Exception, match="upsert B never blocked on transaction A"):
+            await _race_upsert_behind_uncommitted_insert(
+                registry_db,
+                a_kwargs={"created_by": "usr_a"},
+                b_kwargs={"created_by": "usr_b"},
+                b_action=idle_in_tx,
+                poll_attempts=3,
+                poll_interval_s=0.005,
+            )
+
+    assert cancelled is True
+    assert finished is True
+    async with registry_db.session() as session:
+        rows = list(
+            (
+                await session.execute(select(Api).where(Api.vendor == _RACE_IDENTITY["vendor"]))
+            ).scalars()
+        )
+    assert rows == []
+
+
+@_postgres_only
+@pytest.mark.parametrize(
+    ("delay_before_error_s", "poll_attempts", "poll_interval_s"),
+    [
+        (0.0, 20, 0.01),
+        (0.005, 1, 0.05),
+    ],
+    ids=["detected_in_poll_loop", "preserved_during_poll_failure_cleanup"],
+)
+async def test_upsert_race_helper_preserves_unexpected_task_b_error(
+    registry_db: DatabaseSession,
+    clean_registry: None,
+    delay_before_error_s: float,
+    poll_attempts: int,
+    poll_interval_s: float,
+) -> None:
+    """Pins #2025: uncancelled errors from task B propagate rather than being swallowed."""
+
+    async def fail_after_pid(_session: AsyncSession) -> Api:
+        if delay_before_error_s > 0:
+            await asyncio.sleep(delay_before_error_s)
+        raise _UnexpectedUpsertError("unexpected failure in task B")
+
+    async with _assert_clean_async_tasks(), asyncio.timeout(1.0):
+        with pytest.raises(_UnexpectedUpsertError, match="unexpected failure in task B"):
+            await _race_upsert_behind_uncommitted_insert(
+                registry_db,
+                a_kwargs={"created_by": "usr_a"},
+                b_kwargs={"created_by": "usr_b"},
+                b_action=fail_after_pid,
+                poll_attempts=poll_attempts,
+                poll_interval_s=poll_interval_s,
+            )

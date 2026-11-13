@@ -78,11 +78,12 @@ _AGENT_AUTHORITY = text(
     " AS granted"
     " FROM agents a WHERE a.id = :actor_id"
 ).columns(status=String, owner_id=String, granted=Boolean)
-# Liveness matches ``read_user_status(...).accepts_credentials``: a deleted row
-# is refused even if it reads active.
+# Liveness matches ``read_user_status(...).accepts_credentials`` plus the
+# ``must_change_password`` execution fence (#1297): a deleted or rotation-gated
+# row cannot execute queued broker work.
 _USER_AUTHORITY = text(
-    "SELECT (u.active AND u.deleted_at IS NULL) AS active, u.session_generation,"
-    " g.permission FROM users u"
+    "SELECT (u.active AND u.deleted_at IS NULL AND NOT u.must_change_password) AS active,"
+    " u.session_generation, g.permission FROM users u"
     " LEFT JOIN user_permission_grants g ON g.user_id = u.id"
     " WHERE u.id = :actor_id"
 ).columns(active=Boolean, session_generation=Integer, permission=String)

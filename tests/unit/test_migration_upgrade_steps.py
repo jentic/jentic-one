@@ -113,7 +113,7 @@ def test_full_upgrade_runs_the_rule_set_curation_step_every_time(
     assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in capsys.readouterr().out
     assert run_mod.main([]) == 0
     assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in capsys.readouterr().out
-    assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
+    assert set(_ledger(sqlite_stack)) == set(steps_mod.step_names())
 
 
 # Control and admin heads of the 0.41.0 release (the registry head is unchanged).
@@ -272,8 +272,8 @@ def test_cross_owner_listing_failure_warns_and_keeps_the_marking(
     _migrate_to_041_heads()
     ids = _seed_041_data(sqlite_stack)
     assert run_mod.main(["--skip-upgrade-steps"]) == 0
-    # A real query failure: the binding table the listing reads is gone.
-    _execute(sqlite_stack / "admin.db", "ALTER TABLE agent_credential_bindings RENAME TO acb_moved")
+    # A real query failure: the agent table only the cross-owner listing reads is gone.
+    _execute(sqlite_stack / "admin.db", "ALTER TABLE agents RENAME TO agents_moved")
     capsys.readouterr()
 
     assert run_mod.main([]) == 0
@@ -284,7 +284,7 @@ def test_cross_owner_listing_failure_warns_and_keeps_the_marking(
     assert '"cross_owner_bindings": null' in captured.out
     (warning,) = _step_warnings(captured.err)
     assert warning.startswith("could not list cross-owner bindings: ")
-    assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
+    assert set(_ledger(sqlite_stack)) == set(steps_mod.step_names())
 
 
 def test_curation_rerun_marks_a_set_created_after_the_first_run(
@@ -308,7 +308,7 @@ def test_curation_rerun_marks_a_set_created_after_the_first_run(
     out = capsys.readouterr().out
     assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in out
     assert '"marked": 1' in out
-    assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
+    assert set(_ledger(sqlite_stack)) == set(steps_mod.step_names())
 
 
 def test_skipping_the_curation_step_leaves_it_pending(
@@ -319,7 +319,7 @@ def test_skipping_the_curation_step_leaves_it_pending(
 
     assert run_mod.main(["--skip-upgrade-step", steps_mod.RULE_SETS_MARK_CURATED]) == 0
     assert _curated(sqlite_stack)[ids["admin"]] is False
-    assert _ledger(sqlite_stack) == []
+    assert steps_mod.RULE_SETS_MARK_CURATED not in _ledger(sqlite_stack)
     capsys.readouterr()
     assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_NEEDS_MIGRATION
     assert f"STATUS upgrade-step:{steps_mod.RULE_SETS_MARK_CURATED} pending" in (

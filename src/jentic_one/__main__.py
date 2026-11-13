@@ -21,6 +21,9 @@ from jentic_one.admin.services.errors import (
     SetupAlreadyCompleteError,
     UserEmailNotFoundError,
 )
+from jentic_one.control.services.credential_identity_repair import (
+    CredentialIdentityRepairService,
+)
 from jentic_one.control.services.rule_base_path_rewrite import RuleBasePathRewriteService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
@@ -37,6 +40,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
+from jentic_one.shared.models.credential_identity_repair import IdentityRepairBackupError
 from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.app_factory import (
@@ -578,6 +582,77 @@ async def _export_toolkits(*, out_path: str | None, import_path: str | None) -> 
     return 0
 
 
+async def _repair_credential_identities(
+    *,
+    dry_run: bool,
+    report_path: str | None,
+    backup_out: str | None,
+    restore_path: str | None,
+) -> int:
+    """Analyse, repair, back up, or restore vendor-doubled (#1079) and path-derived (#1388) rows."""
+    config = load_config()
+    configure_logging(config)
+
+    async with Context(
+        config, allowed_dbs={"admin", "control", "registry"}, refresh_providers_on_boot=False
+    ) as ctx:
+        svc = CredentialIdentityRepairService(ctx)
+        if restore_path is not None:
+            try:
+                with open(restore_path, encoding="utf-8") as fh:
+                    document = json.load(fh)
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"error: cannot read {restore_path}: {exc}", file=sys.stderr)
+                return 2
+            try:
+                restored = await svc.restore_backup(document, dry_run=dry_run)
+            except IdentityRepairBackupError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            verb = "would restore" if dry_run else "restored"
+            print(
+                f"==> {verb} apis={restored.restored_apis}, "
+                f"credentials={restored.restored_credentials}, "
+                f"connect_sessions={restored.restored_connect_sessions} "
+                f"({restored.already_restored} already at pre-repair state).",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 0
+
+        if backup_out is not None and not dry_run:
+            # Capture and persist the pre-mutation backup before applying any DB writes.
+            preview = await svc.run(dry_run=True)
+            with open(backup_out, "w", encoding="utf-8") as fh:
+                json.dump(preview.backup, fh)
+                fh.write("\n")
+
+        run = await svc.run(dry_run=dry_run)
+        if backup_out is not None:
+            with open(backup_out, "w", encoding="utf-8") as fh:
+                json.dump(run.backup, fh)
+                fh.write("\n")
+
+    lines = [json.dumps(f.as_dict()) for f in run.findings]
+    if report_path is None:
+        for line in lines:
+            print(line, flush=True)
+    else:
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.writelines(line + "\n" for line in lines)
+
+    verb = "would repair" if dry_run else "repaired"
+    print(
+        f"==> scanned {run.apis_scanned} API(s) and {run.credentials_scanned} credential(s): "
+        f"{verb} apis={run.repaired_apis}, credentials={run.repaired_credentials}, "
+        f"connect_sessions={run.repaired_connect_sessions}; "
+        f"unresolvable={run.unresolvable_count}, conflicts={run.conflict_count}.",
+        file=sys.stderr,
+        flush=True,
+    )
+    return 1 if (run.failed_closed or run.unresolvable_count > 0) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Dispatch CLI subcommands. With no subcommand, run the server."""
     parser = argparse.ArgumentParser(prog="jentic_one", description="jentic-one service CLI.")
@@ -677,6 +752,40 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-import a previously exported file (idempotent by row id).",
     )
 
+    repair_identities = sub.add_parser(
+        "repair-credential-identities",
+        help=(
+            "Repair vendor-doubled (#1079) and path-derived (#1388) API and credential "
+            "identities across registry and control DBs (idempotent; fails closed on "
+            "collisions or ambiguous matches)."
+        ),
+    )
+    repair_identities.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Inventory and report planned repairs, conflicts, and unresolvable "
+            "rows without writing."
+        ),
+    )
+    repair_identities.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Write the JSONL findings report here instead of stdout.",
+    )
+    repair_backup_group = repair_identities.add_mutually_exclusive_group()
+    repair_backup_group.add_argument(
+        "--backup-out",
+        metavar="PATH",
+        help="Write a reversible JSON backup snapshot of affected rows to PATH.",
+    )
+    repair_backup_group.add_argument(
+        "--restore",
+        dest="restore_path",
+        metavar="PATH",
+        help="Roll back a prior repair run from its backup JSON file.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "create-admin":
@@ -718,6 +827,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "export-toolkits":
         return asyncio.run(_export_toolkits(out_path=args.out, import_path=args.import_path))
+
+    if args.command == "repair-credential-identities":
+        return asyncio.run(
+            _repair_credential_identities(
+                dry_run=args.dry_run,
+                report_path=args.report,
+                backup_out=args.backup_out,
+                restore_path=args.restore_path,
+            )
+        )
 
     _serve()
     return 0

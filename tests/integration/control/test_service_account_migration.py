@@ -22,13 +22,15 @@ import asyncio
 import datetime as dt
 import hashlib
 import json
+import uuid
 from collections.abc import AsyncGenerator, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 import structlog
 from alembic import command
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
@@ -48,12 +50,13 @@ from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
-from tests.harness.postgres import alembic_config_for
+from tests.harness.postgres import alembic_config_for, ensure_schema, superuser_config
 from tests.integration.service_account_schema import (
-    PreDropApiKeyResolver as _PreDropApiKeyResolver,
+    ADMIN_PRE_SA_DROP,
+    restore_pre_sa_drop_admin,
 )
 from tests.integration.service_account_schema import (
-    restore_pre_sa_drop_admin,
+    PreDropApiKeyResolver as _PreDropApiKeyResolver,
 )
 
 pytestmark = pytest.mark.integration
@@ -1899,3 +1902,418 @@ async def test_admin_level_grant_is_carried_over_and_reported_not_stripped(
         {"id": agent_id},
     )
     assert {r.scope for r in grants_after} == {"capabilities:execute", "org:admin"}
+
+
+# ------------------------------------ stamp-losing downgrade/upgrade (#1444)
+
+_PRE_SA_STAMP_REVISION = "c0d1e2f3a4b5-1"  # pragma: allowlist secret
+
+
+@pytest.fixture()
+async def disposable_migration_config(
+    integration_config: AppConfig, tmp_path: Path
+) -> AsyncGenerator[AppConfig, None]:
+    """Isolated admin + control schemas/files so shared schemas stay untouched."""
+    base_admin = integration_config.databases.admin
+    base_control = integration_config.databases.control
+    if base_admin.backend == "postgres":
+        token = uuid.uuid4().hex[:8]
+        admin_schema = f"sa_idem_adm_{token}"
+        control_schema = f"sa_idem_ctl_{token}"
+        admin_cfg = superuser_config(base_admin).model_copy(update={"schema_name": admin_schema})
+        control_cfg = superuser_config(base_control).model_copy(
+            update={"schema_name": control_schema}
+        )
+        await ensure_schema(admin_cfg)
+        await ensure_schema(control_cfg)
+    else:
+        admin_cfg = base_admin.model_copy(update={"path": str(tmp_path / "admin.db")})
+        control_cfg = base_control.model_copy(update={"path": str(tmp_path / "control.db")})
+
+    await asyncio.to_thread(
+        command.upgrade, alembic_config_for("admin", admin_cfg), ADMIN_PRE_SA_DROP
+    )
+    await asyncio.to_thread(command.upgrade, alembic_config_for("control", control_cfg), "head")
+
+    config = integration_config.model_copy(
+        update={
+            "databases": integration_config.databases.model_copy(
+                update={"admin": admin_cfg, "control": control_cfg}
+            )
+        }
+    )
+    try:
+        yield config
+    finally:
+        if base_admin.backend == "postgres":
+            su_app_cfg = integration_config.model_copy(
+                update={
+                    "databases": integration_config.databases.model_copy(
+                        update={"admin": superuser_config(base_admin)}
+                    )
+                }
+            )
+            async with (
+                Context(
+                    su_app_cfg,
+                    allowed_dbs={"admin"},
+                    refresh_providers_on_boot=False,
+                ) as su_ctx,
+                su_ctx.admin_db.transaction() as session,
+            ):
+                await session.execute(
+                    text(f'DROP SCHEMA IF EXISTS "{admin_cfg.schema_name}" CASCADE')
+                )
+                await session.execute(
+                    text(f'DROP SCHEMA IF EXISTS "{control_cfg.schema_name}" CASCADE')
+                )
+
+
+async def _sa_columns(admin_db: DatabaseSession) -> set[str]:
+    async with admin_db.session() as session:
+        conn = await session.connection()
+        return {
+            str(col["name"])
+            for col in await conn.run_sync(lambda c: inspect(c).get_columns("service_accounts"))
+        }
+
+
+async def test_keyless_active_sa_downgrade_upgrade_reuses_original_successor(
+    disposable_migration_config: AppConfig,
+) -> None:
+    """Pins #1444: an active key-less service account whose migration stamp is
+    dropped by downgrading past ``c0d1e2f3a4b5`` and re-upgrading must recover
+    its original successor agent rather than minting a second successor or
+    duplicating grants, bindings, audit rows, or pre-copied inline rules."""
+    cred_id = "cred_t8m_1444_rules"
+    admin_alembic = alembic_config_for("admin", disposable_migration_config.databases.admin)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email, first_name, last_name)"
+                    " VALUES (:id, 't8m-1444@test.local', 'Tia', 'Owner')"
+                ),
+                {"id": _OWNER},
+            )
+            await session.commit()
+        async with ctx.control_db.session() as session:
+            session.add(
+                Credential(
+                    id=cred_id,
+                    type=StoredCredentialType.API_KEY,
+                    name="t8m 1444 inline-rule credential",
+                    api_vendor="stripe",
+                    api_name="payments",
+                    api_version="v1",
+                )
+            )
+            await session.commit()
+
+        active_keyless_sa = await _seed_sa(
+            ctx.admin_db,
+            suffix="1444_active",
+            status="active",
+            scopes=("capabilities:execute", "toolkit:read"),
+            api_key_plaintext=None,
+            client_secret_hash="cs-digest-1444",  # pragma: allowlist secret
+            with_tokens=True,
+            credential_ids=(cred_id,),
+        )
+        pending_keyless_sa = await _seed_sa(
+            ctx.admin_db,
+            suffix="1444_pending",
+            status="pending",
+            scopes=("toolkit:read",),
+            api_key_plaintext=None,
+        )
+        await _seed_inline_rules(ctx.control_db, active_keyless_sa, cred_id)
+
+        first = {o.service_account_id: o for o in await ServiceAccountMigrationService(ctx).run()}
+        assert first[active_keyless_sa].outcome == "migrated"
+        original_successor_id = first[active_keyless_sa].successor_agent_id
+        assert original_successor_id is not None and original_successor_id.startswith("agnt_")
+        assert first[active_keyless_sa].stored_scope_count == 2
+        assert first[active_keyless_sa].credential_binding_count == 1
+        assert first[active_keyless_sa].permission_rule_count == 2
+        assert first[pending_keyless_sa].outcome == "skipped-non-active"
+        assert first[pending_keyless_sa].successor_agent_id is None
+
+        # Narrow one inline rule on the successor so a rerun that re-copies
+        # rules onto the existing successor (or pre-copies onto a new agent id)
+        # is immediately visible.
+        async with ctx.control_db.session() as session:
+            await session.execute(
+                text("DELETE FROM agent_permission_rules WHERE agent_id = :id AND sequence = 1"),
+                {"id": original_successor_id},
+            )
+            await session.commit()
+
+    # Real stamp-losing downgrade past c0d1e2f3a4b5, then upgrade back.
+    await asyncio.to_thread(command.downgrade, admin_alembic, _PRE_SA_STAMP_REVISION)
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin"},
+        refresh_providers_on_boot=False,
+    ) as downgraded_ctx:
+        cols_down = await _sa_columns(downgraded_ctx.admin_db)
+        assert "migrated_to_actor_id" not in cols_down
+        assert "migrated_at" not in cols_down
+
+    await asyncio.to_thread(command.upgrade, admin_alembic, ADMIN_PRE_SA_DROP)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        assert await _stamp_of(ctx.admin_db, active_keyless_sa) == (None, None)
+        assert await _stamp_of(ctx.admin_db, pending_keyless_sa) == (None, None)
+
+        svc = ServiceAccountMigrationService(ctx)
+        second = {o.service_account_id: o for o in await svc.run()}
+
+        assert second[active_keyless_sa].outcome == "already_migrated"
+        assert second[active_keyless_sa].successor_agent_id == original_successor_id
+        assert second[active_keyless_sa].stored_scope_count == 0
+        assert second[active_keyless_sa].credential_binding_count == 0
+        assert second[active_keyless_sa].permission_rule_count == 0
+        assert second[active_keyless_sa].had_client_secret is True
+        assert second[pending_keyless_sa].outcome == "skipped-non-active"
+        assert second[pending_keyless_sa].successor_agent_id is None
+
+        stamp, migrated_at = await _stamp_of(ctx.admin_db, active_keyless_sa)
+        assert stamp == original_successor_id
+        assert migrated_at is not None
+
+        successors = await _rows(
+            ctx.admin_db,
+            "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'",
+            {},
+        )
+        assert [r.id for r in successors] == [original_successor_id]
+
+        grants = await _rows(
+            ctx.admin_db,
+            "SELECT scope FROM actor_scope_grants"
+            " WHERE actor_id = :id AND actor_type = 'agent' ORDER BY scope",
+            {"id": original_successor_id},
+        )
+        assert [r.scope for r in grants] == ["capabilities:execute", "toolkit:read"]
+
+        bindings = await _rows(
+            ctx.admin_db,
+            "SELECT credential_id FROM agent_credential_bindings WHERE agent_id = :id",
+            {"id": original_successor_id},
+        )
+        assert [r.credential_id for r in bindings] == [cred_id]
+
+        register_audits = await _rows(
+            ctx.admin_db,
+            "SELECT target_id FROM audit_entries"
+            " WHERE actor_id = 'migrate-service-accounts' AND action = 'register'",
+            {},
+        )
+        assert [r.target_id for r in register_audits] == [original_successor_id]
+
+        async with ctx.control_db.session() as session:
+            rule_holders = (
+                await session.execute(
+                    text(
+                        "SELECT agent_id, count(*) AS n FROM agent_permission_rules"
+                        " WHERE credential_id = :c GROUP BY agent_id"
+                    ),
+                    {"c": cred_id},
+                )
+            ).all()
+        assert {str(r.agent_id): int(r.n) for r in rule_holders} == {
+            active_keyless_sa: 2,
+            original_successor_id: 1,
+        }
+
+        retired = await svc.retire()
+        assert (retired.action, retired.migrated, retired.already_migrated, retired.swept) == (
+            "retired",
+            0,
+            2,
+            2,
+        )
+        assert retired.successors == {
+            active_keyless_sa: original_successor_id,
+            pending_keyless_sa: None,
+        }
+        assert len(await _inline_rules(ctx.control_db, original_successor_id)) == 1
+        assert await _inline_rules(ctx.control_db, active_keyless_sa) == []
+
+
+@pytest.mark.parametrize("tamper", ["ren", "noaud"], ids=["renamed", "no-audit"])
+async def test_keyless_sa_downgrade_upgrade_recovers_provenance_from_either_durable_source(
+    disposable_migration_config: AppConfig, tamper: str
+) -> None:
+    """Pins #1444: recovery succeeds whether the successor agent was renamed by
+    an operator (audit provenance survives) or the audit row is absent (the
+    system-registered successor agent row survives)."""
+    admin_alembic = alembic_config_for("admin", disposable_migration_config.databases.admin)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email, first_name, last_name)"
+                    " VALUES (:id, 't8m-1444-alt@test.local', 'Tia', 'Owner')"
+                ),
+                {"id": _OWNER},
+            )
+            await session.commit()
+
+        sa_id = await _seed_sa(
+            ctx.admin_db,
+            suffix=f"44_{tamper}",
+            status="active",
+            scopes=("toolkit:read",),
+            api_key_plaintext=None,
+        )
+        first = {o.service_account_id: o for o in await ServiceAccountMigrationService(ctx).run()}
+        original_id = first[sa_id].successor_agent_id
+        assert original_id is not None
+
+        async with ctx.admin_db.session() as session:
+            if tamper == "ren":
+                await session.execute(
+                    text("UPDATE agents SET name = 'operator-renamed-agent' WHERE id = :id"),
+                    {"id": original_id},
+                )
+            else:
+                await session.execute(
+                    text("DELETE FROM audit_entries WHERE target_id = :id"),
+                    {"id": original_id},
+                )
+            await session.commit()
+
+    await asyncio.to_thread(command.downgrade, admin_alembic, _PRE_SA_STAMP_REVISION)
+    await asyncio.to_thread(command.upgrade, admin_alembic, ADMIN_PRE_SA_DROP)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        assert await _stamp_of(ctx.admin_db, sa_id) == (None, None)
+        second = {o.service_account_id: o for o in await ServiceAccountMigrationService(ctx).run()}
+        assert second[sa_id].outcome == "already_migrated"
+        assert second[sa_id].successor_agent_id == original_id
+
+        successors = await _rows(
+            ctx.admin_db,
+            "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'",
+            {},
+        )
+        assert [r.id for r in successors] == [original_id]
+        stamp, _ = await _stamp_of(ctx.admin_db, sa_id)
+        assert stamp == original_id
+
+
+async def test_keyless_sa_downgrade_upgrade_replaces_deleted_successor_without_duplicates(
+    disposable_migration_config: AppConfig,
+) -> None:
+    """A deleted successor's audit row does not recover a missing agent or its stamp."""
+    admin_alembic = alembic_config_for("admin", disposable_migration_config.databases.admin)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email, first_name, last_name)"
+                    " VALUES (:id, 't8m-1444-deleted@test.local', 'Tia', 'Owner')"
+                ),
+                {"id": _OWNER},
+            )
+            await session.commit()
+
+        sa_id = await _seed_sa(
+            ctx.admin_db,
+            suffix="1444_deleted",
+            status="active",
+            scopes=("toolkit:read",),
+            api_key_plaintext=None,
+        )
+        first = {o.service_account_id: o for o in await ServiceAccountMigrationService(ctx).run()}
+        deleted_id = first[sa_id].successor_agent_id
+        assert deleted_id is not None
+
+        async with ctx.admin_db.session() as session:
+            for table, column in (
+                ("agent_credential_bindings", "agent_id"),
+                ("actor_scope_grants", "actor_id"),
+                ("agent_credentials", "agent_id"),
+            ):
+                await session.execute(
+                    text(f"DELETE FROM {table} WHERE {column} = :id"), {"id": deleted_id}
+                )
+            await session.execute(text("DELETE FROM agents WHERE id = :id"), {"id": deleted_id})
+            await session.commit()
+
+    await asyncio.to_thread(command.downgrade, admin_alembic, _PRE_SA_STAMP_REVISION)
+    await asyncio.to_thread(command.upgrade, admin_alembic, ADMIN_PRE_SA_DROP)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        assert await _stamp_of(ctx.admin_db, sa_id) == (None, None)
+        stale_audits = await _rows(
+            ctx.admin_db,
+            "SELECT target_id FROM audit_entries"
+            " WHERE actor_id = 'migrate-service-accounts' AND action = 'register'"
+            " AND target_id = :id",
+            {"id": deleted_id},
+        )
+        assert len(stale_audits) == 1
+
+        svc = ServiceAccountMigrationService(ctx)
+        second = {o.service_account_id: o for o in await svc.run()}
+        assert second[sa_id].outcome == "migrated"
+        replacement_id = second[sa_id].successor_agent_id
+        assert replacement_id is not None and replacement_id != deleted_id
+
+        third = {o.service_account_id: o for o in await svc.run()}
+        assert third[sa_id].outcome == "already_migrated"
+        assert third[sa_id].successor_agent_id == replacement_id
+
+        stamp, migrated_at = await _stamp_of(ctx.admin_db, sa_id)
+        assert stamp == replacement_id
+        assert migrated_at is not None
+        successors = await _rows(
+            ctx.admin_db,
+            "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'",
+            {},
+        )
+        assert [r.id for r in successors] == [replacement_id]
+        grants = await _rows(
+            ctx.admin_db,
+            "SELECT scope FROM actor_scope_grants WHERE actor_id = :id",
+            {"id": replacement_id},
+        )
+        assert [r.scope for r in grants] == ["toolkit:read"]
+        replacement_audits = await _rows(
+            ctx.admin_db,
+            "SELECT target_id FROM audit_entries"
+            " WHERE actor_id = 'migrate-service-accounts' AND action = 'register'"
+            " AND target_id = :id",
+            {"id": replacement_id},
+        )
+        assert len(replacement_audits) == 1

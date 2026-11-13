@@ -186,6 +186,7 @@ async def test_concurrent_login_burst_caps_concurrency_and_returns_503_with_retr
 
     ctx = MagicMock()
     ctx.config.admin.auth = auth_cfg
+    ctx.config.auth = AuthConfig()
     mock_read_session = AsyncMock()
     ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_read_session)
     ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -261,6 +262,8 @@ async def test_concurrent_login_burst_caps_concurrency_and_returns_503_with_retr
     app.include_router(admin_auth_router.router)
     for exc_class, handler in get_admin_exception_handlers():
         app.add_exception_handler(exc_class, handler)
+    app.state.ctx = ctx
+    app.state.admin_state_backend = MemoryStateBackend()
     app.dependency_overrides[get_auth_service] = lambda: AuthService(ctx)
 
     async with httpx.AsyncClient(

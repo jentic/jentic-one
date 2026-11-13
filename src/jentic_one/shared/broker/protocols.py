@@ -212,6 +212,9 @@ class CredentialDerivation:
       credential covering the API. Computed only for an empty
       ``credentials``; the recovery is the operator's (resume the binding),
       never a new connect.
+    - ``binding_pending`` — an active binding covers the API through a credential
+      whose connect flow is still pending. Recovery completes that existing flow;
+      the credential's identity is not a mismatch.
     """
 
     credentials: tuple[BoundCredential, ...]
@@ -219,6 +222,7 @@ class CredentialDerivation:
     api_served: bool
     identity_mismatch: IdentityMismatch | None
     binding_suspended: bool = False
+    binding_pending: bool = False
 
 
 @runtime_checkable
@@ -279,6 +283,8 @@ class AgentRuleEvaluatorProtocol(Protocol):
         method: str,
         path: str,
         operation_id: str | None,
+        registry_operation_id: str | None = None,
+        ambiguous_operation_ids: frozenset[str] = frozenset(),
         upstream_path: str | None = None,
     ) -> RuleEvaluation: ...
 

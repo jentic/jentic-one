@@ -31,7 +31,7 @@ export type PermissionRuleReadSchema = {
      */
     methods?: (Array<string> | null);
     /**
-     * OpenAPI operation IDs the rule matches; null matches all.
+     * OpenAPI operationIds the rule matches by exact equality (existing `op_…` registry operation IDs also match their revision); null matches all.
      */
     operations?: (Array<string> | null);
     /**

@@ -50,12 +50,13 @@ from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.auth.services.schemas.agents import AgentCreatePayload
 from jentic_one.auth.services.token_service import (
     TokenService,
+    resolve_client_gate,
     resolve_effective_scopes,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
-from jentic_one.shared.auth.permission_catalog import OIDC_PASSTHROUGH_SCOPES
+from jentic_one.shared.auth.permission_catalog import USER_OAUTH_PASSTHROUGH_SCOPES
 from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -130,16 +131,16 @@ def candidate_agent_scopes(
 ) -> list[str]:
     """The scopes an agent-bound grant could carry: requested ∩ client allowlist.
 
-    OIDC passthrough scopes (``openid`` and friends) are stripped first:
-    agent-bound grants carry no OIDC identity, so they must never enter the
-    granted set. Order follows the request.
+    User-channel passthrough scopes (``openid``, ``offline_access``, and friends)
+    are stripped first: agent-bound grants carry platform permissions only, so
+    passthrough scopes must never enter the granted set. Order follows the request.
 
     This is the half of the grant-scope rule that does not depend on which
     agent the user picks, so the consent page shows exactly this list per
     agent option and :func:`effective_agent_scopes` starts from it — one
     function, so the page can never advertise a scope the grant would drop.
     """
-    candidates = [s for s in requested if s not in OIDC_PASSTHROUGH_SCOPES]
+    candidates = [s for s in requested if s not in USER_OAUTH_PASSTHROUGH_SCOPES]
     if allowlist is None:
         return candidates
     return [s for s in candidates if s in allowlist]
@@ -723,6 +724,13 @@ class AuthorizeService:
         ttl = self._auth_config.auth_code_ttl_seconds
 
         async with self._ctx.admin_db.transaction() as session:
+            # Password reset takes this lock before consuming outstanding codes.
+            user = await UserRepository.get_by_id_for_update(session, user_id)
+            if user is None or not user.active or user.deleted_at is not None:
+                raise InvalidGrantError("user is not active")
+            if user.must_change_password:
+                raise InvalidGrantError("user password rotation required")
+
             auth_code = await AuthorizationCodeRepository.create(
                 session,
                 code_hash=code_hash,
@@ -831,14 +839,14 @@ class AuthorizeService:
 
         Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
         the effective set the minted access token will actually enforce,
-        reported per RFC 6749 §5.1: for grant-bearing (agent-channel) codes it
-        is recomputed at exchange time the way the live resolvers enforce it
-        (agent live grants ∩ client ceiling ∩ consent-grant scopes, via
-        :func:`resolve_effective_scopes`); for plain codes it is the
-        authorize-time snapshot. Grant-bearing codes mint actor=AGENT tokens
-        bound to the consent grant and return ``id_token=None`` (D11 — no OIDC
-        identity on the agent channel); plain codes keep the act-as-user path
-        with an id_token.
+        reported per RFC 6749 §5.1. Grant-bearing (agent-channel) codes use
+        agent live grants ∩ client ceiling ∩ consent-grant scopes; plain USER
+        codes intersect the stored request with live USER grants and the client
+        ceiling. Both resolve through :func:`resolve_effective_scopes` at
+        exchange time. Grant-bearing codes mint actor=AGENT tokens bound to the
+        consent grant and return ``id_token=None`` (D11 — no OIDC identity on
+        the agent channel); plain codes keep the act-as-user path with an
+        id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
@@ -846,6 +854,9 @@ class AuthorizeService:
         grant_agent_id: str | None = None
         grant_scopes: list[str] = []
         grant_effective_scopes: list[str] = []
+        user_effective_scopes: list[str] = []
+        user_active = True
+        user_client_active = True
 
         async with self._ctx.admin_db.transaction() as session:
             auth_code = await AuthorizationCodeRepository.get_by_hash(
@@ -930,8 +941,31 @@ class AuthorizeService:
                 )
 
             user = await UserRepository.get_by_id(session, auth_code.user_id)
+            user_fenced = user is None or user.must_change_password
 
-            if user is not None:
+            if auth_code.grant_id is None:
+                user_active = (
+                    user is not None
+                    and user.active
+                    and user.deleted_at is None
+                    and not user.must_change_password
+                )
+                user_client_active, user_client_ceiling = await resolve_client_gate(
+                    session, oauth_client_id
+                )
+                if user is not None and user_active and user_client_active:
+                    code_scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
+                    user_effective_scopes = await resolve_effective_scopes(
+                        session,
+                        actor_id=user.id,
+                        actor_type=ActorType.USER,
+                        snapshot_scopes=code_scopes,
+                        is_ephemeral=False,
+                        client_ceiling=user_client_ceiling,
+                        grant_ceiling=None,
+                    )
+
+            if user is not None and not user_fenced and user_active and user_client_active:
                 await record_audit(
                     session,
                     action=AuditAction.LOGIN,
@@ -945,6 +979,13 @@ class AuthorizeService:
 
         if user is None:
             raise InvalidGrantError("user not found")
+        if user.must_change_password:
+            raise InvalidGrantError("user password rotation required")
+        if auth_code.grant_id is None:
+            if not user_active:
+                raise InvalidGrantError("user is not active")
+            if not user_client_active:
+                raise InvalidGrantError("issuing OAuth client is not active")
 
         if grant_id is not None and grant_agent_id is not None:
             # Actor = the grant's AGENT, scopes = the consent-time grant set
@@ -967,9 +1008,11 @@ class AuthorizeService:
             )
             return access_token, refresh_token, None, grant_effective_scopes
 
-        scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
-            user.id, ActorType.USER, scopes, oauth_client_id=oauth_client_id
+            user.id,
+            ActorType.USER,
+            user_effective_scopes,
+            oauth_client_id=oauth_client_id,
         )
 
         id_token = issue_id_token(
@@ -981,14 +1024,10 @@ class AuthorizeService:
             nonce=auth_code.nonce,
         )
 
-        # Reported (§5.1) as granted at authorize time, deliberately: the user
-        # channel's set may include OIDC passthrough scopes (openid/email/…)
-        # that are consumed by the id_token and never enforced as platform
-        # permissions, and enforcement additionally intersects the *live*
-        # client ceiling at resolve time. Standard OIDC posture — the scope
-        # member tells the client what its authorization covers (including
-        # the identity scopes), not the platform-permission subset.
-        return access_token, refresh_token, id_token, scopes
+        # Reported (RFC 6749 §5.1) from the same live intersection the resolvers
+        # enforce: user live permission grants (implication-expanded), capped by
+        # any registered client ceiling, with OIDC/offline passthrough preserved.
+        return access_token, refresh_token, id_token, user_effective_scopes
 
     async def _resolve_or_create_user(self, claims: IdpClaims) -> str:
         """Resolve external identity to existing user or create a new one.

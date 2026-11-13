@@ -362,6 +362,7 @@ class ExecutionHandler:
                     api_name=api_name or "",
                     api_version=api_version or "",
                     operation_id=operation.id if operation else None,
+                    spec_operation_id=operation.operation_id if operation else None,
                     relative_path=operation.relative_path if operation else None,
                     operation_path=operation.path if operation else None,
                     trace_id=trace_id,

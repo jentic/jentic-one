@@ -168,22 +168,27 @@ source lines are replaced before export. To see the full message, use the struct
 correlate with traces by `trace_id`.
 
 A few instruments are worth alerting on by name:
-`broker.streaming_execution.persist_failures` (a streaming execution's record
+`broker.streaming_execution.persist_failures` (an off-request execution record
 was not written because of a database failure, a timeout or a shutdown cut-off —
-the only signal that happened; the `reason` attribute separates `write_error`
-from `backlog_timeout`, no slot within
-`broker.streaming_persist_acquire_timeout_s`, and `cancelled`, a timeout or
-shutdown drain; the matching log lines are `streaming_execution_persist_failed`
-and `streaming_execution_persist_abandoned`, whose `stage="writing"` means the
-record may still have landed),
-`broker.streaming_execution.persist_pending` (streaming persists waiting for,
-or holding, one of the `broker.streaming_persist_max_concurrency` slots — a
-steadily rising `state="waiting"` series means admin writes can't keep up;
+the only signal that happened; `kind="streaming"` and
+`kind="unmapped_failure"` separate streamed outcomes from buffered generic
+failures, while `reason` separates `write_error` from `backlog_timeout`, no
+slot within `broker.streaming_persist_acquire_timeout_s`, and `cancelled`, a
+timeout or shutdown drain; the matching log lines are
+`streaming_execution_persist_failed` / `streaming_execution_persist_abandoned`
+or `unmapped_failure_persist_failed` / `unmapped_failure_persist_abandoned`,
+whose `stage="writing"` means the record may still have landed),
+`broker.streaming_execution.persist_pending` (persists of either `kind` waiting
+for, or holding, one of the `broker.streaming_persist_max_concurrency` slots —
+a steadily rising `state="waiting"` series means admin writes can't keep up;
 these persists run after the response is complete or the client has
 disconnected, and are not counted in `broker.admission.in_flight`),
-`app.background_tasks` with `outcome` `timed_out`, `cancelled` or `rejected`
-(work handed off after a response — today the streaming execution record —
-that hit its budget or was cut off by a shutdown drain),
+`app.background_tasks` with `outcome` `failed`, `timed_out`, `cancelled` or
+`rejected` (work handed off after a response — streaming execution records and
+buffered generic-failure records — that failed its write or acquire wait, hit
+its budget, or was cut off by a shutdown drain; in particular, an unmapped
+failure whose slot wait times out has `kind="unmapped_failure_persist"` and
+`outcome="failed"`),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
