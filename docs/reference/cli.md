@@ -614,17 +614,18 @@ jentic migrate [flags]
 
 ```text
 migrate copies each legacy profile into an Environment + Identity +
-Context under ~/.config/jentic, and copies key/token material into the XDG
-layout. It is idempotent and non-destructive (the legacy tree survives for
-downgrade); --purge-legacy removes the old tree afterwards. Cached refresh
-tokens are intentionally dropped.
+Context under ~/.config/jentic, and copies key/token material (including
+cached access and refresh tokens) into the XDG layout. It is idempotent and
+non-destructive by default so the legacy tree remains available for recovery
+or downgrade. Verify that a migrated context authenticates (for example,
+`jentic whoami`) before passing --purge-legacy to delete the legacy tree.
 ```
 
 **Flags**
 
 | Flag | Shorthand | Type | Default | Description |
 |---|---|---|---|---|
-| `--purge-legacy` |  | `bool` | `false` | Delete the legacy ~/.jentic profile tree after a successful migration |
+| `--purge-legacy` |  | `bool` | `false` | Delete the legacy ~/.jentic profile tree (run only after verifying migrated authentication) |
 | `--yes` | `-y` | `bool` | `false` | Proceed without interactive confirmation |
 
 Also accepts the [jentic global flags](#jentic-global-flags).

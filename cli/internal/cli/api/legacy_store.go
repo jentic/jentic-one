@@ -51,8 +51,8 @@ type legacyMeta struct {
 
 func (m *legacyMeta) isAPIKey() bool { return m != nil && m.AuthMode == legacyAuthModeAPIKey }
 
-// legacyTokens mirrors the V1 tokens.json shape. The refresh token is read but
-// deliberately never migrated (BC-6).
+// legacyTokens mirrors the V1 tokens.json shape carried into XDG token state by
+// `jentic migrate` (#1384).
 type legacyTokens struct {
 	AccessToken     string    `json:"access_token"`
 	RefreshToken    string    `json:"refresh_token"`

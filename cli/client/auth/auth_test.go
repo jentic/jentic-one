@@ -147,7 +147,11 @@ func TestReadTokens_MissingAndRoundTrip(t *testing.T) {
 		t.Error("ReadTokens on missing file should error (treated as no token)")
 	}
 
-	want := &TokenSet{AccessToken: "tok-1", ExpiresAt: time.Now().Add(time.Hour).Round(time.Second)}
+	want := &TokenSet{
+		AccessToken:  "at-test-synthetic-1",
+		RefreshToken: "rt-test-synthetic-1",
+		ExpiresAt:    time.Now().Add(time.Hour).Round(time.Second),
+	}
 	if err := SaveTokens(ref, want); err != nil {
 		t.Fatalf("SaveTokens: %v", err)
 	}
@@ -155,9 +159,42 @@ func TestReadTokens_MissingAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadTokens: %v", err)
 	}
-	if got.AccessToken != want.AccessToken || !got.ExpiresAt.Equal(want.ExpiresAt) {
+	if got.AccessToken != want.AccessToken || got.RefreshToken != want.RefreshToken || !got.ExpiresAt.Equal(want.ExpiresAt) {
 		t.Errorf("round-trip mismatch: got %+v want %+v", got, want)
 	}
+
+	// Whitespace-only refresh tokens normalize to empty and omit the JSON key.
+	if err := SaveTokens(ref, &TokenSet{
+		AccessToken:  "at-test-synthetic-2",
+		RefreshToken: "  \x09\n ",
+		ExpiresAt:    want.ExpiresAt,
+	}); err != nil {
+		t.Fatalf("SaveTokens whitespace refresh: %v", err)
+	}
+	tokPath, err := getTokenPath(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(tokPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytesContainsRefreshKey(raw) {
+		t.Errorf("whitespace refresh token should be omitted on disk: %s", raw)
+	}
+}
+
+func bytesContainsRefreshKey(b []byte) bool {
+	return len(b) > 0 && filepath.Base(string(b)) != "" && stringContains(string(b), `"refresh_token"`)
+}
+
+func stringContains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
 
 // TestRenewalDeadline_ClampsSkew guards against the exchange-storm failure (F4):

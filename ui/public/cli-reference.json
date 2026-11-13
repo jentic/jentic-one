@@ -756,7 +756,7 @@
           "path": "jentic migrate",
           "use": "migrate",
           "short": "Migrate legacy ~/.jentic profiles to the XDG context model",
-          "long": "migrate copies each legacy profile into an Environment + Identity +\nContext under ~/.config/jentic, and copies key/token material into the XDG\nlayout. It is idempotent and non-destructive (the legacy tree survives for\ndowngrade); --purge-legacy removes the old tree afterwards. Cached refresh\ntokens are intentionally dropped.",
+          "long": "migrate copies each legacy profile into an Environment + Identity +\nContext under ~/.config/jentic, and copies key/token material (including\ncached access and refresh tokens) into the XDG layout. It is idempotent and\nnon-destructive by default so the legacy tree remains available for recovery\nor downgrade. Verify that a migrated context authenticates (for example,\n`jentic whoami`) before passing --purge-legacy to delete the legacy tree.",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -773,7 +773,7 @@
               "name": "purge-legacy",
               "type": "bool",
               "default": "false",
-              "usage": "Delete the legacy ~/.jentic profile tree after a successful migration"
+              "usage": "Delete the legacy ~/.jentic profile tree (run only after verifying migrated authentication)"
             },
             {
               "name": "theme",

@@ -178,3 +178,99 @@ func TestExchangeClient_Resolution(t *testing.T) {
 		t.Error("the caller's client must not be mutated")
 	}
 }
+
+// TestBearerToken_RefreshesExpiredAccessTokenAndFallsBackToAssertion pins
+// #1384: an expired cached access token with a refresh_token rotates via the
+// refresh_token grant first, and falls back to a fresh RFC 7523 assertion
+// exchange if the refresh token is rejected with 400 invalid_grant.
+func TestBearerToken_RefreshesExpiredAccessTokenAndFallsBackToAssertion(t *testing.T) {
+	t.Run("rotates_via_refresh_grant", func(t *testing.T) {
+		withConfigDir(t)
+		ref := IdentityRef{Identity: "a-refresh", Environment: "e-refresh"}
+
+		var grants []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"at-test-rotated","refresh_token":"rt-test-rotated","expires_in":3600}`))
+			grants = append(grants, r.URL.Path)
+		}))
+		defer srv.Close()
+
+		if err := SaveTokens(ref, &TokenSet{
+			AccessToken:  "at-test-expired",
+			RefreshToken: "rt-test-synthetic-1",
+			ExpiresAt:    time.Now().Add(-time.Hour),
+			Origin:       NormalizeOrigin(srv.URL),
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		tok, err := BearerToken(Credentials{
+			BaseURL: srv.URL, IdentityName: ref.Identity, EnvironmentName: ref.Environment,
+		})
+		if err != nil {
+			t.Fatalf("BearerToken via refresh: %v", err)
+		}
+		if tok != "at-test-rotated" {
+			t.Errorf("BearerToken = %q, want at-test-rotated", tok)
+		}
+		if len(grants) != 1 || grants[0] != "/oauth/token" {
+			t.Errorf("token endpoint calls = %v, want [/oauth/token]", grants)
+		}
+		saved, err := ReadTokens(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved.RefreshToken != "rt-test-rotated" {
+			t.Errorf("saved RefreshToken = %q, want rt-test-rotated", saved.RefreshToken)
+		}
+	})
+
+	t.Run("falls_back_to_assertion_when_refresh_rejected", func(t *testing.T) {
+		withConfigDir(t)
+		registerTestIdentity(t, "a-fallback", "e-fallback", "client_fb")
+		ref := IdentityRef{Identity: "a-fallback", Environment: "e-fallback"}
+
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			n := calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			if n == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token expired"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_token":"at-test-asserted","refresh_token":"rt-test-asserted","expires_in":3600}`))
+		}))
+		defer srv.Close()
+
+		if err := SaveTokens(ref, &TokenSet{
+			AccessToken:  "at-test-expired",
+			RefreshToken: "rt-test-dead",
+			ExpiresAt:    time.Now().Add(-time.Hour),
+			Origin:       NormalizeOrigin(srv.URL),
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		tok, err := BearerToken(Credentials{
+			BaseURL: srv.URL, IdentityName: ref.Identity, EnvironmentName: ref.Environment,
+		})
+		if err != nil {
+			t.Fatalf("BearerToken fallback: %v", err)
+		}
+		if tok != "at-test-asserted" {
+			t.Errorf("BearerToken = %q, want at-test-asserted", tok)
+		}
+		if calls.Load() != 2 {
+			t.Errorf("token endpoint calls = %d, want 2 (refresh then assertion)", calls.Load())
+		}
+		saved, err := ReadTokens(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved.RefreshToken != "rt-test-asserted" {
+			t.Errorf("saved RefreshToken = %q, want rt-test-asserted", saved.RefreshToken)
+		}
+	})
+}

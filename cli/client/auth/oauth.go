@@ -276,17 +276,82 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 	}
 
 	var body struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-		// refresh_token intentionally ignored — see the TokenSet note.
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decoding token response: %w", err)
 	}
 	return &TokenSet{
-		AccessToken: body.AccessToken,
-		ExpiresAt:   renewalDeadline(time.Now(), body.ExpiresIn),
-		Origin:      NormalizeOrigin(creds.BaseURL),
+		AccessToken:  strings.TrimSpace(body.AccessToken),
+		RefreshToken: strings.TrimSpace(body.RefreshToken),
+		ExpiresAt:    renewalDeadline(time.Now(), body.ExpiresIn),
+		Origin:       NormalizeOrigin(creds.BaseURL),
+	}, nil
+}
+
+// refreshHTTPStatusError marks a non-200 HTTP response from a refresh-grant
+// attempt (such as 400 invalid_grant on an expired or revoked refresh token) so
+// BearerToken can fall back to a fresh RFC 7523 assertion exchange when the
+// identity holds a registered key, while transport/TLS/redirect failures fail
+// closed without issuing a second request to the same endpoint.
+type refreshHTTPStatusError struct {
+	err error
+}
+
+func (e *refreshHTTPStatusError) Error() string { return e.err.Error() }
+func (e *refreshHTTPStatusError) Unwrap() error { return e.err }
+
+// performRefreshExchange rotates an expired session via the OAuth 2.0
+// refresh_token grant on /oauth/token (#1384), enforcing the same TLS/loopback,
+// custom-CA, attribution, and redirect-refusal posture as performOAuthExchange.
+func performRefreshExchange(creds Credentials, refreshToken string) (*TokenSet, error) {
+	rt := strings.TrimSpace(refreshToken)
+	if rt == "" {
+		return nil, errors.New("refresh token is empty")
+	}
+	endpoint, err := tokenEndpoint(creds.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	reqBody, err := json.Marshal(map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": rt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding refresh request: %w", err)
+	}
+	resp, err := exchangeClient(creds).Post(endpoint, "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("token refresh request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			return nil, classifyTokenError(resp)
+		}
+		return nil, &refreshHTTPStatusError{err: classifyTokenError(resp)}
+	}
+
+	var body struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decoding token response: %w", err)
+	}
+	nextRefresh := strings.TrimSpace(body.RefreshToken)
+	if nextRefresh == "" {
+		nextRefresh = rt
+	}
+	return &TokenSet{
+		AccessToken:  strings.TrimSpace(body.AccessToken),
+		RefreshToken: nextRefresh,
+		ExpiresAt:    renewalDeadline(time.Now(), body.ExpiresIn),
+		Origin:       NormalizeOrigin(creds.BaseURL),
 	}, nil
 }
 
