@@ -5,10 +5,12 @@ this one holds the broker's ``_async_job_payload`` to the payload contract the
 worker reads.
 """
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
+import jwt
 import pytest
 from starlette.requests import Request
 
@@ -16,7 +18,12 @@ from jentic_one.broker.core.errors import AsyncCookieEncryptionUnavailableError
 from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.core.proxy_headers import is_replay_header, replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import _async_job_payload, _captured_cookie
+from jentic_one.broker.services.auth import JwtTokenValidator, JwtVerifier
+from jentic_one.broker.web.routers.execute import (
+    _async_job_payload,
+    _captured_cookie,
+    _extract_request_auth_lineage,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.models import ActorType
@@ -232,6 +239,44 @@ def test_payload_carries_auth_channel_lineage_when_present() -> None:
     assert payload["auth_method"] == "access_token"
     assert payload["oauth_client_id"] == "client_1"
     assert payload["oauth_grant_id"] == "ocg_1"
+    assert payload["auth_expires_at"] == expires_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_payload_preserves_real_broker_jwt_lineage_and_expiry() -> None:
+    expires_at = datetime.fromtimestamp(2_000_000_000, UTC)
+    secret = "broker-jwt-test-secret-with-32-bytes"  # pragma: allowlist secret
+    token = jwt.encode(
+        {
+            "sub": "agt_jwt",
+            "exp": int(expires_at.timestamp()),
+            "actor_type": ActorType.AGENT.value,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    identity = await JwtTokenValidator(verifier=JwtVerifier(secret=secret)).validate(token)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api.example.com/v1/things",
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
+        }
+    )
+
+    token_sha256, auth_method = _extract_request_auth_lineage(request, identity)
+    payload = _async_job_payload(
+        _ctx(),
+        execution_id="exec_jwt",
+        origin="api",
+        identity=identity,
+        auth_token_sha256=token_sha256,
+        auth_method=auth_method,
+    )
+
+    assert payload["auth_token_sha256"] == hashlib.sha256(token.encode()).hexdigest()
+    assert payload["auth_method"] == "jwt"
     assert payload["auth_expires_at"] == expires_at.isoformat()
 
 

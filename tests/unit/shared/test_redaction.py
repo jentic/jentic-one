@@ -72,6 +72,45 @@ def test_basic_value_pattern_redacted_in_free_text() -> None:
     assert "Basic" in out["detail"]
 
 
+@pytest.mark.parametrize(
+    ("raw", "secret", "expected"),
+    [
+        (
+            '{"access_token":"abc\'def","safe":"ok"}',
+            "abc'def",
+            '{"access_token":"***REDACTED***","safe":"ok"}',
+        ),
+        (
+            "{'access_token':'abc\"def','safe':'ok'}",
+            'abc"def',
+            "{'access_token':'***REDACTED***','safe':'ok'}",
+        ),
+        (
+            r'{"access_token":"abc\"def","safe":"ok"}',
+            r"abc\"def",
+            r'{"access_token":"***REDACTED***","safe":"ok"}',
+        ),
+        (
+            r"{'access_token':'abc\'def','safe':'ok'}",
+            r"abc\'def",
+            r"{'access_token':'***REDACTED***','safe':'ok'}",
+        ),
+        (
+            '{"access_token":"unterminated\'value',
+            "unterminated'value",
+            '{"access_token":"***REDACTED***',
+        ),
+    ],
+)
+def test_embedded_json_secret_redaction_respects_value_delimiter(
+    raw: str, secret: str, expected: str
+) -> None:
+    out = redact_value({"detail": raw})["detail"]
+
+    assert out == expected
+    assert secret not in out
+
+
 def test_non_sensitive_values_untouched() -> None:
     payload = {"count": 3, "ok": True, "host": "api.example.com", "ratio": 0.5}
     assert redact_value(payload) == payload

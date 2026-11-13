@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"github.com/jentic/jentic-one/cli/client/config"
 )
 
@@ -52,6 +53,74 @@ func apiKeyOriginPath(ref IdentityRef) (string, error) {
 	return path + ".origin", nil
 }
 
+// apiKeyPendingPath returns the transaction record for a two-file API-key update.
+func apiKeyPendingPath(path string) string {
+	return path + ".pending"
+}
+
+// lockAPIKey serializes readers and writers on a separate lock file so atomic
+// renames never replace the file on which the lock is held.
+func lockAPIKey(path string) (*flock.Flock, error) {
+	lock := flock.New(path + ".lock")
+	if err := lock.Lock(); err != nil {
+		return nil, fmt.Errorf("locking API key %s: %w", path, err)
+	}
+	return lock, nil
+}
+
+// commitAPIKeyRecord replaces the bare key before its origin binding. If the
+// process stops between those writes, the old origin rejects the new key rather
+// than allowing the old key to inherit the new origin.
+func commitAPIKeyRecord(path, key, origin string) error {
+	if err := writeFileAtomic(path, []byte(key)); err != nil {
+		return fmt.Errorf("writing API key %s: %w", path, err)
+	}
+	originPath := path + ".origin"
+	if origin != "" {
+		if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
+			return fmt.Errorf("writing API key origin %s: %w", originPath, err)
+		}
+		return nil
+	}
+	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale API key origin %s: %w", originPath, err)
+	}
+	return nil
+}
+
+// recoverPendingAPIKey rolls a complete pending record forward. The record is
+// durable before either public file changes, and remains until both commits finish.
+func recoverPendingAPIKey(path string) error {
+	pendingPath := apiKeyPendingPath(path)
+	data, err := os.ReadFile(pendingPath) //nolint:gosec // path is derived from the validated API-key path.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading pending API key update %s: %w", pendingPath, err)
+	}
+	var rec apiKeyRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return fmt.Errorf("decoding pending API key update %s: %w", pendingPath, err)
+	}
+	rec.APIKey = strings.TrimSpace(rec.APIKey)
+	if rec.APIKey == "" {
+		return fmt.Errorf("pending API key update %s has an empty credential", pendingPath)
+	}
+	rawOrigin := strings.TrimSpace(rec.Origin)
+	rec.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" && rec.Origin == "" {
+		return fmt.Errorf("invalid API key origin in pending update %s", pendingPath)
+	}
+	if err := commitAPIKeyRecord(path, rec.APIKey, rec.Origin); err != nil {
+		return fmt.Errorf("recovering pending API key update: %w", err)
+	}
+	if err := os.Remove(pendingPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clearing pending API key update %s: %w", pendingPath, err)
+	}
+	return nil
+}
+
 // SaveAPIKey persists a jak_* API key credential for ref (0600), recording the
 // configured origin of ref.Environment when available. It is the V2
 // successor to V1's per-profile `apikey` file: the credential is a first-class
@@ -89,26 +158,25 @@ func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 	if err != nil {
 		return err
 	}
-	originPath, err := apiKeyOriginPath(ref)
+	lock, err := lockAPIKey(path)
 	if err != nil {
 		return err
 	}
-	_, keyExistedErr := os.Stat(path)
-	keyExisted := keyExistedErr == nil
-	if origin != "" {
-		if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
-			return fmt.Errorf("writing API key origin %s: %w", originPath, err)
-		}
-	} else {
-		if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing stale API key origin %s: %w", originPath, err)
-		}
+	defer func() { _ = lock.Unlock() }()
+
+	pending, err := json.Marshal(apiKeyRecord{APIKey: key, Origin: origin})
+	if err != nil {
+		return fmt.Errorf("encoding pending API key update: %w", err)
 	}
-	if err := writeFileAtomic(path, []byte(key)); err != nil {
-		if !keyExisted && origin != "" {
-			_ = os.Remove(originPath)
-		}
-		return fmt.Errorf("writing API key %s: %w", path, err)
+	pendingPath := apiKeyPendingPath(path)
+	if err := writeFileAtomic(pendingPath, pending); err != nil {
+		return fmt.Errorf("writing pending API key update %s: %w", pendingPath, err)
+	}
+	if err := commitAPIKeyRecord(path, key, origin); err != nil {
+		return err
+	}
+	if err := os.Remove(pendingPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clearing pending API key update %s: %w", pendingPath, err)
 	}
 	return nil
 }
@@ -118,6 +186,14 @@ func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 func readAPIKeyRecord(ref IdentityRef) (*apiKeyRecord, error) {
 	path, err := apiKeyPath(ref)
 	if err != nil {
+		return nil, err
+	}
+	lock, err := lockAPIKey(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lock.Unlock() }()
+	if err := recoverPendingAPIKey(path); err != nil {
 		return nil, err
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // path is StateDir()/<validated-stem>.apikey, not user input.
@@ -192,6 +268,15 @@ func InvalidateAPIKey(ref IdentityRef) error {
 	if err != nil {
 		return err
 	}
+	lock, err := lockAPIKey(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Unlock() }()
+	pendingPath := apiKeyPendingPath(path)
+	if err := os.Remove(pendingPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing pending API key update %s: %w", pendingPath, err)
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing API key %s: %w", path, err)
 	}
@@ -225,13 +310,15 @@ func PurgeEnvironmentCredentials(envName string) error {
 	tokSuffix := "_" + envName + "_tokens.json"
 	akSuffix := "_" + envName + ".apikey"
 	akOriginSuffix := akSuffix + ".origin"
+	akPendingSuffix := akSuffix + ".pending"
 	var firstErr error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasSuffix(name, tokSuffix) && !strings.HasSuffix(name, akSuffix) && !strings.HasSuffix(name, akOriginSuffix) {
+		if !strings.HasSuffix(name, tokSuffix) && !strings.HasSuffix(name, akSuffix) &&
+			!strings.HasSuffix(name, akOriginSuffix) && !strings.HasSuffix(name, akPendingSuffix) {
 			continue
 		}
 		fullPath := filepath.Join(stateDir, name)

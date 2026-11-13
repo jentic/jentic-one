@@ -78,8 +78,9 @@ _SENSITIVE_FIELD_NAME_PATTERN: Final[str] = (
     r"|cookie|credential|private_key|session_key)|token|authorization|device_code|code)"
 )
 _JSON_SECRET_FIELD_PATTERN: Final[re.Pattern[str]] = re.compile(
-    rf"(?i)([\"']{_SENSITIVE_FIELD_NAME_PATTERN}[\"']\s*:\s*[\"'])"
-    r"(?:\\.|[^\"\\'])*([\"']|$)"
+    rf"(?i)(?P<prefix>[\"']{_SENSITIVE_FIELD_NAME_PATTERN}[\"']\s*:\s*)"
+    rf"(?P<value_quote>[\"'])"
+    rf"(?:\\.|(?!(?P=value_quote))[^\\])*(?P<closing>(?P=value_quote)|$)"
 )
 _FORM_SECRET_FIELD_PATTERN: Final[re.Pattern[str]] = re.compile(
     rf"(?i)(?<![A-Za-z0-9_.-])({_SENSITIVE_FIELD_NAME_PATTERN}=)([^\s&;\"'<>]+)"
@@ -105,7 +106,9 @@ def _redact_str(value: str) -> str:
     for pattern in _VALUE_PATTERNS:
         redacted = pattern.sub(rf"\1 {REDACTED}", redacted)
     redacted = _URL_USERINFO_PATTERN.sub(rf"\1{REDACTED}@", redacted)
-    redacted = _JSON_SECRET_FIELD_PATTERN.sub(rf"\g<1>{REDACTED}\g<2>", redacted)
+    redacted = _JSON_SECRET_FIELD_PATTERN.sub(
+        rf"\g<prefix>\g<value_quote>{REDACTED}\g<closing>", redacted
+    )
     redacted = _FORM_SECRET_FIELD_PATTERN.sub(rf"\g<1>{REDACTED}", redacted)
     return redacted
 
