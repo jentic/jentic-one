@@ -9,6 +9,9 @@ import structlog
 from jentic_one.admin.core.permissions import ORG_ADMIN
 from jentic_one.admin.core.schema.setup_sentinel import SETUP_SENTINEL_ID, SetupSentinel
 from jentic_one.admin.repos import (
+    AccessTokenRepository,
+    AuthorizationCodeRepository,
+    RefreshTokenRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
@@ -514,6 +517,7 @@ class AuthService:
                 origin=identity.origin.value,
             )
 
+        self._ctx.invalidate_broker_caches(user_id=user_id)
         logger.info("password_changed", user_id=user_id)
 
         # A password change is itself a fresh credential proof, so the absolute
@@ -575,10 +579,19 @@ class AuthService:
             )
             await UserSecretRepository.unlock(session, user.id)
             # A reset is the response to a lost or leaked credential: end every
-            # session issued under the old one.
+            # login session, USER OAuth token family, and unredeemed auth code
+            # issued under the old password (#1297). Agent-bound grants stay
+            # governed by their agent and owner-active status.
             await UserRepository.revoke_login_sessions(session, user.id)
             if not user.must_change_password:
                 await UserRepository.update(session, user.id, must_change_password=True)
+            swept_access = await AccessTokenRepository.revoke_for_actor(
+                session, user.id, actor_type=ActorType.USER.value
+            )
+            swept_refresh = await RefreshTokenRepository.revoke_for_actor(
+                session, user.id, actor_type=ActorType.USER.value
+            )
+            swept_codes = await AuthorizationCodeRepository.consume_for_user(session, user.id)
 
             await record_audit(
                 session,
@@ -591,7 +604,15 @@ class AuthService:
                 origin=None,
             )
 
-        logger.info("password_reset", user_id=user.id, email=email)
+        self._ctx.invalidate_broker_caches(user_id=user.id)
+        logger.info(
+            "password_reset",
+            user_id=user.id,
+            email=email,
+            swept_access_tokens=swept_access,
+            swept_refresh_tokens=swept_refresh,
+            swept_auth_codes=swept_codes,
+        )
         return user.id
 
     async def verify_token(self, token: str) -> Identity:

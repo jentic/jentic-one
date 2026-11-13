@@ -198,7 +198,14 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         # Delete is terminal: a deleted row is refused even if it reads active.
-        return user is not None and user.active and user.deleted_at is None
+        # Forced password rotation fences opaque USER OAuth tokens until the
+        # required password change clears must_change_password (#1297).
+        return (
+            user is not None
+            and user.active
+            and user.deleted_at is None
+            and not user.must_change_password
+        )
     return False
 
 

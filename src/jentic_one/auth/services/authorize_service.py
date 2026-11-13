@@ -727,6 +727,12 @@ class AuthorizeService:
         ttl = self._auth_config.auth_code_ttl_seconds
 
         async with self._ctx.admin_db.transaction() as session:
+            user = await UserRepository.get_by_id(session, user_id)
+            if user is None or not user.active or user.deleted_at is not None:
+                raise InvalidGrantError("user is not active")
+            if user.must_change_password:
+                raise InvalidGrantError("user password rotation required")
+
             stored_scopes = scopes
             if grant_id is None:
                 requested = list(dict.fromkeys(s for s in scopes.split() if s))
@@ -957,9 +963,15 @@ class AuthorizeService:
                 )
 
             user = await UserRepository.get_by_id(session, auth_code.user_id)
+            user_fenced = user is None or user.must_change_password
 
             if auth_code.grant_id is None:
-                user_active = user is not None and user.active and user.deleted_at is None
+                user_active = (
+                    user is not None
+                    and user.active
+                    and user.deleted_at is None
+                    and not user.must_change_password
+                )
                 user_client_active, user_client_ceiling = await resolve_client_gate(
                     session, oauth_client_id
                 )
@@ -975,7 +987,7 @@ class AuthorizeService:
                         grant_ceiling=None,
                     )
 
-            if user is not None and user_active and user_client_active:
+            if user is not None and not user_fenced and user_active and user_client_active:
                 await record_audit(
                     session,
                     action=AuditAction.LOGIN,
@@ -989,6 +1001,8 @@ class AuthorizeService:
 
         if user is None:
             raise InvalidGrantError("user not found")
+        if user.must_change_password:
+            raise InvalidGrantError("user password rotation required")
         if auth_code.grant_id is None:
             if not user_active:
                 raise InvalidGrantError("user is not active")
