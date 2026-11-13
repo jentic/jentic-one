@@ -1,11 +1,11 @@
 """Integration tests for MonitoringService's usage window resolution (#913).
 
-The volume chart / KPI aggregate must never trail the executions feed: an
-execution recorded "now" has to be counted by a usage query that omits
-``until``. The service used to floor the fallback bound DOWN to the minute
-(for cache-key stability), and every aggregate filters ``started_at < until``
-strictly — so current-minute executions were invisible to the aggregate for up
-to 60 s while ``GET /executions`` (no upper bound) already listed them.
+Pins the two window-bound contracts for ``MonitoringService.get_usage_stats``:
+- When ``until`` is omitted, the fallback bound rounds up to the next minute
+  boundary so strict ``started_at < until`` filtering includes executions in
+  the current partial minute while keeping cache keys stable within the minute.
+- When ``until`` is supplied explicitly, it acts as a strict upper bound
+  (``started_at < until``).
 """
 
 from __future__ import annotations
