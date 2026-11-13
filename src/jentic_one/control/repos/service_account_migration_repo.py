@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Collection, Iterable
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import bindparam, delete, func, inspect, select, text
@@ -44,9 +45,23 @@ from jentic_one.shared.db.ids import generate_ksuid
 # every migrated row is attributable to the run (theme-5 provenance shape).
 SYSTEM_ACTOR = "system:theme8-sa-migration"
 
+#: ``audit_entries.actor_id`` and ``reason`` written atomically when a
+#: successor agent is registered, surviving a stamp-dropping downgrade.
+AUDIT_ACTOR_ID = "migrate-service-accounts"
+MIGRATION_AUDIT_REASON = "theme8_sa_migration"
+
 #: Stamp value for skip-but-stamp rows (IMPL-DECISION 3): non-active SAs are
 #: stamped done without a successor. Unambiguous — real values start ``agnt_``.
 SKIPPED_STAMP = "skipped"
+
+
+@dataclass(frozen=True)
+class ExistingSuccessor:
+    """Durable provenance of a successor agent created by an earlier run."""
+
+    agent_id: str
+    migrated_at: datetime | None = None
+
 
 #: Scopes retired by theme 8 itself (Phase 2): stored SA grants carrying them
 #: get no successor twin — they are left behind for the sweep, never carried.
@@ -164,6 +179,40 @@ _STAMP = text(
     " WHERE id = :id AND migrated_to_actor_id IS NULL"
 )
 
+_SELECT_SUCCESSOR_AUDIT_PG = text(
+    "SELECT audit_entries.target_id, audit_entries.occurred_at, audit_entries.after"
+    " FROM audit_entries"
+    " JOIN agents ON agents.id = audit_entries.target_id"
+    " WHERE actor_id = :audit_actor_id"
+    " AND action = 'register'"
+    " AND target_type = 'agent'"
+    " AND reason = :reason"
+    " AND audit_entries.after ->> 'service_account_id' = :sid"
+    " ORDER BY audit_entries.occurred_at ASC, audit_entries.id ASC"
+    " LIMIT 1"
+)
+
+_SELECT_SUCCESSOR_AUDIT_SQLITE = text(
+    "SELECT audit_entries.target_id, audit_entries.occurred_at, audit_entries.after"
+    " FROM audit_entries"
+    " JOIN agents ON agents.id = audit_entries.target_id"
+    " WHERE actor_id = :audit_actor_id"
+    " AND action = 'register'"
+    " AND target_type = 'agent'"
+    " AND reason = :reason"
+    " AND CASE WHEN json_valid(audit_entries.after)"
+    "  THEN json_extract(audit_entries.after, '$.service_account_id') END = :sid"
+    " ORDER BY audit_entries.occurred_at ASC, audit_entries.id ASC"
+    " LIMIT 1"
+)
+
+_SELECT_SUCCESSOR_AGENT = text(
+    "SELECT id, created_at FROM agents"
+    " WHERE registered_by = :system_actor AND name = :name"
+    " ORDER BY created_at ASC, id ASC"
+    " LIMIT 1"
+)
+
 
 class ServiceAccountMigrationRepository:
     """Admin-DB (and a few control-DB) operations for the SA-migration job.
@@ -253,7 +302,7 @@ class ServiceAccountMigrationRepository:
             _INSERT_AGENT,
             {
                 "id": agent_id,
-                "name": f"service-account:{service_account_id}",
+                "name": ServiceAccountMigrationRepository.successor_agent_name(service_account_id),
                 "description": (
                     f"Successor of service account {sa_name!r}"
                     f" ({service_account_id}) — theme-8 Phase 1"
@@ -275,6 +324,69 @@ class ServiceAccountMigrationRepository:
                 },
             )
         return agent_id
+
+    @staticmethod
+    def successor_agent_name(service_account_id: str) -> str:
+        """Canonical initial name given to a service account's successor agent."""
+        return f"service-account:{service_account_id}"
+
+    @staticmethod
+    async def find_existing_successor(
+        session: AsyncSession, *, service_account_id: str
+    ) -> ExistingSuccessor | None:
+        """Recover durable successor provenance when ``migrated_to_actor_id`` is NULL (#1444).
+
+        Downgrading admin past ``c0d1e2f3a4b5`` drops ``migrated_to_actor_id``
+        and ``migrated_at``, and key-less service accounts carry no API-key
+        digest for ``uq_agent_credentials_api_key_hash`` to block a second
+        insert. Two durable admin-DB records survive that round trip:
+
+        1. The append-only ``register`` row in ``audit_entries`` written in the
+           same transaction as the successor insert, joined to its surviving
+           agent row. A deleted successor is not migration evidence.
+        2. The ``agents`` row registered by :data:`SYSTEM_ACTOR` under
+           :meth:`successor_agent_name` (covers databases whose audit log was
+           externally pruned).
+        """
+        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        audit_stmt = (
+            _SELECT_SUCCESSOR_AUDIT_PG
+            if dialect == "postgresql"
+            else _SELECT_SUCCESSOR_AUDIT_SQLITE
+        )
+        audit_row = (
+            await session.execute(
+                audit_stmt,
+                {
+                    "audit_actor_id": AUDIT_ACTOR_ID,
+                    "reason": MIGRATION_AUDIT_REASON,
+                    "sid": service_account_id,
+                },
+            )
+        ).one_or_none()
+        if audit_row is not None and _service_account_id_of(audit_row.after) == service_account_id:
+            return ExistingSuccessor(
+                agent_id=str(audit_row.target_id),
+                migrated_at=_coerce_utc_datetime(audit_row.occurred_at),
+            )
+
+        agent_row = (
+            await session.execute(
+                _SELECT_SUCCESSOR_AGENT,
+                {
+                    "system_actor": SYSTEM_ACTOR,
+                    "name": ServiceAccountMigrationRepository.successor_agent_name(
+                        service_account_id
+                    ),
+                },
+            )
+        ).one_or_none()
+        if agent_row is not None:
+            return ExistingSuccessor(
+                agent_id=str(agent_row.id),
+                migrated_at=_coerce_utc_datetime(agent_row.created_at),
+            )
+        return None
 
     @staticmethod
     def new_successor_agent_id() -> str:
@@ -765,3 +877,29 @@ def _scopes_of(payload: Any) -> set[str]:
         return set()
     scopes = payload.get("scopes")
     return {str(s) for s in scopes} if isinstance(scopes, list) else set()
+
+
+def _service_account_id_of(payload: Any) -> str | None:
+    """The ``service_account_id`` string recorded on a migration ``register`` audit row."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("service_account_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _coerce_utc_datetime(value: Any) -> datetime | None:
+    """Coerce a raw-SQL timestamp (``datetime`` on Postgres, ISO text on SQLite) to UTC."""
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    return None

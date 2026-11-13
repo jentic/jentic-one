@@ -15,6 +15,7 @@ from jentic_one.registry.ingest.host_change_guard import (
     pending_host_change,
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.url_index_repo import (
     UrlIndexRepository,
@@ -31,8 +32,32 @@ from jentic_one.registry.services.errors import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.models import ORIGIN_CATALOG, ApiRevisionState, EventType
 from jentic_one.shared.pagination import decode_cursor, encode_cursor
+
+
+def _should_resolve_catalog_update_available(
+    *,
+    origin: str | None,
+    spec_digest: str | None,
+    source_url: str | None,
+    check: Any,
+) -> bool:
+    """Return whether promoting this revision resolves the API's update-available check (#1490).
+
+    Only a catalog-origin revision carrying the exact outstanding notified digest
+    resolves an open check row on the same source URL whose notification is a
+    plain ``catalog.update_available`` (or an in-sync baseline with no conflict
+    class). Other digests, overlay-conflict notifications, and manual or overlay
+    revisions leave the check row untouched.
+    """
+    if origin != ORIGIN_CATALOG or not spec_digest or check is None:
+        return False
+    if source_url is not None and check.spec_url != source_url:
+        return False
+    if check.last_notified_digest is None or check.last_notified_digest != spec_digest:
+        return False
+    return bool(check.last_notified_event_class in (EventType.CATALOG_UPDATE_AVAILABLE, None))
 
 
 class RevisionPageItem(BaseModel):
@@ -247,9 +272,12 @@ class RevisionService:
             # A draft that came from an origin-tracked source (a catalog revision held
             # for review) goes live as IMPORTED, like any catalog revision, so the next
             # catalog re-import archives it instead of colliding with it.
+            revision_origin = revision.origin
+            revision_spec_digest = revision.spec_digest
+            revision_source_url = revision.source_url
             promoted_state = (
                 ApiRevisionState.IMPORTED
-                if revision.origin is not None
+                if revision_origin is not None
                 else ApiRevisionState.PUBLISHED
             )
             now = datetime.now(UTC)
@@ -263,6 +291,13 @@ class RevisionService:
                 session, revision_uuid, promoted_state, promoted_at=now
             )
             await ApiRepository.set_current_revision(session, api.id, revision_uuid)
+            await self._resolve_catalog_update_available(
+                session,
+                api_id=api.id,
+                origin=revision_origin,
+                spec_digest=revision_spec_digest,
+                source_url=revision_source_url,
+            )
 
             # The demote path above mutates revision rows via bulk UPDATEs and
             # repoints ``Api.current_revision_id``. Bulk updates do not sync the
@@ -318,6 +353,33 @@ class RevisionService:
         current_hosts, new_hosts = held
         raise HostChangeRequiresOperatorError(
             str(revision_id), current_hosts=current_hosts, new_hosts=new_hosts
+        )
+
+    @staticmethod
+    async def _resolve_catalog_update_available(
+        session: Any,
+        *,
+        api_id: uuid.UUID,
+        origin: str | None,
+        spec_digest: str | None,
+        source_url: str | None,
+    ) -> None:
+        """Advance ``catalog_update_checks`` when a catalog-origin draft goes live (#1490)."""
+        if origin != ORIGIN_CATALOG or not spec_digest:
+            return
+        check = await CatalogUpdateCheckRepository.get(session, api_id)
+        if not _should_resolve_catalog_update_available(
+            origin=origin,
+            spec_digest=spec_digest,
+            source_url=source_url,
+            check=check,
+        ):
+            return
+        await CatalogUpdateCheckRepository.mark_notified(
+            session,
+            local_api_id=api_id,
+            notified_digest=spec_digest,
+            notified_event_class=EventType.CATALOG_UPDATE_AVAILABLE,
         )
 
     async def archive(

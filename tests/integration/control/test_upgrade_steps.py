@@ -18,6 +18,7 @@ from sqlalchemy import delete, text
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
 from jentic_one.control.services.upgrade_steps import (
+    CREDENTIAL_IDENTITY_REPAIR,
     RULE_SETS_MARK_CURATED,
     STEPS,
     UpgradeStepOutcome,
@@ -64,8 +65,8 @@ def _counting_step(
 
 
 def test_registered_steps() -> None:
-    assert step_names() == (RULE_SETS_MARK_CURATED,)
-    assert [step.repeatable for step in STEPS] == [True]
+    assert step_names() == (RULE_SETS_MARK_CURATED, CREDENTIAL_IDENTITY_REPAIR)
+    assert [step.repeatable for step in STEPS] == [True, True]
 
 
 async def test_empty_registry_is_a_no_op(

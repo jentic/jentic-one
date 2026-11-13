@@ -83,7 +83,9 @@ _MIGRATIONS_DIR = Path(__file__).resolve().parent
 
 #: Databases the post-migration upgrade steps read and write. The steps run
 #: only when a full upgrade brought every one of them to head.
-_UPGRADE_STEP_DBS = frozenset({"admin", "control"})
+_UPGRADE_STEP_DBS = frozenset({"admin", "control", "registry"})
+#: Databases touched by pre-drop service-account retirement.
+_SA_RETIREMENT_DBS = frozenset({"admin", "control"})
 
 #: Exit code when the schema migrated but an upgrade step left work undone the
 #: operator must resolve. Non-zero so a Helm pre-upgrade hook (or any wrapper)
@@ -209,7 +211,7 @@ def sa_retirement_pending() -> bool:
 async def _retire_service_accounts_async() -> int:
     config = load_config()
     async with Context(
-        config, allowed_dbs=set(_UPGRADE_STEP_DBS), refresh_providers_on_boot=False
+        config, allowed_dbs=set(_SA_RETIREMENT_DBS), refresh_providers_on_boot=False
     ) as ctx:
         try:
             outcome = await ServiceAccountMigrationService(ctx).retire()
@@ -611,7 +613,11 @@ def main(argv: list[str] | None = None) -> int:
         # The retirement writes control too, so control must be at head first
         # (the default order runs it before admin; a hand-written --db order
         # may not — the drop revision's gate then refuses unfinished rows).
-        retire_before_admin = full_upgrade and order.index("control") < order.index("admin")
+        retire_before_admin = (
+            args.target is None
+            and _SA_RETIREMENT_DBS.issubset(order)
+            and order.index("control") < order.index("admin")
+        )
         for db_name in order:
             if db_name == "admin" and retire_before_admin and sa_retirement_pending():
                 print(f"==> Migrating admin to {SA_DROP_PARENT_REVISION}", flush=True)

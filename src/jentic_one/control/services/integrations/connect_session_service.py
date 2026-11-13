@@ -200,6 +200,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.locks import lock_credential_identity_repair
 from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -1386,9 +1387,10 @@ class ConnectSessionService:
         can rotate the other's poll token or swap the other's request.
         """
         initiator_actor_id = identity.sub
-        view = await self._lookup_api(target.vendor, target.name, target.version)
-        if view is None:
+        initial_view = await self._lookup_api(target.vendor, target.name, target.version)
+        if initial_view is None:
             raise UnknownApiError(target.vendor, target.name, target.version)
+        view = initial_view
         scheme = select_scheme(view, auth_type)
         require_pinnable_hosts(view)
 
@@ -1469,6 +1471,11 @@ class ConnectSessionService:
         poll_token = secrets.token_urlsafe(32)
         try:
             async with self._ctx.control_db.transaction() as session:
+                await lock_credential_identity_repair(session)
+                current_view = await self._lookup_api(target.vendor, target.name, target.version)
+                if current_view is None or current_view != view:
+                    raise UnknownApiError(target.vendor, target.name, target.version)
+                view = current_view
                 await self._enforce_open_session_caps(session, cap_scope)
                 credential = await CredentialRepository.create(
                     session,
