@@ -6,11 +6,10 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// The agent_directive type and its parsing live in the UX-free core
-// (ux.Directive / agentops.ParseAgentDirective); the styled rendering lives
-// in ux (the sole terminal gatekeeper — plan 0.2: command code never
-// composes stderr text itself). These two thin methods keep the stream choice
-// (a.Err) here, where the app owns its writers.
+// Directive decoding and parsing live in ux.Directive and
+// agentops.ParseAgentDirective; styled rendering lives in ux, the terminal
+// gatekeeper, so command code never composes stderr text itself. These thin
+// methods keep stream choice (a.Err) in the app, which owns its writers.
 
 // printSynthesizedDenialRecovery prints a best-effort recovery hint for a broker
 // denial that carried no agent_directive, keyed off the HTTP status the broker
