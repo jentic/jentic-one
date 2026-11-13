@@ -218,7 +218,14 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 			"(ask your operator for the broker URL).", envName, vals.URL))
 	}
 
-	return vals, a.registerAndWait(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
+	return vals, a.registerAndWait(ctx, registrationRequest{
+		identity:   vals.Name,
+		envName:    envName,
+		baseURL:    vals.URL,
+		clientName: vals.Name,
+		timeout:    timeout,
+		force:      force,
+	})
 }
 
 // RegisterActive registers the ACTIVE context's identity with its
@@ -251,7 +258,14 @@ func (a *App) RegisterActive(ctx context.Context, st *clictx.ActiveState, client
 	if clientName == "" {
 		clientName = st.IdentityName
 	}
-	return a.registerAndWait(ctx, st.IdentityName, st.EnvironmentName, st.BaseURL, clientName, timeout, force)
+	return a.registerAndWait(ctx, registrationRequest{
+		identity:   st.IdentityName,
+		envName:    st.EnvironmentName,
+		baseURL:    st.BaseURL,
+		clientName: clientName,
+		timeout:    timeout,
+		force:      force,
+	})
 }
 
 // applyBrokerURL sets envName's broker_url inside cfg with the semantics both

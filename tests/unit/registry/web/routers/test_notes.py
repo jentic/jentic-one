@@ -19,9 +19,12 @@ from jentic_one.registry.services.errors import (
     NotePreconditionFailedError,
 )
 from jentic_one.registry.services.note_service import NotePage, NoteView
+from jentic_one.registry.services.schemas import NoteCreate, NoteQuery, NoteUpdate
 from jentic_one.registry.web.app import get_exception_handlers
 from jentic_one.registry.web.routers import notes
+from jentic_one.registry.web.schemas.notes import NoteUpdateRequest
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.schemas.api_reference import APIReference
 from jentic_one.shared.web.deps import resolve_identity
 
 _NOTE_ID = "note_abc123def456ghi789jkl"
@@ -87,16 +90,37 @@ def test_create_note_201(client: TestClient) -> None:
         "jentic_one.registry.web.routers.notes.NoteService.create",
         new_callable=AsyncMock,
         return_value=view,
-    ):
+    ) as mock_create:
         resp = client.post(
             "/notes",
             json={
                 "resource": {"api": _VALID_API_REF},
+                "type": "execution_feedback",
                 "body": "Test note",
+                "confidence": "observed",
+                "source": "agent",
             },
         )
 
     assert resp.status_code == 201
+    mock_create.assert_awaited_once()
+    create_args = mock_create.await_args
+    assert create_args is not None
+    payload = create_args.args[0]
+    assert isinstance(payload, NoteCreate)
+    assert payload.resource.api == APIReference(
+        vendor="stripe", name="payments", version="2023-10-16"
+    )
+    assert payload.body == "Test note"
+    assert payload.type == "execution_feedback"
+    assert type(payload.type) is str
+    assert payload.confidence == "observed"
+    assert type(payload.confidence) is str
+    assert payload.confidence_source == "client"
+    assert payload.source == "agent"
+    assert type(payload.source) is str
+    assert create_args.kwargs["identity"].sub == "test_user"
+
     body = resp.json()
     assert body["note_id"] == _NOTE_ID
     assert body["revision"] == 1
@@ -190,9 +214,14 @@ def test_list_notes_with_filters(client: TestClient) -> None:
         resp = client.get("/notes?type=observation&created_by=user@example.com")
 
     assert resp.status_code == 200
-    mock_list.assert_called_once()
-    assert mock_list.call_args.kwargs["type"] == "observation"
-    assert mock_list.call_args.kwargs["created_by"] == "user@example.com"
+    mock_list.assert_awaited_once()
+    list_args = mock_list.await_args
+    assert list_args is not None
+    query = list_args.args[0]
+    assert isinstance(query, NoteQuery)
+    assert query.type == "observation"
+    assert query.created_by == "user@example.com"
+    assert list_args.kwargs["identity"].sub == "test_user"
 
 
 def test_get_note_200_with_etag(client: TestClient) -> None:
@@ -227,16 +256,29 @@ def test_update_note_200_with_if_match(client: TestClient) -> None:
         "jentic_one.registry.web.routers.notes.NoteService.update",
         new_callable=AsyncMock,
         return_value=view,
-    ):
+    ) as mock_update:
         resp = client.patch(
             f"/notes/{_NOTE_ID}",
-            json={"body": "Updated body"},
+            json={"body": "Updated body", "type": "usage_hint"},
             headers={"If-Match": '"1"'},
         )
 
     assert resp.status_code == 200
     assert resp.headers["ETag"] == '"2"'
     assert resp.json()["revision"] == 2
+    mock_update.assert_awaited_once()
+    update_args = mock_update.await_args
+    assert update_args is not None
+    assert update_args.args[0] == _NOTE_ID
+    payload = update_args.args[1]
+    assert isinstance(payload, NoteUpdate)
+    assert payload.model_dump(exclude_unset=True) == {
+        "body": "Updated body",
+        "type": "usage_hint",
+    }
+    assert type(payload.type) is str
+    assert update_args.kwargs["if_match"] == 1
+    assert update_args.kwargs["identity"].sub == "test_user"
 
 
 def test_update_note_412_stale_if_match(client: TestClient) -> None:
@@ -260,13 +302,31 @@ def test_update_note_200_without_if_match(client: TestClient) -> None:
         "jentic_one.registry.web.routers.notes.NoteService.update",
         new_callable=AsyncMock,
         return_value=view,
-    ):
+    ) as mock_update:
         resp = client.patch(
             f"/notes/{_NOTE_ID}",
             json={"body": "Updated body"},
         )
 
     assert resp.status_code == 200
+    mock_update.assert_awaited_once()
+    update_args = mock_update.await_args
+    assert update_args is not None
+    assert update_args.args[0] == _NOTE_ID
+    payload = update_args.args[1]
+    assert isinstance(payload, NoteUpdate)
+    assert payload.model_dump(exclude_unset=True) == {"body": "Updated body"}
+    assert update_args.kwargs["if_match"] is None
+    assert update_args.kwargs["identity"].sub == "test_user"
+
+
+def test_note_update_request_to_service_model_omitted_vs_null() -> None:
+    omitted = NoteUpdateRequest.model_validate({"body": "Updated body"}).to_service_model()
+    assert omitted.model_dump(exclude_unset=True) == {"body": "Updated body"}
+    assert "type" not in omitted.model_dump(exclude_unset=True)
+
+    cleared = NoteUpdateRequest.model_validate({"type": None}).to_service_model()
+    assert cleared.model_dump(exclude_unset=True) == {"type": None}
 
 
 def test_update_note_400_malformed_if_match(client: TestClient) -> None:

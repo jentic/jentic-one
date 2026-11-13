@@ -440,18 +440,16 @@ def retry_safe(method: str, idempotency_key: str | None) -> bool:
     return bool((idempotency_key or "").strip()) or method.upper() in ("GET", "HEAD")
 
 
-def retry_after_seconds(headers: httpx.Headers) -> int | None:
-    """The broker's ``Retry-After`` in whole seconds.
+def retry_after_seconds(headers: httpx.Headers, *, now_epoch: float | None = None) -> int | None:
+    """The broker's ``Retry-After`` in whole seconds (Go: ``agentops.RetryAfterSeconds``).
 
     Parsed by the same :func:`~jentic_one.shared.http.retry_after.parse_retry_after`
     the broker uses: delay-seconds (a fraction rounds up, a sign or exponent is
     rejected), or an HTTP-date converted to the seconds remaining (floored at
-    zero). ``None`` when absent or unparseable, so no made-up delay is relayed.
-    The Go CLI's ``agentops.RetryAfterSeconds`` reads delay-seconds with
-    ``strconv.ParseFloat`` and does not round, so the two lanes can differ on a
-    fractional, signed or exponent value.
+    zero), capped at one day. ``None`` when absent or unparseable, so no made-up
+    delay is relayed. ``now_epoch`` supports deterministic date parsing.
     """
-    return parse_retry_after(headers.get("Retry-After"))
+    return parse_retry_after(headers.get("Retry-After"), now_epoch=now_epoch)
 
 
 def _broker_transport_actionable(recovery: str, *, retryable: bool, retry_after: int | None) -> str:
@@ -483,7 +481,12 @@ def _broker_transport_actionable(recovery: str, *, retryable: bool, retry_after:
 
 
 def classify_broker_transport_error(
-    status: int, headers: httpx.Headers, body: bytes, *, retry_safe: bool
+    status: int,
+    headers: httpx.Headers,
+    body: bytes,
+    *,
+    retry_safe: bool,
+    now_epoch: float | None = None,
 ) -> ToolError | None:
     """Broker transport-failure classification (Go: ``agentops.BrokerTransportError``
     + ``executeBrokerTransportError``), #1531.
@@ -497,7 +500,8 @@ def classify_broker_transport_error(
 
     The origin header decides, never the body: it must say ``broker``. A vendor
     5xx the broker mirrored is stamped ``upstream`` and is the caller's data,
-    and a missing header keeps the same pass-through reading.
+    and a missing header keeps the same pass-through reading. ``now_epoch``
+    supports deterministic Retry-After date parsing.
     """
     if (status < 500 and status != 429) or _error_origin(headers) != "broker":
         return None
@@ -513,7 +517,7 @@ def classify_broker_transport_error(
     problem_type = raw_type if isinstance(raw_type, str) else ""
     recovery = broker_transport_recovery(status, problem_type)
     retryable = broker_transport_retryable(recovery, retry_safe=retry_safe)
-    retry_after = retry_after_seconds(headers)
+    retry_after = retry_after_seconds(headers, now_epoch=now_epoch)
     details: dict[str, Any] = {"http_status": status, "origin": "broker", "retryable": retryable}
     if problem_type:
         details["problem_type"] = problem_type

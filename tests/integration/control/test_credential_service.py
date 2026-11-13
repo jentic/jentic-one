@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import delete, text
+from sqlalchemy import delete, func, select, text
 
 from jentic_one.admin.repos import AuditRepository
 from jentic_one.control.core.schema.basic_credentials import BasicCredential
@@ -2191,3 +2191,192 @@ async def test_stored_http_oauth2_credential_unaffected_until_token_url_edited(
             )
         assert isinstance(upgraded.details, OAuth2Redacted)
         assert upgraded.details.token_url == _INTERNAL_TOKEN_URL
+
+
+async def _credential_table_counts(control_db: DatabaseSession) -> dict[str, int]:
+    """Return row counts across the credential table and all OAuth2 secret tables."""
+    async with control_db.session() as session:
+        return {
+            "credentials": (
+                await session.execute(select(func.count()).select_from(Credential))
+            ).scalar_one(),
+            "oauth_client_credentials": (
+                await session.execute(select(func.count()).select_from(OAuthClientCredential))
+            ).scalar_one(),
+            "device_authorization_credentials": (
+                await session.execute(
+                    select(func.count()).select_from(DeviceAuthorizationCredential)
+                )
+            ).scalar_one(),
+            "oauth_tokens": (
+                await session.execute(select(func.count()).select_from(OAuthToken))
+            ).scalar_one(),
+        }
+
+
+@pytest.mark.parametrize(
+    "bad_grant",
+    [
+        "password",
+        "implicit",
+        "",
+        "   ",
+        "\t\n",
+        " client_credentials ",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+)
+async def test_create_oauth2_rejects_unsupported_grant_types_without_db_writes(
+    integration_config: AppConfig,
+    clean_credentials: None,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_grant: str,
+) -> None:
+    """Pins #1428: unsupported or blank OAuth2 grant_type values fail validation
+    before URL resolution or opening a write transaction, leaving zero rows in
+    credentials and OAuth secret tables."""
+    config = _egress_config(integration_config, control=_ALLOWLIST)
+    payload = CredentialCreate(
+        type=CredentialType.OAUTH2,
+        name="Unsupported grant",
+        api=_api(),
+        grant_type=bad_grant,
+        token_url=_INTERNAL_TOKEN_URL,
+        authorize_url=f"https://{_INTERNAL_HOST}/oauth/authorize",
+        client_id="client-123",
+        client_secret="secret-456",  # pragma: allowlist secret
+    )
+    async with _context(config) as ctx:
+        svc = CredentialService(ctx)
+        open_count = _track_open_transactions(ctx, monkeypatch)
+        with (
+            _lookups_seeing(open_count) as seen,
+            pytest.raises(InvalidCredentialInputError, match="Unsupported grant_type"),
+        ):
+            await svc.create(payload, identity=_ADMIN_IDENTITY)
+        counts = await _credential_table_counts(ctx.control_db)
+    assert seen == []
+    assert open_count == [0]
+    assert counts == {
+        "credentials": 0,
+        "oauth_client_credentials": 0,
+        "device_authorization_credentials": 0,
+        "oauth_tokens": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("grant_type", "expected_stored", "expected_echo", "client_secret"),
+    [
+        (
+            None,
+            StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
+            "client_credentials",
+            "secret-456",
+        ),
+        (
+            "client_credentials",
+            StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
+            "client_credentials",
+            "secret-456",
+        ),
+        (
+            "authorization_code",
+            StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+            "authorization_code",
+            "secret-456",
+        ),
+        (
+            "device_code",
+            StoredCredentialType.OAUTH2_DEVICE_CODE,
+            "device_code",
+            None,
+        ),
+    ],
+)
+async def test_create_oauth2_supported_and_omitted_grants_preserve_stored_types(
+    svc: CredentialService,
+    clean_credentials: None,
+    control_db: DatabaseSession,
+    grant_type: str | None,
+    expected_stored: StoredCredentialType,
+    expected_echo: str,
+    client_secret: str | None,
+) -> None:
+    """Pins #1428: omitted grant_type defaults to OAUTH2_CLIENT_CREDENTIALS, and
+    the three supported grants preserve their stored types and secret-less
+    device_code behavior."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.OAUTH2,
+            name=f"Supported {grant_type}",
+            api=_api(),
+            grant_type=grant_type,
+            token_url="https://93.184.216.34/oauth/token",
+            authorize_url="https://93.184.216.34/oauth/authorize",
+            client_id="client-123",
+            client_secret=client_secret,
+            scopes=["read"],
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(created.secret, OAuth2Full)
+    assert created.secret.grant_type == expected_echo
+
+    async with control_db.session() as session:
+        row = await session.get(Credential, created.credential_id)
+        assert row is not None
+        assert row.type == expected_stored.value
+        occ = await session.get(OAuthClientCredential, created.credential_id)
+        dfc = await session.get(DeviceAuthorizationCredential, created.credential_id)
+
+    if expected_stored == StoredCredentialType.OAUTH2_DEVICE_CODE:
+        assert dfc is not None
+        assert occ is None
+    else:
+        assert occ is not None
+        assert dfc is None
+
+    redacted = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(redacted.details, OAuth2Redacted)
+    assert redacted.details.grant_type == expected_echo
+
+
+@pytest.mark.parametrize(
+    ("grant_type", "missing_field"),
+    [
+        (None, "client_secret"),
+        ("client_credentials", "client_secret"),
+        ("authorization_code", "client_secret"),
+        ("device_code", "token_url"),
+        ("device_code", "client_id"),
+    ],
+)
+async def test_create_oauth2_supported_grants_preserve_required_fields(
+    svc: CredentialService,
+    clean_credentials: None,
+    control_db: DatabaseSession,
+    grant_type: str | None,
+    missing_field: str,
+) -> None:
+    """Pins #1428: supported grants keep their per-grant required-field checks."""
+    kwargs: dict[str, Any] = {
+        "type": CredentialType.OAUTH2,
+        "name": "Missing field check",
+        "api": _api(),
+        "grant_type": grant_type,
+        "token_url": "https://93.184.216.34/oauth/token",
+        "authorize_url": "https://93.184.216.34/oauth/authorize",
+        "client_id": "client-123",
+        "client_secret": None if grant_type == "device_code" else "secret-456",
+    }
+    kwargs[missing_field] = None
+    with pytest.raises(InvalidCredentialInputError, match=missing_field):
+        await svc.create(CredentialCreate(**kwargs), identity=_ADMIN_IDENTITY)
+    counts = await _credential_table_counts(control_db)
+    assert counts == {
+        "credentials": 0,
+        "oauth_client_credentials": 0,
+        "device_authorization_credentials": 0,
+        "oauth_tokens": 0,
+    }

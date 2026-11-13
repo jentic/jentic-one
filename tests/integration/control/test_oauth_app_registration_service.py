@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import delete
 
 from jentic_one.control.core.schema.authorization_code_app_registration_details import (
@@ -46,7 +47,11 @@ from jentic_one.control.services.oauth_app_registrations.errors import (
     SecretRotationNotSupportedError,
 )
 from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+    DeviceAuthorizationRegistrationCreate,
     OAuthAppRegistrationFlowKind,
+    OAuthAppRegistrationQuery,
+    OAuthAppRegistrationUpdate,
     OAuthAppRegistrationView,
 )
 from jentic_one.control.services.oauth_app_registrations.service import (
@@ -110,16 +115,21 @@ async def test_create_authorization_code_persists_all_fields(
     integration_context: Context,
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
-    view = await svc.create_authorization_code(
+    payload = AuthorizationCodeRegistrationCreate(
         name="MyOrg Prod Gmail",
         api_vendor="googleapis-com",
         catalog_api_id="googleapis-com/gmail",
         display_name="Gmail",
         client_id="cid-prod",
-        client_secret=_TEST_SECRET_PLAINTEXT,
+        client_secret=SecretStr(_TEST_SECRET_PLAINTEXT),
         authorize_url="https://accounts.google.com/o/oauth2/auth",
         token_url="https://oauth2.googleapis.com/token",
         default_scopes=["gmail.readonly"],
+    )
+    assert _TEST_SECRET_PLAINTEXT not in repr(payload)
+    assert _TEST_SECRET_PLAINTEXT not in str(payload)
+    view = await svc.create_authorization_code(
+        payload,
         identity=_ADMIN,
     )
     assert view.id.startswith("oar_")
@@ -156,14 +166,16 @@ async def test_create_device_authorization_has_no_client_secret(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     view = await svc.create_device_authorization(
-        name="MyOrg Gmail Device",
-        api_vendor="googleapis-com",
-        catalog_api_id="googleapis-com/gmail",
-        display_name="Gmail",
-        client_id="cid-device",
-        authorization_endpoint="https://oauth2.googleapis.com/device/code",
-        token_endpoint="https://oauth2.googleapis.com/token",
-        default_scopes=None,
+        DeviceAuthorizationRegistrationCreate(
+            name="MyOrg Gmail Device",
+            api_vendor="googleapis-com",
+            catalog_api_id="googleapis-com/gmail",
+            display_name="Gmail",
+            client_id="cid-device",
+            authorization_endpoint="https://oauth2.googleapis.com/device/code",
+            token_endpoint="https://oauth2.googleapis.com/token",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     assert view.flow_kind is OAuthAppRegistrationFlowKind.DEVICE_AUTHORIZATION
@@ -188,15 +200,17 @@ async def test_get_returns_dependent_credential_count(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Prod",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        client_secret="s",
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="Prod",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=SecretStr("s"),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     # Seed a credential and bind it to the registration via the sanctioned
@@ -230,43 +244,49 @@ async def test_list_page_filters_by_vendor_and_include_inactive(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     a = await svc.create_authorization_code(
-        name="Gmail A",
-        api_vendor="googleapis-com",
-        catalog_api_id="googleapis-com/gmail",
-        display_name="Gmail",
-        client_id="a",
-        client_secret="s",
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="Gmail A",
+            api_vendor="googleapis-com",
+            catalog_api_id="googleapis-com/gmail",
+            display_name="Gmail",
+            client_id="a",
+            client_secret=SecretStr("s"),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     b = await svc.create_authorization_code(
-        name="GitHub A",
-        api_vendor="github",
-        catalog_api_id="github.com/api.github.com",
-        display_name="GitHub",
-        client_id="b",
-        client_secret="s",
-        authorize_url="https://gh/a",
-        token_url="https://gh/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="GitHub A",
+            api_vendor="github",
+            catalog_api_id="github.com/api.github.com",
+            display_name="GitHub",
+            client_id="b",
+            client_secret=SecretStr("s"),
+            authorize_url="https://gh/a",
+            token_url="https://gh/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     # Deactivate one row.
-    await svc.update(a.id, is_active=False, identity=_ADMIN)
+    await svc.update(a.id, OAuthAppRegistrationUpdate(is_active=False), identity=_ADMIN)
 
-    all_active, _, _ = await svc.list_page()
-    all_active_ids = {r.id for r in all_active}
+    all_active = await svc.list_page(OAuthAppRegistrationQuery())
+    all_active_ids = {r.id for r in all_active.data}
     assert b.id in all_active_ids
     assert a.id not in all_active_ids  # deactivated
 
-    with_inactive, _, _ = await svc.list_page(include_inactive=True)
-    with_inactive_ids = {r.id for r in with_inactive}
+    with_inactive = await svc.list_page(OAuthAppRegistrationQuery(include_inactive=True))
+    with_inactive_ids = {r.id for r in with_inactive.data}
     assert {a.id, b.id}.issubset(with_inactive_ids)
 
-    only_gmail, _, _ = await svc.list_page(api_vendor="googleapis-com", include_inactive=True)
-    assert [r.id for r in only_gmail] == [a.id]
+    only_gmail = await svc.list_page(
+        OAuthAppRegistrationQuery(api_vendor="googleapis-com", include_inactive=True)
+    )
+    assert [r.id for r in only_gmail.data] == [a.id]
 
 
 @pytest.mark.usefixtures("clean_registrations")
@@ -276,15 +296,17 @@ async def test_list_page_walks_cursor_and_batches_dependent_counts(
     svc = OAuthAppRegistrationService(integration_context)
     created = [
         await svc.create_authorization_code(
-            name=f"App {i}",
-            api_vendor="v",
-            catalog_api_id="v/api",
-            display_name="V",
-            client_id=f"cid{i}",
-            client_secret="s",
-            authorize_url="https://ex/a",
-            token_url="https://ex/t",
-            default_scopes=None,
+            AuthorizationCodeRegistrationCreate(
+                name=f"App {i}",
+                api_vendor="v",
+                catalog_api_id="v/api",
+                display_name="V",
+                client_id=f"cid{i}",
+                client_secret=SecretStr("s"),
+                authorize_url="https://ex/a",
+                token_url="https://ex/t",
+                default_scopes=None,
+            ),
             identity=_ADMIN,
         )
         for i in range(3)
@@ -307,14 +329,16 @@ async def test_list_page_walks_cursor_and_batches_dependent_counts(
                     session, credential.id, registration_id=reg.id
                 )
 
-    first, has_more, cursor = await svc.list_page(limit=2)
-    assert has_more is True
-    assert cursor is not None
-    rest, has_more_after, cursor_after = await svc.list_page(cursor=cursor, limit=2)
-    assert has_more_after is False
-    assert cursor_after is None
+    first_page = await svc.list_page(OAuthAppRegistrationQuery(limit=2))
+    assert first_page.has_more is True
+    assert first_page.next_cursor is not None
+    rest_page = await svc.list_page(
+        OAuthAppRegistrationQuery(cursor=first_page.next_cursor, limit=2)
+    )
+    assert rest_page.has_more is False
+    assert rest_page.next_cursor is None
 
-    seen = first + rest
+    seen = first_page.data + rest_page.data
     assert sorted(v.id for v in seen) == sorted(r.id for r in created)
     assert len({v.id for v in seen}) == 3
     counts = {v.id: v.dependent_credential_count for v in seen}
@@ -327,25 +351,29 @@ async def test_update_mutates_name_scopes_endpoints_and_toggles_active(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Before",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        client_secret="s",
-        authorize_url="https://before/a",
-        token_url="https://before/t",
-        default_scopes=["a"],
+        AuthorizationCodeRegistrationCreate(
+            name="Before",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=SecretStr("s"),
+            authorize_url="https://before/a",
+            token_url="https://before/t",
+            default_scopes=["a"],
+        ),
         identity=_ADMIN,
     )
     updated = await svc.update(
         reg.id,
-        name="After",
-        display_name="After Family",
-        default_scopes=["b", "c"],
-        authorize_url="https://after/a",
-        token_url="https://before/v2/t",
-        is_active=False,
+        OAuthAppRegistrationUpdate(
+            name="After",
+            display_name="After Family",
+            default_scopes=["b", "c"],
+            authorize_url="https://after/a",
+            token_url="https://before/v2/t",
+            is_active=False,
+        ),
         identity=_ADMIN,
     )
     assert updated.name == "After"
@@ -357,26 +385,84 @@ async def test_update_mutates_name_scopes_endpoints_and_toggles_active(
 
 
 @pytest.mark.usefixtures("clean_registrations")
+async def test_update_leaves_existing_fields_unchanged_for_empty_and_explicit_none(
+    integration_context: Context,
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    reg = await svc.create_authorization_code(
+        AuthorizationCodeRegistrationCreate(
+            name="Original",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="Orig Family",
+            client_id="cid",
+            client_secret=SecretStr("s"),
+            authorize_url="https://orig/a",
+            token_url="https://orig/t",
+            default_scopes=["a"],
+        ),
+        identity=_ADMIN,
+    )
+
+    empty_updated = await svc.update(reg.id, OAuthAppRegistrationUpdate(), identity=_ADMIN)
+    assert empty_updated.name == "Original"
+    assert empty_updated.display_name == "Orig Family"
+    assert empty_updated.default_scopes == ["a"]
+    assert empty_updated.authorize_url == "https://orig/a"
+    assert empty_updated.token_url == "https://orig/t"
+    assert empty_updated.is_active is True
+
+    none_updated = await svc.update(
+        reg.id,
+        OAuthAppRegistrationUpdate(
+            name=None,
+            display_name=None,
+            default_scopes=None,
+            authorize_url=None,
+            token_url=None,
+            is_active=None,
+        ),
+        identity=_ADMIN,
+    )
+    assert none_updated.name == "Original"
+    assert none_updated.display_name == "Orig Family"
+    assert none_updated.default_scopes == ["a"]
+    assert none_updated.authorize_url == "https://orig/a"
+    assert none_updated.token_url == "https://orig/t"
+    assert none_updated.is_active is True
+
+    empty_scopes = await svc.update(
+        reg.id,
+        OAuthAppRegistrationUpdate(default_scopes=[]),
+        identity=_ADMIN,
+    )
+    assert empty_scopes.default_scopes == []
+    assert empty_scopes.name == "Original"
+
+
+@pytest.mark.usefixtures("clean_registrations")
 async def test_update_auth_code_rejects_device_only_fields(
     integration_context: Context,
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="AC",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        client_secret="s",
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="AC",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=SecretStr("s"),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     with pytest.raises(InvalidOAuthAppRegistrationInputError):
         await svc.update(
             reg.id,
-            authorization_endpoint="https://x/d",
+            OAuthAppRegistrationUpdate(authorization_endpoint="https://x/d"),
             identity=_ADMIN,
         )
 
@@ -387,20 +473,22 @@ async def test_update_device_flow_rejects_auth_code_only_fields(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_device_authorization(
-        name="DA",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        authorization_endpoint="https://ex/d",
-        token_endpoint="https://ex/t",
-        default_scopes=None,
+        DeviceAuthorizationRegistrationCreate(
+            name="DA",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            authorization_endpoint="https://ex/d",
+            token_endpoint="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     with pytest.raises(InvalidOAuthAppRegistrationInputError):
         await svc.update(
             reg.id,
-            authorize_url="https://ex/a",
+            OAuthAppRegistrationUpdate(authorize_url="https://ex/a"),
             identity=_ADMIN,
         )
 
@@ -421,15 +509,17 @@ async def test_create_authorization_code_rejects_unsafe_urls(
     urls = {"authorize_url": "https://ex/a", "token_url": "https://ex/t", field: url}
     with pytest.raises(InvalidOAuthAppRegistrationInputError, match=field):
         await svc.create_authorization_code(
-            name="AC",
-            api_vendor="v",
-            catalog_api_id="v/api",
-            display_name="V",
-            client_id="cid",
-            client_secret="s",
-            default_scopes=None,
+            AuthorizationCodeRegistrationCreate(
+                name="AC",
+                api_vendor="v",
+                catalog_api_id="v/api",
+                display_name="V",
+                client_id="cid",
+                client_secret=SecretStr("s"),
+                default_scopes=None,
+                **urls,
+            ),
             identity=_ADMIN,
-            **urls,
         )
 
 
@@ -459,15 +549,17 @@ async def test_create_authorization_code_honours_control_egress_allowlist(
 
         async def _create() -> OAuthAppRegistrationView:
             return await svc.create_authorization_code(
-                name="In-network AC",
-                api_vendor="v",
-                catalog_api_id="v/api",
-                display_name="V",
-                client_id="cid",
-                client_secret=_TEST_SECRET_PLAINTEXT,
-                authorize_url="https://ex/a",
-                token_url=token_url,
-                default_scopes=None,
+                AuthorizationCodeRegistrationCreate(
+                    name="In-network AC",
+                    api_vendor="v",
+                    catalog_api_id="v/api",
+                    display_name="V",
+                    client_id="cid",
+                    client_secret=SecretStr(_TEST_SECRET_PLAINTEXT),
+                    authorize_url="https://ex/a",
+                    token_url=token_url,
+                    default_scopes=None,
+                ),
                 identity=_ADMIN,
             )
 
@@ -502,14 +594,16 @@ async def test_create_device_authorization_honours_control_egress_allowlist(
 
         async def _create() -> OAuthAppRegistrationView:
             return await svc.create_device_authorization(
-                name="In-network DA",
-                api_vendor="v",
-                catalog_api_id="v/api",
-                display_name="V",
-                client_id="cid",
-                authorization_endpoint="https://ex/d",
-                token_endpoint=endpoint,
-                default_scopes=None,
+                DeviceAuthorizationRegistrationCreate(
+                    name="In-network DA",
+                    api_vendor="v",
+                    catalog_api_id="v/api",
+                    display_name="V",
+                    client_id="cid",
+                    authorization_endpoint="https://ex/d",
+                    token_endpoint=endpoint,
+                    default_scopes=None,
+                ),
                 identity=_ADMIN,
             )
 
@@ -532,23 +626,29 @@ async def test_update_authorization_code_honours_control_egress_allowlist(
     async with Context(_corp_egress_config(integration_config)) as ctx:
         svc = OAuthAppRegistrationService(ctx)
         reg = await svc.create_authorization_code(
-            name="AC",
-            api_vendor="v",
-            catalog_api_id="v/api",
-            display_name="V",
-            client_id="cid",
-            client_secret=_TEST_SECRET_PLAINTEXT,
-            authorize_url="https://ex/a",
-            token_url="https://10.50.0.7/t",
-            default_scopes=None,
+            AuthorizationCodeRegistrationCreate(
+                name="AC",
+                api_vendor="v",
+                catalog_api_id="v/api",
+                display_name="V",
+                client_id="cid",
+                client_secret=SecretStr(_TEST_SECRET_PLAINTEXT),
+                authorize_url="https://ex/a",
+                token_url="https://10.50.0.7/t",
+                default_scopes=None,
+            ),
             identity=_ADMIN,
         )
         if accepted:
-            updated = await svc.update(reg.id, token_url=token_url, identity=_ADMIN)
+            updated = await svc.update(
+                reg.id, OAuthAppRegistrationUpdate(token_url=token_url), identity=_ADMIN
+            )
             assert updated.token_url == token_url
         else:
             with pytest.raises(InvalidOAuthAppRegistrationInputError, match="token_url"):
-                await svc.update(reg.id, token_url=token_url, identity=_ADMIN)
+                await svc.update(
+                    reg.id, OAuthAppRegistrationUpdate(token_url=token_url), identity=_ADMIN
+                )
             assert (await svc.get(reg.id)).token_url == "https://10.50.0.7/t"
 
 
@@ -559,14 +659,16 @@ async def test_create_device_authorization_rejects_unsafe_urls(
     svc = OAuthAppRegistrationService(integration_context)
     with pytest.raises(InvalidOAuthAppRegistrationInputError, match="authorization_endpoint"):
         await svc.create_device_authorization(
-            name="DA",
-            api_vendor="v",
-            catalog_api_id="v/api",
-            display_name="V",
-            client_id="cid",
-            authorization_endpoint="https://10.0.0.1/device/code",
-            token_endpoint="https://ex/t",
-            default_scopes=None,
+            DeviceAuthorizationRegistrationCreate(
+                name="DA",
+                api_vendor="v",
+                catalog_api_id="v/api",
+                display_name="V",
+                client_id="cid",
+                authorization_endpoint="https://10.0.0.1/device/code",
+                token_endpoint="https://ex/t",
+                default_scopes=None,
+            ),
             identity=_ADMIN,
         )
 
@@ -584,21 +686,27 @@ async def test_update_rejects_unsafe_urls(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_device_authorization(
-        name="DA",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        authorization_endpoint="https://ex/d",
-        token_endpoint="https://ex/t",
-        default_scopes=None,
+        DeviceAuthorizationRegistrationCreate(
+            name="DA",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            authorization_endpoint="https://ex/d",
+            token_endpoint="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     with pytest.raises(InvalidOAuthAppRegistrationInputError, match=field):
         if field == "token_endpoint":
-            await svc.update(reg.id, token_endpoint=url, identity=_ADMIN)
+            await svc.update(
+                reg.id, OAuthAppRegistrationUpdate(token_endpoint=url), identity=_ADMIN
+            )
         else:
-            await svc.update(reg.id, authorization_endpoint=url, identity=_ADMIN)
+            await svc.update(
+                reg.id, OAuthAppRegistrationUpdate(authorization_endpoint=url), identity=_ADMIN
+            )
     unchanged = await svc.get(reg.id)
     assert unchanged.authorization_endpoint == "https://ex/d"
     assert unchanged.token_endpoint == "https://ex/t"
@@ -610,15 +718,17 @@ async def test_rotate_client_secret_updates_secret_and_timestamp(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Rotate",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        client_secret=_TEST_SECRET_ORIGINAL,
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="Rotate",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=SecretStr(_TEST_SECRET_ORIGINAL),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     before_ts = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
@@ -641,14 +751,16 @@ async def test_rotate_client_secret_refused_on_device_flow(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_device_authorization(
-        name="DA",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        authorization_endpoint="https://ex/d",
-        token_endpoint="https://ex/t",
-        default_scopes=None,
+        DeviceAuthorizationRegistrationCreate(
+            name="DA",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            authorization_endpoint="https://ex/d",
+            token_endpoint="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     with pytest.raises(SecretRotationNotSupportedError) as exc:
@@ -660,15 +772,17 @@ async def test_rotate_client_secret_refused_on_device_flow(
 async def test_delete_succeeds_when_no_dependents(integration_context: Context) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Doomed",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        client_secret="s",
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="Doomed",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=SecretStr("s"),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     await svc.delete(reg.id, identity=_ADMIN)
@@ -682,15 +796,17 @@ async def test_delete_refused_with_dependent_credential(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Referenced",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid",
-        client_secret="s",
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="Referenced",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid",
+            client_secret=SecretStr("s"),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     async with integration_context.control_db.transaction() as session:
@@ -723,15 +839,17 @@ async def test_update_auth_code_refuses_cross_origin_token_url_and_protects_live
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Shared AC",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid-ac",
-        client_secret=_TEST_SECRET_ORIGINAL,
-        authorize_url="https://idp.example.com/authorize",
-        token_url="https://idp.example.com/v1/token",
-        default_scopes=["read"],
+        AuthorizationCodeRegistrationCreate(
+            name="Shared AC",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid-ac",
+            client_secret=SecretStr(_TEST_SECRET_ORIGINAL),
+            authorize_url="https://idp.example.com/authorize",
+            token_url="https://idp.example.com/v1/token",
+            default_scopes=["read"],
+        ),
         identity=_ADMIN,
     )
     async with integration_context.control_db.transaction() as session:
@@ -786,7 +904,7 @@ async def test_update_auth_code_refuses_cross_origin_token_url_and_protects_live
             await asyncio.gather(
                 svc.update(
                     reg.id,
-                    token_url="https://attacker.example.com/token",
+                    OAuthAppRegistrationUpdate(token_url="https://attacker.example.com/token"),
                     identity=_ADMIN,
                 ),
                 provider.refresh(integration_context, token=token_view),
@@ -795,7 +913,7 @@ async def test_update_auth_code_refuses_cross_origin_token_url_and_protects_live
         # Same-origin path update succeeds and keeps the grant working.
         updated = await svc.update(
             reg.id,
-            token_url="https://idp.example.com/v2/token",
+            OAuthAppRegistrationUpdate(token_url="https://idp.example.com/v2/token"),
             identity=_ADMIN,
         )
         assert updated.token_url == "https://idp.example.com/v2/token"
@@ -811,14 +929,16 @@ async def test_update_device_flow_refuses_cross_origin_token_endpoint_and_protec
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_device_authorization(
-        name="Shared DA",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid-da",
-        authorization_endpoint="https://idp.example.com/device/code",
-        token_endpoint="https://idp.example.com/v1/token",
-        default_scopes=["read"],
+        DeviceAuthorizationRegistrationCreate(
+            name="Shared DA",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid-da",
+            authorization_endpoint="https://idp.example.com/device/code",
+            token_endpoint="https://idp.example.com/v1/token",
+            default_scopes=["read"],
+        ),
         identity=_ADMIN,
     )
     async with integration_context.control_db.transaction() as session:
@@ -882,7 +1002,7 @@ async def test_update_device_flow_refuses_cross_origin_token_endpoint_and_protec
             await asyncio.gather(
                 svc.update(
                     reg.id,
-                    token_endpoint="https://attacker.example.com/token",
+                    OAuthAppRegistrationUpdate(token_endpoint="https://attacker.example.com/token"),
                     identity=_ADMIN,
                 ),
                 provider.refresh(integration_context, token=token_view),
@@ -891,14 +1011,16 @@ async def test_update_device_flow_refuses_cross_origin_token_endpoint_and_protec
         with pytest.raises(InvalidOAuthAppRegistrationInputError, match="origin"):
             await svc.update(
                 reg.id,
-                authorization_endpoint="https://attacker.example.com/device/code",
+                OAuthAppRegistrationUpdate(
+                    authorization_endpoint="https://attacker.example.com/device/code"
+                ),
                 identity=_ADMIN,
             )
 
         # Same-origin path update succeeds and keeps the grant working.
         updated = await svc.update(
             reg.id,
-            token_endpoint="https://idp.example.com/v2/token",
+            OAuthAppRegistrationUpdate(token_endpoint="https://idp.example.com/v2/token"),
             identity=_ADMIN,
         )
         assert updated.token_endpoint == "https://idp.example.com/v2/token"

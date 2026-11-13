@@ -154,7 +154,7 @@ async def test_buffered_duration_histogram_records_fractional_ms() -> None:
         )
 
     histogram.record.assert_called_once_with(0.4, {"operation": "getThing"})
-    assert mock_record.call_args.kwargs["duration_ms"] == 0
+    assert mock_record.call_args.args[1].duration_ms == 0
 
 
 @pytest.mark.asyncio
@@ -186,4 +186,4 @@ async def test_streaming_duration_histogram_records_fractional_ms() -> None:
         )
 
     histogram.record.assert_called_once_with(1.9, {"operation": "getThing"})
-    assert mock_record.call_args.kwargs["duration_ms"] == 1
+    assert mock_record.call_args.args[1].duration_ms == 1

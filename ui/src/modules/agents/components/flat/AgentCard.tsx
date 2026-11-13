@@ -62,6 +62,25 @@ const GRABBER_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
 /** The most of a phone viewport the pinned card may take before it stays put. */
 const PHONE_PIN_BUDGET = 0.35;
 
+export interface AgentCardPinning {
+	/**
+	 * Where the card pins, in px under the shell scroller's top: the agent
+	 * strip's measured height, so the card docks under the strip's notch. The
+	 * pin line is judged against it.
+	 */
+	stickyTop?: number;
+	/**
+	 * Where the card sits once pinned, if the strip condenses then (its header
+	 * row slides away): the strip's condensed height. Defaults to `stickyTop`.
+	 * The pin line stays at `stickyTop`, so condensing never feeds back into it.
+	 */
+	stuckTop?: number;
+	/** Reports the pinned card's height, for what scrolls clear of it. */
+	onPinnedHeight?: (px: number) => void;
+	/** Reports whether the card is pinned (so the strip can condense over it). */
+	onStuckChange?: (stuck: boolean) => void;
+}
+
 interface AgentCardProps {
 	agent: AgentEntity;
 	/** The newest call's time: `{ at: null }` = none yet; `null` = not visible to
@@ -80,22 +99,8 @@ interface AgentCardProps {
 	banner?: ReactNode;
 	/** The KPI row. */
 	kpis?: ReactNode;
-	/**
-	 * Where the card pins, in px under the shell scroller's top: the agent
-	 * strip's measured height, so the card docks under the strip's notch. The
-	 * pin line is judged against it.
-	 */
-	stickyTop?: number;
-	/**
-	 * Where the card sits once pinned, if the strip condenses then (its header
-	 * row slides away): the strip's condensed height. Defaults to `stickyTop`.
-	 * The pin line stays at `stickyTop`, so condensing never feeds back into it.
-	 */
-	stuckTop?: number;
-	/** Reports the pinned card's height, for what scrolls clear of it. */
-	onPinnedHeight?: (px: number) => void;
-	/** Reports whether the card is pinned (so the strip can condense over it). */
-	onStuckChange?: (stuck: boolean) => void;
+	/** Sticky offsets and pin-state callbacks under the measured agent strip. */
+	pinning?: AgentCardPinning;
 	/** Opens the agent picker: the name becomes its button. */
 	onSwitchAgent?: () => void;
 	/** Fade the content in on mount (a switch's new card), inside a frame that
@@ -221,13 +226,14 @@ export function AgentCard({
 	description,
 	banner,
 	kpis,
-	stickyTop = 0,
-	stuckTop = stickyTop,
-	onPinnedHeight,
-	onStuckChange,
+	pinning,
 	onSwitchAgent,
 	fadeIn = false,
 }: AgentCardProps) {
+	const stickyTop = pinning?.stickyTop ?? 0;
+	const stuckTop = pinning?.stuckTop ?? stickyTop;
+	const onPinnedHeight = pinning?.onPinnedHeight;
+	const onStuckChange = pinning?.onStuckChange;
 	const selfRegistered = agent.attribution.registeredBy === 'self';
 	const reduced = useReducedMotionConfig() ?? false;
 	const compact = useMediaQuery('(max-width: 639px)');

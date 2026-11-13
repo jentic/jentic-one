@@ -1957,3 +1957,110 @@ def test_list_credentials_wrong_shape_cursor_returns_400(
     resp = cred_writer_client.get("/credentials", params={"cursor": cursor})
     assert resp.status_code == 400
     assert resp.json()["type"] == "invalid_cursor"
+
+
+async def _oauth_table_counts(ctx: Context) -> dict[str, int]:
+    """Count rows in ``credentials`` and the OAuth2 secret tables."""
+    tables = (
+        "credentials",
+        "oauth_client_credentials",
+        "device_authorization_credentials",
+        "oauth_tokens",
+    )
+    async with ctx.control_db.session() as session:
+        counts: dict[str, int] = {}
+        for table in tables:
+            row = await session.execute(text(f"SELECT COUNT(*) FROM {table}"))
+            counts[table] = int(row.scalar_one())
+        return counts
+
+
+@pytest.mark.parametrize(
+    "bad_grant",
+    [
+        "password",
+        "implicit",
+        "",
+        "   ",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+)
+async def test_create_oauth2_unsupported_grant_type_returns_400_without_db_rows(
+    cred_writer_client: TestClient, web_context: Context, bad_grant: str
+) -> None:
+    """Pins #1428: POST /credentials rejects unsupported or blank OAuth2 grant
+    types with 400 invalid_credential_input and persists neither credential nor
+    secret rows."""
+    before_counts = await _oauth_table_counts(web_context)
+
+    resp = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "oauth2",
+            "name": "o-1428-unsupported-grant",
+            "api": {"vendor": "webtest-oauth.example", "name": "", "version": ""},
+            "provider": "static",
+            "grant_type": bad_grant,
+            "token_url": "https://93.184.216.34/oauth/token",
+            "authorize_url": "https://93.184.216.34/oauth/authorize",
+            "client_id": "webtest-client",
+            "client_secret": "webtest-secret",  # pragma: allowlist secret
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    problem = resp.json()
+    assert problem["type"] == "invalid_credential_input"
+    assert problem["status"] == 400
+    assert problem["instance"] == "/credentials"
+    assert "grant_type" in problem["detail"]
+    assert "webtest-secret" not in resp.text
+
+    after_counts = await _oauth_table_counts(web_context)
+    assert after_counts == before_counts
+
+
+def test_create_oauth2_omitted_and_supported_grants_succeed(
+    cred_writer_client: TestClient,
+) -> None:
+    """Pins #1428: omitted grant_type defaults to client_credentials, and
+    supported grants including secret-less device_code succeed over HTTP."""
+    omitted = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "oauth2",
+            "name": "o-1428-omitted",
+            "api": {"vendor": "webtest-oauth.example", "name": "", "version": ""},
+            "provider": "static",
+            "token_url": "https://93.184.216.34/oauth/token",
+            "client_id": "webtest-client",
+            "client_secret": "webtest-secret",  # pragma: allowlist secret
+        },
+    )
+    assert omitted.status_code == 201, omitted.text
+    omitted_id = omitted.json()["credential"]["credential_id"]
+    assert omitted.json()["secret"]["grant_type"] == "client_credentials"
+    assert (
+        cred_writer_client.get(f"/credentials/{omitted_id}").json()["details"]["grant_type"]
+        == "client_credentials"
+    )
+
+    device = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "oauth2",
+            "name": "o-1428-device",
+            "api": {"vendor": "webtest-oauth.example", "name": "", "version": ""},
+            "provider": "static",
+            "grant_type": "device_code",
+            "token_url": "https://93.184.216.34/oauth/token",
+            "authorize_url": "https://93.184.216.34/oauth/device",
+            "client_id": "webtest-device-client",
+        },
+    )
+    assert device.status_code == 201, device.text
+    device_id = device.json()["credential"]["credential_id"]
+    assert device.json()["secret"]["grant_type"] == "device_code"
+    assert (
+        cred_writer_client.get(f"/credentials/{device_id}").json()["details"]["grant_type"]
+        == "device_code"
+    )

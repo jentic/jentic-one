@@ -99,9 +99,10 @@ def test_directive_factories_emit_known_strategies() -> None:
     """Every directive factory must emit a strategy in the AgentStrategy
     vocabulary. This is the recovery contract autonomous agents depend on; a
     factory drifting to an unknown strategy (or the enum being trimmed) would
-    silently break the loop. The Go ``agentDirective`` struct
-    (cli/internal/cmd/execute.go) mirrors these same values by hand — keep them
-    in lock-step until the contract is a shared OpenAPI schema (review P1-1)."""
+    silently break the loop. Go decodes directives into ``ux.Directive``
+    (``cli/internal/cli/ux/execute.go``) via ``agentops.ParseAgentDirective``
+    (``cli/internal/agentops/classify.go``); Python factories and Go directive
+    handling must remain aligned on the wire vocabulary."""
     directives = [
         switch_toolkit_directive(503),
         credential_identity_mismatch_directive(

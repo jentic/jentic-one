@@ -238,11 +238,11 @@ func TestBuildResetStepsSkipsMissingAccount(t *testing.T) {
 	}
 }
 
-// TestResetRunsAsOperator confirms a full reset no longer refuses to run without
-// EUID 0: it runs as the operator (only its individual steps are sudo-fronted).
-// With a configured account it surfaces the "(requires sudo)" notice and proceeds
-// to the plan; the non-interactive-without-force guard then stops it — proving it
-// got past any (removed) root gate. There must be NO "must run as root" error.
+// TestResetRunsAsOperator confirms reset runs as the operator without EUID 0 while
+// individual teardown steps are sudo-fronted. With a configured account, reset
+// emits the "(requires sudo)" notice and renders the plan before the
+// non-interactive-without-force guard stops execution prior to teardown, with no
+// "must run as root" error.
 func TestResetRunsAsOperator(t *testing.T) {
 	withXDG(t)
 	out := &bytes.Buffer{}
