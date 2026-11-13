@@ -897,12 +897,12 @@ async def test_resolve_intersects_scopes_with_client_allowlist(
 @patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
-async def test_resolve_empty_allowed_scopes_denies_all(
+async def test_resolve_empty_allowed_scopes_denies_permissions(
     mock_at_repo: MagicMock,
     mock_client_repo: MagicMock,
     mock_user_grant_repo: MagicMock,
 ) -> None:
-    """An empty allowed_scopes list means the client has no permitted scopes."""
+    """An empty allowed_scopes list denies permissions but retains OIDC scopes."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(scopes=["agents:read", "openid"])
     at_row.oauth_client_id = "oc_ext_456"
@@ -921,7 +921,7 @@ async def test_resolve_empty_allowed_scopes_denies_all(
     resolved = await svc.resolve_access_token("at_empty_scopes")
 
     assert resolved is not None
-    assert resolved.permissions == []
+    assert resolved.permissions == ["openid"]
 
 
 @patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")

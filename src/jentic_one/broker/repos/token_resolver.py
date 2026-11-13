@@ -10,7 +10,10 @@ from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
-from jentic_one.shared.auth.permission_catalog import effective_user_oauth_scopes
+from jentic_one.shared.auth.permission_catalog import (
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+    effective_user_oauth_scopes,
+)
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -158,8 +161,10 @@ class InProcessTokenResolver:
             bool(row.oauth_client_active) and bool(row.oauth_client_approved)
         )
         if oauth_client_id is not None:
-            ceiling = _as_scope_list(row.oauth_client_allowed_scopes)
+            ceiling = set(_as_scope_list(row.oauth_client_allowed_scopes))
             if row.oauth_client_allowed_scopes is not None:
+                if row.actor_type == ActorType.USER.value:
+                    ceiling |= USER_OAUTH_PASSTHROUGH_SCOPES
                 permissions = [s for s in permissions if s in ceiling]
 
         oauth_grant_id = row.oauth_grant_id

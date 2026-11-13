@@ -24,7 +24,10 @@ from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
-from jentic_one.shared.auth.permission_catalog import effective_user_oauth_scopes
+from jentic_one.shared.auth.permission_catalog import (
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+    effective_user_oauth_scopes,
+)
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -111,7 +114,8 @@ async def resolve_effective_scopes(
     ``user_permission_grants`` expanded through :func:`effective_user_oauth_scopes`
     (#1442), so unheld or revoked permissions are never granted. Every starting set
     is then intersected with the issuing client's ``allowed_scopes`` ceiling and
-    the consent grant's scope set.
+    the consent grant's scope set. USER OIDC/offline passthrough scopes are exempt
+    from the client permission ceiling, matching the authorize endpoint.
 
     This is the single source of truth shared by the enforcement path
     (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1 / RFC 7662
@@ -130,6 +134,8 @@ async def resolve_effective_scopes(
         user_grants = await UserPermissionGrantRepository.get_grants_for_user(session, actor_id)
         user_ceiling = effective_user_oauth_scopes({g.permission for g in user_grants})
         scopes = _apply_scope_ceiling(scopes, user_ceiling)
+    if actor_type == ActorType.USER and client_ceiling is not None:
+        client_ceiling = client_ceiling | USER_OAUTH_PASSTHROUGH_SCOPES
     scopes = _apply_scope_ceiling(scopes, client_ceiling)
     return _apply_scope_ceiling(scopes, grant_ceiling)
 

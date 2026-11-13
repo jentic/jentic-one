@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -37,6 +38,7 @@ from jentic_one.admin.repos import (
     RefreshTokenRepository,
 )
 from jentic_one.admin.services.permission_service import PermissionService
+from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.broker.core.setup import install_broker_auth
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
@@ -466,8 +468,8 @@ async def test_third_party_client_and_agent_ceilings_remain_distinct(
     clean_grants: None,
     clean_user_secrets: None,
 ) -> None:
-    """Pins #1442: third-party ``allowed_scopes`` caps ``consent_model='user'``
-    tokens, and ``actor_permission_grants`` stays isolated to ``AGENT`` tokens."""
+    """Third-party ceilings cap USER permissions without dropping OIDC/offline
+    passthrough scopes, and agent grants stay isolated to AGENT tokens."""
     ctx = local_login_ctx
     user_id, email = await seed_password_user(ctx, "usr_1442_ceilings")
     await seed_permissions(ctx, user_id, [APIS_READ, USERS_READ])
@@ -515,3 +517,47 @@ async def test_third_party_client_and_agent_ceilings_remain_distinct(
     assert user_platform.get("scope") == f"openid {APIS_READ}"
     async with _http_client(broker_app, str(user_platform["access_token"])) as broker_client:
         assert (await broker_client.post("/probe-execute")).status_code == 403
+
+    # Registered USER clients cap permissions but retain the OIDC/offline scopes
+    # accepted by the authorize endpoint throughout the token lifecycle.
+    authorize_svc = AuthorizeService(ctx)
+    code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=_USER_CLIENT_ID,
+        redirect_uri=_USER_CLIENT_REDIRECT,
+        code_challenge=code_challenge(CODE_VERIFIER),
+        scopes=(
+            f"openid email offline_access {APIS_READ} {USERS_READ} {BROKER_EXECUTE_PERMISSION}"
+        ),
+    )
+    with patch(
+        "jentic_one.auth.services.authorize_service.issue_id_token",
+        return_value="hdr.payload.sig",
+    ):
+        user_at, user_rt, id_token, user_scopes = await authorize_svc.exchange_code(
+            code=code,
+            code_verifier=CODE_VERIFIER,
+            redirect_uri=_USER_CLIENT_REDIRECT,
+            client_id=_USER_CLIENT_ID,
+            oauth_client_id=_USER_CLIENT_ID,
+        )
+
+    expected_user_scopes = ["openid", "email", "offline_access", APIS_READ]
+    assert id_token == "hdr.payload.sig"
+    assert user_scopes == expected_user_scopes
+
+    token_svc = TokenService(ctx)
+    broker_resolver = InProcessTokenResolver(ctx.admin_db)
+    for resolver in (token_svc, broker_resolver):
+        resolved = await resolver.resolve_access_token(user_at)
+        assert resolved is not None and resolved.permissions == expected_user_scopes
+    assert (await token_svc.introspect(user_at))["scope"] == " ".join(expected_user_scopes)
+    assert (await token_svc.introspect(user_rt))["scope"] == " ".join(expected_user_scopes)
+
+    rotated_at, _rotated_rt, rotated_scopes = await token_svc.refresh(
+        user_rt, client_id=_USER_CLIENT_ID
+    )
+    assert rotated_scopes == expected_user_scopes
+    for resolver in (token_svc, broker_resolver):
+        rotated = await resolver.resolve_access_token(rotated_at)
+        assert rotated is not None and rotated.permissions == expected_user_scopes

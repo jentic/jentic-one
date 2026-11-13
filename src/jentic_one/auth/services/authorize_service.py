@@ -741,7 +741,9 @@ class AuthorizeService:
                 if not is_platform:
                     oauth_client = await OAuthClientRepository.get_by_client_id(session, client_id)
                     if oauth_client is not None and oauth_client.allowed_scopes is not None:
-                        client_allowed = frozenset(oauth_client.allowed_scopes)
+                        client_allowed = (
+                            frozenset(oauth_client.allowed_scopes) | USER_OAUTH_PASSTHROUGH_SCOPES
+                        )
                         narrowed = [s for s in narrowed if s in client_allowed]
                 stored_scopes = " ".join(narrowed)
 
@@ -1031,8 +1033,8 @@ class AuthorizeService:
         )
 
         # Reported (RFC 6749 §5.1) from the same live intersection the resolvers
-        # enforce: user live permission grants (implication-expanded) plus OIDC
-        # passthrough scopes, capped by any registered client ceiling (#1442).
+        # enforce: user live permission grants (implication-expanded), capped by
+        # any registered client ceiling, with OIDC/offline passthrough preserved.
         return access_token, refresh_token, id_token, user_effective_scopes
 
     async def _resolve_or_create_user(self, claims: IdpClaims) -> str:
