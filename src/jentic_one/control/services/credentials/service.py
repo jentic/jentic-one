@@ -2053,16 +2053,28 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'username' is required for basic")
             if _is_blank_str(payload.password, missing=True):
                 raise InvalidCredentialInputError("Field 'password' is required for basic")
-        elif payload.type == CredentialType.OAUTH2 and not managed:
-            if _is_blank_str(payload.token_url, missing=True):
-                raise InvalidCredentialInputError("Field 'token_url' is required for oauth2")
-            if _is_blank_str(payload.client_id, missing=True):
-                raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
-            # Device flow (RFC 8628) is a public-client flow — no secret.
-            if payload.grant_type != "device_code" and _is_blank_str(
-                payload.client_secret, missing=True
+        elif payload.type == CredentialType.OAUTH2:
+            if payload.grant_type is not None and payload.grant_type not in (
+                "client_credentials",
+                "authorization_code",
+                "device_code",
             ):
-                raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
+                raise InvalidCredentialInputError(
+                    f"Unsupported grant_type {payload.grant_type!r} for oauth2: "
+                    "must be 'client_credentials', 'authorization_code', or 'device_code'"
+                )
+            if not managed:
+                if _is_blank_str(payload.token_url, missing=True):
+                    raise InvalidCredentialInputError("Field 'token_url' is required for oauth2")
+                if _is_blank_str(payload.client_id, missing=True):
+                    raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
+                # Device flow (RFC 8628) is a public-client flow — no secret.
+                if payload.grant_type != "device_code" and _is_blank_str(
+                    payload.client_secret, missing=True
+                ):
+                    raise InvalidCredentialInputError(
+                        "Field 'client_secret' is required for oauth2"
+                    )
         elif payload.type == CredentialType.SIGV4:
             if _is_blank_str(payload.access_key_id, missing=True):
                 raise InvalidCredentialInputError("Field 'access_key_id' is required for sigv4")

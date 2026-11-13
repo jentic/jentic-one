@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from jentic_one.control.services.credentials.mapping import is_refreshable, to_stored, to_wire
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 
@@ -34,6 +36,35 @@ def test_to_stored_oauth2_authorization_code() -> None:
         to_stored(CredentialType.OAUTH2, grant_type="authorization_code")
         == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
     )
+
+
+def test_to_stored_oauth2_device_code() -> None:
+    assert (
+        to_stored(CredentialType.OAUTH2, grant_type="device_code")
+        == StoredCredentialType.OAUTH2_DEVICE_CODE
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_grant",
+    [
+        "password",
+        "implicit",
+        "",
+        " ",
+        "   ",
+        "\t\n",
+        " client_credentials",
+        "client_credentials ",
+        "CLIENT_CREDENTIALS",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "arbitrary_grant",
+    ],
+)
+def test_to_stored_oauth2_rejects_unsupported_grant_type(bad_grant: str) -> None:
+    """Pins #1428: explicit unsupported or blank OAuth2 grant types fail closed."""
+    with pytest.raises(ValueError, match="Unsupported OAuth2 grant_type"):
+        to_stored(CredentialType.OAUTH2, grant_type=bad_grant)
 
 
 def test_to_wire_static_bearer_token() -> None:
