@@ -34,6 +34,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 
 from jentic_one.admin.repos import (
     AccessTokenRepository,
+    AuthorizationCodeRepository,
     OAuthClientRepository,
     RefreshTokenRepository,
 )
@@ -460,6 +461,158 @@ async def test_spa_oidc_only_session_keeps_live_control_plane_permissions(
     await PermissionService(ctx).set_assigned(operator_id, [], identity=admin_identity)
     async with _http_client(control_app, spa_at) as ctrl_client:
         assert (await ctrl_client.get("/users")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_request_keeps_the_oidc_session_default(
+    local_login_ctx: Context,
+    clean_grants: None,
+    clean_user_secrets: None,
+) -> None:
+    """An omitted scope still creates a first-party OIDC session with live grants."""
+    ctx = local_login_ctx
+    user_id, _ = await seed_password_user(ctx, "usr_1442_empty_scope")
+    await seed_permissions(ctx, user_id, [USERS_READ])
+    authorize_svc = AuthorizeService(ctx)
+    code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        code_challenge=code_challenge(CODE_VERIFIER),
+        scopes="",
+    )
+
+    access, _refresh, id_token, scopes = await authorize_svc.exchange_code(
+        code=code,
+        code_verifier=CODE_VERIFIER,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+    )
+
+    assert id_token is not None
+    assert scopes == ["openid"]
+    control_app = _make_control_app(ctx)
+    async with _http_client(control_app, access) as client:
+        assert (await client.get("/users")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_legacy_empty_scope_code_keeps_the_oidc_session_default(
+    local_login_ctx: Context,
+    clean_grants: None,
+    clean_user_secrets: None,
+) -> None:
+    """Legacy rows with an empty scope string retain their OIDC-only session meaning."""
+    ctx = local_login_ctx
+    user_id, _ = await seed_password_user(ctx, "usr_1442_legacy_empty_scope")
+    await seed_permissions(ctx, user_id, [USERS_READ])
+    raw_code = secrets.token_urlsafe(32)
+    async with ctx.admin_db.transaction() as session:
+        await AuthorizationCodeRepository.create(
+            session,
+            code_hash=hashlib.sha256(raw_code.encode()).hexdigest(),
+            user_id=user_id,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            code_challenge=code_challenge(CODE_VERIFIER),
+            scopes="",
+            nonce=None,
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            created_by=SEED_MARKER,
+        )
+
+    access, _refresh, id_token, scopes = await AuthorizeService(ctx).exchange_code(
+        code=raw_code,
+        code_verifier=CODE_VERIFIER,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+    )
+
+    assert id_token is not None
+    assert scopes == ["openid"]
+    control_app = _make_control_app(ctx)
+    async with _http_client(control_app, access) as client:
+        assert (await client.get("/users")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_scopes", [" ", "  "])
+async def test_legacy_whitespace_scope_code_stays_empty(
+    local_login_ctx: Context,
+    clean_grants: None,
+    clean_user_secrets: None,
+    stored_scopes: str,
+) -> None:
+    """Nonempty whitespace keeps its legacy zero-scope meaning instead of defaulting to OIDC."""
+    ctx = local_login_ctx
+    user_id, _ = await seed_password_user(ctx, f"usr_1442_legacy_ws_{len(stored_scopes)}")
+    await seed_permissions(ctx, user_id, [USERS_READ])
+    raw_code = secrets.token_urlsafe(32)
+    async with ctx.admin_db.transaction() as session:
+        await AuthorizationCodeRepository.create(
+            session,
+            code_hash=hashlib.sha256(raw_code.encode()).hexdigest(),
+            user_id=user_id,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            code_challenge=code_challenge(CODE_VERIFIER),
+            scopes=stored_scopes,
+            nonce=None,
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            created_by=SEED_MARKER,
+        )
+
+    access, _refresh, _id_token, scopes = await AuthorizeService(ctx).exchange_code(
+        code=raw_code,
+        code_verifier=CODE_VERIFIER,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+    )
+
+    assert scopes == []
+    control_app = _make_control_app(ctx)
+    async with _http_client(control_app, access) as client:
+        assert (await client.get("/users")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_permission_only_request_narrowed_to_zero_stays_empty(
+    local_login_ctx: Context,
+    clean_grants: None,
+    clean_user_secrets: None,
+) -> None:
+    """A denied permission request must not turn into a live-grant OIDC session."""
+    ctx = local_login_ctx
+    user_id, _ = await seed_password_user(ctx, "usr_1442_narrowed_empty_scope")
+    await seed_permissions(ctx, user_id, [USERS_READ])
+    authorize_svc = AuthorizeService(ctx)
+    code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        code_challenge=code_challenge(CODE_VERIFIER),
+        scopes=BROKER_EXECUTE_PERMISSION,
+    )
+    async with ctx.admin_db.session() as session:
+        stored = await AuthorizationCodeRepository.get_by_hash(
+            session, hashlib.sha256(code.encode()).hexdigest()
+        )
+        assert stored is not None
+        assert stored.scopes == BROKER_EXECUTE_PERMISSION
+
+    access, _refresh, _id_token, scopes = await authorize_svc.exchange_code(
+        code=code,
+        code_verifier=CODE_VERIFIER,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+    )
+
+    assert scopes == []
+    resolved = await TokenService(ctx).resolve_access_token(access)
+    assert resolved is not None and resolved.permissions == []
+    control_app = _make_control_app(ctx)
+    async with _http_client(control_app, access) as client:
+        assert (await client.get("/users")).status_code == 403
 
 
 @pytest.mark.asyncio

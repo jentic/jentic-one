@@ -56,10 +56,7 @@ from jentic_one.auth.services.token_service import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
-from jentic_one.shared.auth.permission_catalog import (
-    USER_OAUTH_PASSTHROUGH_SCOPES,
-    effective_user_oauth_scopes,
-)
+from jentic_one.shared.auth.permission_catalog import USER_OAUTH_PASSTHROUGH_SCOPES
 from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -727,26 +724,6 @@ class AuthorizeService:
         ttl = self._auth_config.auth_code_ttl_seconds
 
         async with self._ctx.admin_db.transaction() as session:
-            stored_scopes = scopes
-            if grant_id is None:
-                requested = list(dict.fromkeys(s for s in scopes.split() if s))
-                user_grants = await UserPermissionGrantRepository.get_grants_for_user(
-                    session, user_id
-                )
-                user_allowed = effective_user_oauth_scopes({g.permission for g in user_grants})
-                narrowed = [s for s in requested if s in user_allowed]
-                is_platform = any(
-                    pc.client_id == client_id for pc in self._ctx.config.auth.platform_clients
-                )
-                if not is_platform:
-                    oauth_client = await OAuthClientRepository.get_by_client_id(session, client_id)
-                    if oauth_client is not None and oauth_client.allowed_scopes is not None:
-                        client_allowed = (
-                            frozenset(oauth_client.allowed_scopes) | USER_OAUTH_PASSTHROUGH_SCOPES
-                        )
-                        narrowed = [s for s in narrowed if s in client_allowed]
-                stored_scopes = " ".join(narrowed)
-
             auth_code = await AuthorizationCodeRepository.create(
                 session,
                 code_hash=code_hash,
@@ -754,7 +731,7 @@ class AuthorizeService:
                 client_id=client_id,
                 redirect_uri=redirect_uri,
                 code_challenge=code_challenge,
-                scopes=stored_scopes,
+                scopes=scopes,
                 nonce=nonce,
                 grant_id=grant_id,
                 expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
@@ -855,14 +832,14 @@ class AuthorizeService:
 
         Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
         the effective set the minted access token will actually enforce,
-        reported per RFC 6749 §5.1: for grant-bearing (agent-channel) codes it
-        is recomputed at exchange time the way the live resolvers enforce it
-        (agent live grants ∩ client ceiling ∩ consent-grant scopes, via
-        :func:`resolve_effective_scopes`); for plain codes it is the
-        authorize-time snapshot. Grant-bearing codes mint actor=AGENT tokens
-        bound to the consent grant and return ``id_token=None`` (D11 — no OIDC
-        identity on the agent channel); plain codes keep the act-as-user path
-        with an id_token.
+        reported per RFC 6749 §5.1. Grant-bearing (agent-channel) codes use
+        agent live grants ∩ client ceiling ∩ consent-grant scopes; plain USER
+        codes intersect the stored request with live USER grants and the client
+        ceiling. Both resolve through :func:`resolve_effective_scopes` at
+        exchange time. Grant-bearing codes mint actor=AGENT tokens bound to the
+        consent grant and return ``id_token=None`` (D11 — no OIDC identity on
+        the agent channel); plain codes keep the act-as-user path with an
+        id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
@@ -964,7 +941,7 @@ class AuthorizeService:
                     session, oauth_client_id
                 )
                 if user is not None and user_active and user_client_active:
-                    code_scopes = [s for s in auth_code.scopes.split() if s]
+                    code_scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
                     user_effective_scopes = await resolve_effective_scopes(
                         session,
                         actor_id=user.id,
