@@ -20,7 +20,7 @@ class JobLinksResponse(BaseModel):
     )
     result: str | None = Field(
         default=None,
-        description="URL of the job result; null until the job has completed.",
+        description="URL of the job result when an unexpired result is stored; null otherwise.",
         examples=[f"https://jentic.example.com/jobs/{ex.JOB_ID}/result"],
     )
     execution: str | None = Field(

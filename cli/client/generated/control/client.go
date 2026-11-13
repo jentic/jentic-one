@@ -5670,7 +5670,7 @@ type JobLinksResponse struct {
 	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Execution *string `json:"execution,omitempty"`
 
-	// Result URL of the job result; null until the job has completed.
+	// Result URL of the job result when an unexpired result is stored; null otherwise.
 	//
 	// Examples: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result
 	Result *string `json:"result,omitempty"`
@@ -14132,12 +14132,14 @@ type ClientInterface interface {
 
 	// GetJobResult Get a job's result
 	//
-	// Get the result of a completed job — polymorphic by kind.
+	// Get the stored result of a finished job — polymorphic by kind.
 	//
-	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
-	// running, failed or cancelled), and ``410`` once an
-	// approved execution's result is past
-	// ``held_executions.result_retention_seconds``.
+	// Serves the stored result for a ``completed`` job, or a ``failed`` job that
+	// recorded an actionable result (such as an approved execution whose upstream
+	// call or run-time authorization failed, or a held execution that never ran).
+	// Answers ``409`` while the job is active, cancelled, dead-lettered, or failed
+	// without a stored result, and ``410`` once an approved execution's result is
+	// past ``held_executions.result_retention_seconds``.
 	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -18612,12 +18614,14 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 
 // GetJobResult Get a job's result
 //
-// Get the result of a completed job — polymorphic by kind.
+// Get the stored result of a finished job — polymorphic by kind.
 //
-// Answers “409“ unless the job's “status“ is “completed“ (pending,
-// running, failed or cancelled), and “410“ once an
-// approved execution's result is past
-// “held_executions.result_retention_seconds“.
+// Serves the stored result for a “completed“ job, or a “failed“ job that
+// recorded an actionable result (such as an approved execution whose upstream
+// call or run-time authorization failed, or a held execution that never ran).
+// Answers “409“ while the job is active, cancelled, dead-lettered, or failed
+// without a stored result, and “410“ once an approved execution's result is
+// past “held_executions.result_retention_seconds“.
 //
 // Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -31553,12 +31557,14 @@ type ClientWithResponsesInterface interface {
 
 	// GetJobResultWithResponse Get a job's result
 	//
-	// Get the result of a completed job — polymorphic by kind.
+	// Get the stored result of a finished job — polymorphic by kind.
 	//
-	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
-	// running, failed or cancelled), and ``410`` once an
-	// approved execution's result is past
-	// ``held_executions.result_retention_seconds``.
+	// Serves the stored result for a ``completed`` job, or a ``failed`` job that
+	// recorded an actionable result (such as an approved execution whose upstream
+	// call or run-time authorization failed, or a held execution that never ran).
+	// Answers ``409`` while the job is active, cancelled, dead-lettered, or failed
+	// without a stored result, and ``410`` once an approved execution's result is
+	// past ``held_executions.result_retention_seconds``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -51517,12 +51523,14 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 
 // GetJobResultWithResponse Get a job's result
 //
-// Get the result of a completed job — polymorphic by kind.
+// Get the stored result of a finished job — polymorphic by kind.
 //
-// Answers “409“ unless the job's “status“ is “completed“ (pending,
-// running, failed or cancelled), and “410“ once an
-// approved execution's result is past
-// “held_executions.result_retention_seconds“.
+// Serves the stored result for a “completed“ job, or a “failed“ job that
+// recorded an actionable result (such as an approved execution whose upstream
+// call or run-time authorization failed, or a held execution that never ran).
+// Answers “409“ while the job is active, cancelled, dead-lettered, or failed
+// without a stored result, and “410“ once an approved execution's result is
+// past “held_executions.result_retention_seconds“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
