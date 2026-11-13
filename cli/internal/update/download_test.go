@@ -70,7 +70,15 @@ func TestDownloadAndVerify_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	stage := t.TempDir()
-	res, err := DownloadAndVerify(context.Background(), repoFromURL(srv.URL), "v0.31.0", "jentic", "linux", "amd64", "", stage)
+	res, err := DownloadAndVerify(context.Background(), DownloadRequest{
+		Repo:     repoFromURL(srv.URL),
+		Tag:      "v0.31.0",
+		Binary:   "jentic",
+		GOOS:     "linux",
+		GOARCH:   "amd64",
+		Token:    "",
+		StageDir: stage,
+	})
 	if err != nil {
 		t.Fatalf("DownloadAndVerify: %v", err)
 	}
@@ -94,7 +102,15 @@ func TestDownloadAndVerify_ChecksumMismatchAborts(t *testing.T) {
 	srv := fakeReleaseServer(t, asset, archive, strings.Repeat("0", 64))
 	defer srv.Close()
 
-	_, err := DownloadAndVerify(context.Background(), repoFromURL(srv.URL), "v0.31.0", "jentic", "linux", "amd64", "", t.TempDir())
+	_, err := DownloadAndVerify(context.Background(), DownloadRequest{
+		Repo:     repoFromURL(srv.URL),
+		Tag:      "v0.31.0",
+		Binary:   "jentic",
+		GOOS:     "linux",
+		GOARCH:   "amd64",
+		Token:    "",
+		StageDir: t.TempDir(),
+	})
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("want a checksum-mismatch abort, got %v", err)
 	}
