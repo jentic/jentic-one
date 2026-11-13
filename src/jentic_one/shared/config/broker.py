@@ -136,6 +136,13 @@ class IdempotencyConfig(BaseModel):
             return MEMORY_IDEMPOTENCY_TTL_S
         return SHARED_IDEMPOTENCY_TTL_S
 
+    @field_validator("pending_ttl_s")
+    @classmethod
+    def _positive_pending_ttl(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError(f"pending_ttl_s must be positive, got {value}")
+        return value
+
 
 # Asymmetric signature algs are the only ones the hardened JWT path accepts.
 # HS* (HMAC) is rejected so a leaked/guessed shared secret can't be used to forge
@@ -490,6 +497,31 @@ class BrokerConfig(BaseModel):
             _warn_retired_account_linking_base_url_once()
             data = {k: v for k, v in data.items() if k != _RETIRED_ACCOUNT_LINKING_KEY}
         return data
+
+    @model_validator(mode="after")
+    def _validate_idempotency_pending_ttl(self) -> BrokerConfig:
+        """Ensure ``pending_ttl_s`` exceeds the execution deadline envelope."""
+        if not self.idempotency.enabled:
+            return self
+        deadline_s = self.resilience.request_deadline_s
+        timeout_s = self.upstream_timeout_s
+        if deadline_s <= 0 and timeout_s <= 0:
+            raise ValueError(
+                "broker.idempotency.pending_ttl_s requires a positive "
+                "broker.resilience.request_deadline_s or broker.upstream_timeout_s "
+                "when idempotency is enabled"
+            )
+        if deadline_s > 0 and self.idempotency.pending_ttl_s <= deadline_s:
+            raise ValueError(
+                f"broker.idempotency.pending_ttl_s ({self.idempotency.pending_ttl_s}s) "
+                f"must exceed broker.resilience.request_deadline_s ({deadline_s}s)"
+            )
+        if timeout_s > 0 and self.idempotency.pending_ttl_s <= timeout_s:
+            raise ValueError(
+                f"broker.idempotency.pending_ttl_s ({self.idempotency.pending_ttl_s}s) "
+                f"must exceed broker.upstream_timeout_s ({timeout_s}s)"
+            )
+        return self
 
 
 _retired_direct_bindings_flag_warned = threading.Event()

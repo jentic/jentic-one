@@ -437,7 +437,7 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
 
     class _ActorStatus:
         async def authority(
-            self, *, actor_id: str, actor_type: str, permission: str
+            self, *, actor_id: str, actor_type: str, permission: str, **_lineage: object
         ) -> ActorAuthority:
             return ActorAuthority(active=True, holds_permission=True)
 
@@ -461,6 +461,8 @@ async def test_execution_handler_emits_repeated_failure(session: AsyncSession) -
         "trace_id": _TRACE,
         "api_vendor": "example",
         "operation": {"id": _OPERATION},
+        "auth_token_sha256": "abcd" * 16,
+        "auth_method": "access_token",
     }
 
     # In production the executor persists the failing ExecutionRecord before the

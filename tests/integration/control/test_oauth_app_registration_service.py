@@ -9,9 +9,12 @@ constraints, dependent-credential counting off a real credential row).
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from sqlalchemy import delete
 
@@ -22,8 +25,20 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.device_authorization_app_registration_details import (
     DeviceAuthorizationAppRegistrationDetails,
 )
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
-from jentic_one.control.repos import CredentialRepository
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
+from jentic_one.control.services.credentials.providers.device_authorization import (
+    DeviceAuthorizationConnectProvider,
+)
+from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
+from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.control.services.oauth_app_registrations.errors import (
     InvalidOAuthAppRegistrationInputError,
     OAuthAppRegistrationInUseError,
@@ -38,7 +53,11 @@ from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.config import AppConfig, ControlSurfaceConfig
+from jentic_one.shared.config import (
+    AppConfig,
+    ControlSurfaceConfig,
+    DirectOAuth2ProviderConfig,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -68,6 +87,8 @@ _ADMIN = Identity(
 async def clean_registrations(control_db: DatabaseSession) -> AsyncGenerator[None, None]:
     """Reset the registration + dependent tables before and after each test."""
     tables = (
+        OAuthToken,
+        DeviceAuthorizationCredential,
         AuthorizationCodeAppRegistrationDetails,
         DeviceAuthorizationAppRegistrationDetails,
         Credential,
@@ -323,7 +344,7 @@ async def test_update_mutates_name_scopes_endpoints_and_toggles_active(
         display_name="After Family",
         default_scopes=["b", "c"],
         authorize_url="https://after/a",
-        token_url="https://after/t",
+        token_url="https://before/v2/t",
         is_active=False,
         identity=_ADMIN,
     )
@@ -331,7 +352,7 @@ async def test_update_mutates_name_scopes_endpoints_and_toggles_active(
     assert updated.display_name == "After Family"
     assert updated.default_scopes == ["b", "c"]
     assert updated.authorize_url == "https://after/a"
-    assert updated.token_url == "https://after/t"
+    assert updated.token_url == "https://before/v2/t"
     assert updated.is_active is False
 
 
@@ -518,7 +539,7 @@ async def test_update_authorization_code_honours_control_egress_allowlist(
             client_id="cid",
             client_secret=_TEST_SECRET_PLAINTEXT,
             authorize_url="https://ex/a",
-            token_url="https://ex/t",
+            token_url="https://10.50.0.7/t",
             default_scopes=None,
             identity=_ADMIN,
         )
@@ -528,7 +549,7 @@ async def test_update_authorization_code_honours_control_egress_allowlist(
         else:
             with pytest.raises(InvalidOAuthAppRegistrationInputError, match="token_url"):
                 await svc.update(reg.id, token_url=token_url, identity=_ADMIN)
-            assert (await svc.get(reg.id)).token_url == "https://ex/t"
+            assert (await svc.get(reg.id)).token_url == "https://10.50.0.7/t"
 
 
 @pytest.mark.usefixtures("clean_registrations")
@@ -694,3 +715,194 @@ async def test_delete_refused_with_dependent_credential(
         await svc.delete(reg.id, identity=_ADMIN)
     assert exc.value.registration_id == reg.id
     assert exc.value.credential_count == 1
+
+
+@pytest.mark.usefixtures("clean_registrations")
+async def test_update_auth_code_refuses_cross_origin_token_url_and_protects_live_grant(
+    integration_context: Context,
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    reg = await svc.create_authorization_code(
+        name="Shared AC",
+        api_vendor="v",
+        catalog_api_id="v/api",
+        display_name="V",
+        client_id="cid-ac",
+        client_secret=_TEST_SECRET_ORIGINAL,
+        authorize_url="https://idp.example.com/authorize",
+        token_url="https://idp.example.com/v1/token",
+        default_scopes=["read"],
+        identity=_ADMIN,
+    )
+    async with integration_context.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type="oauth2_authorization_code",
+            name="user cred",
+            api_vendor="v",
+            api_name="v/api",
+            catalog_api_id="v/api",
+            created_by="usr_alice",
+            provider="direct_oauth2",
+            state="connected",
+        )
+        await CredentialRepository.set_oauth_app_registration(
+            session, credential.id, registration_id=reg.id
+        )
+        await OAuthTokenRepository.create(
+            session,
+            credential_id=credential.id,
+            encrypted_access_token=integration_context.encryption.encrypt("at-live"),
+            encrypted_refresh_token=integration_context.encryption.encrypt("rt-live"),
+            created_by="usr_alice",
+        )
+
+    posted_urls: list[str] = []
+
+    async def fake_decrypt() -> str:
+        return "rt-live"
+
+    token_view = OAuthTokenView(
+        credential_id=credential.id,
+        provider="direct_oauth2",
+        expires_at=dt.datetime.now(dt.UTC),
+        decrypt=fake_decrypt,
+    )
+    provider = DirectOAuth2Provider(DirectOAuth2ProviderConfig())
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        async def _record_post(url: str, **_kwargs: object) -> httpx.Response:
+            posted_urls.append(url)
+            return httpx.Response(200, json={"access_token": "at-refreshed"})
+
+        mock_client.post = AsyncMock(side_effect=_record_post)
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(InvalidOAuthAppRegistrationInputError, match="origin"):
+            await asyncio.gather(
+                svc.update(
+                    reg.id,
+                    token_url="https://attacker.example.com/token",
+                    identity=_ADMIN,
+                ),
+                provider.refresh(integration_context, token=token_view),
+            )
+
+        # Same-origin path update succeeds and keeps the grant working.
+        updated = await svc.update(
+            reg.id,
+            token_url="https://idp.example.com/v2/token",
+            identity=_ADMIN,
+        )
+        assert updated.token_url == "https://idp.example.com/v2/token"
+        await provider.refresh(integration_context, token=token_view)
+
+    assert "https://attacker.example.com/token" not in posted_urls
+    assert "https://idp.example.com/v2/token" in posted_urls
+
+
+@pytest.mark.usefixtures("clean_registrations")
+async def test_update_device_flow_refuses_cross_origin_token_endpoint_and_protects_live_grant(
+    integration_context: Context,
+) -> None:
+    svc = OAuthAppRegistrationService(integration_context)
+    reg = await svc.create_device_authorization(
+        name="Shared DA",
+        api_vendor="v",
+        catalog_api_id="v/api",
+        display_name="V",
+        client_id="cid-da",
+        authorization_endpoint="https://idp.example.com/device/code",
+        token_endpoint="https://idp.example.com/v1/token",
+        default_scopes=["read"],
+        identity=_ADMIN,
+    )
+    async with integration_context.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type="oauth2_device_code",
+            name="user device cred",
+            api_vendor="v",
+            api_name="v/api",
+            catalog_api_id="v/api",
+            created_by="usr_alice",
+            provider="device_authorization",
+            state="connected",
+        )
+        await CredentialRepository.set_oauth_app_registration(
+            session, credential.id, registration_id=reg.id
+        )
+        await DeviceAuthorizationCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            client_id="cid-da",
+            token_url="https://idp.example.com/v1/token",
+            authorization_endpoint="https://idp.example.com/device/code",
+            requested_scopes=["read"],
+            created_by="usr_alice",
+        )
+        await OAuthTokenRepository.create(
+            session,
+            credential_id=credential.id,
+            encrypted_access_token=integration_context.encryption.encrypt("at-dev-live"),
+            encrypted_refresh_token=integration_context.encryption.encrypt("rt-dev-live"),
+            created_by="usr_alice",
+        )
+
+    posted_urls: list[str] = []
+
+    async def fake_decrypt() -> str:
+        return "rt-dev-live"
+
+    token_view = OAuthTokenView(
+        credential_id=credential.id,
+        provider="device_authorization",
+        expires_at=dt.datetime.now(dt.UTC),
+        decrypt=fake_decrypt,
+    )
+    provider = DeviceAuthorizationConnectProvider()
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        async def _record_post(url: str, **_kwargs: object) -> httpx.Response:
+            posted_urls.append(url)
+            return httpx.Response(200, json={"access_token": "at-dev-refreshed"})
+
+        mock_client.post = AsyncMock(side_effect=_record_post)
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(InvalidOAuthAppRegistrationInputError, match="origin"):
+            await asyncio.gather(
+                svc.update(
+                    reg.id,
+                    token_endpoint="https://attacker.example.com/token",
+                    identity=_ADMIN,
+                ),
+                provider.refresh(integration_context, token=token_view),
+            )
+
+        with pytest.raises(InvalidOAuthAppRegistrationInputError, match="origin"):
+            await svc.update(
+                reg.id,
+                authorization_endpoint="https://attacker.example.com/device/code",
+                identity=_ADMIN,
+            )
+
+        # Same-origin path update succeeds and keeps the grant working.
+        updated = await svc.update(
+            reg.id,
+            token_endpoint="https://idp.example.com/v2/token",
+            identity=_ADMIN,
+        )
+        assert updated.token_endpoint == "https://idp.example.com/v2/token"
+        await provider.refresh(integration_context, token=token_view)
+
+    assert "https://attacker.example.com/token" not in posted_urls
+    assert "https://idp.example.com/v2/token" in posted_urls

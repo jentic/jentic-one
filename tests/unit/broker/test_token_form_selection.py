@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -99,6 +100,9 @@ async def test_dispatcher_routes_jwt_to_verifier_without_lookup() -> None:
 
     assert resolved.sub == "agnt_jwt"
     assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
+    assert resolved.auth_token_sha256 == hashlib.sha256(token.encode()).hexdigest()
+    assert resolved.auth_method == "jwt"
+    assert resolved.expires_at == datetime.fromtimestamp(exp, UTC)
     assert resolver.calls == []  # no opaque DB lookup for a JWT
 
 

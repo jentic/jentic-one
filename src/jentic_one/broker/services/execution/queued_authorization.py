@@ -38,7 +38,11 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
-from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
+from jentic_one.shared.jobs.protocols import (
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
+    auth_lineage_is_current,
+)
 from jentic_one.shared.jobs.queued_denials import (
     inactive_actor_problem,
     insufficient_scope_problem,
@@ -74,10 +78,25 @@ class QueuedExecutionAuthorizer:
 
         # One read answers both gates (liveness, then the execute permission),
         # in the sync edge's order: authentication before scope.
+        if not auth_lineage_is_current(
+            request.auth_token_sha256, request.auth_method, request.auth_expires_at
+        ):
+            logger.info(
+                "queued_execution_denied",
+                reason="auth_lineage_missing_or_expired",
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+            )
+            return QueuedExecutionVerdict(allowed=False, problem=inactive_actor_problem(instance))
         authority = await self._actor_status.authority(
             actor_id=request.actor_id,
             actor_type=request.actor_type,
             permission=BROKER_EXECUTE_PERMISSION,
+            auth_token_sha256=request.auth_token_sha256,
+            auth_method=request.auth_method,
+            oauth_client_id=request.oauth_client_id,
+            oauth_grant_id=request.oauth_grant_id,
+            session_generation=request.session_generation,
         )
         if not authority.active:
             logger.info(

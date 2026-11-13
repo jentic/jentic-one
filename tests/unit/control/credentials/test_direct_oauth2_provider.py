@@ -780,3 +780,149 @@ async def test_complete_connect_replays_state_redirect_uri_in_exchange() -> None
 
         sent_data = mock_client.post.await_args.kwargs["data"]
         assert sent_data["redirect_uri"] == "http://127.0.0.1:8020/credentials/oauth/callback"
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("raw_authorize_url", "expected_preserved", "expected_fragment"),
+    [
+        ("https://idp.example.com/authorize", {}, ""),
+        ("https://idp.example.com/authorize?audience=api", {"audience": ["api"]}, ""),
+        (
+            "https://idp.example.com/authorize?tenant=t1&resource=https%3A%2F%2Fapi.example%2Fv1&empty=",
+            {"tenant": ["t1"], "resource": ["https://api.example/v1"], "empty": [""]},
+            "",
+        ),
+        (
+            "https://idp.example.com/authorize?audience=api&state=fixed&client_id=shadow#consent",
+            {"audience": ["api"]},
+            "consent",
+        ),
+    ],
+)
+async def test_begin_connect_merges_existing_query_and_overrides_security_params(
+    raw_authorize_url: str,
+    expected_preserved: dict[str, list[str]],
+    expected_fragment: str,
+) -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+
+    class _OCCWithQuery:
+        client_id = "client-abc"
+        authorize_url = raw_authorize_url
+        scope = "read"
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=_legacy_credential(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_OCCWithQuery(),
+        ),
+    ):
+        challenge = await provider.begin_connect(
+            ctx, api=_begin_connect_api_ref(), request=_begin_connect_request()
+        )
+
+    parsed = urlparse(challenge.authorize_url)
+    assert parsed.fragment == expected_fragment
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    for k, v in expected_preserved.items():
+        assert params[k] == v
+    assert params["client_id"] == ["client-abc"]
+    assert params["response_type"] == ["code"]
+    assert params["redirect_uri"] == ["https://app.example.com/credentials/oauth/callback"]
+    assert params["scope"] == ["read write"]
+    assert params["state"] == [challenge.state]
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "bad_expires_in",
+    [None, "not-a-number", "", 0, -1, True, False, 12.5, 10**20, "²", "9" * 5_000],
+)
+async def test_refresh_rejects_invalid_expires_in(bad_expires_in: object) -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(
+                200, json={"access_token": "at_new", "expires_in": bad_expires_in}
+            )
+        )
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ProviderError, match="expires_in"):
+            await provider.refresh(ctx, token=token_view)
+
+
+@pytest.mark.asyncio()
+async def test_refresh_rejects_missing_access_token_and_maps_transport_error() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=httpx.Response(200, json={"scope": "read"}))
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ProviderError, match="access_token"):
+            await provider.refresh(ctx, token=token_view)
+
+        mock_client.post = AsyncMock(side_effect=httpx.ReadError("connection reset"))
+        with pytest.raises(TokenExchangeError):
+            await provider.refresh(ctx, token=token_view)

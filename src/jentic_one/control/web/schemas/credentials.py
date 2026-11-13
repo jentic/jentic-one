@@ -920,6 +920,11 @@ class AuthCodeConnectChallengeResponse(BaseModel):
     """
 
     kind: Literal["authorization_code"] = "authorization_code"
+    flow_id: str | None = Field(
+        default=None,
+        description="Opaque identifier for reading this flow's completion status.",
+        examples=[ex.OPAQUE_TOKEN],
+    )
     authorize_url: str = Field(
         description="Vendor authorization URL to open in the browser that called this endpoint.",
         examples=["https://vendor.example.com/oauth/authorize?client_id=…&state=…"],
@@ -936,12 +941,15 @@ class AuthCodeConnectChallengeResponse(BaseModel):
 class DeviceAuthorizationConnectChallengeResponse(BaseModel):
     """RFC 8628 device-code challenge.
 
-    Client shows ``user_code`` at ``verification_uri`` and polls
-    ``GET /credentials/{id}`` until state moves off ``pending``
-    (scanner-driven server-side).
+    Client shows ``user_code`` at ``verification_uri`` and polls this flow's
+    status endpoint while the scanner drives completion server-side.
     """
 
     kind: Literal["device_authorization"] = "device_authorization"
+    flow_id: str = Field(
+        description="Opaque identifier for reading this flow's completion status.",
+        examples=[ex.OPAQUE_TOKEN],
+    )
     user_code: str = Field(
         description="Code the user types at `verification_uri`.",
         examples=["WDJB-MJHT"],
@@ -966,6 +974,12 @@ class DeviceAuthorizationConnectChallengeResponse(BaseModel):
         ),
         examples=[5],
     )
+
+
+class ConnectFlowStatusResponse(BaseModel):
+    """Authoritative terminal completion of one connect challenge."""
+
+    status: Literal["pending", "connected"] = Field(examples=["connected"])
 
 
 ConnectChallengeResponse = Annotated[

@@ -8,7 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from jentic_one.shared.config import EgressConfig
-from jentic_one.shared.url_validation import validate_upstream_url
+from jentic_one.shared.url_validation import (
+    UpstreamUrlInvalidError,
+    validate_upstream_url,
+    validate_upstream_url_async,
+)
 
 
 def test_valid_https_url() -> None:
@@ -463,3 +467,35 @@ def test_numeric_ipv4_spellings_are_resolved_then_classified(host: str) -> None:
     ):
         validate_upstream_url(f"http://{host}/x")
     assert resolver.call_args.args[0] == host
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://other-user:other-password@api.example.com/resource",  # pragma: allowlist secret
+        "http://user@api.example.com/resource",
+        "https://:secret@api.example.com/resource",
+        "https://@api.example.com/resource",
+        "user:pass@api.example.com/resource",
+        "https://user%40evil.example.com/resource",
+    ],
+)
+def test_rejects_url_userinfo_sync(url: str) -> None:
+    with pytest.raises(UpstreamUrlInvalidError, match="userinfo"):
+        validate_upstream_url(url)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://other-user:other-password@api.example.com/resource",  # pragma: allowlist secret
+        "http://user@api.example.com/resource",
+        "https://:secret@api.example.com/resource",
+        "https://@api.example.com/resource",
+        "user:pass@api.example.com/resource",
+    ],
+)
+async def test_rejects_url_userinfo_async(url: str) -> None:
+    with pytest.raises(UpstreamUrlInvalidError, match="userinfo"):
+        await validate_upstream_url_async(url)

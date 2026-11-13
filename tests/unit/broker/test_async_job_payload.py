@@ -5,14 +5,28 @@ this one holds the broker's ``_async_job_payload`` to the payload contract the
 worker reads.
 """
 
+import hashlib
+from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import MagicMock
 
+import jwt
 import pytest
+from starlette.requests import Request
 
+from jentic_one.broker.core.errors import AsyncCookieEncryptionUnavailableError
+from jentic_one.broker.core.problem import status_for_broker_error
 from jentic_one.broker.core.proxy_headers import is_replay_header, replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import _async_job_payload
+from jentic_one.broker.services.auth import JwtTokenValidator, JwtVerifier
+from jentic_one.broker.web.routers.execute import (
+    _async_job_payload,
+    _captured_cookie,
+    _extract_request_auth_lineage,
+)
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import OperationInfo
 
 
@@ -175,3 +189,109 @@ def test_any_vendor_version_header_replays(name: str) -> None:
 def test_replay_never_keeps_credentials_hop_by_hop_or_jentic_headers(name: str) -> None:
     assert is_replay_header(name) is False
     assert replay_headers({name: "1"}) == {}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Range",
+        "If-Range",
+        "Accept-Encoding",
+        "Accept-Charset",
+        "Cache-Control",
+        "Content-Disposition",
+        "Content-Location",
+        "Content-Range",
+        "Expect",
+        "Max-Forwards",
+        "User-Agent",
+        "Anthropic-Beta",
+        "OpenAI-Beta",
+        "OpenAI-Organization",
+        "OpenAI-Project",
+        "Stripe-Account",
+        "Stripe-Context",
+    ],
+)
+def test_replay_preserves_semantic_and_content_negotiation_headers(name: str) -> None:
+    assert is_replay_header(name) is True
+    assert replay_headers({name: "value"}) == {name.lower(): "value"}
+
+
+def test_payload_carries_auth_channel_lineage_when_present() -> None:
+    expires_at = datetime(2026, 11, 12, 19, 0, tzinfo=UTC)
+    ident = Identity(
+        sub="agt_1",
+        actor_type=ActorType.AGENT,
+        auth_token_sha256="deadbeef" * 8,
+        auth_method="access_token",
+        oauth_client_id="client_1",
+        oauth_grant_id="ocg_1",
+        expires_at=expires_at,
+    )
+    payload = _async_job_payload(
+        _ctx(),
+        execution_id="exec_1",
+        origin="api",
+        identity=ident,
+    )
+    assert payload["auth_token_sha256"] == "deadbeef" * 8
+    assert payload["auth_method"] == "access_token"
+    assert payload["oauth_client_id"] == "client_1"
+    assert payload["oauth_grant_id"] == "ocg_1"
+    assert payload["auth_expires_at"] == expires_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_payload_preserves_real_broker_jwt_lineage_and_expiry() -> None:
+    expires_at = datetime.fromtimestamp(2_000_000_000, UTC)
+    secret = "broker-jwt-test-secret-with-32-bytes"  # pragma: allowlist secret
+    token = jwt.encode(
+        {
+            "sub": "agt_jwt",
+            "exp": int(expires_at.timestamp()),
+            "actor_type": ActorType.AGENT.value,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    identity = await JwtTokenValidator(verifier=JwtVerifier(secret=secret)).validate(token)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api.example.com/v1/things",
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
+        }
+    )
+
+    token_sha256, auth_method = _extract_request_auth_lineage(request, identity)
+    payload = _async_job_payload(
+        _ctx(),
+        execution_id="exec_jwt",
+        origin="api",
+        identity=identity,
+        auth_token_sha256=token_sha256,
+        auth_method=auth_method,
+    )
+
+    assert payload["auth_token_sha256"] == hashlib.sha256(token.encode()).hexdigest()
+    assert payload["auth_method"] == "jwt"
+    assert payload["auth_expires_at"] == expires_at.isoformat()
+
+
+def test_captured_cookie_fails_closed_without_keyset() -> None:
+    req = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api.example.com/v1/things",
+            "headers": [(b"cookie", b"sid=secret")],
+        }
+    )
+    ctx = MagicMock()
+    ctx.has_encryption_keyset = False
+
+    with pytest.raises(AsyncCookieEncryptionUnavailableError) as exc:
+        _captured_cookie(req, ctx)
+    assert status_for_broker_error(exc.value) == 503

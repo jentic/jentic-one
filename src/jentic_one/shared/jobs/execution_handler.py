@@ -5,8 +5,9 @@ issue its own ``httpx`` calls. It resolves credentials
 (via the injected ``CredentialInjector``), applies them to the outbound
 URL/headers through the same ``shared.http.injection.apply_injection`` the sync
 router uses (headers **and** query **and** cookies — an ``apiKey in: query``/
-``cookie`` credential is never dropped, and the caller's own cookies captured at
-enqueue are kept), then dispatches through the injected ``UpstreamExecutor`` — the broker
+``cookie`` credential is never dropped, and origin-scoped upstream cookies captured
+at enqueue are kept when the worker retains their scope evidence), then dispatches
+through the injected ``UpstreamExecutor`` — the broker
 adapter over the **same** composed runner the sync path uses (circuit breaker +
 per-host bulkhead + response-size cap + error-origin enrichment), with the
 ``executions`` row persisted by the pipeline. The handler keeps only the
@@ -37,6 +38,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Callable
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -71,6 +73,7 @@ from jentic_one.shared.jobs.protocols import (
     QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecutor,
+    auth_lineage_is_current,
 )
 from jentic_one.shared.jobs.queued_denials import (
     inactive_actor_problem,
@@ -145,6 +148,18 @@ _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
     "error_origin": "broker",
 }
 
+#: Result problem of a queued payload whose captured Cookie cannot be decrypted.
+_COOKIE_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
+    "type": "queued_cookie_undecryptable",
+    "title": "Queued execution cookie could not be decrypted",
+    "status": 503,
+    "detail": (
+        "The worker could not decrypt the caller's Cookie captured for this execution; "
+        "it was not run"
+    ),
+    "error_origin": "broker",
+}
+
 #: What a run with no credential injector applies: nothing but the caller's cookies.
 _NO_INJECTION = InjectedAuth(headers={}, query_params={}, cookies={})
 
@@ -191,31 +206,31 @@ class ExecutionHandler:
         self._encryption = encryption
         self._repeated_failure_counter = repeated_failure_counter
 
-    def _inbound_cookie(self, payload: dict[str, Any], *, job_id: str) -> str | None:
+    def _inbound_cookie(self, payload: dict[str, Any], *, job_id: str) -> tuple[str | None, bool]:
         """The caller's ``Cookie`` the broker captured at enqueue, decrypted.
 
-        A payload without one yields ``None``. One this worker cannot decrypt
-        (no keyset, a key id no longer in the keyset, or a corrupt blob) is
-        dropped and logged: the run goes ahead without the caller's cookies
-        rather than failing a call the broker accepted.
+        Returns ``(cookie, ok)``. A payload without a cookie yields ``(None, True)``.
+        When a cookie ciphertext is present and cannot be decrypted (no keyset,
+        a rotated-out key id, or a corrupt blob), logs the error and returns
+        ``(None, False)`` so the caller fails the job closed without dispatching.
         """
         blob = payload.get(INBOUND_COOKIE_PAYLOAD_KEY)
         if not isinstance(blob, str) or not blob:
-            return None
+            return None, True
         if self._encryption is None:
-            logger.warning(
+            logger.error(
                 "queued_execution_cookie_undecryptable",
                 job_id=job_id,
                 reason="no_encryption_keyset",
             )
-            return None
+            return None, False
         try:
-            return self._encryption.decrypt(blob)
+            return self._encryption.decrypt(blob), True
         except DecryptionError:
-            logger.warning(
+            logger.error(
                 "queued_execution_cookie_undecryptable", job_id=job_id, reason="decryption_failed"
             )
-            return None
+            return None, False
 
     async def execute(
         self,
@@ -259,7 +274,24 @@ class ExecutionHandler:
                         "problem": _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM,
                     }
                 )
-            payload = json.loads(self._encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY])))
+            try:
+                decrypted = json.loads(
+                    self._encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY]))
+                )
+                if not isinstance(decrypted, dict):
+                    raise ValueError("held payload is not a JSON object")
+                payload = decrypted
+            except (DecryptionError, ValueError):
+                logger.error("held_payload_undecryptable", job_id=job_id)
+                return JobResultPayload(
+                    body={
+                        "execution_id": f"exec_{job_id}",
+                        "status": ExecutionStatus.FAILED,
+                        "http_status": 503,
+                        "duration_ms": 0,
+                        "problem": _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM,
+                    }
+                )
 
         upstream_url = payload.get("upstream_url", "")
         method = payload.get("method", "GET")
@@ -278,6 +310,20 @@ class ExecutionHandler:
         server_variables = _str_map(payload.get("server_variables"))
         server_variable_defaults = _str_map(payload.get("server_variable_defaults"))
         server_variables_unresolved = payload.get("server_variables_unresolved") is True
+        auth_token_sha256 = _optional_str(payload.get("auth_token_sha256"))
+        auth_method = _optional_str(payload.get("auth_method"))
+        oauth_client_id = _optional_str(payload.get("oauth_client_id"))
+        oauth_grant_id = _optional_str(payload.get("oauth_grant_id"))
+        session_generation = _optional_int(payload.get("session_generation"))
+        raw_auth_expires_at = _optional_str(payload.get("auth_expires_at"))
+        try:
+            auth_expires_at = (
+                datetime.fromisoformat(raw_auth_expires_at)
+                if raw_auth_expires_at is not None
+                else None
+            )
+        except ValueError:
+            auth_expires_at = None
 
         body: bytes | None = None
         body_b64 = payload.get("body_b64")
@@ -285,6 +331,19 @@ class ExecutionHandler:
             body = base64.b64decode(body_b64)
 
         upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+
+        inbound_cookie, cookie_ok = self._inbound_cookie(payload, job_id=job_id)
+        if not cookie_ok:
+            return await self._deny(
+                db,
+                job_id=job_id,
+                execution_id=execution_id,
+                trace_id=trace_id,
+                problem=dict(_COOKIE_UNDECRYPTABLE_PROBLEM),
+                created_by=created_by,
+                actor_type=actor_type,
+                payload=payload,
+            )
 
         # Run-time re-authorization (before any credential is touched). The
         # enqueue-time selection rides along only as the disambiguation input;
@@ -310,6 +369,12 @@ class ExecutionHandler:
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
                     job_id=job_id,
+                    auth_token_sha256=auth_token_sha256,
+                    auth_method=auth_method,
+                    oauth_client_id=oauth_client_id,
+                    oauth_grant_id=oauth_grant_id,
+                    session_generation=session_generation,
+                    auth_expires_at=auth_expires_at,
                 )
             )
             # One live read of the actor's rows (liveness + the execute
@@ -327,6 +392,12 @@ class ExecutionHandler:
                     created_by=created_by,
                     actor_type=actor_type,
                     upstream_url=upstream_url,
+                    auth_token_sha256=auth_token_sha256,
+                    auth_method=auth_method,
+                    oauth_client_id=oauth_client_id,
+                    oauth_grant_id=oauth_grant_id,
+                    session_generation=session_generation,
+                    auth_expires_at=auth_expires_at,
                 )
             if not verdict.allowed:
                 return await self._deny(
@@ -346,7 +417,6 @@ class ExecutionHandler:
         # friends) and the caller's own cookies; injected credentials are
         # applied over them.
         headers: dict[str, str] = _str_map(payload.get("headers")) or {}
-        inbound_cookie = self._inbound_cookie(payload, job_id=job_id)
         injection = _NO_INJECTION
         injected_defaults: dict[str, str] | None = None
         if self._credential_injector is not None and api_vendor:
@@ -376,6 +446,8 @@ class ExecutionHandler:
             upstream_url,
             injection,
             inbound_cookie=inbound_cookie,
+            inbound_cookie_scoped=bool(payload.get("inbound_cookie_scoped"))
+            and not server_variables_unresolved,
             server_variable_defaults=injected_defaults,
         )
         credential_id = injection.credential_id
@@ -517,6 +589,12 @@ class ExecutionHandler:
         created_by: str,
         actor_type: str,
         upstream_url: str,
+        auth_token_sha256: str | None = None,
+        auth_method: str | None = None,
+        oauth_client_id: str | None = None,
+        oauth_grant_id: str | None = None,
+        session_generation: int | None = None,
+        auth_expires_at: datetime | None = None,
     ) -> tuple[Identity | None, QueuedExecutionVerdict]:
         """Re-read the actor right before injection: the identity to inject for, or a denial.
 
@@ -533,7 +611,17 @@ class ExecutionHandler:
         argument to ``CredentialInjector.inject``. ``permissions`` is
         intentionally empty: the injector only uses ``sub`` + ``actor_type``.
         """
-        denial = await self._actor_denial(actor_status, created_by, actor_type)
+        denial = await self._actor_denial(
+            actor_status,
+            created_by,
+            actor_type,
+            auth_token_sha256=auth_token_sha256,
+            auth_method=auth_method,
+            oauth_client_id=oauth_client_id,
+            oauth_grant_id=oauth_grant_id,
+            session_generation=session_generation,
+            auth_expires_at=auth_expires_at,
+        )
         if denial is None:
             identity = Identity(
                 sub=created_by,
@@ -559,15 +647,33 @@ class ExecutionHandler:
 
     @staticmethod
     async def _actor_denial(
-        actor_status: ActorStatusReader, created_by: str, actor_type: str
+        actor_status: ActorStatusReader,
+        created_by: str,
+        actor_type: str,
+        *,
+        auth_token_sha256: str | None = None,
+        auth_method: str | None = None,
+        oauth_client_id: str | None = None,
+        oauth_grant_id: str | None = None,
+        session_generation: int | None = None,
+        auth_expires_at: datetime | None = None,
     ) -> _PreInjectionDenial | None:
         """Why the live read refuses the actor, or ``None`` when it may still execute."""
         try:
             ActorTypeEnum(actor_type)
         except ValueError:
             return "actor_type_retired", inactive_actor_problem
+        if not auth_lineage_is_current(auth_token_sha256, auth_method, auth_expires_at):
+            return "auth_lineage_missing_or_expired", inactive_actor_problem
         authority = await actor_status.authority(
-            actor_id=created_by, actor_type=actor_type, permission=BROKER_EXECUTE_PERMISSION
+            actor_id=created_by,
+            actor_type=actor_type,
+            permission=BROKER_EXECUTE_PERMISSION,
+            auth_token_sha256=auth_token_sha256,
+            auth_method=auth_method,
+            oauth_client_id=oauth_client_id,
+            oauth_grant_id=oauth_grant_id,
+            session_generation=session_generation,
         )
         if not authority.active:
             return "actor_inactive", inactive_actor_problem
@@ -748,3 +854,15 @@ def _str_map(value: Any) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
     return {str(k): str(v) for k, v in value.items()} or None
+
+
+def _optional_str(value: Any) -> str | None:
+    """Return a non-empty string payload field, or ``None``."""
+    return value if isinstance(value, str) and value else None
+
+
+def _optional_int(value: Any) -> int | None:
+    """Return an integer payload field, or ``None``."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None

@@ -184,6 +184,8 @@ class InProcessTokenResolver:
             active=active,
             oauth_client_id=oauth_client_id,
             oauth_grant_id=oauth_grant_id,
+            auth_token_sha256=token_hash,
+            auth_method="access_token",
         )
 
 

@@ -124,3 +124,33 @@ async def test_operation_info_forwarded_to_record_execution() -> None:
 
     operation = mock_record.call_args.kwargs["operation"]
     assert operation == OperationInfo(id="getThing", path="/v1/things", method="GET")
+
+
+@pytest.mark.asyncio
+async def test_run_execution_invokes_on_outcome_before_admin_db_transaction() -> None:
+    """``on_outcome`` runs as soon as the upstream call returns, before ``admin_db``
+    persistence opens, so idempotency completion is durable even if the DB write fails."""
+    events: list[str] = []
+
+    async def _on_outcome(outcome: object) -> None:
+        events.append("on_outcome")
+
+    class _FailingTx:
+        def transaction(self) -> object:
+            events.append("tx_open")
+            raise RuntimeError("db write failed")
+
+    with pytest.raises(RuntimeError, match="db write failed"):
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            admin_db=_FailingTx(),  # type: ignore[arg-type]
+            broker=default_broker(_StubRunner()),
+            actor_id="agt_abc123",
+            actor_type="agent",
+            on_dispatched=lambda: events.append("dispatched"),
+            on_outcome=_on_outcome,
+        )
+
+    assert events == ["dispatched", "on_outcome", "tx_open"]

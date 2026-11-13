@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import hashlib
 import json
 import weakref
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -40,6 +43,7 @@ from jentic_one.broker.core.directives import (
 from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
+    AsyncCookieEncryptionUnavailableError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     PayloadTooLargeError,
@@ -90,6 +94,7 @@ from jentic_one.broker.services.execution.service import (
     run_execution,
 )
 from jentic_one.broker.services.idempotency import (
+    IdempotencyClaimLease,
     IdempotencyState,
     SharedStateIdempotencyStore,
     StoredResponse,
@@ -123,7 +128,7 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
-from jentic_one.shared.http.injection import apply_injection
+from jentic_one.shared.http.injection import apply_injection, filter_inbound_cookie
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -899,6 +904,7 @@ async def _handle(
     # Claim/replay on Idempotency-Key. Async same-job_id replay is future
     # work — only the sync path is idempotent here.
     fp: str | None = None
+    claim_lease: IdempotencyClaimLease | None = None
     if idempotency is not None and idem_key:
         # The fingerprint's consumer scope is the selected credential
         # (historically the toolkit on the pre-6b legacy path — same slot,
@@ -908,6 +914,9 @@ async def _handle(
             ctx_req.upstream_url,
             ctx_req.credential_id or "",
             body,
+            headers=request.headers,
+            cookie=_inbound_cookie(request),
+            server_variables=ctx_req.server_variables,
         )
         with stage(ServerTimingStage.IDEMPOTENCY):
             outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
@@ -924,30 +933,53 @@ async def _handle(
             )
         if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
             return _replay_response(outcome_idem.stored)
+        claim_lease = idempotency.lease(
+            identity.sub,
+            idem_key,
+            fp,
+            outcome_idem.claim_id,
+        )
 
-    outcome = await _execute_buffered(
-        request,
-        ctx_req,
-        ctx,
-        identity,
-        runner,
-        body,
-        selected_credential=selected_credential,
-        allowed_credential_ids=allowed_credential_ids,
+    assembled_response: Response | None = None
+
+    async def _complete_idempotency(outcome_exec: ExecutionOutcome) -> None:
+        nonlocal assembled_response
+        assembled_response = _assemble_response(outcome_exec, ctx_req)
+        if claim_lease is not None:
+            raw_pairs = [
+                (k.decode("latin-1"), v.decode("latin-1"))
+                for k, v in assembled_response.raw_headers
+                if k.decode("latin-1").lower() != "content-length"
+            ]
+            with stage(ServerTimingStage.IDEMPOTENCY):
+                await claim_lease.complete(
+                    status_code=assembled_response.status_code,
+                    headers=raw_pairs,
+                    body=outcome_exec.result.body,
+                )
+
+    async with claim_lease if claim_lease is not None else contextlib.nullcontext():
+        outcome = await _execute_buffered(
+            request,
+            ctx_req,
+            ctx,
+            identity,
+            runner,
+            body,
+            selected_credential=selected_credential,
+            allowed_credential_ids=allowed_credential_ids,
+            on_dispatched=claim_lease.mark_dispatched if claim_lease is not None else None,
+            on_pre_send_error=(
+                claim_lease.mark_pre_send_failure if claim_lease is not None else None
+            ),
+            on_outcome=_complete_idempotency if claim_lease is not None else None,
+        )
+
+    return (
+        assembled_response
+        if assembled_response is not None
+        else _assemble_response(outcome, ctx_req)
     )
-
-    response = _assemble_response(outcome, ctx_req)
-    if idempotency is not None and idem_key and fp is not None:
-        with stage(ServerTimingStage.IDEMPOTENCY):
-            await idempotency.complete(
-                identity.sub,
-                idem_key,
-                fp,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                body=outcome.result.body,
-            )
-    return response
 
 
 async def _execute_buffered(
@@ -960,6 +992,9 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
+    on_dispatched: Callable[[], None] | None = None,
+    on_pre_send_error: Callable[[], None] | None = None,
+    on_outcome: Callable[[ExecutionOutcome], Awaitable[None]] | None = None,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -1002,6 +1037,9 @@ async def _execute_buffered(
         security_config=ctx.config.security,
         repeated_failure_counter=get_repeated_failure_counter(request),
         signing=injection.signing,
+        on_dispatched=on_dispatched,
+        on_pre_send_error=on_pre_send_error,
+        on_outcome=on_outcome,
     )
 
 
@@ -1133,6 +1171,27 @@ def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> s
     return None
 
 
+def _set_raw_response_headers(
+    response: Response, header_items: Sequence[tuple[str, str]]
+) -> Response:
+    """Populate ``response.raw_headers`` preserving repeated fields and ``content-length``."""
+    encoded: list[tuple[bytes, bytes]] = []
+    has_content_type = any(k.lower() == "content-type" for k, _ in header_items)
+    has_content_length = any(k.lower() == "content-length" for k, _ in header_items)
+    for raw_k, raw_v in response.raw_headers:
+        lower_k = raw_k.lower()
+        if (lower_k == b"content-type" and not has_content_type) or (
+            lower_k == b"content-length" and not has_content_length
+        ):
+            encoded.append((raw_k, raw_v))
+    for k, v in header_items:
+        encoded.append((k.lower().encode("latin-1"), v.encode("latin-1")))
+    response.raw_headers = encoded
+    if hasattr(response, "_headers"):
+        delattr(response, "_headers")
+    return response
+
+
 def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext) -> Response:
     result = outcome.result
     metadata = _metadata_headers(ctx_req, outcome.context.execution_id)
@@ -1143,13 +1202,17 @@ def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext
     if hint is not None:
         metadata[JenticHeader.HINT.value] = hint
 
-    passthrough = passthrough_response_headers(result.headers)
-    return Response(
+    passthrough = passthrough_response_headers(result.headers, upstream_url=ctx_req.upstream_url)
+    meta_lower = {k.lower() for k in metadata}
+    raw_items = [(k, v) for k, v in passthrough.raw_headers if k.lower() not in meta_lower] + list(
+        metadata.items()
+    )
+    response = Response(
         content=result.body,
         status_code=result.status_code,
         media_type=result.content_type,
-        headers={**passthrough, **metadata},
     )
+    return _set_raw_response_headers(response, raw_items)
 
 
 def _replay_response(stored: StoredResponse) -> Response:
@@ -1163,19 +1226,42 @@ def _replay_response(stored: StoredResponse) -> Response:
     """
     # A replay re-emits a passthrough body, so it carries the passthrough
     # Cache-Control whatever the stored record holds (#1835).
-    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
-    headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
-    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
+    source_items = (
+        list(stored.header_items) if stored.header_items else list(stored.headers.items())
+    )
+    dropped = {"cache-control"}
     if stored.body_omitted:
-        headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
-        # The stored content-length described the original (uncached) body; drop
-        # it so the ASGI server recomputes it for the empty replay body.
-        headers.pop("content-length", None)
-    return Response(
+        dropped.add("content-length")
+        dropped.add("content-encoding")
+    raw_items = [(k, v) for k, v in source_items if k.lower() not in dropped]
+    raw_items.append((JenticHeader.IDEMPOTENT_REPLAYED.value, "true"))
+    raw_items.append(("cache-control", PASSTHROUGH_CACHE_CONTROL))
+    if stored.body_omitted:
+        raw_items.append((JenticHeader.IDEMPOTENCY_BODY_OMITTED.value, "true"))
+    response = Response(
         content=stored.body,
         status_code=stored.status_code,
-        headers=headers,
     )
+    return _set_raw_response_headers(response, raw_items)
+
+
+def _extract_request_auth_lineage(
+    request: Request, identity: Identity
+) -> tuple[str | None, str | None]:
+    """Derive ``(auth_token_sha256, auth_method)`` from ``identity`` or raw request headers."""
+    if identity.auth_token_sha256 is not None:
+        return identity.auth_token_sha256, identity.auth_method
+    raw = request.headers.get("x-jentic-api-key")
+    if not raw:
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.startswith("Bearer "):
+            raw = auth_header.removeprefix("Bearer ")
+    if raw:
+        if raw.startswith("at_"):
+            return hashlib.sha256(raw.encode()).hexdigest(), "access_token"
+        if raw.startswith(("jak_", "jntc_live_")):
+            return hashlib.sha256(raw.encode()).hexdigest(), "api_key"
+    return None, identity.auth_method
 
 
 def _async_job_payload(
@@ -1188,6 +1274,12 @@ def _async_job_payload(
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
     inbound_cookie_enc: str | None = None,
+    identity: Identity | None = None,
+    auth_token_sha256: str | None = None,
+    auth_method: str | None = None,
+    oauth_client_id: str | None = None,
+    oauth_grant_id: str | None = None,
+    session_generation: int | None = None,
 ) -> dict[str, Any]:
     """Build the job payload for an async (202) execution.
 
@@ -1230,24 +1322,89 @@ def _async_job_payload(
         payload["headers"] = dict(headers)
     if inbound_cookie_enc:
         payload[INBOUND_COOKIE_PAYLOAD_KEY] = inbound_cookie_enc
+        if not ctx_req.server_variables_unresolved:
+            payload["inbound_cookie_scoped"] = True
+    effective_token_sha = (
+        auth_token_sha256
+        if auth_token_sha256 is not None
+        else (identity.auth_token_sha256 if identity is not None else None)
+    )
+    effective_auth_method = (
+        auth_method
+        if auth_method is not None
+        else (identity.auth_method if identity is not None else None)
+    )
+    effective_client_id = (
+        oauth_client_id
+        if oauth_client_id is not None
+        else (identity.oauth_client_id if identity is not None else None)
+    )
+    effective_grant_id = (
+        oauth_grant_id
+        if oauth_grant_id is not None
+        else (identity.oauth_grant_id if identity is not None else None)
+    )
+    effective_sgen = (
+        session_generation
+        if session_generation is not None
+        else (identity.session_generation if identity is not None else None)
+    )
+    if effective_token_sha is not None:
+        payload["auth_token_sha256"] = effective_token_sha
+    if effective_auth_method is not None:
+        payload["auth_method"] = effective_auth_method
+    if effective_client_id is not None:
+        payload["oauth_client_id"] = effective_client_id
+    if effective_grant_id is not None:
+        payload["oauth_grant_id"] = effective_grant_id
+    if effective_sgen is not None:
+        payload["session_generation"] = effective_sgen
+    if identity is not None and identity.expires_at is not None:
+        payload["auth_expires_at"] = identity.expires_at.isoformat()
     return payload
 
 
-def _captured_cookie(request: Request, ctx: Context) -> str | None:
+def _captured_cookie(
+    request: Request,
+    ctx: Context,
+    *,
+    upstream_url: str | None = None,
+    server_variables_unresolved: bool = False,
+) -> str | None:
     """The caller's ``Cookie`` encrypted for an async or held job payload.
 
     The job sits in the admin DB until a worker claims it, so the cookie is
-    kept only as platform-key ciphertext. Without an encryption keyset there
-    is nowhere safe to keep it: the run is still queued, without the caller's
-    cookies, and the drop is logged.
+    kept only as platform-key ciphertext. Without an encryption keyset or when
+    encryption fails, the request is refused (503) rather than queued without
+    the caller's cookies. When the target URL is already resolved, foreign or
+    unscoped cookie pairs are filtered at the web edge before encryption.
     """
     cookie = _inbound_cookie(request)
     if cookie is None:
         return None
-    if not ctx.has_encryption_keyset:
-        logger.warning("async_execution_cookie_not_kept", reason="no_encryption_keyset")
-        return None
-    return ctx.encryption.encrypt(cookie)
+    if not ctx.has_encryption_keyset or getattr(ctx, "encryption", None) is None:
+        logger.error("async_execution_cookie_not_kept", reason="no_encryption_keyset")
+        raise AsyncCookieEncryptionUnavailableError(
+            "This call carries a Cookie header, but the deployment has no credentials "
+            "encryption keyset to keep it at rest (credentials.encryption)",
+            type="async_cookie_encryption_unavailable",
+            instance=request.url.path,
+            pre_send=True,
+        )
+    if upstream_url and not server_variables_unresolved:
+        cookie = filter_inbound_cookie(cookie, upstream_url)
+        if cookie is None:
+            return None
+    try:
+        return ctx.encryption.encrypt(cookie)
+    except Exception as exc:
+        logger.error("async_execution_cookie_not_kept", reason="encryption_failed")
+        raise AsyncCookieEncryptionUnavailableError(
+            "This call carries a Cookie header that could not be encrypted at rest",
+            type="async_cookie_encryption_unavailable",
+            instance=request.url.path,
+            pre_send=True,
+        ) from exc
 
 
 def _review_url(ctx: Context, request: Request, approval_id: str) -> str:
@@ -1279,9 +1436,9 @@ async def _handle_hold(
     claim. Filing, the approval row and ``execution.approval_requested`` share
     one admin-DB transaction; an identical pending request joins its existing
     hold (even at the cap), and an agent at its pending cap is otherwise denied
-    before anything is written. The fingerprint a join matches on leaves out the
-    ``Cookie``, so a joined hold runs with the first request's captured cookie
-    and the joining request's cookie is not kept.
+    before anything is written. The fingerprint a join matches on includes the
+    inbound ``Cookie`` and semantic headers so only semantically identical
+    requests join an existing hold.
     """
     if not ctx.has_encryption_keyset:
         raise ApprovalHoldUnavailableError(
@@ -1297,6 +1454,7 @@ async def _handle_hold(
     execution_id = mint_execution_id()
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
+    token_sha256, auth_method = _extract_request_auth_lineage(request, identity)
     raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1305,7 +1463,15 @@ async def _handle_hold(
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
-        inbound_cookie_enc=_captured_cookie(request, ctx),
+        inbound_cookie_enc=_captured_cookie(
+            request,
+            ctx,
+            upstream_url=ctx_req.upstream_url,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+        ),
+        identity=identity,
+        auth_token_sha256=token_sha256,
+        auth_method=auth_method,
     )
     payload: dict[str, object] = {
         ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(raw_payload))
@@ -1326,7 +1492,10 @@ async def _handle_hold(
                 method=ctx_req.method,
                 path=path,
                 query=parsed_url.query,
+                upstream_url=ctx_req.upstream_url,
                 body=body,
+                headers=request.headers,
+                cookie=_inbound_cookie(request),
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,
                 payload=payload,
@@ -1426,6 +1595,7 @@ async def _handle_async(
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
 
+    token_sha256, auth_method = _extract_request_auth_lineage(request, identity)
     payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1434,7 +1604,15 @@ async def _handle_async(
         allowed_credential_ids=allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
-        inbound_cookie_enc=_captured_cookie(request, ctx),
+        inbound_cookie_enc=_captured_cookie(
+            request,
+            ctx,
+            upstream_url=ctx_req.upstream_url,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+        ),
+        identity=identity,
+        auth_token_sha256=token_sha256,
+        auth_method=auth_method,
     )
 
     async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:

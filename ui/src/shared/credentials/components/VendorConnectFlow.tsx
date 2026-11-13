@@ -54,6 +54,7 @@ import {
 import {
 	cancelConnectSession,
 	cancelConnectSessionOnUnload,
+	pollConnectSessionStatus,
 	IntegrationsApiError,
 } from '@/shared/credentials/api/vendors-client';
 import { useProviders } from '@/shared/credentials/api';
@@ -194,6 +195,7 @@ export type VendorConnectFlowProps =
 			credentialId: string;
 			credentialName: string;
 			vendorKey: string;
+			onRegisterDismiss?: (handler: (() => void) | null) => void;
 			onBack: () => void;
 			onDone: () => void;
 	  };
@@ -244,6 +246,7 @@ export function VendorConnectFlow(props: VendorConnectFlowProps) {
 				credentialId={props.credentialId}
 				credentialName={props.credentialName}
 				vendorKey={props.vendorKey}
+				onRegisterDismiss={props.onRegisterDismiss}
 				onBack={props.onBack}
 				onDone={props.onDone}
 			/>
@@ -2260,6 +2263,7 @@ function EditScopesFlow({
 	credentialId,
 	credentialName,
 	vendorKey,
+	onRegisterDismiss,
 	onBack,
 	onDone,
 }: {
@@ -2267,6 +2271,7 @@ function EditScopesFlow({
 	credentialId: string;
 	credentialName: string;
 	vendorKey: string;
+	onRegisterDismiss?: (handler: (() => void) | null) => void;
 	onBack: () => void;
 	onDone: () => void;
 }) {
@@ -2284,7 +2289,13 @@ function EditScopesFlow({
 		pollToken: string;
 		challenge: ConfirmResponse;
 	} | null>(null);
+	const [cancelError, setCancelError] = useState<string | null>(null);
+	const [cancelChecking, setCancelChecking] = useState(false);
 	const [outcome, setOutcome] = useState<{ failed: string | null } | null>(null);
+	const consentRef = useRef<{ sessionId: string; pollToken: string } | null>(null);
+	const terminalRef = useRef(false);
+	const mountedRef = useRef(true);
+	const startingRef = useRef(false);
 	const scopesId = useId();
 	const reasonId = useId();
 	const display: VendorDisplay = { displayName: credentialName, iconKey: vendorKey };
@@ -2296,23 +2307,109 @@ function EditScopesFlow({
 				? (consent.challenge.poll_interval_seconds ?? 5) * 1000
 				: undefined,
 	});
+	const showApplied = useCallback((): void => {
+		if (terminalRef.current) return;
+		terminalRef.current = true;
+		setOutcome({ failed: null });
+		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+		void invalidateEditSurfaces(queryClient, {
+			binding: { agent_id: agentId, credential_id: credentialId },
+			other_bound_agents: [],
+		});
+		toast({ title: 'Access updated', variant: 'success' });
+	}, [agentId, credentialId, queryClient]);
+
 	useEffect(() => {
 		if (!consent || outcome) return;
+		const err = polling.error as { status?: number } | undefined;
 		const status = polling.data?.status;
 		if (status === 'applied') {
-			setOutcome({ failed: null });
-			void queryClient.invalidateQueries({ queryKey: ['credentials'] });
-			void invalidateEditSurfaces(queryClient, {
-				binding: { agent_id: agentId, credential_id: credentialId },
-				other_bound_agents: [],
-			});
-			toast({ title: 'Access updated', variant: 'success' });
-		} else if (status === 'failed' || status === 'expired') {
+			showApplied();
+		} else if (err?.status === 403 || status === 'failed' || status === 'expired') {
+			terminalRef.current = true;
 			setOutcome({
 				failed: signInFailure(polling.data),
 			});
 		}
-	}, [consent, outcome, polling.data, queryClient, agentId, credentialId]);
+	}, [consent, outcome, polling.data, polling.error, showApplied]);
+
+	const cancelLiveConsent = useCallback(async (): Promise<void> => {
+		const live = consentRef.current;
+		if (!live || terminalRef.current) {
+			onBack();
+			return;
+		}
+		if (cancelMutation.isPending || cancelChecking) return;
+		setCancelChecking(true);
+		setCancelError(null);
+		try {
+			await cancelMutation.mutateAsync({
+				sessionId: live.sessionId,
+				pollToken: live.pollToken,
+			});
+			const authoritative = await pollConnectSessionStatus(live.sessionId, live.pollToken);
+			if (authoritative.status === 'applied') {
+				showApplied();
+				return;
+			}
+			if (authoritative.status === 'failed' || authoritative.status === 'expired') {
+				terminalRef.current = true;
+				if (authoritative.error_code === 'cancelled') {
+					onBack();
+				} else {
+					setOutcome({ failed: signInFailure(authoritative) });
+				}
+				return;
+			}
+			setCancelError('The server has not confirmed the sign-in outcome. Try again.');
+		} catch (err) {
+			setCancelError(
+				err instanceof Error && err.message
+					? err.message
+					: 'Could not confirm the sign-in outcome. Try again.',
+			);
+		} finally {
+			setCancelChecking(false);
+		}
+	}, [cancelChecking, cancelMutation, onBack, showApplied]);
+
+	useEffect(() => {
+		if (!onRegisterDismiss) return undefined;
+		if (start.isPending) {
+			onRegisterDismiss(() => {});
+			return () => onRegisterDismiss(null);
+		}
+		if (consent && !outcome) {
+			onRegisterDismiss(() => {
+				void cancelLiveConsent();
+			});
+			return () => onRegisterDismiss(null);
+		}
+		onRegisterDismiss(null);
+		return undefined;
+	}, [consent, outcome, onRegisterDismiss, cancelLiveConsent, start.isPending]);
+
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+			if (terminalRef.current) return;
+			const live = consentRef.current;
+			if (!live) return;
+			void cancelConnectSession(live.sessionId, live.pollToken).catch(() => {});
+		};
+	}, []);
+
+	useEffect(() => {
+		const onBeforeUnload = (): void => {
+			if (terminalRef.current) return;
+			const live = consentRef.current;
+			if (!live) return;
+			cancelConnectSessionOnUnload(live.sessionId, live.pollToken);
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	}, []);
 
 	if (outcome) {
 		return (
@@ -2334,12 +2431,10 @@ function EditScopesFlow({
 				display={display}
 				challenge={consent.challenge}
 				status={polling.data?.status ?? 'pending'}
+				cancelling={cancelMutation.isPending || cancelChecking}
+				cancelError={cancelError}
 				onCancel={(): void => {
-					cancelMutation.mutate({
-						sessionId: consent.sessionId,
-						pollToken: consent.pollToken,
-					});
-					onBack();
+					void cancelLiveConsent();
 				}}
 			/>
 		);
@@ -2394,6 +2489,8 @@ function EditScopesFlow({
 		});
 
 	const submit = async (): Promise<void> => {
+		if (startingRef.current || consentRef.current) return;
+		startingRef.current = true;
 		setError(null);
 		try {
 			const result = await start.mutateAsync({
@@ -2404,6 +2501,18 @@ function EditScopesFlow({
 				apply: true,
 			});
 			if (result.challenge) {
+				const live = {
+					sessionId: result.session_id,
+					pollToken: result.poll_token,
+				};
+				consentRef.current = live;
+				if (!mountedRef.current) {
+					terminalRef.current = true;
+					void cancelConnectSession(live.sessionId, live.pollToken).catch(() => {});
+					return;
+				}
+				terminalRef.current = false;
+				setCancelError(null);
 				setConsent({
 					sessionId: result.session_id,
 					pollToken: result.poll_token,
@@ -2417,7 +2526,9 @@ function EditScopesFlow({
 				}
 			}
 		} catch (err) {
-			setError(describeEditError(err));
+			if (mountedRef.current) setError(describeEditError(err));
+		} finally {
+			startingRef.current = false;
 		}
 	};
 
@@ -2477,14 +2588,20 @@ function EditScopesFlow({
 			{error && <ErrorAlert message={error} />}
 
 			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
-				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					onClick={onBack}
+					disabled={start.isPending}
+				>
 					Cancel
 				</Button>
 				<Button
 					type="button"
 					variant="primary"
 					loading={start.isPending}
-					disabled={!changed}
+					disabled={!changed || start.isPending}
 					onClick={(): void => void submit()}
 				>
 					Sign in and save
@@ -3269,11 +3386,15 @@ function AwaitingStep({
 	display,
 	challenge,
 	status,
+	cancelling,
+	cancelError,
 	onCancel,
 }: {
 	display: VendorDisplay;
 	challenge: ConfirmResponse;
 	status: string;
+	cancelling?: boolean;
+	cancelError?: string | null;
 	onCancel: () => void;
 }) {
 	if (challenge.kind === 'device_authorization') {
@@ -3282,6 +3403,8 @@ function AwaitingStep({
 				display={display}
 				challenge={challenge}
 				status={status}
+				cancelling={cancelling}
+				cancelError={cancelError}
 				onCancel={onCancel}
 			/>
 		);
@@ -3291,6 +3414,8 @@ function AwaitingStep({
 			display={display}
 			challenge={challenge}
 			status={status}
+			cancelling={cancelling}
+			cancelError={cancelError}
 			onCancel={onCancel}
 		/>
 	);
@@ -3300,11 +3425,15 @@ function DeviceCodeAwaitingStep({
 	display,
 	challenge,
 	status,
+	cancelling,
+	cancelError,
 	onCancel,
 }: {
 	display: VendorDisplay;
 	challenge: DeviceAuthorizationConfirmResponse;
 	status: string;
+	cancelling?: boolean;
+	cancelError?: string | null;
 	onCancel: () => void;
 }) {
 	const openUrl = challenge.verification_uri_complete ?? challenge.verification_uri ?? null;
@@ -3354,7 +3483,8 @@ function DeviceCodeAwaitingStep({
 				))}
 
 			<PollingStatusLine display={display} status={status} />
-			<CancelBar onCancel={onCancel} />
+			{cancelError && <ErrorAlert message={cancelError} />}
+			<CancelBar onCancel={onCancel} loading={cancelling} />
 		</div>
 	);
 }
@@ -3363,11 +3493,15 @@ function RedirectAwaitingStep({
 	display,
 	challenge,
 	status,
+	cancelling,
+	cancelError,
 	onCancel,
 }: {
 	display: VendorDisplay;
 	challenge: AuthCodeConfirmResponse;
 	status: string;
+	cancelling?: boolean;
+	cancelError?: string | null;
 	onCancel: () => void;
 }) {
 	return (
@@ -3401,7 +3535,8 @@ function RedirectAwaitingStep({
 			)}
 
 			<PollingStatusLine display={display} status={status} />
-			<CancelBar onCancel={onCancel} />
+			{cancelError && <ErrorAlert message={cancelError} />}
+			<CancelBar onCancel={onCancel} loading={cancelling} />
 		</div>
 	);
 }
@@ -3435,10 +3570,10 @@ function PollingStatusLine({ display, status }: { display: VendorDisplay; status
 	);
 }
 
-function CancelBar({ onCancel }: { onCancel: () => void }) {
+function CancelBar({ onCancel, loading }: { onCancel: () => void; loading?: boolean }) {
 	return (
 		<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end border-t px-5 py-3.5">
-			<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+			<Button type="button" variant="ghost" size="sm" loading={loading} onClick={onCancel}>
 				Cancel
 			</Button>
 		</div>

@@ -872,66 +872,72 @@ class AgentService:
         ``purge=True`` deletes the row outright — the explicit destructive
         path — together with the pair's inline permission rules, so a later
         re-bind starts from default deny instead of resurrecting rules that
-        were dormant under an attached rule set. The rules go first: if the
-        admin-side delete then fails, the surviving binding has no inline
-        rules and denies (fail-closed) rather than the other way round.
+        were dormant under an attached rule set. A purge commits suspension of
+        the binding row first, then deletes its inline rules in the control DB,
+        and finally deletes the binding row in the admin DB, invalidating
+        broker caches in a ``finally`` block so any partial failure leaves the
+        binding suspended and uncached (fail-closed) for both inline rules and
+        attached shared rule sets, while a retry completes the purge.
         """
         agent = await self._load_binding_agent(agent_id, identity=identity)
         if purge and self._is_own_binding(agent_id, identity):
             # A purge followed by a re-bind would drop a suspension the owner
             # set, so an agent may suspend its own binding but not purge it.
             raise CredentialBindingNotFoundError(agent_id, credential_id)
-        if purge and self._ctx.is_db_allowed("control"):
-            async with self._ctx.admin_db.session() as session:
-                existing = await AgentCredentialBindingRepository.get(
-                    session, agent_id=agent_id, credential_id=credential_id
+        try:
+            if purge and self._ctx.is_db_allowed("control"):
+                async with self._ctx.admin_db.transaction() as session:
+                    suspended = await AgentCredentialBindingRepository.set_suspended(
+                        session, agent_id=agent_id, credential_id=credential_id, suspended=True
+                    )
+                if not suspended:
+                    raise CredentialBindingNotFoundError(agent_id, credential_id)
+                async with self._ctx.control_db.transaction() as session:
+                    await BindingRuleRepository.delete_for_binding(
+                        session, agent_id=agent_id, credential_id=credential_id
+                    )
+            credential_name = await self._credential_name(credential_id)
+            async with self._ctx.admin_db.transaction() as session:
+                if purge:
+                    removed = await AgentCredentialBindingRepository.purge(
+                        session, agent_id=agent_id, credential_id=credential_id
+                    )
+                else:
+                    removed = await AgentCredentialBindingRepository.set_suspended(
+                        session, agent_id=agent_id, credential_id=credential_id, suspended=True
+                    )
+                if not removed:
+                    raise CredentialBindingNotFoundError(agent_id, credential_id)
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE if purge else AuditAction.DISABLE,
+                    target_type=AuditTargetType.CREDENTIAL_BINDING,
+                    target_id=credential_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    target_parent_id=agent_id,
+                    reason="purge_credential_binding" if purge else "suspend_credential_binding",
+                    origin=identity.origin.value,
                 )
-            if existing is None:
-                raise CredentialBindingNotFoundError(agent_id, credential_id)
-            async with self._ctx.control_db.transaction() as session:
-                await BindingRuleRepository.delete_for_binding(
-                    session, agent_id=agent_id, credential_id=credential_id
+                verb = "unbound (purged) from" if purge else "suspended for"
+                credential = summary_label(credential_name, credential_id)
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"Credential {credential} {verb} agent "
+                        f"{summary_label(agent.name, agent_id)}"
+                    ),
+                    data={"agent_id": agent_id, "credential_id": credential_id},
+                    # The binding's subject is the agent, so its owner sees the
+                    # event; ``actor_id`` records who changed the binding.
+                    created_by=agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
                 )
-        credential_name = await self._credential_name(credential_id)
-        async with self._ctx.admin_db.transaction() as session:
-            if purge:
-                removed = await AgentCredentialBindingRepository.purge(
-                    session, agent_id=agent_id, credential_id=credential_id
-                )
-            else:
-                removed = await AgentCredentialBindingRepository.set_suspended(
-                    session, agent_id=agent_id, credential_id=credential_id, suspended=True
-                )
-            if not removed:
-                raise CredentialBindingNotFoundError(agent_id, credential_id)
-            await record_audit(
-                session,
-                action=AuditAction.REVOKE if purge else AuditAction.DISABLE,
-                target_type=AuditTargetType.CREDENTIAL_BINDING,
-                target_id=credential_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                target_parent_id=agent_id,
-                reason="purge_credential_binding" if purge else "suspend_credential_binding",
-                origin=identity.origin.value,
-            )
-            verb = "unbound (purged) from" if purge else "suspended for"
-            credential = summary_label(credential_name, credential_id)
-            await emit_event_best_effort(
-                session,
-                type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
-                severity=EventSeverity.INFO,
-                summary=(
-                    f"Credential {credential} {verb} agent {summary_label(agent.name, agent_id)}"
-                ),
-                data={"agent_id": agent_id, "credential_id": credential_id},
-                # The binding's subject is the agent, so its owner sees the
-                # event; ``actor_id`` records who changed the binding.
-                created_by=agent_id,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-            )
-        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
+        finally:
+            self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
 
     async def _credential_name(self, credential_id: str) -> str | None:
         """Best-effort display name for a credential, for an event summary.

@@ -2,9 +2,11 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/client/config"
@@ -22,6 +24,7 @@ import (
 type TokenSet struct {
 	AccessToken string    `json:"access_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	Origin      string    `json:"origin,omitempty"`
 }
 
 // getTokenPath returns the token-state file path for ref, under the XDG STATE dir
@@ -41,10 +44,9 @@ func getTokenPath(ref IdentityRef) (string, error) {
 	return filepath.Join(stateDir, stem+"_tokens.json"), nil
 }
 
-// ReadTokens loads the cached token for ref. A missing, unreadable, or corrupt
-// file yields an error and a nil TokenSet, so callers can treat any failure as
-// "no usable token" and re-exchange without risking a nil dereference.
-func ReadTokens(ref IdentityRef) (*TokenSet, error) {
+// readTokensRaw loads the cached token file for ref without checking the
+// configured environment origin.
+func readTokensRaw(ref IdentityRef) (*TokenSet, error) {
 	path, err := getTokenPath(ref)
 	if err != nil {
 		return nil, err
@@ -57,7 +59,34 @@ func ReadTokens(ref IdentityRef) (*TokenSet, error) {
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return nil, fmt.Errorf("decoding token state %s: %w", path, err)
 	}
+	rawOrigin := strings.TrimSpace(tokens.Origin)
+	tokens.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" && tokens.Origin == "" {
+		return nil, fmt.Errorf("invalid token origin in %s", path)
+	}
 	return &tokens, nil
+}
+
+// ReadTokens loads the cached token for ref. A missing, unreadable, corrupt,
+// or cross-origin file yields an error and a nil TokenSet, so callers can
+// treat any failure as "no usable token" and re-exchange without risking a nil
+// dereference.
+func ReadTokens(ref IdentityRef) (*TokenSet, error) {
+	tokens, err := readTokensRaw(ref)
+	if err != nil {
+		return nil, err
+	}
+	if tokens.Origin != "" {
+		envOrigin, err := configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return nil, err
+		}
+		if envOrigin != "" && tokens.Origin != envOrigin {
+			return nil, fmt.Errorf("%w: cached token for %s/%s belongs to %s, not %s",
+				ErrOriginMismatch, ref.Identity, ref.Environment, tokens.Origin, envOrigin)
+		}
+	}
+	return tokens, nil
 }
 
 // InvalidateTokens removes the cached token for ref so the next request forces a
@@ -85,11 +114,28 @@ func InvalidateTokens(ref IdentityRef) error {
 // exchange, never an invalid state (contrast config.MutateConfig, which locks
 // because it mutates stateful status fields).
 func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
+	if tokens == nil {
+		return errors.New("tokens must not be nil")
+	}
 	path, err := getTokenPath(ref)
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(tokens) //nolint:gosec // G117: intentionally persisting the access token to the 0600 state file; this IS the token cache.
+	toSave := *tokens
+	rawOrigin := strings.TrimSpace(toSave.Origin)
+	toSave.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" && toSave.Origin == "" {
+		return errors.New("invalid token origin")
+	}
+	if toSave.Origin == "" {
+		envOrigin, err := configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return err
+		}
+		toSave.Origin = envOrigin
+	}
+	tokens.Origin = toSave.Origin
+	data, err := json.Marshal(&toSave) //nolint:gosec // G117: intentionally persisting the access token to the 0600 state file; this IS the token cache.
 	if err != nil {
 		return fmt.Errorf("encoding token state: %w", err)
 	}

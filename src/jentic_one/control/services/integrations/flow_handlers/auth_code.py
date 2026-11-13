@@ -26,7 +26,7 @@ import hashlib
 import secrets
 from datetime import UTC, datetime
 from typing import Any, ClassVar
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 import structlog
@@ -40,6 +40,8 @@ from jentic_one.control.repos.oauth_app_registration_repo import (
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
+from jentic_one.control.services.credentials.providers.base import ProviderError
+from jentic_one.control.services.credentials.providers.oauth2 import parse_oauth_expires_in
 from jentic_one.control.services.credentials.schemas.connect import ConnectState
 from jentic_one.control.services.credentials.state import (
     OAUTH_CALLBACK_PATH,
@@ -75,6 +77,58 @@ class RegistrationInactiveError(ConnectSessionServiceError):
 #: ``credential.provider`` value shared with the existing DirectOAuth2Provider —
 #: keeps refresh dispatch on the same code path (no broker changes needed).
 _PROVIDER_ID = "direct_oauth2"
+
+_ALLOWED_OAUTH_ERRORS: frozenset[str] = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+        "access_denied",
+        "server_error",
+        "temporarily_unavailable",
+    }
+)
+
+
+def _extract_oauth_error_slug(response: httpx.Response) -> str | None:
+    """Extract a strictly allowlisted RFC 6749 error slug from a JSON error response."""
+    if not response.text:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    raw_error = body.get("error")
+    if not isinstance(raw_error, str):
+        return None
+    slug = raw_error.strip().lower()
+    return slug if slug in _ALLOWED_OAUTH_ERRORS else None
+
+
+def _merge_authorize_url(base_url: str, params: dict[str, str]) -> str:
+    """Merge *params* into *base_url*, overriding colliding endpoint query keys."""
+    parts = urlsplit(base_url)
+    existing = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in params
+    ]
+    merged = existing + list(params.items())
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(merged), parts.fragment))
+
+
+def _parse_expires_in(raw: object) -> int:
+    """Parse a bounded positive ``expires_in`` value for the embedded flow."""
+    try:
+        seconds = parse_oauth_expires_in(raw)
+    except ProviderError as exc:
+        raise AuthCodeExchangeError("invalid expires_in in token response") from exc
+    return seconds
 
 
 def _pkce_challenge_from_verifier(verifier: str) -> str:
@@ -190,7 +244,7 @@ class AuthCodeFlowHandler:
         }
         if confirmed_scopes:
             params["scope"] = " ".join(confirmed_scopes)
-        authorize_url = f"{app.authorize_url}?{urlencode(params)}"
+        authorize_url = _merge_authorize_url(app.authorize_url, params)
 
         return AuthCodeBeginResult(authorize_url=authorize_url)
 
@@ -290,33 +344,36 @@ class AuthCodeFlowHandler:
             # Raised by the pinning transport: the host re-resolved to a blocked
             # address or did not resolve at all.
             raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise AuthCodeExchangeError(
+                f"token endpoint transport error: {type(exc).__name__}"
+            ) from exc
         if response.status_code != 200:
             _logger.warning(
                 "auth_code.token_exchange_failed",
                 status=response.status_code,
-                body_snippet=response.text[:200],
+                error=_extract_oauth_error_slug(response),
             )
             raise AuthCodeExchangeError(f"token exchange failed: HTTP {response.status_code}")
         try:
-            data: dict[str, str] = response.json()
+            data = response.json()
         except ValueError as exc:
             raise AuthCodeExchangeError("token endpoint returned non-JSON") from exc
+        if not isinstance(data, dict):
+            raise AuthCodeExchangeError("token endpoint returned non-object JSON")
 
         access_token = data.get("access_token")
-        if not access_token:
+        if not isinstance(access_token, str) or not access_token.strip():
             raise AuthCodeExchangeError("token endpoint returned no access_token")
 
-        expires_in_raw = data.get("expires_in")
-        expires_in: int | None
-        try:
-            expires_in = int(expires_in_raw) if expires_in_raw is not None else None
-        except (TypeError, ValueError):
-            expires_in = None
+        expires_in = _parse_expires_in(data["expires_in"]) if "expires_in" in data else None
 
-        scope = data.get("scope")
+        refresh_token = data.get("refresh_token")
+        scope_raw = data.get("scope")
+        scope = scope_raw if isinstance(scope_raw, str) else None
         return SuccessTokens(
             access_token=access_token,
-            refresh_token=data.get("refresh_token"),
+            refresh_token=refresh_token if isinstance(refresh_token, str) else None,
             expires_in=expires_in,
             scope=scope,
             # Auth-code: the server tells us what was granted.

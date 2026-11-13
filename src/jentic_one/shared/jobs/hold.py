@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -56,9 +57,8 @@ PROBLEM_CONTENT_TYPE = "application/problem+json"
 ENCRYPTED_PAYLOAD_KEY = "_enc"
 
 #: An async or held execution payload carries the caller's ``Cookie`` under this
-#: key as platform-key ciphertext, so the worker sends the caller's cookies
-#: upstream exactly as the sync route does without the payload ever holding
-#: them in plaintext.
+#: key as platform-key ciphertext, so the worker applies the same upstream-origin
+#: cookie policy as the sync route without the payload holding cookies in plaintext.
 INBOUND_COOKIE_PAYLOAD_KEY = "inbound_cookie_enc"
 
 #: What the agent is told to do with a held 202.
@@ -158,6 +158,135 @@ def canonical_query(query: str) -> str:
     return urlencode(sorted(parse_qsl(query, keep_blank_values=True)))
 
 
+# Non-semantic headers excluded when fingerprinting a held request's headers.
+_VOLATILE_HOLD_HEADERS: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "b3",
+        "connection",
+        "content-length",
+        "cookie",
+        "date",
+        "forwarded",
+        "host",
+        "idempotency-key",
+        "jentic-credential-id",
+        "jentic-credential-name",
+        "jentic-revision",
+        "jentic-toolkit-id",
+        "keep-alive",
+        "mcp-session-id",
+        "prefer",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "traceparent",
+        "tracestate",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "user-agent",
+        "via",
+        "x-amzn-trace-id",
+        "x-b3-flags",
+        "x-b3-parentspanid",
+        "x-b3-sampled",
+        "x-b3-spanid",
+        "x-b3-traceid",
+        "x-correlation-id",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-port",
+        "x-forwarded-proto",
+        "x-jentic-api-key",
+        "x-real-ip",
+        "x-request-id",
+    }
+)
+
+
+def canonical_cookie(cookie: str | None) -> str:
+    """Return a whitespace-normalised cookie string preserving pair order."""
+    if not cookie:
+        return ""
+    return "; ".join(segment.strip() for segment in cookie.split(";") if segment.strip())
+
+
+def _canonical_content_type(value: str) -> str:
+    segments = [seg.strip() for seg in value.split(";") if seg.strip()]
+    if not segments:
+        return ""
+    media_type = segments[0].lower()
+    params: list[str] = []
+    for seg in segments[1:]:
+        if "=" in seg:
+            k, v = seg.split("=", 1)
+            k_norm = k.strip().lower()
+            v_norm = v.strip()
+            if k_norm == "charset":
+                v_norm = v_norm.strip('"').lower()
+            params.append(f"{k_norm}={v_norm}")
+        else:
+            params.append(seg.lower())
+    params.sort()
+    return "; ".join([media_type, *params])
+
+
+def _connection_nominated_hold_headers(headers: Mapping[str, str] | None) -> frozenset[str]:
+    if not headers:
+        return frozenset()
+    nominated: set[str] = set()
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        conn_vals = getlist("connection")
+        if isinstance(conn_vals, list):
+            for val in conn_vals:
+                for token in str(val).split(","):
+                    cleaned = token.strip().lower()
+                    if cleaned:
+                        nominated.add(cleaned)
+    for key, val in headers.items():
+        if key.strip().lower() == "connection":
+            for token in val.split(","):
+                cleaned = token.strip().lower()
+                if cleaned:
+                    nominated.add(cleaned)
+    return frozenset(nominated)
+
+
+def canonical_headers(headers: Mapping[str, str] | None) -> list[tuple[str, str]]:
+    """Return sorted ``(lowercase_name, normalised_value)`` pairs for semantic headers."""
+    if not headers:
+        return []
+    nominated = _connection_nominated_hold_headers(headers)
+    out: list[tuple[str, str]] = []
+    for raw_name, raw_value in headers.items():
+        name = raw_name.strip().lower()
+        if not name or name in _VOLATILE_HOLD_HEADERS or name in nominated:
+            continue
+        value = raw_value.strip()
+        if name == "accept-encoding":
+            value = value.lower()
+            if value == "identity":
+                # The HTTP runner injects identity when this header is absent.
+                continue
+        if name == "content-type":
+            value = _canonical_content_type(value)
+        out.append((name, value))
+    out.sort()
+    return out
+
+
+def _canonical_upstream_url(upstream_url: str) -> str:
+    """Canonicalize the query embedded in the complete upstream target."""
+    if not upstream_url:
+        return ""
+    parts = urlsplit(upstream_url)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, canonical_query(parts.query), parts.fragment)
+    )
+
+
 def compute_execution_fingerprint(
     *,
     agent_id: str,
@@ -165,19 +294,58 @@ def compute_execution_fingerprint(
     method: str,
     path: str,
     query: str = "",
+    upstream_url: str = "",
     body: bytes | None,
+    headers: Mapping[str, str] | None = None,
+    cookie: str | None = None,
 ) -> str:
-    """SHA-256 over ``(agent_id, credential_id, method, path, query, body)``.
+    """Hash the caller, credential, upstream target, operation, and request content.
 
-    The query and body are canonicalised (:func:`canonical_query`,
-    :func:`canonical_body`).
+    The complete ``upstream_url`` separates approvals for different resolved
+    origins even when their server-relative paths and credentials match.
+
+    The query, body, cookie, and semantic headers are canonicalised
+    (:func:`canonical_query`, :func:`canonical_body`, :func:`canonical_cookie`,
+    :func:`canonical_headers`).
     """
     digest = hashlib.sha256()
-    for part in (agent_id, credential_id, method.upper(), path, canonical_query(query)):
+    for part in (
+        agent_id,
+        credential_id,
+        method.upper(),
+        _canonical_upstream_url(upstream_url),
+        path,
+        canonical_query(query),
+    ):
         digest.update(part.encode())
         digest.update(b"\x00")
     digest.update(canonical_body(body))
+
+    nominated = _connection_nominated_hold_headers(headers)
+    effective_cookie = None if "cookie" in nominated else cookie
+    if effective_cookie is None and headers and "cookie" not in nominated:
+        cookie_vals = [v for k, v in headers.items() if k.strip().lower() == "cookie" and v]
+        if cookie_vals:
+            effective_cookie = "; ".join(cookie_vals)
+
+    norm_cookie = canonical_cookie(effective_cookie)
+    if norm_cookie:
+        digest.update(b"\x00cookie\x00")
+        digest.update(norm_cookie.encode())
+
+    norm_headers = canonical_headers(headers)
+    if norm_headers:
+        digest.update(b"\x00headers")
+        for name, value in norm_headers:
+            digest.update(b"\x00")
+            digest.update(name.encode())
+            digest.update(b"\x00")
+            digest.update(value.encode())
+
     return digest.hexdigest()
+
+
+compute_hold_fingerprint = compute_execution_fingerprint
 
 
 async def _pending_by_fingerprint(session: AsyncSession, fingerprint: str) -> HeldExecution | None:
@@ -250,7 +418,10 @@ async def file_hold(
     method: str,
     path: str,
     query: str = "",
+    upstream_url: str = "",
     body: bytes | None,
+    headers: Mapping[str, str] | None = None,
+    cookie: str | None = None,
     trace_id: str | None,
     execution_id: str,
     payload: dict[str, Any],
@@ -275,7 +446,10 @@ async def file_hold(
         method=method,
         path=path,
         query=query,
+        upstream_url=upstream_url,
         body=body,
+        headers=headers,
+        cookie=cookie,
     )
     await _lock_agent_holds(session, agent_id)
     existing = await _pending_by_fingerprint(session, fingerprint)

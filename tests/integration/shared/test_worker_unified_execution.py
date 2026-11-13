@@ -83,7 +83,9 @@ class _StaticAuthorizer:
 class _ActiveActor:
     """Stands in for the broker's live actor read: active, holding the execute permission."""
 
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         return ActorAuthority(active=True, holds_permission=True)
 
 
@@ -128,6 +130,8 @@ def _payload() -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
+        "auth_token_sha256": "0" * 64,
+        "auth_method": "opaque",
         # The resolved operation rides the payload as one dict.
         "operation": {"id": "op_widgets", "path": "/v1/widgets", "method": "GET"},
     }

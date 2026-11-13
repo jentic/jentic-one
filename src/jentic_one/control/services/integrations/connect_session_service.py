@@ -44,6 +44,7 @@ from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegis
 from jentic_one.control.core.schema.permission_rule_sets import PermissionRuleSetRule
 from jentic_one.control.repos import (
     AgentPermissionRuleRepository,
+    ConnectNonceRepository,
     CredentialRepository,
     OAuthAppRegistrationRepository,
     OAuthTokenRepository,
@@ -671,6 +672,10 @@ _CALLBACK_STATE_GRACE = timedelta(seconds=60)
 
 class _SessionEndedError(Exception):
     """The session left its live states before its finalise write (nothing written)."""
+
+
+class _DeviceFlowSupersededError(Exception):
+    """A newer device challenge replaced the generation being finalised."""
 
 
 # Flows that live for ``_SESSION_TTL_SECONDS``. Every other flow (a session a
@@ -5488,30 +5493,44 @@ class ConnectSessionService:
         report = await handler.advance(credential.id)
         if report.kind == "pending":
             return
-        if report.kind == "success":
-            assert report.tokens is not None
-            await self._finalise_credential_connected(credential, handler, report.tokens)
+        try:
+            if report.kind == "success":
+                assert report.tokens is not None
+                await self._finalise_credential_connected(
+                    credential, handler, report.tokens, flow_nonce=report.flow_nonce
+                )
+                return
+            # Terminal (failed / expired) — flip the credential row and clear
+            # the aux row so the scanner stops picking it up.
+            await self._mark_credential_terminal(
+                credential.id,
+                report.terminal_detail or report.error_code or report.kind,
+                flow_nonce=report.flow_nonce,
+            )
+        except _DeviceFlowSupersededError:
+            # A reconnect committed a newer challenge after this poll. Its
+            # transient state and eventual outcome belong to that flow.
             return
-        # Terminal (failed / expired) — flip the credential row and clear
-        # the aux row so the scanner stops picking it up.
-        await self._mark_credential_terminal(
-            credential.id,
-            report.terminal_detail or report.error_code or report.kind,
-        )
 
     async def _mark_credential_terminal(
         self,
         credential_id: str,
         detail: str,
+        flow_nonce: str | None = None,
     ) -> None:
         """Move a standalone device-flow credential to ``failed`` + clear aux.
 
-        Clears the aux row's transient state regardless of the specific
-        terminal cause so the scanner stops picking it up on the next
-        tick. ``credentials`` has no ``error_detail`` column today, so
-        detail is logged and lost after this call.
+        A polled generation must still be current before its terminal outcome
+        can clear the challenge. ``credentials`` has no ``error_detail``
+        column today, so detail is logged and lost after this call.
         """
         async with self._ctx.control_db.transaction() as session:
+            if flow_nonce is not None:
+                claimed = await DeviceAuthorizationCredentialRepository.claim_finalisation(
+                    session, credential_id, flow_nonce=flow_nonce
+                )
+                if not claimed:
+                    raise _DeviceFlowSupersededError(credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is None:
                 return
@@ -5898,6 +5917,7 @@ class ConnectSessionService:
         credential: Credential,
         handler: AuthFlowHandler,
         tokens: SuccessTokens,
+        flow_nonce: str | None = None,
     ) -> StatusResult:
         """Credential-mode finalise: shared write, no session row to close.
 
@@ -5925,6 +5945,7 @@ class ConnectSessionService:
             connected_as=None,
             created_by=credential.created_by,
             close_session_id=None,
+            flow_nonce=flow_nonce,
         )
 
         _logger.info(
@@ -5952,6 +5973,7 @@ class ConnectSessionService:
         created_by: str,
         close_session_id: str | None,
         in_session: Any | None = None,
+        flow_nonce: str | None = None,
     ) -> None:
         """Shared finalise write — vault token, cleanup aux, flip credential.
 
@@ -5972,7 +5994,9 @@ class ConnectSessionService:
         the grant and that swap in one commit.
         """
         expires_at = (
-            datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
+            datetime.now(UTC) + timedelta(seconds=tokens.expires_in)
+            if tokens.expires_in is not None
+            else None
         )
         encrypted_access = self._ctx.encryption.encrypt(tokens.access_token)
         encrypted_refresh = (
@@ -5989,6 +6013,12 @@ class ConnectSessionService:
         )
 
         async with self._write_transaction(in_session) as session:
+            if flow_nonce is not None:
+                claimed = await DeviceAuthorizationCredentialRepository.claim_finalisation(
+                    session, credential_id, flow_nonce=flow_nonce
+                )
+                if not claimed:
+                    raise _DeviceFlowSupersededError(credential_id)
             # Same lock as the broker refresh and a token_url edit. A
             # cross-origin edit that committed while the code was being
             # exchanged has moved the credential off the origin this grant
@@ -6067,19 +6097,21 @@ class ConnectSessionService:
                 if registration_id_stamp is not None:
                     existing.app_registration_id = registration_id_stamp
                     await session.flush()
+            if flow_nonce is not None:
+                await ConnectNonceRepository.mark_completed(
+                    session,
+                    nonce=flow_nonce,
+                    credential_id=credential_id,
+                )
             await handler.on_finalise(session, credential_id=credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is not None:
                 credential.state = "connected"
                 if connected_as is not None:
                     credential.provider_account_ref = connected_as
-                # Force an ``updated_at`` bump so client-side pollers
-                # detect the transition even on a re-connect where the
-                # state was already ``"connected"``. Without this,
-                # SQLAlchemy may short-circuit the UPDATE when every
-                # assigned column matches its stored value, leaving
-                # ``updated_at`` unchanged and ``runConnectFlow`` /
-                # ``get_credential``-based watchers polling forever.
+                # Keep ordinary credential detail readers fresh on a
+                # re-connect whose state was already ``"connected"``. Exact
+                # flow completion is recorded on its nonce above.
                 credential.updated_at = datetime.now(UTC)
                 await session.flush()
             if close_session_id is not None:

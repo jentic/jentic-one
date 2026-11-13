@@ -35,17 +35,19 @@ class AuthCodeChallenge(BaseModel):
     kind: Literal["authorization_code"] = "authorization_code"
     authorize_url: str
     state: str
+    flow_id: str | None = None
 
 
 class DeviceAuthorizationChallenge(BaseModel):
     """RFC 8628 device-code challenge.
 
     The caller shows ``user_code`` and asks the human to enter it at
-    ``verification_uri``; the SPA polls ``GET /credentials/{id}`` while
+    ``verification_uri``; the SPA polls this flow's status endpoint while
     the ``ConnectPollScanner`` drives completion server-side.
     """
 
     kind: Literal["device_authorization"] = "device_authorization"
+    flow_id: str
     user_code: str
     verification_uri: str
     verification_uri_complete: str | None = None

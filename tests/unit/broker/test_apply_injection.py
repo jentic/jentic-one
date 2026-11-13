@@ -5,7 +5,7 @@ The sync router (``_apply_injection``) and the async worker
 ``shared.http.injection.apply_injection``. The parity tests pin that a call
 sent inline and the same call sent with ``Prefer: respond-async`` reach the
 upstream with identical URL and headers, for header, query and cookie
-credentials, with and without the caller's own cookies.
+credentials, with and without upstream-scoped cookies.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from starlette.requests import Request
 
+from jentic_one.broker.core.errors import AsyncCookieEncryptionUnavailableError
 from jentic_one.broker.core.proxy_headers import replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import (
@@ -27,6 +28,10 @@ from jentic_one.broker.web.routers.execute import (
 )
 from jentic_one.shared.config import EncryptionConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
+from jentic_one.shared.http.injection import (
+    clear_upstream_cookie_scopes,
+    record_upstream_set_cookie,
+)
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
@@ -51,6 +56,11 @@ _ENCRYPTION = EncryptionService(
 
 
 def _request(*, cookies: list[str] | None = None) -> Request:
+    # These fixtures model cookies returned by this upstream on an earlier call.
+    # Unknown cookies are intentionally rejected; isolation is covered separately.
+    for cookie in cookies or []:
+        for pair in cookie.split(";"):
+            record_upstream_set_cookie(_URL, f"{pair.strip()}; Path=/")
     raw: list[tuple[bytes, bytes]] = [
         (b"host", b"broker.local:8080"),
         (b"content-type", b"application/json"),
@@ -147,8 +157,9 @@ def test_async_payload_without_a_cookie_has_no_cookie_key() -> None:
     assert INBOUND_COOKIE_PAYLOAD_KEY not in payload
 
 
-def test_async_capture_without_a_keyset_keeps_nothing() -> None:
-    assert _captured_cookie(_request(cookies=["sid=1"]), _keyed_ctx(keyset=False)) is None
+def test_async_capture_without_a_keyset_fails_closed() -> None:
+    with pytest.raises(AsyncCookieEncryptionUnavailableError):
+        _captured_cookie(_request(cookies=["sid=1"]), _keyed_ctx(keyset=False))
 
 
 # --- sync / async parity ----------------------------------------------------
@@ -177,7 +188,9 @@ class _AllowAll:
 
 
 class _ActiveActor:
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         return ActorAuthority(active=True, holds_permission=True)
 
 
@@ -206,6 +219,8 @@ async def _async_outbound(
         origin="api",
         headers=replay_headers(request.headers),
         inbound_cookie_enc=_captured_cookie(request, _keyed_ctx()),
+        auth_token_sha256="abcd" * 16,
+        auth_method="access_token",
     )
     if held:
         payload = {ENCRYPTED_PAYLOAD_KEY: _ENCRYPTION.encrypt(json.dumps(payload))}
@@ -295,3 +310,125 @@ async def test_held_payload_sends_the_same_upstream_request_as_sync(
     assert _lowered(held_headers) == _lowered(sync_headers)
     if inbound_cookies:
         assert _lowered(held_headers)["cookie"].startswith("; ".join(inbound_cookies))
+
+
+@pytest.mark.asyncio
+async def test_sync_async_and_held_strip_colliding_query_and_cookie_names() -> None:
+    url = "https://api.example.com/v1/things?api_key=caller1&page=2&%61pi_key=caller2"
+    injection = InjectedAuth(
+        headers={"Authorization": "Bearer broker"},
+        query_params={"api_key": "broker"},  # pragma: allowlist secret
+        cookies={"session": "broker"},
+    )
+    req = _request(cookies=["session=caller1; sid=keep; %73ession=caller2"])
+    sync_url, sync_headers = _apply_injection(url, injection, req)
+    assert sync_url == "https://api.example.com/v1/things?page=2&api_key=broker"
+    assert sync_headers["Cookie"] == "sid=keep; session=broker"
+
+
+def test_sync_connection_nominated_cookie_dropped_before_cookie_injection() -> None:
+    raw: list[tuple[bytes, bytes]] = [
+        (b"host", b"broker.local:8080"),
+        (b"connection", b"Cookie, X-Hop"),
+        (b"cookie", b"caller_sid=1"),
+        (b"x-hop", b"drop-me"),
+        (b"accept", b"application/json"),
+    ]
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "scheme": "http",
+        "server": ("broker.local", 8080),
+        "path": "/api.example.com/v1/things",
+        "raw_path": b"/api.example.com/v1/things",
+        "root_path": "",
+        "query_string": b"",
+        "headers": raw,
+    }
+    request = Request(scope)
+    auth = InjectedAuth(headers={}, query_params={}, cookies={"session": "broker"})
+    _, headers = _apply_injection(_URL, auth, request)
+    lowered = _lowered(headers)
+    assert "x-hop" not in lowered
+    assert "connection" not in lowered
+    assert lowered["cookie"] == "session=broker"
+
+
+@pytest.mark.asyncio
+async def test_async_captured_cookie_filters_foreign_pairs_and_survives_worker_scope_reset() -> (
+    None
+):
+    """Cookies filtered at enqueue for the target URL survive worker execution
+    even when the worker runs in a separate process with an empty scope cache."""
+    clear_upstream_cookie_scopes()
+    record_upstream_set_cookie(_URL, "sid=allowed-session; Path=/v1")
+    record_upstream_set_cookie("https://other.example.com/v1", "foreign=leaked; Path=/")
+
+    raw: list[tuple[bytes, bytes]] = [
+        (b"host", b"broker.local:8080"),
+        (b"cookie", b"sid=allowed-session; foreign=leaked; unknown=untracked"),
+    ]
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "server": ("broker.local", 8080),
+            "path": "/api.example.com/v1/things",
+            "raw_path": b"/api.example.com/v1/things",
+            "root_path": "",
+            "query_string": b"page=2",
+            "headers": raw,
+        }
+    )
+    ctx_req = ExecuteRequestContext(
+        upstream_url=_URL,
+        method="POST",
+        trace_id="ab" * 16,
+        api_vendor="example.com",
+        api_name="example",
+        api_version="1",
+    )
+    captured = _captured_cookie(
+        request,
+        _keyed_ctx(),
+        upstream_url=ctx_req.upstream_url,
+        server_variables_unresolved=ctx_req.server_variables_unresolved,
+    )
+    assert captured is not None
+    assert _ENCRYPTION.decrypt(captured) == "sid=allowed-session"
+
+    payload = _async_job_payload(
+        ctx_req,
+        execution_id="exec_worker_sep",
+        origin="api",
+        headers=replay_headers(request.headers),
+        inbound_cookie_enc=captured,
+        auth_token_sha256="abcd" * 16,
+        auth_method="access_token",
+    )
+    assert payload.get("inbound_cookie_scoped") is True
+
+    # Simulate a separate worker process that never saw the Set-Cookie response.
+    clear_upstream_cookie_scopes()
+
+    executor = _RecordingExecutor()
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FixedInjector(
+            InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+        ),
+        execution_authorizer=_AllowAll(),
+        actor_status=_ActiveActor(),
+        encryption=_ENCRYPTION,
+    )
+    await handler.execute(
+        "job_worker_sep",
+        SessionScope(_FakeSession()),
+        payload=payload,
+        created_by="agnt_parity",
+        actor_type="agent",
+    )
+    sent = executor.last_request
+    assert sent is not None
+    assert sent.headers.get("Cookie") == "sid=allowed-session"

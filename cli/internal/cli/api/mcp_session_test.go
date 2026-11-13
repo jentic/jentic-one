@@ -667,8 +667,8 @@ func TestMCPSession_ContextValuesReachHandlersAndTransport(t *testing.T) {
 // TestMCPSession_RevokedIdentity401MapsToNotAuthenticated pins the §3.7
 // error-table row this server exists for: a wire 401 from GET /me (token
 // rejected post-mint — revoked/kill-switched identity) surfaces as a soft
-// error coded NOT_AUTHENTICATED with the get_started pointer, never the
-// INTERNAL_ERROR "report a CLI bug" catch-all.
+// error coded NOT_AUTHENTICATED with the get_started pointer and HTTP status,
+// without relaying upstream-provided detail text.
 func TestMCPSession_RevokedIdentity401MapsToNotAuthenticated(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -706,8 +706,11 @@ func TestMCPSession_RevokedIdentity401MapsToNotAuthenticated(t *testing.T) {
 		t.Errorf("next_tool = %v, want get_started (the recovery-loop pointer must fire)", payload["next_tool"])
 	}
 	msg, _ := payload["error"].(string)
-	if !strings.Contains(msg, "identity revoked") {
-		t.Errorf("error %q should carry the control plane's detail", msg)
+	if strings.Contains(msg, "identity revoked") {
+		t.Errorf("error %q must not relay the control plane's detail", msg)
+	}
+	if !strings.Contains(msg, "401") {
+		t.Errorf("error %q should retain the HTTP status", msg)
 	}
 }
 

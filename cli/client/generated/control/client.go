@@ -386,6 +386,24 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 	}
 }
 
+// Defines values for ConnectFlowStatusResponseStatus.
+const (
+	ConnectFlowStatusResponseStatusConnected ConnectFlowStatusResponseStatus = "connected"
+	ConnectFlowStatusResponseStatusPending   ConnectFlowStatusResponseStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ConnectFlowStatusResponseStatus enum.
+func (e ConnectFlowStatusResponseStatus) Valid() bool {
+	switch e {
+	case ConnectFlowStatusResponseStatusConnected:
+		return true
+	case ConnectFlowStatusResponseStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectSchemeOptionResponseKind.
 const (
 	ConnectSchemeOptionResponseKindApiKey ConnectSchemeOptionResponseKind = "api_key"
@@ -2858,13 +2876,18 @@ type AuthCodeConfirmSessionResponseKind string
 // Client opens “authorize_url“ in a popup; completion lands
 // server-side via “/credentials/oauth/callback“.
 //
-// Examples: {"authorize_url":"https://vendor.example.com/oauth/authorize?client_id=…\u0026state=…","state":"Jq8Yk2mN4pR7sT1vW3xZ"}
+// Examples: {"authorize_url":"https://vendor.example.com/oauth/authorize?client_id=…\u0026state=…","flow_id":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","state":"Jq8Yk2mN4pR7sT1vW3xZ"}
 type AuthCodeConnectChallengeResponse struct {
 	// AuthorizeUrl Vendor authorization URL to open in the browser that called this endpoint.
 	//
 	// Examples: https://vendor.example.com/oauth/authorize?client_id=…&state=…
-	AuthorizeUrl string                                `json:"authorize_url"`
-	Kind         *AuthCodeConnectChallengeResponseKind `json:"kind,omitempty"`
+	AuthorizeUrl string `json:"authorize_url"`
+
+	// FlowId Opaque identifier for reading this flow's completion status.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+	FlowId *string                               `json:"flow_id,omitempty"`
+	Kind   *AuthCodeConnectChallengeResponseKind `json:"kind,omitempty"`
 
 	// State Opaque CSRF state bound to this challenge; the callback accepts it only from the browser that started the flow.
 	//
@@ -3484,6 +3507,17 @@ type ClaimRequest struct {
 	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 	Token string `json:"token"`
 }
+
+// ConnectFlowStatusResponse Authoritative terminal completion of one connect challenge.
+//
+// Examples: {"status":"connected"}
+type ConnectFlowStatusResponse struct {
+	// Status Examples: connected
+	Status ConnectFlowStatusResponseStatus `json:"status"`
+}
+
+// ConnectFlowStatusResponseStatus Examples: connected
+type ConnectFlowStatusResponseStatus string
 
 // ConnectOptionsResponse How a connection to one registry API would be made, scheme by scheme.
 //
@@ -4173,13 +4207,16 @@ type DeviceAuthorizationConfirmSessionResponseKind string
 
 // DeviceAuthorizationConnectChallengeResponse RFC 8628 device-code challenge.
 //
-// Client shows “user_code“ at “verification_uri“ and polls
-// “GET /credentials/{id}“ until state moves off “pending“
-// (scanner-driven server-side).
+// Client shows “user_code“ at “verification_uri“ and polls this flow's
+// status endpoint while the scanner drives completion server-side.
 //
-// Examples: {"poll_interval_seconds":5,"user_code":"WDJB-MJHT","verification_uri":"https://vendor.example.com/device","verification_uri_complete":"https://vendor.example.com/device?user_code=WDJB-MJHT"}
+// Examples: {"flow_id":"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk","poll_interval_seconds":5,"user_code":"WDJB-MJHT","verification_uri":"https://vendor.example.com/device","verification_uri_complete":"https://vendor.example.com/device?user_code=WDJB-MJHT"}
 type DeviceAuthorizationConnectChallengeResponse struct {
-	Kind *DeviceAuthorizationConnectChallengeResponseKind `json:"kind,omitempty"`
+	// FlowId Opaque identifier for reading this flow's completion status.
+	//
+	// Examples: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+	FlowId string                                           `json:"flow_id"`
+	Kind   *DeviceAuthorizationConnectChallengeResponseKind `json:"kind,omitempty"`
 
 	// PollIntervalSeconds Minimum seconds to wait between polls, when the vendor supplies it; null means use your own default.
 	//
@@ -13777,6 +13814,13 @@ type ClientInterface interface {
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 	ConnectCredential(ctx context.Context, credentialId PathCredentialId, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConnectFlowStatus Read OAuth connect flow status
+	//
+	// Read one flow's committed outcome, not a credential-wide timestamp.
+	//
+	// Corresponds with GET /credentials/{credential_id}/connect/{flow_id}/status (the `GetConnectFlowStatus` operationId).
+	GetConnectFlowStatus(ctx context.Context, credentialId PathCredentialId, flowId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ErrorPage Get a browser authorization error
 	//
 	// Minimal error endpoint for browser-facing authorization failures.
@@ -18000,6 +18044,23 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId Pat
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 func (c *Client) ConnectCredential(ctx context.Context, credentialId PathCredentialId, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConnectCredentialRequest(c.Server, credentialId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectFlowStatus Read OAuth connect flow status
+//
+// Read one flow's committed outcome, not a credential-wide timestamp.
+//
+// Corresponds with GET /credentials/{credential_id}/connect/{flow_id}/status (the `GetConnectFlowStatus` operationId).
+func (c *Client) GetConnectFlowStatus(ctx context.Context, credentialId PathCredentialId, flowId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectFlowStatusRequest(c.Server, credentialId, flowId)
 	if err != nil {
 		return nil, err
 	}
@@ -25561,6 +25622,47 @@ func NewConnectCredentialRequestWithBody(server string, credentialId PathCredent
 	return req, nil
 }
 
+// NewGetConnectFlowStatusRequest constructs an http.Request for the GetConnectFlowStatus method
+func NewGetConnectFlowStatusRequest(server string, credentialId PathCredentialId, flowId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "flow_id", flowId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s/connect/%s/status", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewErrorPageRequest constructs an http.Request for the ErrorPage method
 func NewErrorPageRequest(server string, params *ErrorPageParams) (*http.Request, error) {
 	var err error
@@ -31096,6 +31198,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 	ConnectCredentialWithResponse(ctx context.Context, credentialId PathCredentialId, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*ConnectCredentialHTTPResp, error)
+
+	// GetConnectFlowStatusWithResponse Read OAuth connect flow status
+	//
+	// Read one flow's committed outcome, not a credential-wide timestamp.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /credentials/{credential_id}/connect/{flow_id}/status (the `GetConnectFlowStatus` operationId).
+	GetConnectFlowStatusWithResponse(ctx context.Context, credentialId PathCredentialId, flowId string, reqEditors ...RequestEditorFn) (*GetConnectFlowStatusHTTPResp, error)
 
 	// ErrorPageWithResponse Get a browser authorization error
 	//
@@ -41411,6 +41522,103 @@ func (r ConnectCredentialHTTPResp) ContentType() string {
 	return ""
 }
 
+type GetConnectFlowStatusHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectFlowStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *InternalServerError
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ServiceUnavailable
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *UnexpectedError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectFlowStatusHTTPResp) GetJSON200() *ConnectFlowStatusResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON500() *InternalServerError {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSON503() *ServiceUnavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetConnectFlowStatusHTTPResp) GetApplicationproblemJSONDefault() *UnexpectedError {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectFlowStatusHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectFlowStatusHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectFlowStatusHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectFlowStatusHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ErrorPageHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -50802,6 +51010,21 @@ func (c *ClientWithResponses) ConnectCredentialWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseConnectCredentialHTTPResp(rsp)
+}
+
+// GetConnectFlowStatusWithResponse Read OAuth connect flow status
+//
+// Read one flow's committed outcome, not a credential-wide timestamp.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /credentials/{credential_id}/connect/{flow_id}/status (the `GetConnectFlowStatus` operationId).
+func (c *ClientWithResponses) GetConnectFlowStatusWithResponse(ctx context.Context, credentialId PathCredentialId, flowId string, reqEditors ...RequestEditorFn) (*GetConnectFlowStatusHTTPResp, error) {
+	rsp, err := c.GetConnectFlowStatus(ctx, credentialId, flowId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectFlowStatusHTTPResp(rsp)
 }
 
 // ErrorPageWithResponse Get a browser authorization error
@@ -60336,6 +60559,88 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalServerError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ServiceUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest UnexpectedError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectFlowStatusHTTPResp parses an HTTP response from a GetConnectFlowStatusWithResponse call
+func ParseGetConnectFlowStatusHTTPResp(rsp *http.Response) (*GetConnectFlowStatusHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectFlowStatusHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectFlowStatusResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity

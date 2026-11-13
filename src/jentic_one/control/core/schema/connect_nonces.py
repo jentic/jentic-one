@@ -34,3 +34,4 @@ class ConnectNonce(AuditableMixin, ControlBase):
     )
     consumed_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

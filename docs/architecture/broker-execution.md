@@ -74,6 +74,16 @@ Results of async executions are polled through the jobs API
 (`GET /jobs/{job_id}`, `GET /jobs/{job_id}/result`) or the
 `get_execution_result` MCP tool.
 
+Async and held jobs persist only the end-to-end headers in `REPLAY_HEADERS`
+and vendor `*-version` headers accepted by `is_replay_header` in
+[`broker/core/proxy_headers.py`](../../src/jentic_one/broker/core/proxy_headers.py).
+Other vendor-specific headers are supported only on synchronous execution.
+Callers that depend on an unlisted header must use the synchronous path: queued
+execution does not persist arbitrary values that may contain credentials, such as
+`X-Api-Key`, in plaintext. Cookies are captured separately as ciphertext, and
+hop-by-hop, broker-consumed, spoofable, framing, and caller authorization headers
+are always excluded.
+
 ## The Broker protocol and `DefaultBroker`
 
 [`shared/broker/broker.py`](../../src/jentic_one/shared/broker/broker.py) defines the `Broker` protocol — `execute()`

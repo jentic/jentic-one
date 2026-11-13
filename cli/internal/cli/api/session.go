@@ -128,7 +128,7 @@ func credsFromState(ctx context.Context, st *clictx.ActiveState) (auth.Credentia
 // misconfiguration) → NOT_AUTHENTICATED — all of which `jentic register`
 // resolves or diagnoses.
 func contextAuthErr(err error, st *clictx.ActiveState) error {
-	if errors.Is(err, auth.ErrNotRegistered) {
+	if errors.Is(err, auth.ErrNotRegistered) || errors.Is(err, auth.ErrOriginMismatch) {
 		return notRegisteredErr(st.IdentityName, st.EnvironmentName)
 	}
 	// A data-plane command never has a claim outstanding, so the claim-vs-audience

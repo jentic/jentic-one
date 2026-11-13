@@ -146,7 +146,8 @@ func GetOrGenerateKey(ref IdentityRef) (ed25519.PrivateKey, error) {
 
 // PurgeMaterial removes ALL on-disk secret material for ref — the Ed25519 key
 // (<config>/keys/<stem>.key), the cached tokens (<state>/<stem>_tokens.json), and
-// the API-key credential (<state>/<stem>.apikey). It is called by `identity
+// the API-key credential and origin sidecar (<state>/<stem>.apikey[.origin]).
+// It is called by `identity
 // delete` / `context delete --identity` so deleting an identity does not leave
 // its private key and tokens orphaned on disk after the config entry is gone
 // (impl/1.3 §4a "delete removes its key/token files"; F8-34).
@@ -165,14 +166,20 @@ func PurgeMaterial(ref IdentityRef) error {
 	keyPath, kerr := KeyPathForImport(ref)
 	tokPath, terr := getTokenPath(ref)
 	akPath, aerr := apiKeyPath(ref)
-	for _, e := range []error{kerr, terr, aerr} {
+	akOriginPath, oerr := apiKeyOriginPath(ref)
+	for _, e := range []error{kerr, terr, aerr, oerr} {
 		if e != nil {
 			return e
 		}
 	}
 
 	var firstErr error
-	for _, path := range []string{keyPath, tokPath, akPath} {
+	for _, path := range []string{keyPath, tokPath, akPath, akOriginPath} {
+		if path == akOriginPath {
+			if _, err := os.Stat(akPath); err == nil || !os.IsNotExist(err) {
+				continue
+			}
+		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) && firstErr == nil {
 			firstErr = fmt.Errorf("removing identity material %s: %w", path, err)
 		}

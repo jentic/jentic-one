@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 from jentic_one.shared.config._secrets import _require_or_generate_secret
 from jentic_one.shared.config.egress import ControlEgressConfig
 from jentic_one.shared.config.encryption import EncryptionConfig
-from jentic_one.shared.url import validate_redirect_uri
+from jentic_one.shared.url import is_loopback_url, normalize_base_url, validate_redirect_uri
 
 
 class DirectOAuth2ProviderConfig(BaseModel):
@@ -95,6 +95,14 @@ class PipedreamProviderConfig(BaseModel):
             "shifted."
         ),
     )
+
+    @field_validator("connect_base_url")
+    @classmethod
+    def _validate_connect_base_url(cls, value: str) -> str:
+        normalized = normalize_base_url(value)
+        if not normalized.startswith("https://") and not is_loopback_url(normalized):
+            raise ValueError(f"connect_base_url must use https: {value!r}")
+        return normalized
 
 
 ProviderConfig = Annotated[

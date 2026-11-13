@@ -167,6 +167,9 @@ def _request(agent_id: str, credential_id: str, *, method: str = "GET") -> Queue
         api_name=_API_NAME,
         api_version=_API_VERSION,
         credential_id=credential_id,
+        auth_token_sha256="abcd" * 16,
+        auth_method="jwt",
+        auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
 
@@ -628,6 +631,9 @@ async def test_rules_are_reauthorized_on_the_server_relative_path(
             api_version=_API_VERSION,
             relative_path=relative_path,
             credential_id=credential_id,
+            auth_token_sha256="abcd" * 16,
+            auth_method="jwt",
+            auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
     )
 
@@ -668,6 +674,9 @@ async def test_encoded_path_is_denied_by_a_deny_rule_on_fallback(
             api_name=_API_NAME,
             api_version=_API_VERSION,
             credential_id=credential_id,
+            auth_token_sha256="abcd" * 16,
+            auth_method="jwt",
+            auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
     )
 
@@ -715,6 +724,9 @@ def _base_path_request(agent_id: str, credential_id: str) -> QueuedExecutionRequ
         api_version=_API_VERSION,
         relative_path="/admin/users",
         credential_id=credential_id,
+        auth_token_sha256="abcd" * 16,
+        auth_method="jwt",
+        auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
 
@@ -819,6 +831,9 @@ async def test_encoded_traversal_is_denied(
             api_name=_API_NAME,
             api_version=_API_VERSION,
             credential_id=credential_id,
+            auth_token_sha256="abcd" * 16,
+            auth_method="jwt",
+            auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
     )
 
@@ -999,6 +1014,9 @@ async def _queue_job(ctx: Context, agent_id: str, credential_id: str) -> str:
                 "api_version": _API_VERSION,
                 "credential_id": credential_id,
                 "operation": {"id": "op_pets", "path": "/v1/pets", "method": "GET"},
+                "auth_token_sha256": "abcd" * 16,
+                "auth_method": "jwt",
+                "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             },
         )
         session.add(job)

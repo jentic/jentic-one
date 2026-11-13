@@ -75,3 +75,8 @@ class Identity(BaseModel):
     # row this token was minted under. Lets audit/telemetry separate
     # key-channel from grant-channel agent traffic.
     oauth_grant_id: str | None = None
+    # Optional authentication-channel lineage for revalidating queued and held
+    # work against the submitting credential or login session.
+    auth_token_sha256: str | None = None
+    auth_method: str | None = None
+    session_generation: int | None = None
