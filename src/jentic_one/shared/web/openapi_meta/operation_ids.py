@@ -41,7 +41,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # surface name and status.
         "authHealth",
         # Password login: the caller has no token yet; the credential is the
-        # request body, verified by AuthService.authenticate.
+        # request body, verified by AuthService.authenticate. Rate limited.
         "login",
         # Invite redemption: the caller has no token yet; bound by the
         # single-use invite token in the request body.

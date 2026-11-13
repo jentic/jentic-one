@@ -10,6 +10,7 @@ import pytest
 import structlog.testing
 from fastapi import FastAPI
 
+from jentic_one.admin.web.app import install_on_app as install_admin
 from jentic_one.auth.web.app import install_on_app as install_auth
 from jentic_one.control.web.app import create_app as create_control_app
 from jentic_one.control.web.connect_limits import install_connect_limiters
@@ -66,10 +67,12 @@ async def test_every_surface_shares_one_backend_closed_once(
 ) -> None:
     ctx = _ctx(sample_config_dict, backend="counting")
     app = FastAPI()
+    install_admin(app, ctx)
     install_auth(app, ctx)
     install_connect_limiters(app, ctx)
 
     (backend,) = counting
+    assert app.state.admin_state_backend is backend
     assert app.state.auth_state_backend is backend
     assert app.state.control_state_backend is backend
 
