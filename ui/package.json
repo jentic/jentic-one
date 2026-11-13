@@ -21,7 +21,7 @@
 		"e2e:docker": "playwright test --config=playwright.docker.config.ts"
 	},
 	"dependencies": {
-		"@tanstack/react-query": "^5.105.0",
+		"@tanstack/react-query": "^5.107.1",
 		"clsx": "^2.1.1",
 		"framer-motion": "^14.8.0",
 		"lucide-react": "^1.70.0",
