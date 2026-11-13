@@ -608,6 +608,7 @@ async def test_unexpected_stage_failure_retains_stage_diagnostic_and_traceback(
     stage_type: type[BasePipelineStage],
 ) -> None:
     """Pins #2029: an active-index cause cannot disguise an internal stage failure."""
+    monkeypatch.setattr(integration_context.config.search, "enabled", True)
     monkeypatch.setattr(stage_type, "_run", _raise_unexpected_active_conflict)
     source = _inline(_BASE, origin="catalog")
     del source["origin"]
