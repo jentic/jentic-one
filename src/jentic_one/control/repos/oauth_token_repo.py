@@ -9,7 +9,6 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
-from jentic_one.shared.db.locks import credential_refresh_lock_key
 
 ExpiryEventKind = Literal["expiring_soon", "expired"]
 
@@ -21,19 +20,18 @@ class OAuthTokenRepository:
     async def acquire_refresh_lock(session: AsyncSession, credential_id: str) -> None:
         """Acquire the transaction-scoped lock that serialises a credential's grant.
 
-        Held by control writes that replace or drop a credential's OAuth grant
-        and paired with the broker refresher's session-level lock over the same
-        key (:func:`credential_refresh_lock_key`), so grant updates and token
-        refreshes never interleave. On PostgreSQL this is
-        ``pg_advisory_xact_lock`` (released at commit/rollback). On SQLite it is
-        a no-op: every write transaction opens with ``BEGIN IMMEDIATE``, which
-        serialises writers across processes.
+        Held by the broker's single-flight refresh and by any control write
+        that drops the grant, so the two never interleave. On PostgreSQL this
+        is ``pg_advisory_xact_lock`` (released at commit/rollback). On SQLite
+        it is a no-op: every write transaction opens with ``BEGIN IMMEDIATE``,
+        which already serialises the refresh transaction against the dropping
+        write across processes.
         """
         dialect = session.bind.dialect.name if session.bind else "sqlite"
         if dialect == "postgresql":
             await session.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"),
-                {"key": credential_refresh_lock_key(credential_id)},
+                text("SELECT pg_advisory_xact_lock(hashtext(:cid))"),
+                {"cid": credential_id},
             )
 
     @staticmethod
@@ -66,13 +64,10 @@ class OAuthTokenRepository:
         return row
 
     @staticmethod
-    async def get_by_credential(
-        session: AsyncSession, credential_id: str, *, for_update: bool = False
-    ) -> OAuthToken | None:
-        stmt = select(OAuthToken).where(OAuthToken.credential_id == credential_id)
-        if for_update:
-            stmt = stmt.with_for_update()
-        result = await session.execute(stmt)
+    async def get_by_credential(session: AsyncSession, credential_id: str) -> OAuthToken | None:
+        result = await session.execute(
+            select(OAuthToken).where(OAuthToken.credential_id == credential_id)
+        )
         return result.scalar_one_or_none()
 
     @staticmethod

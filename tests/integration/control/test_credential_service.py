@@ -75,7 +75,6 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseDataError
-from jentic_one.shared.db.locks import credential_refresh_lock_key
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
@@ -1434,11 +1433,9 @@ async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_
     async def parked_on_advisory_lock(credential_id: str) -> None:
         # Only this credential's lock in this database counts, so a waiter on
         # another lock (another test, another database) cannot release the move
-        # early. ``acquire_refresh_lock`` keys on ``credential_refresh_lock_key``;
-        # pg_locks splits a bigint key into ``classid`` (high 32 bits) and
-        # ``objid`` (low 32 bits) with ``objsubid = 1``.
-        key = credential_refresh_lock_key(credential_id)
-        unsigned = key & 0xFFFF_FFFF_FFFF_FFFF
+        # early. ``acquire_refresh_lock`` keys on ``hashtext(credential_id)``
+        # widened to bigint; pg_locks splits a bigint key into ``classid``
+        # (high 32 bits) and ``objid`` (low 32 bits) with ``objsubid = 1``.
         while True:
             async with control_db.session() as session:
                 waiting = (
@@ -1448,9 +1445,11 @@ async def test_update_path_edit_queued_behind_cross_origin_move_rechecks_origin_
                             " WHERE locktype = 'advisory' AND NOT granted"
                             " AND database = (SELECT oid FROM pg_database"
                             " WHERE datname = current_database())"
-                            " AND objsubid = 1 AND classid = :hi AND objid = :lo"
+                            " AND objsubid = 1"
+                            " AND ((classid::int8 << 32) | objid::int8)"
+                            " = hashtext(:cid)::int8"
                         ),
-                        {"hi": unsigned >> 32, "lo": unsigned & 0xFFFFFFFF},
+                        {"cid": credential_id},
                     )
                 ).scalar_one()
             if waiting:
