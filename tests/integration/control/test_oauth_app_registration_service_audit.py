@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.audit import AuditEntry
@@ -22,6 +23,10 @@ from jentic_one.control.core.schema.device_authorization_app_registration_detail
     DeviceAuthorizationAppRegistrationDetails,
 )
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
+from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+    OAuthAppRegistrationUpdate,
+)
 from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
@@ -96,18 +101,24 @@ async def test_lifecycle_records_one_audit_entry_per_mutation(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Audited",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid-audit",
-        client_secret=_SECRET_ORIGINAL,
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=["read"],
+        AuthorizationCodeRegistrationCreate(
+            name="Audited",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid-audit",
+            client_secret=SecretStr(_SECRET_ORIGINAL),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=["read"],
+        ),
         identity=_ADMIN,
     )
-    await svc.update(reg.id, name="Audited (renamed)", is_active=False, identity=_ADMIN)
+    await svc.update(
+        reg.id,
+        OAuthAppRegistrationUpdate(name="Audited (renamed)", is_active=False),
+        identity=_ADMIN,
+    )
     await svc.rotate_client_secret(reg.id, client_secret=_SECRET_ROTATED, identity=_ADMIN)
     await svc.delete(reg.id, identity=_ADMIN)
 
@@ -146,15 +157,17 @@ async def test_audit_snapshots_never_carry_the_client_secret(
 ) -> None:
     svc = OAuthAppRegistrationService(integration_context)
     reg = await svc.create_authorization_code(
-        name="Secretive",
-        api_vendor="v",
-        catalog_api_id="v/api",
-        display_name="V",
-        client_id="cid-secret",
-        client_secret=_SECRET_ORIGINAL,
-        authorize_url="https://ex/a",
-        token_url="https://ex/t",
-        default_scopes=None,
+        AuthorizationCodeRegistrationCreate(
+            name="Secretive",
+            api_vendor="v",
+            catalog_api_id="v/api",
+            display_name="V",
+            client_id="cid-secret",
+            client_secret=SecretStr(_SECRET_ORIGINAL),
+            authorize_url="https://ex/a",
+            token_url="https://ex/t",
+            default_scopes=None,
+        ),
         identity=_ADMIN,
     )
     async with integration_context.control_db.session() as session:
@@ -163,7 +176,11 @@ async def test_audit_snapshots_never_carry_the_client_secret(
     sealed_original = details.encrypted_client_secret
 
     await svc.rotate_client_secret(reg.id, client_secret=_SECRET_ROTATED, identity=_ADMIN)
-    await svc.update(reg.id, name="Secretive (renamed)", identity=_ADMIN)
+    await svc.update(
+        reg.id,
+        OAuthAppRegistrationUpdate(name="Secretive (renamed)"),
+        identity=_ADMIN,
+    )
     await svc.delete(reg.id, identity=_ADMIN)
 
     entries = await _audit_entries_for(integration_context, reg.id)

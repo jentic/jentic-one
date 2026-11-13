@@ -11,6 +11,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 )
 from jentic_one.control.services.oauth_app_registrations.schemas import (
     OAuthAppRegistrationFlowKind,
+    OAuthAppRegistrationQuery,
     OAuthAppRegistrationView,
 )
 from jentic_one.control.services.oauth_app_registrations.service import (
@@ -82,28 +83,13 @@ async def create_oauth_app_registration(
     """
     if isinstance(body, AuthorizationCodeRegistrationCreateRequest):
         view = await svc.create_authorization_code(
-            name=body.name,
-            api_vendor=body.api_vendor,
-            catalog_api_id=body.catalog_api_id,
-            display_name=body.display_name,
-            client_id=body.client_id,
-            client_secret=body.client_secret,
-            authorize_url=body.authorize_url,
-            token_url=body.token_url,
-            default_scopes=body.default_scopes,
+            body.to_service_model(),
             identity=identity,
         )
     else:
         assert isinstance(body, DeviceAuthorizationRegistrationCreateRequest)
         view = await svc.create_device_authorization(
-            name=body.name,
-            api_vendor=body.api_vendor,
-            catalog_api_id=body.catalog_api_id,
-            display_name=body.display_name,
-            client_id=body.client_id,
-            authorization_endpoint=body.authorization_endpoint,
-            token_endpoint=body.token_endpoint,
-            default_scopes=body.default_scopes,
+            body.to_service_model(),
             identity=identity,
         )
     await connect_svc.resolve_awaiting_app_sessions()
@@ -148,17 +134,19 @@ async def list_oauth_app_registrations(
     rows and org-wide dependent-credential counts. Non-admins discover the
     shared apps they can connect through via ``GET /vendors``.
     """
-    views, has_more, next_cursor = await svc.list_page(
-        api_vendor=api_vendor,
-        flow_kind=flow_kind.value if flow_kind is not None else None,
-        include_inactive=include_inactive,
-        cursor=cursor,
-        limit=limit,
+    page = await svc.list_page(
+        OAuthAppRegistrationQuery(
+            api_vendor=api_vendor,
+            flow_kind=flow_kind.value if flow_kind is not None else None,
+            include_inactive=include_inactive,
+            cursor=cursor,
+            limit=limit,
+        )
     )
     return OAuthAppRegistrationListResponse(
-        data=[_to_response(v) for v in views],
-        has_more=has_more,
-        next_cursor=next_cursor,
+        data=[_to_response(v) for v in page.data],
+        has_more=page.has_more,
+        next_cursor=page.next_cursor,
     )
 
 
@@ -207,14 +195,7 @@ async def update_oauth_app_registration(
     """
     view = await svc.update(
         id,
-        name=body.name,
-        display_name=body.display_name,
-        is_active=body.is_active,
-        default_scopes=body.default_scopes,
-        authorize_url=body.authorize_url,
-        token_url=body.token_url,
-        authorization_endpoint=body.authorization_endpoint,
-        token_endpoint=body.token_endpoint,
+        body.to_service_model(),
         identity=identity,
     )
     return _to_response(view)
