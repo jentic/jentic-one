@@ -2,7 +2,7 @@ package auth
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -190,7 +190,7 @@ func TestAPIKeyReplacement_ConcurrentReadersNeverSeeMismatchedOrigin(t *testing.
 				matchesA := rec.APIKey == keyA && rec.Origin == originA // pragma: allowlist secret
 				matchesB := rec.APIKey == keyB && rec.Origin == originB // pragma: allowlist secret
 				if !matchesA && !matchesB {
-					errs <- fmt.Errorf("observed an API key with a mismatched origin")
+					errs <- errors.New("observed an API key with a mismatched origin")
 					return
 				}
 			}

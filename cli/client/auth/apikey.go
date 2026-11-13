@@ -164,7 +164,7 @@ func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 	}
 	defer func() { _ = lock.Unlock() }()
 
-	pending, err := json.Marshal(apiKeyRecord{APIKey: key, Origin: origin})
+	pending, err := json.Marshal(apiKeyRecord{APIKey: key, Origin: origin}) //nolint:gosec // G117: the pending credential is persisted through the 0600 atomic writer.
 	if err != nil {
 		return fmt.Errorf("encoding pending API key update: %w", err)
 	}
