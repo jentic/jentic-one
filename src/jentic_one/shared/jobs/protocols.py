@@ -115,6 +115,7 @@ class QueuedExecutionRequest:
     api_name: str
     api_version: str
     operation_id: str | None = None
+    spec_operation_id: str | None = None
     # The enqueue-time operation's server-relative path
     # (``OperationInfo.relative_path``) — the path the binding rules are
     # re-evaluated on, so enqueue and run time judge the same path. ``None``

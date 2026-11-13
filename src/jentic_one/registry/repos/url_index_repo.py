@@ -24,6 +24,7 @@ class OperationContext:
     api: APIReference
     path: str
     method: str
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,7 @@ class UrlIndexCandidate:
     version: str
     operation_path: str
     operation_method: str
+    spec_operation_id: str | None = None
 
     def context(self) -> OperationContext:
         """The operation's API identity + path/method as an :class:`OperationContext`."""
@@ -50,10 +52,11 @@ class UrlIndexCandidate:
             api=APIReference(vendor=self.vendor, name=self.name, version=self.version),
             path=self.operation_path,
             method=self.operation_method,
+            operation_id=self.spec_operation_id,
         )
 
 
-_CandidateSelect = Select[OperationURLIndex, str, str, str, str, str]
+_CandidateSelect = Select[OperationURLIndex, str, str, str, str, str, str | None]
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,7 @@ def _candidate_rows() -> _CandidateSelect:
             Api.version,
             Operation.path,
             Operation.method,
+            Operation.operation_id,
         )
         .join(Operation, Operation.id == OperationURLIndex.operation_id)
         .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
@@ -160,8 +164,9 @@ async def _fetch_candidates(
             version=version,
             operation_path=path,
             operation_method=method,
+            spec_operation_id=spec_operation_id,
         )
-        for row, vendor, name, version, path, method in result
+        for row, vendor, name, version, path, method, spec_operation_id in result
     ]
 
 

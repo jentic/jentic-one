@@ -7879,7 +7879,7 @@ type PermissionRuleReadSchema struct {
 	// Examples: ["GET"]
 	Methods *[]string `json:"methods,omitempty"`
 
-	// Operations OpenAPI operation IDs the rule matches; null matches all.
+	// Operations OpenAPI operationIds the rule matches by exact equality (existing `op_…` registry operation IDs also match their revision); null matches all.
 	//
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
@@ -7928,7 +7928,7 @@ type PermissionRuleSchema struct {
 	// Examples: ["GET"]
 	Methods *[]string `json:"methods,omitempty"`
 
-	// Operations OpenAPI operation IDs to match. None matches all operations.
+	// Operations OpenAPI operationIds to match by exact string equality (survives revision promotion; existing `op_…` registry operation IDs also match their revision). None matches all operations.
 	//
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
@@ -7958,7 +7958,7 @@ type PermissionTestRequest struct {
 	// Examples: GET
 	Method string `json:"method"`
 
-	// OperationId Optional OpenAPI operation id resolved from the request URL.
+	// OperationId Optional OpenAPI operationId (or `op_…` registry operation ID) of the hypothetical request. When omitted, the dry-run resolves the operation from `(method, path)` against the credential's covered live API(s); when supplied, it must agree with the resolved operation.
 	//
 	// Examples: listCharges
 	OperationId *string `json:"operation_id,omitempty"`

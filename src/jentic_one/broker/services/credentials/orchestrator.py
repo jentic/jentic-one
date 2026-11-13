@@ -69,6 +69,7 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
+from jentic_one.shared.models.api_identity import CredentialScope
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
 from jentic_one.shared.schemas import APIReference
@@ -90,11 +91,13 @@ class CredentialService:
         ctx: Context,
         *,
         connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
+        candidate_scopes_out: dict[str, CredentialScope] | None = None,
     ) -> None:
         self._ctx = ctx
         # Shared OAuth-app registrations the 424 directive may suggest; ``None``
         # reads them from the control DB on the denial path.
         self._connect_registrations = connect_registrations
+        self._candidate_scopes_out = candidate_scopes_out
 
     async def inject(
         self,
@@ -368,7 +371,12 @@ class CredentialService:
         (424/400/409).
         """
         try:
-            return await CredentialResolver(self._ctx).resolve(
+            resolver = (
+                CredentialResolver(self._ctx, candidate_scopes_out=self._candidate_scopes_out)
+                if self._candidate_scopes_out is not None
+                else CredentialResolver(self._ctx)
+            )
+            return await resolver.resolve(
                 api=api,
                 caller=identity.sub,
                 credential_name=credential_name,

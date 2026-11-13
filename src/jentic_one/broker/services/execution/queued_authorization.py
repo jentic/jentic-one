@@ -27,6 +27,7 @@ import structlog
 from jentic_one.broker.core.errors import BrokerError
 from jentic_one.broker.core.problem import broker_error_problem, discovery_error_problem
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
+from jentic_one.broker.repos.operation_scope_repo import OperationScopeRepository
 from jentic_one.broker.services.execution.authorization import authorize_execution
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
@@ -49,7 +50,7 @@ from jentic_one.shared.jobs.queued_denials import (
     queued_execution_instance,
 )
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.permissions.evaluation import rule_request_path
+from jentic_one.shared.permissions.evaluation import is_registry_operation_id, rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
@@ -139,6 +140,16 @@ class QueuedExecutionAuthorizer:
             expires_at=None,
             active=True,
         )
+        spec_operation_id = request.spec_operation_id
+        if (
+            spec_operation_id is None
+            and request.operation_id is not None
+            and is_registry_operation_id(request.operation_id)
+            and self._ctx.has_db("registry")
+        ):
+            spec_operation_id = await OperationScopeRepository.spec_operation_id_for_pk(
+                self._ctx.registry_db, operation_pk=request.operation_id
+            )
         try:
             authorization = await authorize_execution(
                 ctx=self._ctx,
@@ -149,6 +160,7 @@ class QueuedExecutionAuthorizer:
                     version=request.api_version,
                 ),
                 operation_id=request.operation_id,
+                spec_operation_id=spec_operation_id,
                 method=request.method,
                 path=rule_request_path(
                     request.relative_path,

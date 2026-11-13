@@ -56,6 +56,10 @@ class ResolvedCredential(BaseModel):
     wire_type: CredentialType
     stored_type: StoredCredentialType
     provider: str
+    api_vendor: str | None = None
+    api_name: str | None = None
+    api_version: str | None = None
+    scope_is_wildcard: bool = False
     server_variables: dict[str, str] | None = None
 
     # bearer_token / api_key
@@ -86,8 +90,14 @@ class ResolvedCredential(BaseModel):
 class CredentialResolver:
     """Resolves a credential for an API tuple from the control DB."""
 
-    def __init__(self, ctx: Context) -> None:
+    def __init__(
+        self,
+        ctx: Context,
+        *,
+        candidate_scopes_out: dict[str, CredentialScope] | None = None,
+    ) -> None:
         self._ctx = ctx
+        self._candidate_scopes_out = candidate_scopes_out
 
     async def resolve(
         self,
@@ -257,7 +267,11 @@ class CredentialResolver:
         # vendor wildcard, so a vendor-wide credential coexisting with a pin
         # doesn't force a spurious 409.
         best = max(credential_specificity(s) for (_, s) in covering)
-        matches = [c for (c, s) in covering if credential_specificity(s) == best]
+        matched_pairs = [(c, s) for (c, s) in covering if credential_specificity(s) == best]
+        matches = [c for (c, _) in matched_pairs]
+        if self._candidate_scopes_out is not None:
+            for c, s in matched_pairs:
+                self._candidate_scopes_out[c.id] = s
 
         if candidate_filter is not None and credential_id is None and len(matches) > 1:
             viable_ids = set(await candidate_filter([c.id for c in matches]))
@@ -282,7 +296,17 @@ class CredentialResolver:
         # candidates' rows are never selected (and 404/409 read none).
         async with self._ctx.control_db.read_session() as session:
             await CredentialRepository.load_material(session, [credential])
-        return self._build_resolved(credential, wire_type, stored_type)
+        resolved = self._build_resolved(credential, wire_type, stored_type)
+        return resolved.model_copy(
+            update={
+                "api_vendor": credential.api_vendor,
+                "api_name": credential.api_name,
+                "api_version": credential.api_version,
+                "scope_is_wildcard": (
+                    credential.api_name is None or credential.api_version is None
+                ),
+            }
+        )
 
     @staticmethod
     def _to_candidate(credential: Credential, *, scoped: bool = False) -> CredentialCandidate:

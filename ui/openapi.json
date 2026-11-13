@@ -18236,7 +18236,7 @@
                 "type": "null"
               }
             ],
-            "description": "OpenAPI operation IDs the rule matches; null matches all.",
+            "description": "OpenAPI operationIds the rule matches by exact equality (existing `op_…` registry operation IDs also match their revision); null matches all.",
             "examples": [
               [
                 "listCharges"
@@ -18352,7 +18352,7 @@
                 "type": "null"
               }
             ],
-            "description": "OpenAPI operation IDs to match. None matches all operations.",
+            "description": "OpenAPI operationIds to match by exact string equality (survives revision promotion; existing `op_…` registry operation IDs also match their revision). None matches all operations.",
             "examples": [
               [
                 "listCharges"
@@ -18406,7 +18406,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional OpenAPI operation id resolved from the request URL.",
+            "description": "Optional OpenAPI operationId (or `op_…` registry operation ID) of the hypothetical request. When omitted, the dry-run resolves the operation from `(method, path)` against the credential's covered live API(s); when supplied, it must agree with the resolved operation.",
             "examples": [
               "listCharges"
             ]

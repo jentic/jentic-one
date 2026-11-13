@@ -116,6 +116,11 @@ from jentic_one.shared.permissions.evaluation import (
     normalize_methods,
 )
 from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.permissions.operation_resolution import (
+    ResolvedRuleOperation,
+    resolve_dry_run_operation,
+    resolve_live_operation,
+)
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
@@ -918,6 +923,14 @@ class CredentialService:
         """
         binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
         async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            if credential is None:
+                raise CredentialNotFoundError(credential_id)
+            scope = canonical_credential_scope(
+                vendor=credential.api_vendor,
+                name=credential.api_name,
+                version=credential.api_version,
+            )
             if binding.rule_set_id is not None:
                 rules: Sequence[
                     AgentPermissionRule | PermissionRuleSetRule
@@ -950,11 +963,36 @@ class CredentialService:
         ]
         # The broker enforces on the normalized server-relative path; normalize
         # the dry-run input the same way so ``/%61dmin`` previews as ``/admin``.
+        normalized_path = normalize_path(path)
+        needs_operation_resolution = operation_id is not None or any(
+            r.operations is not None for r in compiled
+        )
+        resolved_op = ResolvedRuleOperation()
+        if needs_operation_resolution:
+            if self._ctx.has_db("registry"):
+                async with self._ctx.registry_db.session() as reg_session:
+                    live_ops = await RegistryApiLookupRepository.live_operations_for_vendor(
+                        reg_session, scope.vendor
+                    )
+                resolved_op = resolve_dry_run_operation(
+                    live_ops,
+                    scope=scope,
+                    method=method,
+                    normalized_path=normalized_path,
+                    requested_operation_id=operation_id,
+                )
+            elif operation_id is not None:
+                resolved_op = resolve_live_operation(
+                    spec_operation_id=None,
+                    registry_operation_id=operation_id,
+                )
         idx = first_matching_rule(
             compiled,
             method=method,
-            path=normalize_path(path),
-            operation_id=operation_id,
+            path=normalized_path,
+            operation_id=resolved_op.operation_id,
+            registry_operation_id=resolved_op.registry_operation_id,
+            ambiguous_operation_ids=resolved_op.ambiguous_operation_ids,
             binding=f"{agent_id}:{credential_id}",
         )
         if idx is not None:
