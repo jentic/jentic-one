@@ -45,16 +45,17 @@ def _should_resolve_catalog_update_available(
 ) -> bool:
     """Return whether promoting this revision resolves the API's update-available check (#1490).
 
-    Only a catalog-origin revision carrying a digest resolves an open check row on the
-    same source URL whose recorded notification is a plain ``catalog.update_available``
-    (or an in-sync baseline with no conflict class). Overlay-conflict notifications and
-    manual or overlay revisions leave the check row untouched.
+    Only a catalog-origin revision carrying the exact outstanding notified digest
+    resolves an open check row on the same source URL whose notification is a
+    plain ``catalog.update_available`` (or an in-sync baseline with no conflict
+    class). Other digests, overlay-conflict notifications, and manual or overlay
+    revisions leave the check row untouched.
     """
     if origin != ORIGIN_CATALOG or not spec_digest or check is None:
         return False
     if source_url is not None and check.spec_url != source_url:
         return False
-    if check.last_notified_digest is None or check.last_notified_digest == spec_digest:
+    if check.last_notified_digest is None or check.last_notified_digest != spec_digest:
         return False
     return bool(check.last_notified_event_class in (EventType.CATALOG_UPDATE_AVAILABLE, None))
 

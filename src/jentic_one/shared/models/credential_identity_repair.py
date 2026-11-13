@@ -1800,7 +1800,7 @@ def _plan_connect_session_repairs(
             new_target = api_rename_by_triple[(cs.vendor, cs.api_name, cs.api_version)]
         elif cs.credential_id in safe_cred_repairs:
             cp = safe_cred_repairs[cs.credential_id]
-            if cp.after_name is not None and cp.after_version is not None:
+            if cp.after_name is not None:
                 new_target = (cp.after_vendor, cp.after_name, cp.after_version)
 
         if new_target is None or new_target == (cs.vendor, cs.api_name, cs.api_version):
@@ -1899,4 +1899,64 @@ def _plan_connect_session_repairs(
         else:
             updated_creds[cid] = cp
 
-    return updated_creds, standalone
+    return updated_creds, _final_standalone_sessions(
+        candidates=candidates,
+        standalone=standalone,
+        safe_api_repairs=safe_api_repairs,
+        safe_cred_repairs=safe_cred_repairs,
+    )
+
+
+def _final_standalone_sessions(
+    *,
+    candidates: Sequence[tuple[ConnectSessionSnapshot, PlannedConnectSessionRepair]],
+    standalone: Sequence[PlannedConnectSessionRepair],
+    safe_api_repairs: Mapping[str, PlannedApiRepair],
+    safe_cred_repairs: Mapping[str, PlannedCredentialRepair],
+) -> list[PlannedConnectSessionRepair]:
+    """Drop standalone work whose source identity no longer has a safe repair."""
+    standalone_by_id = {plan.session_id: plan for plan in standalone}
+    final: list[PlannedConnectSessionRepair] = []
+    for cs, original in candidates:
+        plan = standalone_by_id.get(cs.id)
+        if plan is None:
+            continue
+        cp = safe_cred_repairs.get(cs.credential_id)
+        if cp is not None:
+            if cp.after_name is None:
+                continue
+            target = (cp.after_vendor, cp.after_name, cp.after_version)
+        else:
+            api_plan = next(
+                (
+                    repair
+                    for repair in safe_api_repairs.values()
+                    if (
+                        repair.before_vendor,
+                        repair.before_name,
+                        repair.before_version,
+                    )
+                    == (cs.vendor, cs.api_name, cs.api_version)
+                ),
+                None,
+            )
+            if api_plan is None:
+                continue
+            target = (
+                api_plan.after_vendor,
+                api_plan.after_name,
+                api_plan.after_version,
+            )
+        if target != (original.after_vendor, original.after_name, original.after_version):
+            plan = PlannedConnectSessionRepair(
+                session_id=plan.session_id,
+                credential_id=plan.credential_id,
+                before_vendor=plan.before_vendor,
+                before_name=plan.before_name,
+                before_version=plan.before_version,
+                after_vendor=target[0],
+                after_name=target[1],
+                after_version=target[2],
+            )
+        final.append(plan)
+    return final

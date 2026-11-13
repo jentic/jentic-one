@@ -14,6 +14,7 @@ from jentic_one.control.services import upgrade_steps as steps_mod
 from jentic_one.migrations import run as run_mod
 from jentic_one.shared.models.credential_identity_repair import (
     ApiReferenceCounts,
+    ConnectSessionSnapshot,
     CredentialReferenceCounts,
     CredentialSnapshot,
     IdentityRepairBackupError,
@@ -322,6 +323,122 @@ def test_shared_agent_binding_collision_fails_closed() -> None:
     assert plan.credential_repairs == ()
     assert len(plan.conflicts) == 1
     assert plan.conflicts[0].reason == "agent_binding_scope_collision"
+
+
+def test_open_session_collision_cancels_derived_standalone_repair() -> None:
+    """A cancelled API/credential pair cannot leave a session on the cancelled target."""
+    api_id = str(uuid.uuid4())
+    plan = build_repair_plan(
+        apis=[
+            RegistryApiSnapshot(
+                id=api_id,
+                vendor="posthog-com",
+                name="posthog-com-posthog-api",
+                version="1.0.0",
+                catalog_api_id="posthog.com/posthog-api",
+            )
+        ],
+        credentials=[
+            CredentialSnapshot(
+                id="cred_malformed",
+                name="Malformed",
+                created_by="usr_1",
+                api_vendor="posthog-com",
+                api_name="posthog-com-posthog-api",
+                api_version=None,
+                catalog_api_id="posthog.com/posthog-api",
+            )
+        ],
+        connect_sessions=[
+            ConnectSessionSnapshot(
+                id="cs_clean_agent_1",
+                credential_id="cred_other",
+                agent_id="agnt_1",
+                initiator_actor_id="agnt_1",
+                state="created",
+                target_kind="api",
+                vendor="posthog-com",
+                api_name="posthog-api",
+                api_version="1.0.0",
+            ),
+            ConnectSessionSnapshot(
+                id="cs_malformed_agent_1",
+                credential_id="cred_malformed",
+                agent_id="agnt_1",
+                initiator_actor_id="agnt_1",
+                state="created",
+                target_kind="api",
+                vendor="posthog-com",
+                api_name="posthog-com-posthog-api",
+                api_version="1.0.0",
+            ),
+            ConnectSessionSnapshot(
+                id="cs_standalone_agent_2",
+                credential_id="cred_other",
+                agent_id="agnt_2",
+                initiator_actor_id="agnt_2",
+                state="created",
+                target_kind="api",
+                vendor="posthog-com",
+                api_name="posthog-com-posthog-api",
+                api_version="1.0.0",
+            ),
+        ],
+    )
+    assert plan.api_repairs == ()
+    assert plan.credential_repairs == ()
+    assert plan.open_session_repairs == ()
+    assert {finding.reason for finding in plan.conflicts} == {
+        "open_connect_session_collision",
+        "dependent_credential_collision",
+    }
+
+
+def test_credential_session_uses_repaired_name_with_wildcard_version() -> None:
+    """A vendor-axis repair carries its named, wildcard-version scope to open sessions."""
+    plan = build_repair_plan(
+        apis=[
+            RegistryApiSnapshot(
+                id=str(uuid.uuid4()),
+                vendor="github-com",
+                name="api-github-com",
+                version="1.1.4",
+                catalog_api_id="github.com/api.github.com",
+            )
+        ],
+        credentials=[
+            CredentialSnapshot(
+                id="cred_doubled_vendor",
+                name="GitHub",
+                created_by="usr_1",
+                api_vendor="github-com-api-github-com",
+                api_name=None,
+                api_version=None,
+            )
+        ],
+        connect_sessions=[
+            ConnectSessionSnapshot(
+                id="cs_wildcard_version",
+                credential_id="cred_doubled_vendor",
+                agent_id="agnt_1",
+                initiator_actor_id="agnt_1",
+                state="created",
+                target_kind="api",
+                vendor="github-com-api-github-com",
+                api_name="api.github.com",
+                api_version=None,
+            )
+        ],
+    )
+    (credential,) = plan.credential_repairs
+    assert (credential.after_name, credential.after_version) == ("api-github-com", None)
+    (session,) = credential.connect_sessions
+    assert (session.after_vendor, session.after_name, session.after_version) == (
+        "github-com",
+        "api-github-com",
+        None,
+    )
+    assert plan.open_session_repairs == ()
 
 
 def test_backup_document_validation_rejects_tampered_payloads() -> None:

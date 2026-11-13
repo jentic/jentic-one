@@ -240,6 +240,27 @@ class CredentialIdentityRepairRepository:
         ]
 
     @staticmethod
+    async def list_open_session_ids(
+        session: AsyncSession, *, vendor: str, name: str | None, version: str | None
+    ) -> list[str]:
+        rows = (
+            await session.execute(
+                select(ConnectSession.id).where(
+                    ConnectSession.target_kind == TARGET_KIND_API,
+                    ConnectSession.state.in_(OPEN_CONNECT_SESSION_STATES),
+                    ConnectSession.vendor == vendor,
+                    ConnectSession.api_name.is_(None)
+                    if name is None
+                    else ConnectSession.api_name == name,
+                    ConnectSession.api_version.is_(None)
+                    if version is None
+                    else ConnectSession.api_version == version,
+                )
+            )
+        ).all()
+        return [str(row.id) for row in rows]
+
+    @staticmethod
     async def control_reference_counts(
         session: AsyncSession,
     ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:

@@ -30,6 +30,19 @@ def advisory_lock_key(name: str) -> int:
     return int.from_bytes(digest, "big", signed=True)
 
 
+CREDENTIAL_IDENTITY_REPAIR_LOCK_KEY = advisory_lock_key("control.credential_identity_repair")
+
+
+async def lock_credential_identity_repair(session: AsyncSession) -> None:
+    """Serialise API-connect creation with identity repair on the control DB."""
+    dialect = session.bind.dialect.name if session.bind else "sqlite"
+    if dialect == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": CREDENTIAL_IDENTITY_REPAIR_LOCK_KEY},
+        )
+
+
 async def lock_credential_bindings(session: AsyncSession, credential_id: str) -> None:
     """Serialise writes to one credential's ``agent_credential_bindings`` rows.
 

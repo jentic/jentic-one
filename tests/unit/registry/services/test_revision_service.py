@@ -72,20 +72,20 @@ def test_should_resolve_catalog_update_available_matches_catalog_draft() -> None
             origin=ORIGIN_CATALOG,
             spec_digest="sha256:promoted",
             source_url="https://example.com/openapi.json",
-            check=_check_row(),
+            check=_check_row(notified_digest="sha256:promoted"),
         )
         is True
     )
 
 
 def test_should_resolve_catalog_update_available_matches_synced_baseline() -> None:
-    """Pins #1490: a check row synced without an event class also advances on catalog promote."""
+    """Pins #1490: a matching baseline without an event class advances on catalog promote."""
     assert (
         _should_resolve_catalog_update_available(
             origin=ORIGIN_CATALOG,
             spec_digest="sha256:promoted",
             source_url=None,
-            check=_check_row(notified_digest="sha256:baseline", notified_class=None),
+            check=_check_row(notified_digest="sha256:promoted", notified_class=None),
         )
         is True
     )
@@ -120,8 +120,8 @@ def test_should_resolve_catalog_update_available_leaves_overlay_conflict_open() 
     )
 
 
-def test_should_resolve_catalog_update_available_skips_noop_and_mismatched_source() -> None:
-    """Pins #1490: missing/unnotified/already-matching checks and other URLs do not resolve."""
+def test_should_resolve_catalog_update_available_skips_unnotified_and_mismatched_drafts() -> None:
+    """Pins #1490: unnotified rows, distinct digests, and other URLs do not resolve."""
     assert (
         _should_resolve_catalog_update_available(
             origin=ORIGIN_CATALOG,
@@ -134,7 +134,7 @@ def test_should_resolve_catalog_update_available_skips_noop_and_mismatched_sourc
     assert (
         _should_resolve_catalog_update_available(
             origin=ORIGIN_CATALOG,
-            spec_digest="sha256:notified",
+            spec_digest="sha256:distinct",
             source_url="https://example.com/openapi.json",
             check=_check_row(notified_digest="sha256:notified"),
         )

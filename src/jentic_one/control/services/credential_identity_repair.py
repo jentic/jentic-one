@@ -6,12 +6,15 @@ malformed rows are analysed with full cross-surface reference accounting
 permission rules, connect sessions, held executions, and append-only execution
 history) before any rewrite runs:
 
-- Registry ``apis`` rows are updated in place first (preserving ``apis.id`` so
-  revisions, operations, URL indexes, overlays, and notes stay attached).
-- Control ``credentials`` and open ``api``-target ``connect_sessions`` are
-  updated in place next (preserving ``credentials.id`` so encrypted secret rows,
+- Open ``api``-target sessions without a credential repair are grouped by source
+  identity and committed before their dependent API rename. Registry ``apis``
+  rows are updated in place (preserving ``apis.id`` so revisions, operations,
+  URL indexes, overlays, and notes stay attached).
+- Control ``credentials`` and their attached open sessions are updated in place
+  (preserving ``credentials.id`` so encrypted secret rows,
   ``agent_credential_bindings``, ``agent_permission_rules``, and historical
-  ``execution_records`` references stay intact).
+  ``execution_records`` references stay intact). Cross-database failures are
+  compensated where possible and recorded in the applied backup otherwise.
 - Historical ``execution_records`` and terminal ``held_executions`` /
   ``connect_sessions`` remain immutable.
 - Colliding or ambiguous rows fail closed without mutating data and surface
@@ -22,7 +25,7 @@ history) before any rewrite runs:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import structlog
@@ -31,20 +34,22 @@ from jentic_one import __version__
 from jentic_one.control.repos.credential_identity_repair_repo import (
     CredentialIdentityRepairRepository,
 )
-from jentic_one.shared.audit import record_audit
+from jentic_one.control.services.run_lock import IDENTITY_REPAIR_LOCK_KEY, hold_run_lock
+from jentic_one.shared.audit import record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.credential_identity_repair import (
+    OPEN_CONNECT_SESSION_STATES,
     IdentityRepairBackupError,
     PlannedApiRepair,
     PlannedConnectSessionRepair,
     PlannedCredentialRepair,
     RepairFinding,
+    RepairPlan,
     RepairRunResult,
     RestoreOutcome,
     build_backup_document,
     build_repair_plan,
-    has_candidate_anomalies,
     validate_backup_document,
 )
 
@@ -54,6 +59,7 @@ _AUDIT_ACTOR_TYPE = "system:job"
 _AUDIT_ACTOR_ID = "system:credential-identity-repair"
 _AUDIT_REASON_REPAIR = "credential_identity_repair"
 _AUDIT_REASON_ROLLBACK = "credential_identity_repair_rollback"
+_AUDIT_REASON_COMPENSATION = "credential_identity_repair_compensation"
 
 
 class CredentialIdentityRepairService:
@@ -62,8 +68,22 @@ class CredentialIdentityRepairService:
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def run(self, *, dry_run: bool = False) -> RepairRunResult:
-        """Inventory malformed rows across registry/control/admin and repair safe ones."""
+    async def run(
+        self,
+        *,
+        dry_run: bool = False,
+        before_apply: Callable[[RepairRunResult], Awaitable[None]] | None = None,
+    ) -> RepairRunResult:
+        """Inventory and repair under one lock, optionally persisting the live plan first."""
+        async with hold_run_lock(self._ctx, IDENTITY_REPAIR_LOCK_KEY):
+            return await self._run_locked(dry_run=dry_run, before_apply=before_apply)
+
+    async def _run_locked(
+        self,
+        *,
+        dry_run: bool,
+        before_apply: Callable[[RepairRunResult], Awaitable[None]] | None,
+    ) -> RepairRunResult:
         async with self._ctx.registry_db.session() as reg_session:
             apis = await CredentialIdentityRepairRepository.list_registry_apis(reg_session)
             manifest_entries = (
@@ -75,29 +95,6 @@ class CredentialIdentityRepairService:
 
         async with self._ctx.control_db.session() as ctrl_session:
             credentials = await CredentialIdentityRepairRepository.list_credentials(ctrl_session)
-
-        # Fast-path exit when every API and credential is already canonical and covered:
-        # avoids unnecessary admin-DB queries on clean upgrades.
-        if not has_candidate_anomalies(
-            apis=apis,
-            credentials=credentials,
-            manifest_entries=manifest_entries,
-            revision_urls_by_api_id=rev_urls,
-        ):
-            empty_backup = build_backup_document(tool_version=__version__, apis=(), credentials=())
-            return RepairRunResult(
-                dry_run=dry_run,
-                apis_scanned=len(apis),
-                credentials_scanned=len(credentials),
-                repaired_apis=0,
-                repaired_credentials=0,
-                repaired_connect_sessions=0,
-                unresolvable_count=0,
-                conflict_count=0,
-                failed_closed=False,
-                findings=(),
-                backup=empty_backup,
-            )
 
         async with (
             self._ctx.registry_db.session() as reg_session,
@@ -143,38 +140,13 @@ class CredentialIdentityRepairService:
             active_bound_agents_by_credential=bound_agents,
         )
 
+        planned_result = _planned_result(
+            plan, apis_scanned=len(apis), credentials_scanned=len(credentials)
+        )
         if dry_run:
-            findings: list[RepairFinding] = []
-            session_count = len(plan.open_session_repairs) + sum(
-                len(c.connect_sessions) for c in plan.credential_repairs
-            )
-            for api_plan in plan.api_repairs:
-                findings.append(_api_repair_finding("would_repair", api_plan))
-            for cred_plan in plan.credential_repairs:
-                findings.append(_credential_repair_finding("would_repair", cred_plan))
-            for cs_plan in plan.open_session_repairs:
-                findings.append(_session_repair_finding("would_repair", cs_plan))
-            findings.extend(plan.unresolvable)
-            findings.extend(plan.conflicts)
-            backup = build_backup_document(
-                tool_version=__version__,
-                apis=plan.api_repairs,
-                credentials=plan.credential_repairs,
-                standalone_sessions=plan.open_session_repairs,
-            )
-            return RepairRunResult(
-                dry_run=True,
-                apis_scanned=len(apis),
-                credentials_scanned=len(credentials),
-                repaired_apis=len(plan.api_repairs),
-                repaired_credentials=len(plan.credential_repairs),
-                repaired_connect_sessions=session_count,
-                unresolvable_count=len(plan.unresolvable),
-                conflict_count=len(plan.conflicts),
-                failed_closed=bool(plan.conflicts),
-                findings=tuple(findings),
-                backup=backup,
-            )
+            return planned_result
+        if before_apply is not None:
+            await before_apply(planned_result)
 
         applied_apis: list[PlannedApiRepair] = []
         applied_creds: list[PlannedCredentialRepair] = []
@@ -182,10 +154,79 @@ class CredentialIdentityRepairService:
         applied_findings: list[RepairFinding] = []
         runtime_conflicts: list[RepairFinding] = list(plan.conflicts)
         failed_api_pairs: set[tuple[str, str]] = set()
-        repaired_sessions = 0
+
+        standalone_groups: dict[
+            tuple[str, str | None, str | None], list[PlannedConnectSessionRepair]
+        ] = {}
+        for cs_plan in plan.open_session_repairs:
+            key = (cs_plan.before_vendor, cs_plan.before_name, cs_plan.before_version)
+            standalone_groups.setdefault(key, []).append(cs_plan)
+        standalone_ids = {cs_plan.session_id for cs_plan in plan.open_session_repairs}
+        for group in standalone_groups.values():
+            outcome = await self._apply_standalone_session_group(group)
+            if outcome == "repaired":
+                applied_standalone_sessions.extend(group)
+                applied_findings.extend(
+                    _session_repair_finding("repaired", cs_plan) for cs_plan in group
+                )
+                continue
+            failed_api_pairs.update(
+                (cs_plan.before_vendor, cs_plan.before_name)
+                for cs_plan in group
+                if cs_plan.before_name is not None
+            )
+            runtime_conflicts.extend(
+                RepairFinding(
+                    category="conflict",
+                    surface="control",
+                    resource_type="connect_session",
+                    resource_id=cs_plan.session_id,
+                    shape="open_api_connect_session",
+                    reason=outcome,
+                    before=cs_plan.before_dict(),
+                    after=cs_plan.after_dict(),
+                    references={},
+                    remediation=(
+                        f"Connect-session group containing {cs_plan.session_id} did not commit; "
+                        "its dependent API rename was held back. Re-run repair."
+                    ),
+                )
+                for cs_plan in group
+            )
 
         for api_plan in plan.api_repairs:
-            outcome = await self._apply_api_repair(api_plan)
+            pair = (api_plan.before_vendor, api_plan.before_name)
+            if pair in failed_api_pairs:
+                runtime_conflicts.append(
+                    RepairFinding(
+                        category="conflict",
+                        surface="registry",
+                        resource_type="api",
+                        resource_id=api_plan.api_id,
+                        shape=api_plan.shape,
+                        reason="standalone_session_write_failed",
+                        before=api_plan.before_dict(),
+                        after=api_plan.after_dict(),
+                        references=api_plan.references.as_dict(),
+                        remediation="Resolve the open-session conflict and re-run repair.",
+                    )
+                )
+                continue
+            outcome = await self._apply_api_repair(
+                api_plan,
+                expected_session_ids=frozenset(
+                    cs.id
+                    for cs in connect_sessions
+                    if cs.state in OPEN_CONNECT_SESSION_STATES
+                    and (cs.vendor, cs.api_name, cs.api_version)
+                    == (
+                        api_plan.before_vendor,
+                        api_plan.before_name,
+                        api_plan.before_version,
+                    )
+                    and cs.id not in standalone_ids
+                ),
+            )
             if outcome == "repaired":
                 applied_apis.append(api_plan)
                 applied_findings.append(_api_repair_finding("repaired", api_plan))
@@ -196,7 +237,29 @@ class CredentialIdentityRepairService:
                     after_name=api_plan.after_name,
                 )
             else:
-                failed_api_pairs.add((api_plan.before_vendor, api_plan.before_name))
+                failed_api_pairs.add(pair)
+                compensation_errors = await self._compensate_standalone_sessions(
+                    api_plan, applied_standalone_sessions
+                )
+                if compensation_errors:
+                    runtime_conflicts.append(
+                        RepairFinding(
+                            category="conflict",
+                            surface="control",
+                            resource_type="connect_session",
+                            resource_id=api_plan.api_id,
+                            shape="open_api_connect_session",
+                            reason="standalone_session_compensation_incomplete",
+                            before=api_plan.before_dict(),
+                            after=api_plan.after_dict(),
+                            references={},
+                            detail={"failed_compensations": compensation_errors},
+                            remediation=(
+                                "The applied backup records the remaining forward writes. "
+                                "Inspect the named sessions and re-run repair."
+                            ),
+                        )
+                    )
                 runtime_conflicts.append(
                     RepairFinding(
                         category="conflict",
@@ -216,10 +279,8 @@ class CredentialIdentityRepairService:
                 )
 
         for cred_plan in plan.credential_repairs:
-            if (
-                cred_plan.before_name is not None
-                and (cred_plan.before_vendor, cred_plan.before_name) in failed_api_pairs
-            ):
+            cred_pair = (cred_plan.before_vendor, cred_plan.before_name)
+            if cred_plan.before_name is not None and cred_pair in failed_api_pairs:
                 runtime_conflicts.append(
                     RepairFinding(
                         category="conflict",
@@ -240,10 +301,9 @@ class CredentialIdentityRepairService:
                 )
                 continue
 
-            outcome, sessions_updated = await self._apply_credential_repair(cred_plan)
+            outcome, _ = await self._apply_credential_repair(cred_plan)
             if outcome == "repaired":
                 applied_creds.append(cred_plan)
-                repaired_sessions += sessions_updated
                 applied_findings.append(_credential_repair_finding("repaired", cred_plan))
                 self._ctx.invalidate_broker_caches(credential_id=cred_plan.credential_id)
                 logger.info(
@@ -254,56 +314,97 @@ class CredentialIdentityRepairService:
                     after_name=cred_plan.after_name,
                     after_version=cred_plan.after_version,
                 )
-            else:
-                runtime_conflicts.append(
-                    RepairFinding(
-                        category="conflict",
-                        surface="control",
-                        resource_type="credential",
-                        resource_id=cred_plan.credential_id,
-                        shape=cred_plan.shape,
-                        reason=outcome,
-                        before=cred_plan.before_dict(),
-                        after=cred_plan.after_dict(),
-                        references=cred_plan.references.as_dict(),
-                        detail={"credential_name": cred_plan.credential_name},
-                        remediation=(
-                            f"Credential {cred_plan.credential_id} changed concurrently or "
-                            "failed to write; re-run repair."
-                        ),
-                    )
-                )
-
-        for cs_plan in plan.open_session_repairs:
-            if (
-                cs_plan.before_name is not None
-                and (cs_plan.before_vendor, cs_plan.before_name) in failed_api_pairs
-            ):
                 continue
-            cs_outcome = await self._apply_standalone_session_repair(cs_plan)
-            if cs_outcome == "repaired":
-                applied_standalone_sessions.append(cs_plan)
-                repaired_sessions += 1
-                applied_findings.append(_session_repair_finding("repaired", cs_plan))
+
+            runtime_conflicts.append(
+                RepairFinding(
+                    category="conflict",
+                    surface="control",
+                    resource_type="credential",
+                    resource_id=cred_plan.credential_id,
+                    shape=cred_plan.shape,
+                    reason=outcome,
+                    before=cred_plan.before_dict(),
+                    after=cred_plan.after_dict(),
+                    references=cred_plan.references.as_dict(),
+                    detail={"credential_name": cred_plan.credential_name},
+                    remediation=(
+                        f"Credential {cred_plan.credential_id} changed concurrently or "
+                        "failed to write; re-run repair."
+                    ),
+                )
+            )
+            paired_api = next(
+                (
+                    api_plan
+                    for api_plan in applied_apis
+                    if (api_plan.before_vendor, api_plan.before_name) == cred_pair
+                ),
+                None,
+            )
+            if paired_api is None:
+                continue
+            failed_api_pairs.add((paired_api.before_vendor, paired_api.before_name))
+            compensation_errors = await self._compensate_paired_api(
+                api_plan=paired_api,
+                applied_apis=applied_apis,
+                applied_creds=applied_creds,
+                applied_standalone_sessions=applied_standalone_sessions,
+            )
+            if compensation_errors:
+                runtime_conflicts.append(
+                    RepairFinding(
+                        category="conflict",
+                        surface="registry",
+                        resource_type="api",
+                        resource_id=paired_api.api_id,
+                        shape=paired_api.shape,
+                        reason="paired_credential_compensation_incomplete",
+                        before=paired_api.before_dict(),
+                        after=paired_api.after_dict(),
+                        references=paired_api.references.as_dict(),
+                        detail={"failed_compensations": compensation_errors},
+                        remediation=(
+                            "The run backup records every committed row. Re-run repair to "
+                            "reconcile the remaining rows after inspecting current state."
+                        ),
+                    )
+                )
             else:
                 runtime_conflicts.append(
                     RepairFinding(
                         category="conflict",
-                        surface="control",
-                        resource_type="connect_session",
-                        resource_id=cs_plan.session_id,
-                        shape="open_api_connect_session",
-                        reason=cs_outcome,
-                        before=cs_plan.before_dict(),
-                        after=cs_plan.after_dict(),
-                        references={},
+                        surface="registry",
+                        resource_type="api",
+                        resource_id=paired_api.api_id,
+                        shape=paired_api.shape,
+                        reason="paired_credential_write_failed_compensated",
+                        before=paired_api.before_dict(),
+                        after=paired_api.after_dict(),
+                        references=paired_api.references.as_dict(),
                         remediation=(
-                            f"Connect session {cs_plan.session_id} changed concurrently; "
-                            "re-run repair."
+                            "The paired credential write failed and committed API/control rows "
+                            "were restored to their pre-run identities. Re-run repair."
                         ),
                     )
                 )
 
+        repaired_sessions = sum(
+            len(cred_plan.connect_sessions) for cred_plan in applied_creds
+        ) + len(applied_standalone_sessions)
+
+        applied_ids = {
+            "api": {api.api_id for api in applied_apis},
+            "credential": {cred.credential_id for cred in applied_creds},
+            "connect_session": {cs.session_id for cs in applied_standalone_sessions}
+            | {cs.session_id for cred in applied_creds for cs in cred.connect_sessions},
+        }
+        applied_findings = [
+            finding
+            for finding in applied_findings
+            if finding.category != "repaired"
+            or finding.resource_id in applied_ids.get(finding.resource_type, set())
+        ]
         applied_findings.extend(plan.unresolvable)
         applied_findings.extend(runtime_conflicts)
         backup = build_backup_document(
@@ -338,6 +439,12 @@ class CredentialIdentityRepairService:
         Idempotent: rows already at their ``before`` state count as
         ``already_restored``.
         """
+        async with hold_run_lock(self._ctx, IDENTITY_REPAIR_LOCK_KEY):
+            return await self._restore_backup_locked(document, dry_run=dry_run)
+
+    async def _restore_backup_locked(
+        self, document: Mapping[str, Any], *, dry_run: bool
+    ) -> RestoreOutcome:
         tables = validate_backup_document(document)
         outcome = RestoreOutcome(dry_run=dry_run)
 
@@ -446,19 +553,21 @@ class CredentialIdentityRepairService:
             outcome.restored_apis = len(api_actions)
             return outcome
 
-        # Apply rollback in reverse dependency order: connect_sessions -> credentials -> apis.
-        for entry in session_actions:
-            sid = entry["id"]
-            before = entry["before"]
-            after = entry["after"]
-            async with self._ctx.control_db.transaction() as ctrl_session:
-                applied = await CredentialIdentityRepairRepository.cas_update_connect_session(
-                    ctrl_session, session_id=sid, before=after, after=before
-                )
-                if not applied:
-                    raise IdentityRepairBackupError(
-                        f"connect_session {sid!r} changed concurrently during rollback"
+        applied_entries: list[tuple[str, dict[str, Any]]] = []
+        try:
+            # Apply rollback in reverse dependency order: sessions -> credentials -> APIs.
+            for entry in session_actions:
+                sid = entry["id"]
+                before = entry["before"]
+                after = entry["after"]
+                async with self._ctx.control_db.transaction() as ctrl_session:
+                    applied = await CredentialIdentityRepairRepository.cas_update_connect_session(
+                        ctrl_session, session_id=sid, before=after, after=before
                     )
+                    if not applied:
+                        raise IdentityRepairBackupError(
+                            f"connect_session {sid!r} changed concurrently during rollback"
+                        )
                 await self._audit(
                     target_type=AuditTargetType.SESSION,
                     target_id=sid,
@@ -466,20 +575,21 @@ class CredentialIdentityRepairService:
                     after=before,
                     reason=_AUDIT_REASON_ROLLBACK,
                 )
-            outcome.restored_connect_sessions += 1
+                applied_entries.append(("connect_session", entry))
+                outcome.restored_connect_sessions += 1
 
-        for entry in cred_actions:
-            cid = entry["id"]
-            before = entry["before"]
-            after = entry["after"]
-            async with self._ctx.control_db.transaction() as ctrl_session:
-                applied = await CredentialIdentityRepairRepository.cas_update_credential(
-                    ctrl_session, credential_id=cid, before=after, after=before
-                )
-                if not applied:
-                    raise IdentityRepairBackupError(
-                        f"credential {cid!r} changed concurrently during rollback"
+            for entry in cred_actions:
+                cid = entry["id"]
+                before = entry["before"]
+                after = entry["after"]
+                async with self._ctx.control_db.transaction() as ctrl_session:
+                    applied = await CredentialIdentityRepairRepository.cas_update_credential(
+                        ctrl_session, credential_id=cid, before=after, after=before
                     )
+                    if not applied:
+                        raise IdentityRepairBackupError(
+                            f"credential {cid!r} changed concurrently during rollback"
+                        )
                 await self._audit(
                     target_type=AuditTargetType.CREDENTIAL,
                     target_id=cid,
@@ -487,21 +597,22 @@ class CredentialIdentityRepairService:
                     after=before,
                     reason=_AUDIT_REASON_ROLLBACK,
                 )
-            self._ctx.invalidate_broker_caches(credential_id=cid)
-            outcome.restored_credentials += 1
+                applied_entries.append(("credential", entry))
+                self._ctx.invalidate_broker_caches(credential_id=cid)
+                outcome.restored_credentials += 1
 
-        for entry in api_actions:
-            aid = entry["id"]
-            before = entry["before"]
-            after = entry["after"]
-            async with self._ctx.registry_db.transaction() as reg_session:
-                applied = await CredentialIdentityRepairRepository.cas_update_api(
-                    reg_session, api_id=aid, before=after, after=before
-                )
-                if not applied:
-                    raise IdentityRepairBackupError(
-                        f"api {aid!r} changed concurrently during rollback"
+            for entry in api_actions:
+                aid = entry["id"]
+                before = entry["before"]
+                after = entry["after"]
+                async with self._ctx.registry_db.transaction() as reg_session:
+                    applied = await CredentialIdentityRepairRepository.cas_update_api(
+                        reg_session, api_id=aid, before=after, after=before
                     )
+                    if not applied:
+                        raise IdentityRepairBackupError(
+                            f"api {aid!r} changed concurrently during rollback"
+                        )
                 await self._audit(
                     target_type=AuditTargetType.API,
                     target_id=aid,
@@ -509,42 +620,120 @@ class CredentialIdentityRepairService:
                     after=before,
                     reason=_AUDIT_REASON_ROLLBACK,
                 )
-            outcome.restored_apis += 1
+                applied_entries.append(("api", entry))
+                outcome.restored_apis += 1
+        except Exception as exc:
+            compensation_errors = await self._compensate_restore(applied_entries)
+            detail = (
+                f"; failed compensation IDs: {compensation_errors}" if compensation_errors else ""
+            )
+            raise IdentityRepairBackupError(
+                f"{exc}; completed rollback writes were compensated{detail}"
+            ) from exc
 
         return outcome
 
-    async def _apply_api_repair(self, plan: PlannedApiRepair) -> str:
-        try:
-            async with self._ctx.registry_db.transaction() as reg_session:
-                applied = await CredentialIdentityRepairRepository.cas_update_api(
-                    reg_session,
-                    api_id=plan.api_id,
-                    before=plan.before_dict(),
-                    after=plan.after_dict(),
-                )
+    async def _compensate_restore(
+        self, applied_entries: list[tuple[str, dict[str, Any]]]
+    ) -> list[str]:
+        """Return committed rows to their post-repair state after a restore failure."""
+        errors: list[str] = []
+        for kind, entry in reversed(applied_entries):
+            row_id = str(entry["id"])
+            before = entry["before"]
+            after = entry["after"]
+            try:
+                if kind == "api":
+                    async with self._ctx.registry_db.transaction() as session:
+                        applied = await CredentialIdentityRepairRepository.cas_update_api(
+                            session, api_id=row_id, before=before, after=after
+                        )
+                    target_type = AuditTargetType.API
+                elif kind == "credential":
+                    async with self._ctx.control_db.transaction() as session:
+                        applied = await CredentialIdentityRepairRepository.cas_update_credential(
+                            session, credential_id=row_id, before=before, after=after
+                        )
+                    target_type = AuditTargetType.CREDENTIAL
+                    self._ctx.invalidate_broker_caches(credential_id=row_id)
+                else:
+                    async with self._ctx.control_db.transaction() as session:
+                        applied = (
+                            await CredentialIdentityRepairRepository.cas_update_connect_session(
+                                session, session_id=row_id, before=before, after=after
+                            )
+                        )
+                    target_type = AuditTargetType.SESSION
                 if not applied:
-                    return "changed_concurrently"
+                    errors.append(row_id)
+                    continue
                 await self._audit(
-                    target_type=AuditTargetType.API,
-                    target_id=plan.api_id,
-                    before=plan.before_dict(),
-                    after=plan.after_dict(),
-                    reason=_AUDIT_REASON_REPAIR,
+                    target_type=target_type,
+                    target_id=row_id,
+                    before=before,
+                    after=after,
+                    reason=_AUDIT_REASON_COMPENSATION,
                 )
+            except Exception:
+                logger.warning("identity_restore_compensation_failed", row_id=row_id, exc_info=True)
+                errors.append(row_id)
+        return errors
+
+    async def _apply_api_repair(
+        self,
+        plan: PlannedApiRepair,
+        *,
+        expected_session_ids: frozenset[str] | None = None,
+        compensate: bool = False,
+    ) -> str:
+        before = plan.after_dict() if compensate else plan.before_dict()
+        after = plan.before_dict() if compensate else plan.after_dict()
+        try:
+            async with self._ctx.control_db.transaction() as ctrl_session:
+                if expected_session_ids is not None:
+                    current_ids = await CredentialIdentityRepairRepository.list_open_session_ids(
+                        ctrl_session,
+                        vendor=str(before["vendor"]),
+                        name=before["name"],
+                        version=before["version"],
+                    )
+                    if frozenset(current_ids) != expected_session_ids:
+                        return "session_inventory_changed"
+                async with self._ctx.registry_db.transaction() as reg_session:
+                    applied = await CredentialIdentityRepairRepository.cas_update_api(
+                        reg_session,
+                        api_id=plan.api_id,
+                        before=before,
+                        after=after,
+                    )
+                    if not applied:
+                        return "changed_concurrently"
+            await self._audit(
+                target_type=AuditTargetType.API,
+                target_id=plan.api_id,
+                before=before,
+                after=after,
+                reason=_AUDIT_REASON_COMPENSATION if compensate else _AUDIT_REASON_REPAIR,
+            )
         except Exception:
             logger.warning("registry_api_identity_repair_failed", api_id=plan.api_id, exc_info=True)
             return "write_failed"
         return "repaired"
 
-    async def _apply_credential_repair(self, plan: PlannedCredentialRepair) -> tuple[str, int]:
+    async def _apply_credential_repair(
+        self, plan: PlannedCredentialRepair, *, compensate: bool = False
+    ) -> tuple[str, int]:
         sessions_updated = 0
+        before = plan.after_dict() if compensate else plan.before_dict()
+        after = plan.before_dict() if compensate else plan.after_dict()
+        reason = _AUDIT_REASON_COMPENSATION if compensate else _AUDIT_REASON_REPAIR
         try:
             async with self._ctx.control_db.transaction() as ctrl_session:
                 applied = await CredentialIdentityRepairRepository.cas_update_credential(
                     ctrl_session,
                     credential_id=plan.credential_id,
-                    before=plan.before_dict(),
-                    after=plan.after_dict(),
+                    before=before,
+                    after=after,
                 )
                 if not applied:
                     return "changed_concurrently", 0
@@ -552,58 +741,139 @@ class CredentialIdentityRepairService:
                     cs_ok = await CredentialIdentityRepairRepository.cas_update_connect_session(
                         ctrl_session,
                         session_id=cs.session_id,
-                        before=cs.before_dict(),
-                        after=cs.after_dict(),
+                        before=cs.after_dict() if compensate else cs.before_dict(),
+                        after=cs.before_dict() if compensate else cs.after_dict(),
                     )
                     if not cs_ok:
                         raise RuntimeError(f"connect_session {cs.session_id} changed concurrently")
                     sessions_updated += 1
+            await self._audit(
+                target_type=AuditTargetType.CREDENTIAL,
+                target_id=plan.credential_id,
+                before=before,
+                after=after,
+                reason=reason,
+            )
+            for cs in plan.connect_sessions:
                 await self._audit(
-                    target_type=AuditTargetType.CREDENTIAL,
-                    target_id=plan.credential_id,
-                    before=plan.before_dict(),
-                    after=plan.after_dict(),
-                    reason=_AUDIT_REASON_REPAIR,
+                    target_type=AuditTargetType.SESSION,
+                    target_id=cs.session_id,
+                    before=cs.after_dict() if compensate else cs.before_dict(),
+                    after=cs.before_dict() if compensate else cs.after_dict(),
+                    reason=reason,
                 )
-                for cs in plan.connect_sessions:
-                    await self._audit(
-                        target_type=AuditTargetType.SESSION,
-                        target_id=cs.session_id,
-                        before=cs.before_dict(),
-                        after=cs.after_dict(),
-                        reason=_AUDIT_REASON_REPAIR,
-                    )
         except Exception:
             logger.warning("cred_identity_repair_failed", cred_id=plan.credential_id, exc_info=True)
             return "write_failed", 0
         return "repaired", sessions_updated
 
-    async def _apply_standalone_session_repair(self, plan: PlannedConnectSessionRepair) -> str:
+    async def _apply_standalone_session_group(
+        self, plans: list[PlannedConnectSessionRepair], *, compensate: bool = False
+    ) -> str:
+        reason = _AUDIT_REASON_COMPENSATION if compensate else _AUDIT_REASON_REPAIR
         try:
             async with self._ctx.control_db.transaction() as ctrl_session:
-                applied = await CredentialIdentityRepairRepository.cas_update_connect_session(
-                    ctrl_session,
-                    session_id=plan.session_id,
-                    before=plan.before_dict(),
-                    after=plan.after_dict(),
-                )
-                if not applied:
-                    return "changed_concurrently"
-                await self._audit(
-                    target_type=AuditTargetType.SESSION,
-                    target_id=plan.session_id,
-                    before=plan.before_dict(),
-                    after=plan.after_dict(),
-                    reason=_AUDIT_REASON_REPAIR,
-                )
+                for plan in plans:
+                    applied = await CredentialIdentityRepairRepository.cas_update_connect_session(
+                        ctrl_session,
+                        session_id=plan.session_id,
+                        before=plan.after_dict() if compensate else plan.before_dict(),
+                        after=plan.before_dict() if compensate else plan.after_dict(),
+                    )
+                    if not applied:
+                        raise RuntimeError(
+                            f"connect_session {plan.session_id} changed concurrently"
+                        )
         except Exception:
             logger.warning(
                 "connect_session_identity_repair_failed",
-                session_id=plan.session_id,
+                session_ids=[plan.session_id for plan in plans],
                 exc_info=True,
             )
             return "write_failed"
+        for plan in plans:
+            await self._audit(
+                target_type=AuditTargetType.SESSION,
+                target_id=plan.session_id,
+                before=plan.after_dict() if compensate else plan.before_dict(),
+                after=plan.before_dict() if compensate else plan.after_dict(),
+                reason=reason,
+            )
         return "repaired"
+
+    async def _compensate_standalone_sessions(
+        self,
+        api_plan: PlannedApiRepair,
+        applied_standalone_sessions: list[PlannedConnectSessionRepair],
+    ) -> list[str]:
+        """Return standalone sessions to their source target when their API does not move."""
+        standalone = [
+            plan
+            for plan in applied_standalone_sessions
+            if (plan.before_vendor, plan.before_name, plan.before_version)
+            == (
+                api_plan.before_vendor,
+                api_plan.before_name,
+                api_plan.before_version,
+            )
+        ]
+        if not standalone:
+            return []
+        outcome = await self._apply_standalone_session_group(standalone, compensate=True)
+        if outcome != "repaired":
+            return [plan.session_id for plan in standalone]
+        for plan in standalone:
+            applied_standalone_sessions.remove(plan)
+        return []
+
+    async def _compensate_paired_api(
+        self,
+        *,
+        api_plan: PlannedApiRepair,
+        applied_apis: list[PlannedApiRepair],
+        applied_creds: list[PlannedCredentialRepair],
+        applied_standalone_sessions: list[PlannedConnectSessionRepair],
+    ) -> list[str]:
+        """Return IDs whose committed forward repair could not be compensated."""
+        errors: list[str] = []
+        for cred_plan in reversed(list(applied_creds)):
+            if (cred_plan.before_vendor, cred_plan.before_name) != (
+                api_plan.before_vendor,
+                api_plan.before_name,
+            ):
+                continue
+            outcome, _ = await self._apply_credential_repair(cred_plan, compensate=True)
+            if outcome == "repaired":
+                applied_creds.remove(cred_plan)
+                self._ctx.invalidate_broker_caches(credential_id=cred_plan.credential_id)
+            else:
+                errors.append(cred_plan.credential_id)
+
+        standalone = [
+            plan
+            for plan in applied_standalone_sessions
+            if (plan.before_vendor, plan.before_name, plan.before_version)
+            == (
+                api_plan.before_vendor,
+                api_plan.before_name,
+                api_plan.before_version,
+            )
+        ]
+        if standalone:
+            outcome = await self._apply_standalone_session_group(standalone, compensate=True)
+            if outcome == "repaired":
+                for plan in standalone:
+                    applied_standalone_sessions.remove(plan)
+            else:
+                errors.extend(plan.session_id for plan in standalone)
+
+        if not errors:
+            outcome = await self._apply_api_repair(api_plan, compensate=True)
+            if outcome == "repaired":
+                applied_apis.remove(api_plan)
+            else:
+                errors.append(api_plan.api_id)
+        return errors
 
     async def _audit(
         self,
@@ -616,19 +886,52 @@ class CredentialIdentityRepairService:
     ) -> None:
         if not self._ctx.has_db("admin"):
             return
-        async with self._ctx.admin_db.transaction() as admin_session:
-            await record_audit(
-                admin_session,
-                action=AuditAction.UPDATE,
-                target_type=target_type,
-                target_id=target_id,
-                actor_type=_AUDIT_ACTOR_TYPE,
-                actor_id=_AUDIT_ACTOR_ID,
-                before=before,
-                after=after,
-                reason=reason,
-                origin=None,
-            )
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=target_type,
+            target_id=target_id,
+            actor_type=_AUDIT_ACTOR_TYPE,
+            actor_id=_AUDIT_ACTOR_ID,
+            before=before,
+            after=after,
+            reason=reason,
+            origin=None,
+        )
+
+
+def _planned_result(
+    plan: RepairPlan, *, apis_scanned: int, credentials_scanned: int
+) -> RepairRunResult:
+    """Describe one locked plan for dry-run output and pre-apply persistence."""
+    findings = [_api_repair_finding("would_repair", item) for item in plan.api_repairs]
+    findings.extend(
+        _credential_repair_finding("would_repair", item) for item in plan.credential_repairs
+    )
+    findings.extend(
+        _session_repair_finding("would_repair", item) for item in plan.open_session_repairs
+    )
+    findings.extend(plan.unresolvable)
+    findings.extend(plan.conflicts)
+    return RepairRunResult(
+        dry_run=True,
+        apis_scanned=apis_scanned,
+        credentials_scanned=credentials_scanned,
+        repaired_apis=len(plan.api_repairs),
+        repaired_credentials=len(plan.credential_repairs),
+        repaired_connect_sessions=len(plan.open_session_repairs)
+        + sum(len(item.connect_sessions) for item in plan.credential_repairs),
+        unresolvable_count=len(plan.unresolvable),
+        conflict_count=len(plan.conflicts),
+        failed_closed=bool(plan.conflicts),
+        findings=tuple(findings),
+        backup=build_backup_document(
+            tool_version=__version__,
+            apis=plan.api_repairs,
+            credentials=plan.credential_repairs,
+            standalone_sessions=plan.open_session_repairs,
+        ),
+    )
 
 
 def _api_repair_finding(category: str, plan: PlannedApiRepair) -> RepairFinding:

@@ -2220,3 +2220,100 @@ async def test_keyless_sa_downgrade_upgrade_recovers_provenance_from_either_dura
         assert [r.id for r in successors] == [original_id]
         stamp, _ = await _stamp_of(ctx.admin_db, sa_id)
         assert stamp == original_id
+
+
+async def test_keyless_sa_downgrade_upgrade_replaces_deleted_successor_without_duplicates(
+    disposable_migration_config: AppConfig,
+) -> None:
+    """A deleted successor's audit row does not recover a missing agent or its stamp."""
+    admin_alembic = alembic_config_for("admin", disposable_migration_config.databases.admin)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email, first_name, last_name)"
+                    " VALUES (:id, 't8m-1444-deleted@test.local', 'Tia', 'Owner')"
+                ),
+                {"id": _OWNER},
+            )
+            await session.commit()
+
+        sa_id = await _seed_sa(
+            ctx.admin_db,
+            suffix="1444_deleted",
+            status="active",
+            scopes=("toolkit:read",),
+            api_key_plaintext=None,
+        )
+        first = {o.service_account_id: o for o in await ServiceAccountMigrationService(ctx).run()}
+        deleted_id = first[sa_id].successor_agent_id
+        assert deleted_id is not None
+
+        async with ctx.admin_db.session() as session:
+            for table, column in (
+                ("agent_credential_bindings", "agent_id"),
+                ("actor_scope_grants", "actor_id"),
+                ("agent_credentials", "agent_id"),
+            ):
+                await session.execute(
+                    text(f"DELETE FROM {table} WHERE {column} = :id"), {"id": deleted_id}
+                )
+            await session.execute(text("DELETE FROM agents WHERE id = :id"), {"id": deleted_id})
+            await session.commit()
+
+    await asyncio.to_thread(command.downgrade, admin_alembic, _PRE_SA_STAMP_REVISION)
+    await asyncio.to_thread(command.upgrade, admin_alembic, ADMIN_PRE_SA_DROP)
+
+    async with Context(
+        disposable_migration_config,
+        allowed_dbs={"admin", "control"},
+        refresh_providers_on_boot=False,
+    ) as ctx:
+        assert await _stamp_of(ctx.admin_db, sa_id) == (None, None)
+        stale_audits = await _rows(
+            ctx.admin_db,
+            "SELECT target_id FROM audit_entries"
+            " WHERE actor_id = 'migrate-service-accounts' AND action = 'register'"
+            " AND target_id = :id",
+            {"id": deleted_id},
+        )
+        assert len(stale_audits) == 1
+
+        svc = ServiceAccountMigrationService(ctx)
+        second = {o.service_account_id: o for o in await svc.run()}
+        assert second[sa_id].outcome == "migrated"
+        replacement_id = second[sa_id].successor_agent_id
+        assert replacement_id is not None and replacement_id != deleted_id
+
+        third = {o.service_account_id: o for o in await svc.run()}
+        assert third[sa_id].outcome == "already_migrated"
+        assert third[sa_id].successor_agent_id == replacement_id
+
+        stamp, migrated_at = await _stamp_of(ctx.admin_db, sa_id)
+        assert stamp == replacement_id
+        assert migrated_at is not None
+        successors = await _rows(
+            ctx.admin_db,
+            "SELECT id FROM agents WHERE registered_by = 'system:theme8-sa-migration'",
+            {},
+        )
+        assert [r.id for r in successors] == [replacement_id]
+        grants = await _rows(
+            ctx.admin_db,
+            "SELECT scope FROM actor_scope_grants WHERE actor_id = :id",
+            {"id": replacement_id},
+        )
+        assert [r.scope for r in grants] == ["toolkit:read"]
+        replacement_audits = await _rows(
+            ctx.admin_db,
+            "SELECT target_id FROM audit_entries"
+            " WHERE actor_id = 'migrate-service-accounts' AND action = 'register'"
+            " AND target_id = :id",
+            {"id": replacement_id},
+        )
+        assert len(replacement_audits) == 1

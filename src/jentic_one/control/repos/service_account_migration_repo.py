@@ -180,25 +180,29 @@ _STAMP = text(
 )
 
 _SELECT_SUCCESSOR_AUDIT_PG = text(
-    "SELECT target_id, occurred_at, after FROM audit_entries"
+    "SELECT audit_entries.target_id, audit_entries.occurred_at, audit_entries.after"
+    " FROM audit_entries"
+    " JOIN agents ON agents.id = audit_entries.target_id"
     " WHERE actor_id = :audit_actor_id"
     " AND action = 'register'"
     " AND target_type = 'agent'"
     " AND reason = :reason"
-    " AND after ->> 'service_account_id' = :sid"
-    " ORDER BY occurred_at ASC, id ASC"
+    " AND audit_entries.after ->> 'service_account_id' = :sid"
+    " ORDER BY audit_entries.occurred_at ASC, audit_entries.id ASC"
     " LIMIT 1"
 )
 
 _SELECT_SUCCESSOR_AUDIT_SQLITE = text(
-    "SELECT target_id, occurred_at, after FROM audit_entries"
+    "SELECT audit_entries.target_id, audit_entries.occurred_at, audit_entries.after"
+    " FROM audit_entries"
+    " JOIN agents ON agents.id = audit_entries.target_id"
     " WHERE actor_id = :audit_actor_id"
     " AND action = 'register'"
     " AND target_type = 'agent'"
     " AND reason = :reason"
-    " AND CASE WHEN json_valid(after)"
-    "  THEN json_extract(after, '$.service_account_id') END = :sid"
-    " ORDER BY occurred_at ASC, id ASC"
+    " AND CASE WHEN json_valid(audit_entries.after)"
+    "  THEN json_extract(audit_entries.after, '$.service_account_id') END = :sid"
+    " ORDER BY audit_entries.occurred_at ASC, audit_entries.id ASC"
     " LIMIT 1"
 )
 
@@ -338,8 +342,8 @@ class ServiceAccountMigrationRepository:
         insert. Two durable admin-DB records survive that round trip:
 
         1. The append-only ``register`` row in ``audit_entries`` written in the
-           same transaction as the successor insert (immutable even if an
-           operator renames or deletes the successor agent).
+           same transaction as the successor insert, joined to its surviving
+           agent row. A deleted successor is not migration evidence.
         2. The ``agents`` row registered by :data:`SYSTEM_ACTOR` under
            :meth:`successor_agent_name` (covers databases whose audit log was
            externally pruned).

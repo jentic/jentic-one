@@ -272,8 +272,8 @@ def test_cross_owner_listing_failure_warns_and_keeps_the_marking(
     _migrate_to_041_heads()
     ids = _seed_041_data(sqlite_stack)
     assert run_mod.main(["--skip-upgrade-steps"]) == 0
-    # A real query failure: the binding table the listing reads is gone.
-    _execute(sqlite_stack / "admin.db", "ALTER TABLE agent_credential_bindings RENAME TO acb_moved")
+    # A real query failure: the agent table only the cross-owner listing reads is gone.
+    _execute(sqlite_stack / "admin.db", "ALTER TABLE agents RENAME TO agents_moved")
     capsys.readouterr()
 
     assert run_mod.main([]) == 0

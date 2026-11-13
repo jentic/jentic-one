@@ -20,11 +20,13 @@ real ``registry_db``, ``control_db``, and ``admin_db`` sessions:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
@@ -50,6 +52,8 @@ from jentic_one.control.services.credential_identity_repair import (
 from jentic_one.control.services.upgrade_steps import (
     CREDENTIAL_IDENTITY_REPAIR,
     UpgradeStepService,
+    UpgradeStepSpec,
+    _repair_credential_identities,
 )
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -794,3 +798,468 @@ async def test_upgrade_step_service_records_backup_and_fails_closed_on_conflict(
         ledger_row = await UpgradeStepRepository.get(session, CREDENTIAL_IDENTITY_REPAIR)
         assert ledger_row is not None and ledger_row.summary is not None
         assert ledger_row.summary["repaired_credentials"] == 1
+
+
+async def _seed_doubled_group(
+    ctx: Context, *, credential_count: int = 2, standalone: bool = True
+) -> str:
+    """Seed one doubled API with coupled credentials and an independent open session."""
+    async with ctx.registry_db.session() as session:
+        api = Api(
+            vendor="posthog-com",
+            name="posthog-com-posthog-api",
+            version="1.0.0",
+            catalog_api_id="posthog.com/posthog-api",
+            created_by="usr_owner",
+        )
+        session.add(api)
+        await session.flush()
+        api_id = api.id
+        await session.commit()
+    async with ctx.control_db.session() as session:
+        for index in range(credential_count):
+            credential_id = f"cred_ph_{index}"
+            session.add(
+                Credential(
+                    id=credential_id,
+                    type="bearer",
+                    name=f"PostHog {index}",
+                    api_vendor="posthog-com",
+                    api_name="posthog-com-posthog-api",
+                    api_version=None,
+                    catalog_api_id="posthog.com/posthog-api",
+                    created_by=f"usr_owner_{index}",
+                )
+            )
+            await session.flush()
+            session.add(
+                ConnectSession(
+                    id=f"cs_ph_attached_{index}",
+                    credential_id=credential_id,
+                    target_kind=TARGET_KIND_API,
+                    vendor="posthog-com",
+                    api_name="posthog-com-posthog-api",
+                    api_version="1.0.0",
+                    agent_id=f"agnt_attached_{index}",
+                    initiator_actor_id=f"agnt_attached_{index}",
+                    state="created",
+                    resolved_flow="manual",
+                    poll_token_hash=f"{index + 1:064d}",
+                    created_by=f"agnt_attached_{index}",
+                )
+            )
+        if standalone:
+            session.add(
+                Credential(
+                    id="cred_ph_standalone",
+                    type="bearer",
+                    name="Already clean",
+                    api_vendor="posthog-com",
+                    api_name="posthog-api",
+                    api_version="1.0.0",
+                    created_by="usr_standalone",
+                )
+            )
+            await session.flush()
+            session.add(
+                ConnectSession(
+                    id="cs_ph_standalone",
+                    credential_id="cred_ph_standalone",
+                    target_kind=TARGET_KIND_API,
+                    vendor="posthog-com",
+                    api_name="posthog-com-posthog-api",
+                    api_version="1.0.0",
+                    agent_id="agnt_standalone",
+                    initiator_actor_id="agnt_standalone",
+                    state="created",
+                    resolved_flow="manual",
+                    poll_token_hash="d" * 64,
+                    created_by="agnt_standalone",
+                )
+            )
+        await session.commit()
+    return str(api_id)
+
+
+async def _reject_second_credential_forward_write(
+    ctx: Context,
+    *,
+    install: bool,
+    credential_id: str = "cred_ph_1",
+    after_name: str = "posthog-api",
+) -> None:
+    """Use a real database constraint trigger to fail one forward credential write."""
+    async with ctx.control_db.session() as session:
+        assert session.bind is not None
+        if session.bind.dialect.name == "sqlite":
+            if install:
+                await session.execute(
+                    text(
+                        "CREATE TRIGGER reject_second_credential_forward_write "
+                        "BEFORE UPDATE ON credentials "
+                        f"WHEN NEW.id = '{credential_id}' AND NEW.api_name = '{after_name}' "
+                        "BEGIN SELECT RAISE(ABORT, 'injected credential write failure'); END"
+                    )
+                )
+            else:
+                await session.execute(
+                    text("DROP TRIGGER IF EXISTS reject_second_credential_forward_write")
+                )
+        elif install:
+            await session.execute(
+                text(
+                    "CREATE OR REPLACE FUNCTION reject_second_credential_forward_write() "
+                    "RETURNS trigger LANGUAGE plpgsql AS $$ "
+                    "BEGIN "
+                    f"IF NEW.id = '{credential_id}' AND NEW.api_name = '{after_name}' THEN "
+                    "RAISE EXCEPTION 'injected credential write failure'; END IF; "
+                    "RETURN NEW; END $$"
+                )
+            )
+            await session.execute(
+                text(
+                    "CREATE TRIGGER reject_second_credential_forward_write "
+                    "BEFORE UPDATE ON credentials FOR EACH ROW "
+                    "EXECUTE FUNCTION reject_second_credential_forward_write()"
+                )
+            )
+        else:
+            await session.execute(
+                text("DROP TRIGGER IF EXISTS reject_second_credential_forward_write ON credentials")
+            )
+            await session.execute(
+                text("DROP FUNCTION IF EXISTS reject_second_credential_forward_write()")
+            )
+        await session.commit()
+
+
+async def _reject_repair_audits(ctx: Context, *, install: bool) -> None:
+    """Reject repair audit inserts using the real admin database."""
+    async with ctx.admin_db.session() as session:
+        assert session.bind is not None
+        if session.bind.dialect.name == "sqlite":
+            if install:
+                await session.execute(
+                    text(
+                        "CREATE TRIGGER reject_identity_repair_audit "
+                        "BEFORE INSERT ON audit_entries "
+                        "WHEN NEW.reason = 'credential_identity_repair' "
+                        "BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END"
+                    )
+                )
+            else:
+                await session.execute(text("DROP TRIGGER IF EXISTS reject_identity_repair_audit"))
+        elif install:
+            await session.execute(
+                text(
+                    "CREATE OR REPLACE FUNCTION reject_identity_repair_audit() "
+                    "RETURNS trigger LANGUAGE plpgsql AS $$ "
+                    "BEGIN "
+                    "IF NEW.reason = 'credential_identity_repair' THEN "
+                    "RAISE EXCEPTION 'injected audit failure'; END IF; "
+                    "RETURN NEW; END $$"
+                )
+            )
+            await session.execute(
+                text(
+                    "CREATE TRIGGER reject_identity_repair_audit "
+                    "BEFORE INSERT ON audit_entries FOR EACH ROW "
+                    "EXECUTE FUNCTION reject_identity_repair_audit()"
+                )
+            )
+        else:
+            await session.execute(
+                text("DROP TRIGGER IF EXISTS reject_identity_repair_audit ON audit_entries")
+            )
+            await session.execute(text("DROP FUNCTION IF EXISTS reject_identity_repair_audit()"))
+        await session.commit()
+
+
+async def _identity_triples(
+    ctx: Context,
+) -> tuple[str, dict[str, str | None], dict[str, str | None]]:
+    async with ctx.registry_db.session() as session:
+        api_name = (
+            await session.execute(select(Api.name).where(Api.vendor == "posthog-com"))
+        ).scalar_one()
+    async with ctx.control_db.session() as session:
+        credentials = {
+            row.id: row.api_name
+            for row in (await session.execute(select(Credential))).scalars()
+            if row.id.startswith("cred_ph_") and row.id != "cred_ph_standalone"
+        }
+        sessions = {
+            row.id: row.api_name
+            for row in (await session.execute(select(ConnectSession))).scalars()
+        }
+    return api_name, credentials, sessions
+
+
+async def test_api_inventory_drift_compensates_standalone_sessions_and_retries(
+    integration_context: Context, clean_all: None
+) -> None:
+    """A session created after planning holds the API back and leaves no moved sessions."""
+    await _seed_doubled_group(integration_context, credential_count=1)
+    svc = CredentialIdentityRepairService(integration_context)
+
+    async def add_unplanned_session(_planned: Any) -> None:
+        async with integration_context.control_db.transaction() as session:
+            session.add(
+                Credential(
+                    id="cred_arrived",
+                    type="bearer",
+                    name="Late arrival",
+                    api_vendor="posthog-com",
+                    api_name="posthog-api",
+                    api_version="1.0.0",
+                    created_by="usr_arrived",
+                )
+            )
+            await session.flush()
+            session.add(
+                ConnectSession(
+                    id="cs_arrived",
+                    credential_id="cred_arrived",
+                    target_kind=TARGET_KIND_API,
+                    vendor="posthog-com",
+                    api_name="posthog-com-posthog-api",
+                    api_version="1.0.0",
+                    agent_id="agnt_arrived",
+                    initiator_actor_id="agnt_arrived",
+                    state="created",
+                    resolved_flow="manual",
+                    poll_token_hash="e" * 64,
+                    created_by="agnt_arrived",
+                )
+            )
+
+    result = await svc.run(before_apply=add_unplanned_session)
+    assert result.failed_closed is True
+    assert (result.repaired_apis, result.repaired_credentials) == (0, 0)
+    assert result.repaired_connect_sessions == 0
+    assert result.backup["tables"]["apis"]["row_count"] == 0
+    assert result.backup["tables"]["connect_sessions"]["row_count"] == 0
+    assert "session_inventory_changed" in {finding.reason for finding in result.findings}
+    api_name, credentials, sessions = await _identity_triples(integration_context)
+    assert api_name == "posthog-com-posthog-api"
+    assert set(credentials.values()) == {"posthog-com-posthog-api"}
+    assert set(sessions.values()) == {"posthog-com-posthog-api"}
+
+    retried = await svc.run()
+    assert retried.failed_closed is False
+    assert (retried.repaired_apis, retried.repaired_credentials) == (1, 1)
+    assert retried.repaired_connect_sessions == 3
+    api_name, credentials, sessions = await _identity_triples(integration_context)
+    assert api_name == "posthog-api"
+    assert set(credentials.values()) == {"posthog-api"}
+    assert set(sessions.values()) == {"posthog-api"}
+
+
+async def test_late_credential_failure_compensates_pair_and_retry_completes(
+    integration_context: Context, clean_all: None
+) -> None:
+    """A late credential rollback reverses its committed API, credentials, and sessions."""
+    await _seed_doubled_group(integration_context)
+    svc = CredentialIdentityRepairService(integration_context)
+    await _reject_second_credential_forward_write(integration_context, install=True)
+    try:
+        result = await svc.run()
+    finally:
+        await _reject_second_credential_forward_write(integration_context, install=False)
+
+    assert result.failed_closed is True
+    assert (result.repaired_apis, result.repaired_credentials) == (0, 0)
+    assert result.repaired_connect_sessions == 0
+    assert "paired_credential_write_failed_compensated" in {
+        finding.reason for finding in result.findings
+    }
+    assert not [finding for finding in result.findings if finding.category == "repaired"]
+    assert all(section["row_count"] == 0 for section in result.backup["tables"].values())
+    api_name, credentials, sessions = await _identity_triples(integration_context)
+    assert api_name == "posthog-com-posthog-api"
+    assert set(credentials.values()) == {"posthog-com-posthog-api"}
+    assert set(sessions.values()) == {"posthog-com-posthog-api"}
+
+    retried = await svc.run()
+    assert retried.failed_closed is False
+    assert (retried.repaired_apis, retried.repaired_credentials) == (1, 2)
+    assert retried.repaired_connect_sessions == 3
+    assert len(retried.backup["tables"]["connect_sessions"]["rows"]) == 3
+    api_name, credentials, sessions = await _identity_triples(integration_context)
+    assert api_name == "posthog-api"
+    assert set(credentials.values()) == {"posthog-api"}
+    assert set(sessions.values()) == {"posthog-api"}
+
+
+async def test_restore_late_drift_compensates_completed_writes(
+    integration_context: Context, clean_all: None
+) -> None:
+    """Committed post-preflight drift fails the API CAS and compensates control writes."""
+    if integration_context.registry_db.engine.dialect.name != "postgresql":
+        pytest.skip("Row-lock interleaving requires PostgreSQL")
+    api_id = await _seed_doubled_group(integration_context, credential_count=1)
+    svc = CredentialIdentityRepairService(integration_context)
+    applied = await svc.run()
+    assert (applied.repaired_apis, applied.repaired_credentials) == (1, 1)
+    assert applied.failed_closed is False
+
+    drift_tx = integration_context.registry_db.transaction()
+    drift_session = await drift_tx.__aenter__()
+    drifted_api = await drift_session.get(Api, api_id)
+    assert drifted_api is not None
+    drifted_api.name = "drifted-during-restore"
+    await drift_session.flush()
+    restore_task = asyncio.create_task(svc.restore_backup(applied.backup))
+    try:
+        async with asyncio.timeout(10):
+            while True:
+                async with integration_context.registry_db.session() as session:
+                    waiting = (
+                        await session.execute(
+                            text(
+                                "SELECT 1 FROM pg_stat_activity "
+                                "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+                                "AND wait_event_type = 'Lock' "
+                                "AND query LIKE '%UPDATE%apis%' LIMIT 1"
+                            )
+                        )
+                    ).first()
+                if waiting is not None:
+                    break
+                await asyncio.sleep(0.01)
+    except BaseException:
+        restore_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await restore_task
+        raise
+    finally:
+        await drift_tx.__aexit__(None, None, None)
+
+    with pytest.raises(IdentityRepairBackupError, match="compensated") as raised:
+        await restore_task
+    assert "changed concurrently during rollback" in str(raised.value)
+    assert "failed compensation IDs" not in str(raised.value)
+
+    api_name, credentials, sessions = await _identity_triples(integration_context)
+    assert api_name == "drifted-during-restore"
+    assert set(credentials.values()) == {"posthog-api"}
+    assert set(sessions.values()) == {"posthog-api"}
+
+
+async def test_audit_database_failure_preserves_repair_and_applied_backup(
+    integration_context: Context, clean_all: None
+) -> None:
+    """A real audit constraint failure cannot erase or roll back committed identity writes."""
+    await _seed_doubled_group(integration_context, credential_count=1)
+    await _reject_repair_audits(integration_context, install=True)
+    try:
+        result = await CredentialIdentityRepairService(integration_context).run()
+    finally:
+        await _reject_repair_audits(integration_context, install=False)
+
+    assert result.failed_closed is False
+    assert (result.repaired_apis, result.repaired_credentials) == (1, 1)
+    assert result.repaired_connect_sessions == 2
+    assert [row["id"] for row in result.backup["tables"]["credentials"]["rows"]] == ["cred_ph_0"]
+    assert {row["id"] for row in result.backup["tables"]["connect_sessions"]["rows"]} == {
+        "cs_ph_attached_0",
+        "cs_ph_standalone",
+    }
+    assert "sealed" not in str(result.backup)
+    api_name, credentials, sessions = await _identity_triples(integration_context)
+    assert api_name == "posthog-api"
+    assert set(credentials.values()) == {"posthog-api"}
+    assert set(sessions.values()) == {"posthog-api"}
+    async with integration_context.admin_db.session() as session:
+        assert (
+            await session.execute(
+                select(AuditEntry).where(AuditEntry.reason == "credential_identity_repair")
+            )
+        ).scalars().all() == []
+
+
+async def test_large_upgrade_persists_prepared_backup_when_run_fails(
+    integration_context: Context, clean_all: None
+) -> None:
+    """The durable ledger retains the exact live plan when a large repair fails."""
+    async with integration_context.registry_db.session() as session:
+        session.add(
+            Api(
+                vendor="github-com",
+                name="api-github-com",
+                version="1.1.4",
+                catalog_api_id="github.com/api.github.com",
+                created_by="usr_owner",
+            )
+        )
+        await session.commit()
+    async with integration_context.control_db.session() as session:
+        session.add_all(
+            Credential(
+                id=f"cred_large_{index:03d}",
+                type="bearer",
+                name=f"GitHub {index}",
+                api_vendor="github-com",
+                api_name="openapi",
+                api_version="api.github.com",
+                created_by=f"usr_large_{index:03d}",
+            )
+            for index in range(201)
+        )
+        await session.commit()
+    planned = await CredentialIdentityRepairService(integration_context).run(dry_run=True)
+    assert planned.repaired_credentials == 201
+    await _reject_second_credential_forward_write(
+        integration_context,
+        install=True,
+        credential_id="cred_large_001",
+        after_name="api-github-com",
+    )
+    try:
+        outcome = await UpgradeStepService(
+            integration_context,
+            steps=[
+                UpgradeStepSpec(
+                    name=CREDENTIAL_IDENTITY_REPAIR,
+                    run=_repair_credential_identities,
+                    repeatable=True,
+                )
+            ],
+        ).run()
+    finally:
+        await _reject_second_credential_forward_write(integration_context, install=False)
+
+    assert outcome[0].failed is True
+    assert outcome[0].summary["repaired_credentials"] == 200
+    async with integration_context.control_db.session() as session:
+        ledger = await UpgradeStepRepository.get(session, CREDENTIAL_IDENTITY_REPAIR)
+    assert ledger is not None and ledger.summary is not None
+    assert ledger.summary["backup_state"] == "prepared"
+    assert ledger.summary["planned_rows"] == 201
+    assert ledger.summary["backup"]["tables"] == planned.backup["tables"]
+    assert ledger.summary["backup"]["format"] == planned.backup["format"]
+    assert ledger.summary["backup"]["tool_version"] == planned.backup["tool_version"]
+
+
+async def test_before_apply_observes_the_exact_plan_before_mutation(
+    integration_context: Context, clean_all: None
+) -> None:
+    """The backup callback sees the live plan while every source identity is unchanged."""
+    await _seed_doubled_group(integration_context, credential_count=1)
+    svc = CredentialIdentityRepairService(integration_context)
+    planned = await svc.run(dry_run=True)
+    observed: list[Any] = []
+
+    async def capture(candidate: Any) -> None:
+        observed.append(candidate)
+        api_name, credentials, sessions = await _identity_triples(integration_context)
+        assert api_name == "posthog-com-posthog-api"
+        assert set(credentials.values()) == {"posthog-com-posthog-api"}
+        assert set(sessions.values()) == {"posthog-com-posthog-api"}
+
+    result = await svc.run(before_apply=capture)
+    assert len(observed) == 1
+    assert observed[0].backup["tables"] == planned.backup["tables"]
+    assert observed[0].findings == planned.findings
+    assert observed[0].repaired_apis == planned.repaired_apis
+    assert result.backup["tables"] == planned.backup["tables"]
