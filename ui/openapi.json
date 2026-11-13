@@ -6715,6 +6715,7 @@
                 "api_version": "2024-04-10"
               }
             ],
+            "state": "pending",
             "suspended": false,
             "suspended_reason": "api_deleted"
           }
@@ -6779,6 +6780,20 @@
               "$ref": "#/components/schemas/ServedApiRef"
             },
             "type": "array"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lifecycle state of the bound credential (`pending`, `connected` or `failed`); null if the credential cannot be resolved.",
+            "examples": [
+              "pending"
+            ]
           },
           "suspended": {
             "default": false,
@@ -12385,6 +12400,7 @@
                     "api_version": "2024-04-10"
                   }
                 ],
+                "state": "pending",
                 "suspended": false,
                 "suspended_reason": "api_deleted"
               }
@@ -12436,6 +12452,7 @@
                       "api_version": "2024-04-10"
                     }
                   ],
+                  "state": "pending",
                   "suspended": false,
                   "suspended_reason": "api_deleted"
                 }

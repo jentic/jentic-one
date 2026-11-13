@@ -287,6 +287,17 @@ class CredentialBindingSuspendedError(BrokerError):
     default_type = "credential_binding_suspended"
 
 
+class CredentialPendingError(BrokerError):
+    """A bound credential is waiting for its connect flow to finish (403).
+
+    The caller already has the binding; creating another connection or fixing
+    the credential identity cannot make this credential usable. The directive
+    asks the human to complete the pending sign-in and then retry.
+    """
+
+    default_type = "credential_pending"
+
+
 class UpstreamTimeoutError(BrokerError):
     """The upstream did not respond within the deadline, or the pool timed out (504).
 

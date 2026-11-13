@@ -62,6 +62,7 @@ async def _seed_credential(
     api_name: str | None,
     version: str | None,
     active: bool = True,
+    state: str = "connected",
 ) -> str:
     credential = Credential(
         type="token_value",
@@ -70,6 +71,7 @@ async def _seed_credential(
         api_name=api_name,
         api_version=version,
         active=active,
+        state=state,
     )
     async with control_db.session() as session:
         session.add(credential)
@@ -291,3 +293,28 @@ async def test_wildcard_credential_covers(
     )
 
     assert [bc.credential_id for bc in result.credentials] == [cred_id]
+
+
+async def test_pending_covering_binding_is_not_an_identity_mismatch(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A bound pending credential asks the caller to finish connecting it."""
+    cred_id = await _seed_credential(
+        control_db,
+        name="acme",
+        vendor="acme.com",
+        api_name="pets-api",
+        version="v1",
+        state="pending",
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_id)
+
+    resolver = CredentialBindingResolver(admin_db, control_db)
+    result = await resolver.derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.credentials == ()
+    assert result.binding_pending is True
+    assert result.identity_mismatch is None

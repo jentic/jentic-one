@@ -67,8 +67,16 @@ _COVERING_CREDENTIALS = text(
 _CREDENTIAL_IDENTITIES = text(
     "SELECT DISTINCT c.api_vendor, c.api_name, c.api_version "
     "FROM credentials c "
-    "WHERE c.id IN :credential_ids AND c.active "
+    "WHERE c.id IN :credential_ids AND c.active AND c.state = 'connected' "
     "ORDER BY c.api_vendor, c.api_name, c.api_version"
+).bindparams(bindparam("credential_ids", expanding=True))
+
+# control DB — whether an active binding points at a pending credential that
+# covers the API. The caller can only recover by completing that existing flow.
+_PENDING_COVERING = text(
+    f"SELECT c.id FROM credentials c "
+    f"WHERE c.id IN :credential_ids AND {credential_coverage_where()} "
+    f"AND c.active AND c.state = 'pending' LIMIT 1"
 ).bindparams(bindparam("credential_ids", expanding=True))
 
 # control DB — whether any of the agent's suspended-binding credentials covers
@@ -115,9 +123,9 @@ class CredentialBindingResolver:
         covering the API) plus enough context to pick the right denial
         directive: whether the agent is bound to anything, whether any
         credential serves the API at all, whether a suspended binding covers
-        it, and — when bound but unresolved — a nearest-miss credential
-        identity. The suspension check costs a query only on the empty-set
-        path, and only when the agent holds a suspended binding.
+        it, whether an active binding covers it through a pending credential,
+        and — when bound but unresolved — a nearest-miss credential identity.
+        The suspension and pending checks run only on the empty-set path.
         """
         async with self._admin_db.session() as session:
             binding_rows = (await session.execute(_AGENT_CREDENTIALS, {"agent_id": agent_id})).all()
@@ -158,13 +166,38 @@ class CredentialBindingResolver:
                 suspended_ids, vendor=vendor, name=name, version=version
             )
 
+        binding_pending = False
+        if not candidates and rule_sets:
+            binding_pending = await self._pending_covers(
+                set(rule_sets), vendor=vendor, name=name, version=version
+            )
+
         return CredentialDerivation(
             credentials=candidates,
             agent_bound_any=bool(rule_sets),
             api_served=bool(covering_ids),
             identity_mismatch=mismatch,
             binding_suspended=binding_suspended,
+            binding_pending=binding_pending,
         )
+
+    async def _pending_covers(
+        self, credential_ids: set[str], *, vendor: str, name: str, version: str
+    ) -> bool:
+        """Whether an active binding points at a pending credential covering the API."""
+        async with self._control_db.session() as session:
+            row = (
+                await session.execute(
+                    _PENDING_COVERING,
+                    {
+                        "credential_ids": sorted(credential_ids),
+                        "vendor": vendor,
+                        "name": name,
+                        "version": version,
+                    },
+                )
+            ).first()
+        return row is not None
 
     async def _suspended_covers(
         self, suspended_ids: set[str], *, vendor: str, name: str, version: str

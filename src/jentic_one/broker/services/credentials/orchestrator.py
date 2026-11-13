@@ -52,7 +52,11 @@ from jentic_one.broker.services.credentials.errors import (
 )
 from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
-from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.broker.services.credentials.resolver import (
+    CredentialCandidateFilter,
+    CredentialResolver,
+    ResolvedCredential,
+)
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProtocol
@@ -308,6 +312,7 @@ class CredentialService:
         server_variables_unresolved: bool = False,
         method: str = "",
         path: str = "",
+        candidate_filter: CredentialCandidateFilter | None = None,
     ) -> ResolvedCredential | None:
         """Resolve-only credential selection — no refresh, decrypt, or audit.
 
@@ -320,7 +325,9 @@ class CredentialService:
         :meth:`inject` as ``preresolved`` to avoid resolving twice.
 
         ``method`` / ``path`` are the request's, for the 424 directive's
-        ``suggested_rules``.
+        ``suggested_rules``. ``candidate_filter`` narrows policy-applicable ties
+        after credential-side applicability and specificity checks; explicit
+        credential IDs bypass it.
 
         Returns ``None`` when the API tuple has no vendor (no credential path).
         """
@@ -337,6 +344,7 @@ class CredentialService:
             server_variables_unresolved=server_variables_unresolved,
             method=method,
             path=path,
+            candidate_filter=candidate_filter,
         )
 
     async def _resolve_mapped(
@@ -351,6 +359,7 @@ class CredentialService:
         server_variables_unresolved: bool = False,
         method: str = "",
         path: str = "",
+        candidate_filter: CredentialCandidateFilter | None = None,
     ) -> ResolvedCredential:
         """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
 
@@ -367,6 +376,7 @@ class CredentialService:
                 allowed_credential_ids=allowed_credential_ids,
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
+                candidate_filter=candidate_filter,
             )
         except CredentialServerVariableMismatchError as exc:
             # Ordered before the generic 424: a credential exists here, so the

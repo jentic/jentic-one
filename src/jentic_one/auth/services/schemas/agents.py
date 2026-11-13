@@ -48,6 +48,8 @@ class CredentialBindingView(BaseModel):
     # Human-readable credential name resolved from the control DB. None when
     # the credential no longer exists or the control DB is unreachable.
     name: str | None = None
+    # Credential lifecycle from the control DB; None when it cannot be resolved.
+    state: str | None = None
     bound_at: datetime
     # Reversible per-consumer cut-off: excluded from derivation, rules kept.
     suspended: bool = False

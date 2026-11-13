@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -32,6 +32,12 @@ from jentic_one.shared.models.credentials import (
 )
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.url import server_variables_compatible
+
+# Execution authorization supplies this hook to remove policy-denied candidates
+# only after every credential-side applicability check has run. An empty result
+# retains the deterministic first candidate so the caller can render its normal
+# fail-closed policy denial; it never makes that candidate executable.
+CredentialCandidateFilter = Callable[[list[str]], Awaitable[list[str]]]
 
 
 class ResolvedCredential(BaseModel):
@@ -93,6 +99,7 @@ class CredentialResolver:
         allowed_credential_ids: Collection[str] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
+        candidate_filter: CredentialCandidateFilter | None = None,
     ) -> ResolvedCredential:
         """Resolve a single active credential for the API tuple.
 
@@ -118,6 +125,10 @@ class CredentialResolver:
             server_variables_unresolved: Discovery could not determine the
                 request URL's server-variable values; a credential scoped by
                 ``server_variables`` is then never a match (fail closed).
+            candidate_filter: Optional policy filter applied to same-specificity
+                candidates after all credential-side applicability checks. It is
+                bypassed for an explicit ``credential_id``. An empty result keeps
+                the first candidate for the caller's fail-closed denial path.
 
         Raises CredentialNotProvisionedError if no match.
         Raises CredentialServerVariableMismatchError when the only credentials
@@ -135,141 +146,143 @@ class CredentialResolver:
         most-specific-wins to break ties.
         """
         # Read-only: the header query and the winner's material query need no
-        # shared snapshot. At READ COMMITTED (the server default; the
-        # application sets no isolation level) each already takes its own, so
-        # autocommit drops the BEGIN/ROLLBACK round trips without changing what
-        # is read.
+        # shared snapshot. Separate read sessions keep no control-DB connection
+        # checked out while the candidate filter performs its own database work.
         async with self._ctx.control_db.read_session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
-            # Injection boundary (Q-02): an unbound credential must never be
-            # considered, even if it covers the API. Applied before coverage
-            # matching so nothing downstream (name filter, specificity, the
-            # ambiguity 409 candidate list) can ever surface an unbound row.
-            if allowed_credential_ids is not None:
-                allowed = set(allowed_credential_ids)
-                candidates = [c for c in candidates if c.id in allowed]
+        # Injection boundary (Q-02): an unbound credential must never be
+        # considered, even if it covers the API. Applied before coverage
+        # matching so nothing downstream (name filter, specificity, the
+        # ambiguity 409 candidate list) can ever surface an unbound row.
+        if allowed_credential_ids is not None:
+            allowed = set(allowed_credential_ids)
+            candidates = [c for c in candidates if c.id in allowed]
 
-            # Coverage + specificity via the shared seam. A credential's stored
-            # scope (canonicalized here so legacy '' / non-slug rows compare on
-            # the same footing) covers the concrete operation when each axis is
-            # either unscoped (NULL → wildcard) or equal. Precompute (cred, scope)
-            # once so the scope isn't recomputed per predicate below.
-            covering: list[tuple[Credential, CredentialScope]] = []
-            # Credentials that cover this API and failed *only* on their
-            # server-variable scope. They already passed the injection boundary
-            # and coverage, so they are the caller's own bound credentials —
-            # the fact that separates "scoped elsewhere" from "none at all".
-            scope_mismatched: list[Credential] = []
-            for c in candidates:
-                if not c.active:
-                    continue
-                scope = canonical_credential_scope(
-                    vendor=c.api_vendor, name=c.api_name, version=c.api_version
-                )
-                if not credential_covers(
-                    scope, vendor=api.vendor, name=api.name, version=api.version
-                ):
-                    continue
-                if not server_variables_compatible(
-                    c.server_variables,
-                    request_server_variables,
-                    unresolved=server_variables_unresolved,
-                ):
-                    scope_mismatched.append(c)
-                    continue
-                covering.append((c, scope))
+        # Coverage + specificity via the shared seam. A credential's stored
+        # scope (canonicalized here so legacy '' / non-slug rows compare on
+        # the same footing) covers the concrete operation when each axis is
+        # either unscoped (NULL → wildcard) or equal. Precompute (cred, scope)
+        # once so the scope isn't recomputed per predicate below.
+        covering: list[tuple[Credential, CredentialScope]] = []
+        # Credentials that cover this API and failed *only* on their
+        # server-variable scope. They already passed the injection boundary
+        # and coverage, so they are the caller's own bound credentials —
+        # the fact that separates "scoped elsewhere" from "none at all".
+        scope_mismatched: list[Credential] = []
+        for c in candidates:
+            if not c.active:
+                continue
+            scope = canonical_credential_scope(
+                vendor=c.api_vendor, name=c.api_name, version=c.api_version
+            )
+            if not credential_covers(scope, vendor=api.vendor, name=api.name, version=api.version):
+                continue
+            if not server_variables_compatible(
+                c.server_variables,
+                request_server_variables,
+                unresolved=server_variables_unresolved,
+            ):
+                scope_mismatched.append(c)
+                continue
+            covering.append((c, scope))
 
-            if not covering:
-                if scope_mismatched:
-                    requested = dict(request_server_variables or {})
-                    raise CredentialServerVariableMismatchError(
-                        api.vendor,
-                        api.name,
-                        api.version,
-                        requested=requested,
-                        conflicting=sorted(
-                            {
-                                name
-                                for c in scope_mismatched
-                                for name, scoped in (c.server_variables or {}).items()
-                                # Only a name the request resolves to a
-                                # *different* value disagrees. A variable the
-                                # request does not resolve imposes no
-                                # constraint, and one that agrees is not why
-                                # the candidate was ruled out — naming either
-                                # sends an operator to the wrong variable.
-                                # When the URL resolves nothing, every scoped
-                                # name is in play, so all are named.
-                                if server_variables_unresolved
-                                or (name in requested and requested[name] != scoped)
-                            }
-                        ),
-                        candidates=[self._to_candidate(c, scoped=True) for c in scope_mismatched],
-                        unresolved=server_variables_unresolved,
-                    )
-                raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
-
-            # An explicit credential_id is exact — the authoritative tie-breaker
-            # (Jentic-Credential-Id). Applied first: an id names one row, so no
-            # later filter can meaningfully narrow further; a name/specificity
-            # pass after an id match would only manufacture spurious errors.
-            if credential_id is not None:
-                by_id = [(c, s) for (c, s) in covering if c.id == credential_id]
-                if not by_id:
-                    raise CredentialIdNotFoundError(
-                        api.vendor,
-                        api.name,
-                        api.version,
-                        credential_id,
-                        [self._to_candidate(c) for (c, _) in covering],
-                    )
-                covering = by_id
-
-            # An explicit credential_name is the strongest *name-side* signal
-            # (only an exact id beats it), so it searches *all* covering
-            # credentials — including a
-            # covering-but-less-specific one (e.g. the vendor-wide credential
-            # while a pin also exists). Applying it before specificity narrowing
-            # means naming that credential resolves it instead of a spurious
-            # CredentialNameNotFoundError.
-            if credential_name is not None:
-                named = [(c, s) for (c, s) in covering if c.name == credential_name]
-                if not named:
-                    raise CredentialNameNotFoundError(
-                        api.vendor,
-                        api.name,
-                        api.version,
-                        credential_name,
-                        [self._to_candidate(c) for (c, _) in covering],
-                    )
-                covering = named
-
-            # Among the remaining covering credentials, most-specific-wins: a
-            # vendor.name.version pin beats a vendor.name which beats a bare
-            # vendor wildcard, so a vendor-wide credential coexisting with a pin
-            # doesn't force a spurious 409.
-            best = max(credential_specificity(s) for (_, s) in covering)
-            matches = [c for (c, s) in covering if credential_specificity(s) == best]
-
-            if len(matches) > 1:
-                raise AmbiguousCredentialError(
+        if not covering:
+            if scope_mismatched:
+                requested = dict(request_server_variables or {})
+                raise CredentialServerVariableMismatchError(
                     api.vendor,
                     api.name,
                     api.version,
-                    len(matches),
-                    candidates=[self._to_candidate(c) for c in matches],
+                    requested=requested,
+                    conflicting=sorted(
+                        {
+                            name
+                            for c in scope_mismatched
+                            for name, scoped in (c.server_variables or {}).items()
+                            # Only a name the request resolves to a
+                            # *different* value disagrees. A variable the
+                            # request does not resolve imposes no
+                            # constraint, and one that agrees is not why
+                            # the candidate was ruled out — naming either
+                            # sends an operator to the wrong variable.
+                            # When the URL resolves nothing, every scoped
+                            # name is in play, so all are named.
+                            if server_variables_unresolved
+                            or (name in requested and requested[name] != scoped)
+                        }
+                    ),
+                    candidates=[self._to_candidate(c, scoped=True) for c in scope_mismatched],
+                    unresolved=server_variables_unresolved,
                 )
+            raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
 
-            credential = matches[0]
-            stored_type = StoredCredentialType(credential.type)
-            wire_type = to_wire(stored_type)
+        # An explicit credential_id is exact — the authoritative tie-breaker
+        # (Jentic-Credential-Id). Applied first: an id names one row, so no
+        # later filter can meaningfully narrow further; a name/specificity
+        # pass after an id match would only manufacture spurious errors.
+        if credential_id is not None:
+            by_id = [(c, s) for (c, s) in covering if c.id == credential_id]
+            if not by_id:
+                raise CredentialIdNotFoundError(
+                    api.vendor,
+                    api.name,
+                    api.version,
+                    credential_id,
+                    [self._to_candidate(c) for (c, _) in covering],
+                )
+            covering = by_id
 
-            # ``list_by_vendor`` returns headers only; read secret material for
-            # the single winner alone, so unbound/inactive/non-covering
-            # candidates' rows are never selected (and 404/409 read none).
+        # An explicit credential_name is the strongest *name-side* signal
+        # (only an exact id beats it), so it searches *all* covering
+        # credentials — including a
+        # covering-but-less-specific one (e.g. the vendor-wide credential
+        # while a pin also exists). Applying it before specificity narrowing
+        # means naming that credential resolves it instead of a spurious
+        # CredentialNameNotFoundError.
+        if credential_name is not None:
+            named = [(c, s) for (c, s) in covering if c.name == credential_name]
+            if not named:
+                raise CredentialNameNotFoundError(
+                    api.vendor,
+                    api.name,
+                    api.version,
+                    credential_name,
+                    [self._to_candidate(c) for (c, _) in covering],
+                )
+            covering = named
+
+        # Among the remaining covering credentials, most-specific-wins: a
+        # vendor.name.version pin beats a vendor.name which beats a bare
+        # vendor wildcard, so a vendor-wide credential coexisting with a pin
+        # doesn't force a spurious 409.
+        best = max(credential_specificity(s) for (_, s) in covering)
+        matches = [c for (c, s) in covering if credential_specificity(s) == best]
+
+        if candidate_filter is not None and credential_id is None and len(matches) > 1:
+            viable_ids = set(await candidate_filter([c.id for c in matches]))
+            viable_matches = [c for c in matches if c.id in viable_ids]
+            matches = viable_matches or matches[:1]
+
+        if len(matches) > 1:
+            raise AmbiguousCredentialError(
+                api.vendor,
+                api.name,
+                api.version,
+                len(matches),
+                candidates=[self._to_candidate(c) for c in matches],
+            )
+
+        credential = matches[0]
+        stored_type = StoredCredentialType(credential.type)
+        wire_type = to_wire(stored_type)
+
+        # ``list_by_vendor`` returns headers only; read secret material for
+        # the single winner alone, so unbound/inactive/non-covering
+        # candidates' rows are never selected (and 404/409 read none).
+        async with self._ctx.control_db.read_session() as session:
             await CredentialRepository.load_material(session, [credential])
-            return self._build_resolved(credential, wire_type, stored_type)
+        return self._build_resolved(credential, wire_type, stored_type)
 
     @staticmethod
     def _to_candidate(credential: Credential, *, scoped: bool = False) -> CredentialCandidate:

@@ -4010,6 +4010,7 @@ components:
         - api_name: stripe
           api_vendor: stripe.com
           api_version: '2024-04-10'
+        state: pending
         suspended: false
         suspended_reason: api_deleted
       properties:
@@ -4046,6 +4047,13 @@ components:
           items:
             $ref: '#/components/schemas/ServedApiRef'
           type: array
+        state:
+          description: Lifecycle state of the bound credential (`pending`, `connected` or `failed`); null if the credential cannot be resolved.
+          examples:
+          - pending
+          type:
+          - string
+          - 'null'
         suspended:
           default: false
           description: Whether the binding is suspended; the agent cannot execute through it until resumed.
