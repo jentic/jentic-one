@@ -10,9 +10,14 @@ from typing import Any, cast
 import pytest
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import websocket_request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
 from fastapi.testclient import TestClient
+from jentic.problem_details import ProblemDetailException
 from sqlalchemy.exc import DBAPIError
+from starlette.exceptions import HTTPException
 
+from jentic_one.__main__ import _expand_allowed_dbs
 from jentic_one.broker.core.directives import (
     AgentDirective,
     AgentStrategy,
@@ -44,16 +49,23 @@ from jentic_one.broker.core.schemas import (
     HeldExecutionAcceptedLinks,
     HeldExecutionAcceptedResponse,
 )
+from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.broker.web.errors import (
     handle_broker_error,
+    handle_database_unavailable,
     handle_discovery_error,
+    handle_http_exception,
+    handle_validation,
     install_broker_error_handlers,
     problem_response,
 )
+from jentic_one.broker.web.routers.execute import _FIXED_STATUS_BY_HANDLER
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.config import AppConfig
+from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import (
     DatabaseCommitOutcomeUnknownError,
     DatabaseUnavailableError,
@@ -66,7 +78,14 @@ from jentic_one.shared.discovery.errors import (
     TooManyCandidatesError,
 )
 from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE
-from jentic_one.shared.web.errors import DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
+from jentic_one.shared.state.backend import StateBackendCapacityError
+from jentic_one.shared.web.app_factory import spa_aware_problem_detail_handler
+from jentic_one.shared.web.errors import (
+    DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,
+    request_validation_error_handler,
+    state_backend_capacity_error_handler,
+    unhandled_exception_handler,
+)
 
 
 def _body(resp: Any) -> dict[str, Any]:
@@ -652,6 +671,34 @@ def test_installed_handlers_render_a_raised_discovery_error() -> None:
     assert resp.status_code == 503
     assert resp.json()["type"] == "too_many_candidates"
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
+
+
+def test_every_registered_http_handler_has_a_classification_contract(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A new broker handler registration must also update failure classification."""
+    config = AppConfig.model_validate(sample_config_dict)
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["broker"], config))
+    app = create_broker_app(ctx)
+
+    assert app.exception_handlers == {
+        HTTPException: handle_http_exception,
+        RequestValidationError: handle_validation,
+        WebSocketRequestValidationError: websocket_request_validation_exception_handler,
+        ProblemDetailException: spa_aware_problem_detail_handler,
+        StateBackendCapacityError: state_backend_capacity_error_handler,
+        Exception: unhandled_exception_handler,
+        BrokerError: handle_broker_error,
+        DiscoveryError: handle_discovery_error,
+        DatabaseUnavailableError: handle_database_unavailable,
+    }
+    assert {
+        handle_validation: 422,
+        request_validation_error_handler: 422,
+        state_backend_capacity_error_handler: 503,
+        handle_database_unavailable: 503,
+        unhandled_exception_handler: 500,
+    } == _FIXED_STATUS_BY_HANDLER
 
 
 def test_held_execution_directive_is_a_structured_object() -> None:

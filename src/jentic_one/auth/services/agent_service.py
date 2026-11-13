@@ -767,9 +767,10 @@ class AgentService:
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
         views = [CredentialBindingView.model_validate(b) for b in bindings]
-        # Enrich from the control DB with the credential's human-readable name
-        # and the API it serves (issue #686). The bindings above are already
-        # scoped to this agent. Failure to reach the control DB is non-fatal.
+        # Enrich from the control DB with the credential's human-readable name,
+        # lifecycle state and the API it serves (issue #686). The bindings above
+        # are already scoped to this agent. Failure to reach the control DB is
+        # non-fatal.
         credential_ids = [v.credential_id for v in views]
         if credential_ids and self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
@@ -779,6 +780,7 @@ class AgentService:
                 if ref is None:
                     continue
                 view.name = ref.name
+                view.state = ref.state
                 view.serves = [
                     ServedApiRef(
                         api_vendor=ref.api_vendor,

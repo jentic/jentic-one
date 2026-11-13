@@ -17,21 +17,15 @@ machine clients does not squeeze them all into one bucket.
 
 from __future__ import annotations
 
-import ipaddress
-
 from fastapi import Request
 
-from jentic_one.shared.config import TrustedProxyNetwork
 from jentic_one.shared.state.backend import SharedStateBackend
-
-#: IPv6 clients are grouped by this prefix length. One host (or one customer
-#: site) typically holds at least a whole /64 and can pick any interface ID
-#: inside it, so grouping by full address would let it rotate into a fresh
-#: bucket per request.
-IPV6_CLIENT_PREFIX = 64
-
-#: RFC 6052 well-known NAT64 prefix: the low 32 bits are the IPv4 client.
-_NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+from jentic_one.shared.web.ratelimit import (
+    IPV6_CLIENT_PREFIX,
+    client_ip,
+    client_network,
+    client_rate_limit_key,
+)
 
 
 def get_auth_backend(request: Request) -> SharedStateBackend:
@@ -52,171 +46,6 @@ def get_auth_backend(request: Request) -> SharedStateBackend:
         "its install_on_app, which wires the process's shared-state backend "
         "(Context.state_backend)"
     )
-
-
-def _is_port(value: str) -> bool:
-    return value.isascii() and value.isdigit()
-
-
-def _strip_port(value: str) -> str:
-    """Drop a forwarded hop's port: ``203.0.113.7:51234`` or ``[2001:db8::1]:443``.
-
-    Some proxies forward the peer's source port. Left on, it would make a
-    trusted proxy's hop unmatchable and give the client a new identity per
-    connection. A value that is not an address with a numeric port is
-    returned unchanged.
-    """
-    if value.startswith("[") and "]" in value:
-        host, _, rest = value[1:].partition("]")
-        if rest and not (rest.startswith(":") and _is_port(rest[1:])):
-            return value
-    elif value.count(":") == 1:
-        host, _, port = value.partition(":")
-        if not _is_port(port):
-            return value
-    else:
-        return value
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return value
-    return host
-
-
-def _parse_request_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """Parse a socket or forwarded address for trust matching, or None if unparsable.
-
-    A forwarded hop arrives here without its port (see :func:`_strip_port`);
-    a socket address never carries one. An IPv4-mapped IPv6 address (a
-    dual-stack listener) is unmapped so it matches IPv4 entries. A zone ID
-    parses but does not affect membership.
-    """
-    try:
-        addr = ipaddress.ip_address(value)
-    except ValueError:
-        return None
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        return addr.ipv4_mapped
-    return addr
-
-
-def _is_trusted(value: str, trusted_proxies: tuple[TrustedProxyNetwork, ...]) -> bool:
-    addr = _parse_request_address(value)
-    if addr is None:
-        return False
-    return any(addr in network for network in trusted_proxies)
-
-
-def client_ip(request: Request, trusted_proxies: tuple[TrustedProxyNetwork, ...]) -> str:
-    """Extract the real client IP, honoring XFF only from trusted reverse proxies.
-
-    ``trusted_proxies`` is the pre-parsed
-    ``OAuthRateLimitConfig.trusted_networks``. The socket address and each
-    ``X-Forwarded-For`` hop (walked right to left) are trusted by network
-    membership; the first untrusted hop is the client. Every hop examined
-    was written by the trusted proxy to its right, so while the client's own
-    address is untrusted, a value it sends sits further left and is never
-    reached. When every hop is trusted, the client is inside a trusted
-    network (and can set its identity anyway), so the leftmost hop is used
-    rather than the nearest proxy's address. A hop's ``:port`` is dropped,
-    an unparsable hop is untrusted and returned as-is, and empty list
-    elements are skipped (RFC 9110 §5.6.1).
-    Repeated ``X-Forwarded-For`` lines are read as one comma-joined list
-    (RFC 9110 §5.3), so a proxy that adds its own line cannot be outranked by
-    a line the client sent first.
-    """
-    socket_ip = request.client.host if request.client else "unknown"
-    if not trusted_proxies or not _is_trusted(socket_ip, trusted_proxies):
-        return socket_ip
-    forwarded = ",".join(request.headers.getlist("x-forwarded-for"))
-    hops = [_strip_port(h.strip()) for h in forwarded.split(",") if h.strip()]
-    if not hops:
-        return socket_ip
-    for hop in reversed(hops):
-        if not _is_trusted(hop, trusted_proxies):
-            return hop
-    return hops[0]
-
-
-def _parse_client_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """Parse a client address, tolerating a forwarded hop's ``:port`` suffix.
-
-    Some proxies forward ``203.0.113.7:51234`` or ``[2001:db8::1]:443``;
-    without stripping the port, every source port would count as its own
-    client.
-    """
-    candidates = [value]
-    if value.startswith("[") and "]" in value:
-        candidates.append(value[1 : value.index("]")])
-    elif value.count(":") == 1:
-        candidates.append(value.split(":", 1)[0])
-    for candidate in candidates:
-        try:
-            return ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-    return None
-
-
-def _embedded_ipv4(addr: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
-    """The IPv4 client an IPv6 address stands for, if it embeds one.
-
-    IPv4-mapped (``::ffff:a.b.c.d``, a dual-stack listener), well-known-prefix
-    NAT64 (``64:ff9b::a.b.c.d``, RFC 6052), 6to4 (``2002:abcd:ef01::/48``) and
-    Teredo addresses all carry the client's IPv4 address, so they are budgeted
-    as that IPv4 client rather than as an IPv6 /64.
-
-    A network-specific translation prefix (the RFC 8215 local-use
-    ``64:ff9b:1::/48`` or an operator's own) cannot be told apart from a
-    native IPv6 network, so it is grouped by /64 like one: behind such a
-    translator (SIIT in front of an IPv6-only server), every IPv4 client
-    mapped into one /64 of that prefix shares a single bucket.
-    """
-    if addr.ipv4_mapped is not None:
-        return addr.ipv4_mapped
-    if addr in _NAT64_WELL_KNOWN_PREFIX:
-        return ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
-    if addr.sixtofour is not None:
-        return addr.sixtofour
-    if addr.teredo is not None:
-        return addr.teredo[1]
-    return None
-
-
-def client_network(ip: str) -> str:
-    """The network a client address is budgeted under.
-
-    An IPv4 address stands for itself, as does an IPv6 address that embeds
-    one (see :func:`_embedded_ipv4`), so a dual-stack or translated path does
-    not give one client two identities. Any other IPv6 address stands for its
-    /64, so a host cannot rotate interface IDs within its prefix to escape
-    its budget; link-local and unique-local addresses follow the same rule.
-    A value that is not an IP address (no socket peer, or an unparsable
-    forwarded hop) is used as-is.
-    """
-    addr = _parse_client_address(ip)
-    if addr is None:
-        return ip
-    if isinstance(addr, ipaddress.IPv6Address):
-        embedded = _embedded_ipv4(addr)
-        if embedded is not None:
-            return str(embedded)
-        network = ipaddress.IPv6Network((int(addr), IPV6_CLIENT_PREFIX), strict=False)
-        return str(network)
-    return str(addr)
-
-
-def client_rate_limit_key(
-    request: Request, trusted_proxies: tuple[TrustedProxyNetwork, ...]
-) -> str:
-    """The pre-auth rate-limit key for this request: the caller's client network.
-
-    :func:`client_ip` (``X-Forwarded-For`` honoured only from a trusted
-    proxy) normalised by :func:`client_network` (forwarded port dropped, an
-    IPv6 address that embeds an IPv4 client reduced to that IPv4 address,
-    any other IPv6 address grouped by /64).
-    """
-    return client_network(client_ip(request, trusted_proxies))
 
 
 __all__ = [

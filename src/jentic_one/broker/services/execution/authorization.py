@@ -26,6 +26,7 @@ from jentic_one.broker.core.denial import DenialReason
 from jentic_one.broker.core.directives import (
     AgentDirective,
     credential_binding_suspended_directive,
+    credential_pending_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
@@ -36,7 +37,9 @@ from jentic_one.broker.core.errors import (
     BrokerError,
     CredentialBindingSuspendedError,
     CredentialIdentityMismatchError,
+    CredentialPendingError,
 )
+from jentic_one.broker.repos.operation_scope_repo import OperationScopeRepository
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.provisioning import (
@@ -51,13 +54,19 @@ from jentic_one.shared.broker.protocols import (
     ConnectableRegistrationSourceProtocol,
     CredentialDerivation,
     CredentialDeriverProtocol,
+    RuleEvaluation,
     RuleVerdict,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_none
 from jentic_one.shared.metrics import get_meter
+from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.permissions.evaluation import PathDivergence
+from jentic_one.shared.permissions.operation_resolution import (
+    colliding_spec_operation_ids,
+    resolve_live_operation,
+)
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 
@@ -173,6 +182,30 @@ def _suspended_binding_denial(api: APIReference, *, instance: str) -> BrokerErro
     )
 
 
+def _pending_credential_denial(
+    api: APIReference, *, instance: str, provisioning_url: str | None
+) -> BrokerError:
+    """The denial for a bound credential whose connect flow is incomplete."""
+    _authz_denied.add(
+        1,
+        {
+            "reason": DenialReason.CREDENTIAL_PENDING.value,
+            "mode": "direct",
+            "vendor": api.vendor,
+        },
+    )
+    return CredentialPendingError(
+        "The bound credential is waiting for its connection to be completed",
+        instance=instance,
+        directive=credential_pending_directive(
+            vendor=api.vendor,
+            name=api.name,
+            version=api.version,
+            provisioning_url=provisioning_url,
+        ),
+    )
+
+
 async def _emit_credential_binding_unserved(
     ctx: Context, *, api: APIReference, identity: Identity, trace_id: str | None = None
 ) -> None:
@@ -223,13 +256,16 @@ async def derive_credential_bindings(
     method: str = "",
     path: str = "",
     trace_id: str | None = None,
+    operation_id: str | None = None,
+    operation_path: str | None = None,
     connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
 
     ``0 → 403`` (no binding / suspended binding / credential identity
-    mismatch — with the operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit
-    for the pre-binding nothing-serves case). Candidate *selection* among
+    mismatch). An unserved API emits ``CREDENTIAL_BINDING_UNSERVED``; a served
+    API with no binding emits ``PBAC_DENIED`` with the actor, API and operation
+    template. Candidate *selection* among
     ``N ≥ 1`` (name header → most-specific-wins → ``Jentic-Credential-Id``
     tie-breaker → 409) is owned by ``CredentialService.select``, which shares
     the resolver with injection so selection and injection can never disagree.
@@ -255,6 +291,14 @@ async def derive_credential_bindings(
     if not derivation.credentials:
         if derivation.binding_suspended:
             raise _suspended_binding_denial(api, instance=instance)
+        if derivation.binding_pending:
+            raise _pending_credential_denial(
+                api,
+                instance=instance,
+                provisioning_url=await open_session_provisioning_url(
+                    ctx, identity=identity, api=api
+                ),
+            )
         denial = _empty_credential_derivation_denial(
             derivation,
             api,
@@ -270,6 +314,18 @@ async def derive_credential_bindings(
         if not derivation.api_served and isinstance(denial, ActionDeniedError):
             await _emit_credential_binding_unserved(
                 ctx, api=api, identity=identity, trace_id=trace_id
+            )
+        elif derivation.api_served and isinstance(denial, ActionDeniedError):
+            await _emit_pbac_denied(
+                ctx,
+                identity=identity,
+                api=api,
+                reason=DenialReason.NO_CREDENTIAL_BINDING,
+                summary="Operation denied: no credential binding covers this API",
+                trace_id=trace_id,
+                operation_id=operation_id,
+                operation_method=method or None,
+                operation_path=operation_path,
             )
         raise denial
     return derivation
@@ -368,6 +424,45 @@ def _report_base_path_divergence(
     )
 
 
+async def _emit_pbac_denied(
+    ctx: Context,
+    *,
+    identity: Identity,
+    api: APIReference,
+    reason: DenialReason,
+    summary: str,
+    trace_id: str | None,
+    operation_id: str | None,
+    operation_method: str | None,
+    operation_path: str | None,
+) -> None:
+    """Record actor/API denial evidence without concrete request material."""
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.PBAC_DENIED,
+                severity=EventSeverity.WARNING,
+                summary=summary,
+                trace_id=valid_trace_id_or_none(trace_id),
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "reason": reason.value,
+                    "mode": "direct",
+                    "api_vendor": api.vendor,
+                    "api_name": api.name,
+                    "api_version": api.version,
+                    "operation_id": operation_id,
+                    "operation_method": operation_method,
+                    "operation_path": operation_path,
+                },
+            )
+    except Exception:
+        logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
+
+
 async def _deny(
     ctx: Context,
     *,
@@ -394,33 +489,17 @@ async def _deny(
         1,
         {"reason": reason.value, "mode": "direct", "vendor": api.vendor},
     )
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await emit_event_best_effort(
-                session,
-                type=EventType.PBAC_DENIED,
-                severity=EventSeverity.WARNING,
-                summary=summary,
-                trace_id=valid_trace_id_or_none(trace_id),
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-                # Flat keys, matching the other broker events that name an API
-                # or operation (``credential.accessed``,
-                # ``broker.execution_repeated_failure``).
-                data={
-                    "reason": reason.value,
-                    "mode": "direct",
-                    "api_vendor": api.vendor,
-                    "api_name": api.name,
-                    "api_version": api.version,
-                    "operation_id": operation_id,
-                    "operation_method": operation_method,
-                    "operation_path": operation_path,
-                },
-            )
-    except Exception:
-        logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
+    await _emit_pbac_denied(
+        ctx,
+        identity=identity,
+        api=api,
+        reason=reason,
+        summary=summary,
+        trace_id=trace_id,
+        operation_id=operation_id,
+        operation_method=operation_method,
+        operation_path=operation_path,
+    )
     raise ActionDeniedError(
         detail=detail,
         type="action_denied",
@@ -447,6 +526,7 @@ async def authorize_execution(
     upstream_url: str | None = None,
     trace_id: str | None = None,
     operation_path: str | None = None,
+    spec_operation_id: str | None = None,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -474,9 +554,9 @@ async def authorize_execution(
     when the execution is not allowed.
     """
     # Derive candidates (0 → 403 with the right directive), then select the
-    # single credential (name header → most-specific-wins →
-    # Jentic-Credential-Id tie-breaker; genuine tie → 409), then enforce the
-    # binding's rules — all before any secret is decrypted or audited.
+    # single credential. Applicable same-specificity ties are narrowed by each
+    # binding's rules: deny-only candidates cannot block an allowed or held
+    # sibling, while multiple usable candidates remain a genuine 409.
     derivation = await derive_credential_bindings(
         deriver=credential_deriver,
         identity=identity,
@@ -486,24 +566,11 @@ async def authorize_execution(
         method=method,
         path=path,
         trace_id=trace_id,
+        operation_id=operation_id,
+        operation_path=operation_path,
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
-    selected_credential = await CredentialService(ctx).select(
-        api_vendor=api.vendor,
-        api_name=api.name,
-        api_version=api.version,
-        identity=identity,
-        credential_name=credential_name,
-        credential_id=credential_id,
-        allowed_credential_ids=allowed_credential_ids,
-        request_server_variables=request_server_variables,
-        server_variables_unresolved=server_variables_unresolved,
-        method=method,
-        path=path,
-    )
-    assert selected_credential is not None  # api.vendor is concrete (asserted above)
-    rule_set_id = rule_set_ids.get(selected_credential.credential_id)
     raw_upstream_path = urlparse(upstream_url).path if upstream_url is not None else None
     if has_ambiguous_traversal(path) or (
         raw_upstream_path is not None and has_ambiguous_traversal(raw_upstream_path)
@@ -529,15 +596,98 @@ async def authorize_execution(
     upstream_path = (
         normalize_path(raw_upstream_path or "/") if raw_upstream_path is not None else None
     )
-    evaluation = await agent_rule_evaluator.evaluate(
-        agent_id=identity.sub,
-        credential_id=selected_credential.credential_id,
-        rule_set_id=rule_set_id,
+    candidate_scopes: dict[str, CredentialScope] = {}
+    evaluations: dict[str, RuleEvaluation] = {}
+    declaring_apis: list[tuple[str, str]] | None = None
+
+    async def _colliding_ids_for(scope: CredentialScope | None) -> frozenset[str]:
+        nonlocal declaring_apis
+        if (
+            scope is None
+            or (scope.name is not None and scope.version is not None)
+            or spec_operation_id is None
+            or not ctx.has_db("registry")
+        ):
+            return frozenset()
+        if declaring_apis is None:
+            declaring_apis = await OperationScopeRepository.live_apis_declaring_operation_id(
+                ctx.registry_db,
+                vendor=scope.vendor,
+                spec_operation_id=spec_operation_id,
+            )
+        return colliding_spec_operation_ids(
+            declaring_apis,
+            scope=scope,
+            spec_operation_id=spec_operation_id,
+        )
+
+    async def _evaluate_candidate(
+        candidate_id: str, *, scope: CredentialScope | None = None
+    ) -> RuleEvaluation:
+        resolved_scope = scope if scope is not None else candidate_scopes.get(candidate_id)
+        colliding_ids = await _colliding_ids_for(resolved_scope)
+        resolved_op = resolve_live_operation(
+            spec_operation_id=spec_operation_id,
+            registry_operation_id=operation_id,
+            colliding_operation_ids=colliding_ids,
+        )
+        evaluation = await agent_rule_evaluator.evaluate(
+            agent_id=identity.sub,
+            credential_id=candidate_id,
+            rule_set_id=rule_set_ids.get(candidate_id),
+            method=method,
+            path=path,
+            operation_id=resolved_op.operation_id,
+            registry_operation_id=resolved_op.registry_operation_id,
+            ambiguous_operation_ids=resolved_op.ambiguous_operation_ids,
+            upstream_path=upstream_path if upstream_path != path else None,
+        )
+        evaluations[candidate_id] = evaluation
+        return evaluation
+
+    async def _filter_policy_viable(candidate_ids: list[str]) -> list[str]:
+        viable: list[str] = []
+        for candidate_id in candidate_ids:
+            evaluation = await _evaluate_candidate(candidate_id)
+            if evaluation.verdict != RuleVerdict.DENY:
+                viable.append(candidate_id)
+        # The resolver retains the first candidate when this is empty solely so
+        # the standard rule-denial path can report it. No denied candidate is
+        # returned as a successful ExecutionAuthorization.
+        return viable
+
+    selected_credential = await CredentialService(
+        ctx, candidate_scopes_out=candidate_scopes
+    ).select(
+        api_vendor=api.vendor,
+        api_name=api.name,
+        api_version=api.version,
+        identity=identity,
+        credential_name=credential_name,
+        credential_id=credential_id,
+        allowed_credential_ids=allowed_credential_ids,
+        request_server_variables=request_server_variables,
+        server_variables_unresolved=server_variables_unresolved,
         method=method,
         path=path,
-        operation_id=operation_id,
-        upstream_path=upstream_path if upstream_path != path else None,
+        candidate_filter=None if credential_id is not None else _filter_policy_viable,
     )
+    assert selected_credential is not None  # api.vendor is concrete (asserted above)
+    rule_set_id = rule_set_ids.get(selected_credential.credential_id)
+    selected_scope = (
+        canonical_credential_scope(
+            vendor=selected_credential.api_vendor or api.vendor,
+            name=selected_credential.api_name,
+            version=selected_credential.api_version,
+        )
+        if selected_credential.scope_is_wildcard
+        else None
+    )
+    evaluation = evaluations.get(selected_credential.credential_id)
+    if evaluation is None:
+        evaluation = await _evaluate_candidate(
+            selected_credential.credential_id, scope=selected_scope
+        )
     if evaluation.divergence is not None:
         _report_base_path_divergence(
             evaluation.divergence,

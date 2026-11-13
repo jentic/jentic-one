@@ -28,12 +28,13 @@ class CredentialRef:
     name: str
     created_by: str | None
     active: bool
+    state: str
     api_vendor: str
     api_name: str | None
     api_version: str | None
 
 
-_COLUMNS = "id, name, created_by, active, api_vendor, api_name, api_version"
+_COLUMNS = "id, name, created_by, active, state, api_vendor, api_name, api_version"
 
 
 def _to_ref(row: Sequence[object]) -> CredentialRef:
@@ -42,9 +43,10 @@ def _to_ref(row: Sequence[object]) -> CredentialRef:
         name=str(row[1]),
         created_by=str(row[2]) if row[2] is not None else None,
         active=bool(row[3]),
-        api_vendor=str(row[4]),
-        api_name=str(row[5]) if row[5] is not None else None,
-        api_version=str(row[6]) if row[6] is not None else None,
+        state=str(row[4]),
+        api_vendor=str(row[5]),
+        api_name=str(row[6]) if row[6] is not None else None,
+        api_version=str(row[7]) if row[7] is not None else None,
     )
 
 

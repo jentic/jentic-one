@@ -354,6 +354,35 @@ def credential_binding_suspended_directive(
     )
 
 
+def credential_pending_directive(
+    *, vendor: str, name: str, version: str, provisioning_url: str | None = None
+) -> AgentDirective:
+    """Directive for a bound credential whose connect flow is still pending."""
+    api = "/".join(part for part in (vendor, name) if part)
+    parameters: dict[str, Any] = {
+        "api": {"vendor": vendor, "name": name, "version": version},
+        "state": "pending",
+    }
+    if provisioning_url:
+        parameters["provisioning_url"] = provisioning_url
+        instruction = (
+            f"Your credential for '{api}' is still waiting for your human operator to "
+            f"complete sign-in. Do not start another connection: relay {provisioning_url} "
+            "to them, then check whoami for state 'connected' and retry once they confirm."
+        )
+    else:
+        instruction = (
+            f"Your credential for '{api}' is still pending. Ask your human operator to "
+            "complete the existing connection or sign-in flow; do not create a duplicate. "
+            "Check whoami for state 'connected' and retry once they confirm."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters=parameters,
+        human_readable_instruction=instruction,
+    )
+
+
 def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
     """Directive for the direct-binding ``credential_identity_mismatch`` 403.
 

@@ -58,7 +58,11 @@ class BasePermissionRuleSchema(BaseModel):
     operations: list[str] | None = Field(
         default=None,
         examples=[[ex.OPERATION_ID]],
-        description="OpenAPI operation IDs to match. None matches all operations.",
+        description=(
+            "OpenAPI operationIds to match by exact string equality (survives revision "
+            "promotion; existing `op_…` registry operation IDs also match their revision). "
+            "None matches all operations."
+        ),
     )
     comment: str | None = Field(
         default=None,
@@ -152,7 +156,10 @@ class PermissionRuleReadSchema(BaseModel):
     )
     operations: list[str] | None = Field(
         default=None,
-        description="OpenAPI operation IDs the rule matches; null matches all.",
+        description=(
+            "OpenAPI operationIds the rule matches by exact equality (existing `op_…` "
+            "registry operation IDs also match their revision); null matches all."
+        ),
         examples=[[ex.OPERATION_ID]],
     )
     is_system: bool = Field(
@@ -276,7 +283,12 @@ class PermissionTestRequest(BaseModel):
     )
     operation_id: str | None = Field(
         default=None,
-        description="Optional OpenAPI operation id resolved from the request URL.",
+        description=(
+            "Optional OpenAPI operationId (or `op_…` registry operation ID) of the "
+            "hypothetical request. When omitted, the dry-run resolves the operation from "
+            "`(method, path)` against the credential's covered live API(s); when supplied, "
+            "it must agree with the resolved operation."
+        ),
         examples=[ex.OPERATION_ID],
     )
 

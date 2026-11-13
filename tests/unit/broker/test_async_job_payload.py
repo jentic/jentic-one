@@ -37,7 +37,11 @@ def _ctx(**overrides: Any) -> ExecuteRequestContext:
         "trace_id": "a" * 32,
         "toolkit_id": "tk_test000000000000000000",
         "operation": OperationInfo(
-            id="op_x", path="/v1/things/{id}", method="GET", relative_path="/v1/things/7"
+            id="op_x",
+            operation_id="getThing",
+            path="/v1/things/{id}",
+            method="GET",
+            relative_path="/v1/things/7",
         ),
         "api_vendor": "example",
         "api_name": "api",
@@ -49,13 +53,14 @@ def _ctx(**overrides: Any) -> ExecuteRequestContext:
 
 def test_payload_carries_the_operation_dict_only() -> None:
     """The producer writes the resolved operation as one ``operation`` dict and
-    no flat ``operation_id`` key (#1382). The dict carries the server-relative
-    path so the run-time rule re-check judges the same path the sync edge would
-    (#1424)."""
+    no flat ``operation_id`` key (#1382). The dict carries the spec
+    ``operation_id`` (#1081) and server-relative path (#1424) so the run-time
+    rule re-check judges the same operation identity and path as the sync edge."""
     payload = _async_job_payload(_ctx(), execution_id="exec_1", origin="api")
 
     assert payload["operation"] == {
         "id": "op_x",
+        "operation_id": "getThing",
         "path": "/v1/things/{id}",
         "method": "GET",
         "relative_path": "/v1/things/7",

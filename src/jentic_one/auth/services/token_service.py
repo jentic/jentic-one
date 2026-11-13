@@ -17,12 +17,17 @@ from jentic_one.admin.repos import (
     OAuthClientGrantRepository,
     OAuthClientRepository,
     RefreshTokenRepository,
+    UserPermissionGrantRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import (
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+    effective_user_oauth_scopes,
+)
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -43,7 +48,14 @@ def _generate_token(prefix: str) -> str:
     return f"{prefix}{secrets.token_urlsafe(32)}"
 
 
-async def _resolve_client_gate(
+class _ResolvedAccessTokenIdentity(Identity):
+    """Identity resolved from an ``access_tokens`` row, carrying mint-mode metadata."""
+
+    is_ephemeral: bool = False
+    raw_scopes: tuple[str, ...] | None = None
+
+
+async def resolve_client_gate(
     session: AsyncSession, oauth_client_id: str | None
 ) -> tuple[bool, frozenset[str] | None]:
     """Look up an issuing OAuth client and return (active, scope_ceiling).
@@ -55,7 +67,7 @@ async def _resolve_client_gate(
     outstanding tokens from resolving. ``scope_ceiling`` is the client's
     ``allowed_scopes`` if set (used to filter the token's scopes at
     introspection time), else None. Kept as a module-level helper so the
-    introspect + resolve paths share one shape.
+    exchange, introspect, and resolve paths share one shape.
     """
     if oauth_client_id is None:
         return True, None
@@ -68,6 +80,9 @@ async def _resolve_client_gate(
         return False, None
     ceiling = frozenset(client.allowed_scopes) if client.allowed_scopes is not None else None
     return True, ceiling
+
+
+_resolve_client_gate = resolve_client_gate
 
 
 def _apply_scope_ceiling(scopes: list[str], ceiling: frozenset[str] | None) -> list[str]:
@@ -89,25 +104,25 @@ async def resolve_effective_scopes(
     """The scope set the live resolvers actually enforce for a token.
 
     Named for what it returns, not for what it reads: the result is a token's
-    OAuth2 scope set, even though the live arm reads internal permission grants to
+    OAuth2 scope set, even though the live arms read internal permission grants to
     compute it. The same applies to :func:`_apply_scope_ceiling` — a ceiling is an
     OAuth2 concept.
 
     Non-ephemeral AGENT tokens draw scopes *live* from
-    ``actor_permission_grants`` — the mint-time snapshot is dead weight for
-    enforcement on these actor types (permission edits take effect immediately by
-    design). Ephemeral mints and USER tokens keep their snapshot. Either
-    starting set is then intersected with the issuing client's
-    ``allowed_scopes`` ceiling and the consent grant's scope set.
+    ``actor_permission_grants``. Ephemeral AGENT mints keep their downscoped
+    snapshot. USER tokens intersect their snapshot with the user's live
+    ``user_permission_grants`` expanded through :func:`effective_user_oauth_scopes`
+    (#1442), so unheld or revoked permissions are never granted. Every starting set
+    is then intersected with the issuing client's ``allowed_scopes`` ceiling and
+    the consent grant's scope set. USER OIDC/offline passthrough scopes are exempt
+    from the client permission ceiling, matching the authorize endpoint.
 
     This is the single source of truth shared by the enforcement path
-    (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1
-    reporting paths (:meth:`TokenService.refresh`,
-    ``AuthorizeService.exchange_code``), so the ``scope`` member a token
-    response reports can never diverge from what the minted token enforces.
-    The broker's ``InProcessTokenResolver`` re-implements the same math over
-    raw SQL (it deliberately imports nothing from ``auth``); the
-    grant-channel integration suite pins all three against each other.
+    (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1 / RFC 7662
+    reporting paths (:meth:`TokenService.refresh`, :meth:`TokenService.introspect`,
+    ``AuthorizeService.exchange_code``), so reported scopes never diverge from
+    what the token enforces. The broker's ``InProcessTokenResolver`` implements
+    the same math over raw SQL.
     """
     scopes = snapshot_scopes
     if not is_ephemeral and actor_type == ActorType.AGENT:
@@ -115,6 +130,12 @@ async def resolve_effective_scopes(
             session, actor_id, actor_type=actor_type
         )
         scopes = [g.permission for g in grants]
+    elif actor_type == ActorType.USER:
+        user_grants = await UserPermissionGrantRepository.get_grants_for_user(session, actor_id)
+        user_ceiling = effective_user_oauth_scopes({g.permission for g in user_grants})
+        scopes = _apply_scope_ceiling(scopes, user_ceiling)
+    if actor_type == ActorType.USER and client_ceiling is not None:
+        client_ceiling = client_ceiling | USER_OAUTH_PASSTHROUGH_SCOPES
     scopes = _apply_scope_ceiling(scopes, client_ceiling)
     return _apply_scope_ceiling(scopes, grant_ceiling)
 
@@ -177,7 +198,14 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         # Delete is terminal: a deleted row is refused even if it reads active.
-        return user is not None and user.active and user.deleted_at is None
+        # Forced password rotation fences opaque USER OAuth tokens until the
+        # required password change clears must_change_password (#1297).
+        return (
+            user is not None
+            and user.active
+            and user.deleted_at is None
+            and not user.must_change_password
+        )
     return False
 
 
@@ -259,6 +287,16 @@ class TokenService:
         now = datetime.now(UTC)
 
         async def _write(session: AsyncSession) -> None:
+            if actor_type == ActorType.USER:
+                # Reset holds this lock while it fences the user and sweeps tokens.
+                user = await UserRepository.get_by_id_for_update(session, actor_id)
+                if (
+                    user is None
+                    or not user.active
+                    or user.deleted_at is not None
+                    or user.must_change_password
+                ):
+                    raise InvalidGrantError("actor is not active")
             await AccessTokenRepository.create(
                 session,
                 token_hash=access_hash,
@@ -339,6 +377,11 @@ class TokenService:
         grant_ceiling: frozenset[str] | None = None
 
         async with self._ctx.admin_db.transaction() as session:
+            candidate = await RefreshTokenRepository.get_by_hash(session, token_hash)
+            if candidate is not None and candidate.actor_type == ActorType.USER:
+                # Reset locks the user before its token sweep. Take the same
+                # order here, then refresh the token row under its own lock.
+                await UserRepository.get_by_id_for_update(session, candidate.actor_id)
             rt = await RefreshTokenRepository.get_by_hash(session, token_hash, for_update=True)
 
             if rt is None or rt.revoked_at is not None:
@@ -435,6 +478,11 @@ class TokenService:
                         client_ceiling=client_ceiling,
                         grant_ceiling=grant_ceiling,
                     )
+                    # For USER tokens, persist narrowed scopes onto rotated rows so
+                    # permissions lost before refresh cannot be widened again on future
+                    # rotations even if re-granted later (#1442). AGENT tokens ignore
+                    # the row snapshot at enforcement and retain the family snapshot.
+                    persisted_scopes = scopes if rt.actor_type == ActorType.USER else snapshot
                     now = datetime.now(UTC)
 
                     await AccessTokenRepository.create(
@@ -442,7 +490,7 @@ class TokenService:
                         token_hash=_hash_token(access_plain),
                         actor_id=rt.actor_id,
                         actor_type=rt.actor_type,
-                        scopes=snapshot,
+                        scopes=persisted_scopes,
                         token_family_id=rt.token_family_id,
                         expires_at=now + timedelta(seconds=self.access_ttl_seconds),
                         created_by=rt.actor_id,
@@ -454,7 +502,7 @@ class TokenService:
                         token_hash=_hash_token(refresh_plain),
                         actor_id=rt.actor_id,
                         actor_type=rt.actor_type,
-                        scopes=snapshot,
+                        scopes=persisted_scopes,
                         token_family_id=rt.token_family_id,
                         expires_at=now + timedelta(seconds=self._refresh_ttl),
                         created_by=rt.actor_id,
@@ -558,8 +606,19 @@ class TokenService:
                     and client_active
                     and grant_active
                 )
-                scopes = _apply_scope_ceiling(list(at.scopes), ceiling)
-                scopes = _apply_scope_ceiling(scopes, grant_scopes)
+                scopes = (
+                    await resolve_effective_scopes(
+                        session,
+                        actor_id=at.actor_id,
+                        actor_type=at.actor_type,
+                        snapshot_scopes=list(at.scopes),
+                        is_ephemeral=at.is_ephemeral,
+                        client_ceiling=ceiling,
+                        grant_ceiling=grant_scopes,
+                    )
+                    if active
+                    else []
+                )
                 return {
                     "active": active,
                     "sub": at.actor_id,
@@ -581,8 +640,19 @@ class TokenService:
                     and client_active
                     and grant_active
                 )
-                scopes = _apply_scope_ceiling(list(rt.scopes), ceiling)
-                scopes = _apply_scope_ceiling(scopes, grant_scopes)
+                scopes = (
+                    await resolve_effective_scopes(
+                        session,
+                        actor_id=rt.actor_id,
+                        actor_type=rt.actor_type,
+                        snapshot_scopes=list(rt.scopes),
+                        is_ephemeral=False,
+                        client_ceiling=ceiling,
+                        grant_ceiling=grant_scopes,
+                    )
+                    if active
+                    else []
+                )
                 return {
                     "active": active,
                     "sub": rt.actor_id,
@@ -690,7 +760,7 @@ class TokenService:
             )
 
         active = at.revoked_at is None and at.expires_at > now and actor_active
-        return Identity(
+        return _ResolvedAccessTokenIdentity(
             sub=at.actor_id,
             actor_name=actor_name,
             actor_type=ActorType(at.actor_type),
@@ -704,4 +774,6 @@ class TokenService:
             parent_actor_id=parent_actor_id,
             oauth_client_id=at.oauth_client_id,
             oauth_grant_id=at.oauth_grant_id,
+            is_ephemeral=at.is_ephemeral,
+            raw_scopes=tuple(at.scopes),
         )

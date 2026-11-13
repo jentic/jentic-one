@@ -119,6 +119,12 @@ DEFAULT_AGENT_PERMISSIONS: tuple[str, ...] = (
 #: being treated as authorization grants. OAuth2 plane — genuinely scopes.
 OIDC_PASSTHROUGH_SCOPES: frozenset[str] = frozenset({"openid", "email", "profile"})
 
+#: Identity and refresh-consent OAuth2 scopes passed through user-channel
+#: authorization without corresponding to entries in ``ALL_PERMISSIONS``.
+USER_OAUTH_PASSTHROUGH_SCOPES: frozenset[str] = OIDC_PASSTHROUGH_SCOPES | frozenset(
+    {"offline_access"}
+)
+
 #: Server-side cap for the `scope` a client claims at the anonymous DCR front
 #: door (POST /oauth-clients): a DCR-registered client's `allowed_scopes` ceiling is
 #: always ⊆ this set — never unrestricted. It is the MCP tool surface expressed as
@@ -330,6 +336,19 @@ def compute_effective(grants: set[str]) -> set[str]:
                 effective.add(p)
                 frontier.append(p)
     return effective
+
+
+def effective_user_oauth_scopes(granted_permissions: set[str]) -> frozenset[str]:
+    """Compute the OAuth2 scope ceiling for a user from direct permission grants (#1442).
+
+    Expands ``granted_permissions`` through :func:`compute_effective`, retains only
+    catalogue permissions (excluding retired strings), and unions
+    :data:`USER_OAUTH_PASSTHROUGH_SCOPES`.
+    """
+    return (
+        frozenset(compute_effective(granted_permissions) & ALL_PERMISSIONS.keys())
+        | USER_OAUTH_PASSTHROUGH_SCOPES
+    )
 
 
 #: Public surface re-exported verbatim by the ``admin.core.permissions`` shim. Kept

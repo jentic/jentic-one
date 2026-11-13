@@ -239,6 +239,10 @@ def make_service_error_handler(
                     content=problem.detail,
                     media_type="application/problem+json",
                 )
+                if isinstance(exc, DatabaseUnavailableError) and not isinstance(
+                    exc, DatabaseCommitOutcomeUnknownError
+                ):
+                    response.headers.setdefault("Retry-After", str(exc.retry_after_s))
                 if response_hook is not None:
                     response = response_hook(request, exc, status_code, response)
                 return response

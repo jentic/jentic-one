@@ -640,9 +640,14 @@ async def _mint_nonce_for(app: FastAPI, ls: str, client_key: str) -> str:
     return f"{client_key}.{nonce}"
 
 
-def test_failure_does_not_burn_ls(ctx: MagicMock, client: TestClient) -> None:
+def test_failure_does_not_burn_ls(ctx: MagicMock) -> None:
     """A failed credential check leaves the ls valid: the user retries a
     typo'd password on the same page and completes (MINOR-3's failure arm)."""
+    app = _make_app(ctx)
+    authorize_svc = MagicMock()
+    authorize_svc.issue_authorization_code = AsyncMock(return_value="authcode-retry")
+    app.dependency_overrides[deps.get_authorize_service] = lambda: authorize_svc
+    client = TestClient(app)
     fields = _get_form(ctx, client)
     failing = MagicMock()
     failing.authenticate = AsyncMock(side_effect=InvalidCredentialsError())

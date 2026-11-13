@@ -11,6 +11,13 @@ from jentic_one.auth.services.authorize_service import (
     candidate_agent_scopes,
     effective_agent_scopes,
 )
+from jentic_one.shared.auth.permission_catalog import (
+    APIS_READ,
+    APIS_WRITE,
+    CATALOG_IMPORT,
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+    effective_user_oauth_scopes,
+)
 
 
 def test_pkce_valid_verifier_passes() -> None:
@@ -91,7 +98,17 @@ def test_effective_scopes_empty_when_the_agent_holds_none_of_them() -> None:
 def test_effective_scopes_start_from_the_candidate_set() -> None:
     """The page's candidate list and the grant's scopes share their first two
     steps by construction, so the page cannot advertise a scope the grant drops."""
-    requested = ["openid", "apis:write", "credentials:read", "apis:read"]
+    requested = ["openid", "offline_access", "apis:write", "credentials:read", "apis:read"]
     allowlist = frozenset({"apis:read", "apis:write"})
     candidates = candidate_agent_scopes(requested, allowlist)
+    assert "offline_access" not in candidates
     assert effective_agent_scopes(requested, allowlist, frozenset(candidates)) == candidates
+
+
+def test_effective_user_oauth_scopes_expands_implications_and_drops_retired() -> None:
+    """Pins #1442: user OAuth scope ceiling expands direct grants via compute_effective,
+    excludes retired strings, and retains OIDC + offline_access passthrough scopes."""
+    ceiling = effective_user_oauth_scopes({APIS_WRITE, "toolkits:read"})
+    assert ceiling >= USER_OAUTH_PASSTHROUGH_SCOPES
+    assert {APIS_WRITE, APIS_READ, CATALOG_IMPORT} <= ceiling
+    assert "toolkits:read" not in ceiling

@@ -49,7 +49,7 @@ class RefreshTokenRepository:
     ) -> RefreshToken | None:
         stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
         if for_update:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -73,6 +73,20 @@ class RefreshTokenRepository:
         )
         await session.execute(stmt)
         await session.flush()
+
+    @staticmethod
+    async def revoke_for_actor(session: AsyncSession, actor_id: str, *, actor_type: str) -> int:
+        """Revoke every live refresh token held by ``(actor_id, actor_type)``."""
+        stmt = (
+            update(RefreshToken)
+            .where(RefreshToken.actor_id == actor_id)
+            .where(RefreshToken.actor_type == actor_type)
+            .where(RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:

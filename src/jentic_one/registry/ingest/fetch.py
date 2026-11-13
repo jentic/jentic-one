@@ -422,8 +422,16 @@ async def load_specification(
             raise IngestStageError(f"response exceeds {size_limit_label} size limit") from exc
         except UndecodableBodyError as exc:
             raise IngestStageError(f"failed to fetch URL: {exc}") from exc
-        except httpx.HTTPError as exc:
+        except (
+            httpx.UnsupportedProtocol,
+            httpx.LocalProtocolError,
+            httpx.DecodingError,
+        ) as exc:
+            raise IngestStageError(f"failed to fetch URL: {exc}") from exc
+        except httpx.TransportError as exc:
             raise RetryableFetchError(f"failed to fetch URL: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise IngestStageError(f"failed to fetch URL: {exc}") from exc
 
         url_path = urlparse(source.url).path
         url_filename = url_path.rsplit("/", 1)[-1] if "/" in url_path else None

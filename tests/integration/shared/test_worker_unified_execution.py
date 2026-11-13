@@ -176,6 +176,7 @@ async def test_async_job_dispatches_through_executor(
     # persists the human-readable identity.
     assert req.metadata["operation"] == {
         "id": "op_widgets",
+        "operation_id": None,
         "path": "/v1/widgets",
         "method": "GET",
         "relative_path": None,

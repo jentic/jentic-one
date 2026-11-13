@@ -57,10 +57,12 @@ import sys
 from collections.abc import Collection
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from alembic.util import CommandError
 
 from jentic_one.control.services.service_account_migration import (
     SAK_KEYS_RETIRED_WARNING,
@@ -87,6 +89,16 @@ _UPGRADE_STEP_DBS = frozenset({"admin", "control"})
 #: operator must resolve. Non-zero so a Helm pre-upgrade hook (or any wrapper)
 #: stops before the new version serves traffic.
 EXIT_UPGRADE_STEP_FAILED = 4
+
+#: Exit code when ``--direction down`` is refused up front without mutating any
+#: database (missing ``--target``, multi-DB relative/revision target, unknown
+#: revision, or uninitialized target database).
+EXIT_INVALID_DOWNGRADE = 2
+
+#: Exit code when a downgrade stops after rolling back at least one revision or
+#: database, leaving a partially rolled-back state reported via
+#: ``DOWNGRADE_STATUS`` lines.
+EXIT_PARTIAL_DOWNGRADE = 6
 
 #: The admin revision that drops the service-account tables, and the one
 #: before it. The retirement runs between the two (see the module docstring).
@@ -405,6 +417,139 @@ def _warn_manual_flows_on() -> None:
         print(f"==> WARNING (connect sessions): {MANUAL_FLOWS_UPGRADE_WARNING}", flush=True)
 
 
+def _run_downgrade(dbs: list[str], raw_target: str | None) -> int:
+    """Validate and execute ``--direction down`` with explicit completion state.
+
+    Refuses ambiguous requests before mutating any database: ``--target`` is
+    mandatory on ``--direction down``, and multi-database downgrades accept only
+    ``--target base`` because relative step counts and revision IDs belong to a
+    single database's Alembic history. On mid-run failure (for example an
+    irreversible migration after earlier revisions committed), prints per-DB
+    ``DOWNGRADE_STATUS`` lines and exits :data:`EXIT_PARTIAL_DOWNGRADE` when any
+    revision changed, or ``1`` when nothing changed.
+    """
+    if raw_target is None or not raw_target.strip():
+        print(
+            "==> ERROR: --direction down requires an explicit --target "
+            "(<revision>, 'base', or '-N' with a single --db <name>).",
+            file=sys.stderr,
+            flush=True,
+        )
+        return EXIT_INVALID_DOWNGRADE
+
+    target = raw_target.strip()
+    # Rollback reverses registration order so a dependent schema tears down
+    # before the schema it FKs into. Critical for FK safety.
+    order = list(reversed(dbs))
+
+    if ":" in target:
+        print(
+            f"==> ERROR: revision range {target!r} is not supported for online downgrade.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return EXIT_INVALID_DOWNGRADE
+
+    if len(order) > 1 and target != "base":
+        if target.startswith(("-", "+")):
+            print(
+                f"==> ERROR: relative downgrade target {target!r} is ambiguous across "
+                f"multiple databases ({', '.join(order)}); pass a single --db <name> "
+                "with an explicit target.",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                f"==> ERROR: downgrade target {target!r} belongs to a single revision tree "
+                f"and cannot be applied across multiple databases ({', '.join(order)}); "
+                "pass a single --db <name>, or --target base.",
+                file=sys.stderr,
+                flush=True,
+            )
+        return EXIT_INVALID_DOWNGRADE
+
+    before_by_db: dict[str, list[str]] = {}
+    for db_name in order:
+        state, current, _heads = status(db_name)
+        if state == STATE_UNINITIALIZED and target != "base":
+            print(
+                f"==> ERROR: cannot downgrade uninitialized database {db_name!r} to {target!r}.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return EXIT_INVALID_DOWNGRADE
+        script = ScriptDirectory.from_config(_build_config(db_name))
+        current_rev: Any = tuple(current) if current else None
+        try:
+            script._downgrade_revs(target, current_rev)
+        except CommandError as exc:
+            print(
+                f"==> ERROR: invalid downgrade target {target!r} for {db_name}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return EXIT_INVALID_DOWNGRADE
+        before_by_db[db_name] = current
+
+    results: dict[str, tuple[str, list[str], list[str] | None]] = {}
+    for idx, db_name in enumerate(order):
+        before = before_by_db[db_name]
+        before_fmt = ",".join(before) or "-"
+        print(f"==> Rolling back {db_name} to {target}", flush=True)
+        downgrade_returned = False
+        try:
+            downgrade(db_name, target)
+            downgrade_returned = True
+            _, after, _ = status(db_name)
+        except Exception as exc:
+            after_err: list[str] | None
+            try:
+                _, after_err, _ = status(db_name)
+            except Exception:
+                after_err = None
+            if after_err is None and downgrade_returned:
+                outcome = "unknown"
+            elif after_err is not None and after_err != before:
+                outcome = "partial"
+            elif downgrade_returned:
+                outcome = "unchanged"
+            else:
+                outcome = "failed"
+            results[db_name] = (outcome, before, after_err)
+            for untouched_db in order[idx + 1 :]:
+                untouched_revs = before_by_db[untouched_db]
+                results[untouched_db] = ("untouched", untouched_revs, untouched_revs)
+            any_mutated = any(kind in ("rolled_back", "partial") for kind, _, _ in results.values())
+            any_unknown = any(kind == "unknown" for kind, _, _ in results.values())
+            for name in order:
+                kind, b_revs, a_revs = results[name]
+                b_str = ",".join(b_revs) or "-"
+                a_str = (",".join(a_revs) or "-") if a_revs is not None else "unknown"
+                print(
+                    f"DOWNGRADE_STATUS {name} {kind} before={b_str} after={a_str}",
+                    flush=True,
+                )
+            verdict = "partial_downgrade" if any_mutated or any_unknown else "failed"
+            print(f"OVERALL {verdict}", flush=True)
+            print(
+                f"==> ERROR: downgrade failed on {db_name} ({type(exc).__name__}: {exc})",
+                file=sys.stderr,
+                flush=True,
+            )
+            return EXIT_PARTIAL_DOWNGRADE if any_mutated or any_unknown else 1
+
+        after_fmt = ",".join(after) or "-"
+        outcome = "unchanged" if after == before else "rolled_back"
+        results[db_name] = (outcome, before, after)
+        if outcome == "unchanged":
+            print(f"==> {db_name} unchanged ({after_fmt})", flush=True)
+        else:
+            print(f"==> {db_name} rolled back ({before_fmt} -> {after_fmt})", flush=True)
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply Alembic migrations.")
     parser.add_argument(
@@ -422,9 +567,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--target",
         default=None,
-        help="Target revision. Default: 'head' (up) / '-1' (down). "
-        "The down default of '-1' is applied per --db, so a bare "
-        "'--db a --db b down' steps each database back one revision.",
+        help="Target revision. Default: 'head' for '--direction up'; required "
+        "for '--direction down' ('<revision>' or '-N' with a single '--db', or "
+        "'base' across one or more databases).",
     )
     parser.add_argument(
         "--check",
@@ -457,14 +602,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return _run_check(order)
     if args.direction == "down":
-        # Rollback reverses registration order so a dependent schema tears down
-        # before the schema it FKs into. Critical for FK safety.
-        order = list(reversed(order))
-        target = args.target or "-1"
-        for db_name in order:
-            print(f"==> Rolling back {db_name} to {target}", flush=True)
-            downgrade(db_name, target)
-            print(f"==> {db_name} rolled back", flush=True)
+        return _run_downgrade(order, args.target)
     else:
         target = args.target or "head"
         # The steps need every database they touch at head; a partial or

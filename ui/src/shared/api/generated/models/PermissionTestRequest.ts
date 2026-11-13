@@ -11,7 +11,7 @@ export type PermissionTestRequest = {
      */
     method: string;
     /**
-     * Optional OpenAPI operation id resolved from the request URL.
+     * Optional OpenAPI operationId (or `op_…` registry operation ID) of the hypothetical request. When omitted, the dry-run resolves the operation from `(method, path)` against the credential's covered live API(s); when supplied, it must agree with the resolved operation.
      */
     operation_id?: (string | null);
     /**

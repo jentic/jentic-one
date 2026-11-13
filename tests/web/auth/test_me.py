@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -27,7 +28,9 @@ from jentic_one.admin.services._support.passwords import hash_password
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.app import create_app
+from jentic_one.mcp.tools import CallEnv, handle_whoami
 from jentic_one.shared.auth.api_key_resolver import RETIRED_SERVICE_ACCOUNT_KEY_DETAIL
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType, InviteState
 from tests.web.conftest import noop_lifespan
@@ -43,6 +46,8 @@ OWNER_EMAIL = "me-test-owner@test.local"
 NAMED_CREDENTIAL_ID = "cred_me_named"
 NAMED_CREDENTIAL_NAME = "Stripe live account"
 ORPHAN_CREDENTIAL_ID = "cred_me_orphan"
+UNBOUND_CREDENTIAL_ID = "cred_me_unbound"
+UNBOUND_CREDENTIAL_NAME = "Another user's private account"
 
 
 def _build_app(ctx: Context) -> FastAPI:
@@ -194,8 +199,9 @@ async def approved_agent_id(
         await session.execute(
             text(
                 "INSERT INTO credentials "
-                "(id, type, name, api_vendor, api_name, api_version, created_by) "
-                "VALUES (:id, 'token_value', :name, 'stripe', 'payments', 'v1', :created_by) "
+                "(id, type, name, api_vendor, api_name, api_version, created_by, state) "
+                "VALUES (:id, 'token_value', :name, 'stripe', 'payments', 'v1', "
+                ":created_by, 'pending') "
                 "ON CONFLICT DO NOTHING"
             ),
             {
@@ -203,6 +209,16 @@ async def approved_agent_id(
                 "name": NAMED_CREDENTIAL_NAME,
                 "created_by": owner_user_id,
             },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, api_version, created_by, state) "
+                "VALUES (:id, 'token_value', :name, 'other', 'private', 'v1', "
+                "'usr_someone_else', 'connected') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": UNBOUND_CREDENTIAL_ID, "name": UNBOUND_CREDENTIAL_NAME},
         )
         await session.commit()
     yield agent.id
@@ -216,7 +232,8 @@ async def approved_agent_id(
         await session.commit()
     async with ctx.control_db.session() as session:
         await session.execute(
-            text("DELETE FROM credentials WHERE id = :id"), {"id": NAMED_CREDENTIAL_ID}
+            text("DELETE FROM credentials WHERE id IN (:named_id, :unbound_id)"),
+            {"named_id": NAMED_CREDENTIAL_ID, "unbound_id": UNBOUND_CREDENTIAL_ID},
         )
         await session.commit()
 
@@ -288,6 +305,7 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     assert len(cred_bindings) == 2
     named = cred_bindings[NAMED_CREDENTIAL_ID]
     assert named["name"] == NAMED_CREDENTIAL_NAME
+    assert named["state"] == "pending"
     assert named["suspended"] is False
     # No shared rule set attached — inline rules govern this binding (Q-04).
     assert named["rule_set_id"] is None
@@ -297,7 +315,41 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     # …and graceful degradation (name=None, empty serves) for the orphan.
     orphan = cred_bindings[ORPHAN_CREDENTIAL_ID]
     assert orphan["name"] is None
+    assert orphan["state"] is None
     assert orphan["serves"] == []
+    # Enrichment is scoped by the caller's bindings; another user's credential
+    # in the same control DB contributes neither an entry nor its metadata.
+    assert UNBOUND_CREDENTIAL_ID not in resp.text
+    assert UNBOUND_CREDENTIAL_NAME not in resp.text
+
+
+async def test_mcp_whoami_exposes_only_own_binding_states(
+    web_context: Context, approved_agent_id: str
+) -> None:
+    """Python MCP whoami shares the /me state projection and binding boundary."""
+    result = await handle_whoami(
+        CallEnv(
+            ctx=web_context,
+            identity=Identity(
+                sub=approved_agent_id,
+                actor_type=ActorType.AGENT,
+                permissions=["capabilities:execute"],
+                active=True,
+            ),
+            credential="test-credential",
+            base_url="https://testserver",
+            session_id=None,
+        ),
+        {},
+    )
+
+    raw = result.content[0].text  # type: ignore[union-attr]
+    payload = json.loads(raw)
+    bindings = {b["credential_id"]: b for b in payload["credential_bindings"]}
+    assert bindings[NAMED_CREDENTIAL_ID]["state"] == "pending"
+    assert bindings[ORPHAN_CREDENTIAL_ID]["state"] is None
+    assert UNBOUND_CREDENTIAL_ID not in bindings
+    assert UNBOUND_CREDENTIAL_NAME not in raw
 
 
 async def test_me_agent_opaque_token_surfaces_minted_scopes(

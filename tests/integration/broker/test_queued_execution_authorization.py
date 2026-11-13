@@ -103,8 +103,7 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
 
 
 async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
-    """An active agent holding the execute scope, bound to one API-key
-    credential with an allow-GET rule."""
+    """Seed an active agent with execute scope and an allowed credential binding."""
     agent = Agent(name="queued-agent", registered_by="usr_owner", status="active")
     credential = Credential(
         type=StoredCredentialType.API_KEY,
@@ -152,6 +151,17 @@ async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
                 path=".*",
                 sequence=1,
             )
+        )
+        await session.commit()
+    return agent_id, credential_id
+
+
+async def _seed_unbound_agent_for_served_api(ctx: Context) -> tuple[str, str]:
+    """Seed an active agent and a credential serving the API, but no binding."""
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent_id)
         )
         await session.commit()
     return agent_id, credential_id
@@ -321,10 +331,14 @@ _DENIAL_IDENTITY_KEYS = (
 )
 
 
-async def _denial_events(ctx: Context) -> list[Event]:
+async def _events_of_type(ctx: Context, event_type: str) -> list[Event]:
     async with ctx.admin_db.session() as session:
-        result = await session.execute(select(Event).where(Event.type == EventType.PBAC_DENIED))
+        result = await session.execute(select(Event).where(Event.type == event_type))
         return list(result.scalars())
+
+
+async def _denial_events(ctx: Context) -> list[Event]:
+    return await _events_of_type(ctx, EventType.PBAC_DENIED)
 
 
 async def _deny_by_rule(ctx: Context, agent_id: str) -> None:
@@ -390,6 +404,48 @@ async def test_rule_denial_with_malformed_trace_id_still_records_an_uncorrelated
     assert event.trace_id is None
 
 
+async def test_served_api_without_binding_records_actor_and_operation_denial_evidence(
+    integration_context: Context, clean_tables: None
+) -> None:
+    ctx = integration_context
+    agent_id, credential_id = await _seed_unbound_agent_for_served_api(ctx)
+
+    verdict = await build_queued_execution_authorizer(ctx).authorize(
+        replace(
+            _request(agent_id, credential_id),
+            upstream_url=("https://api.acme.com/v1/pets/secret-id-123?token=QUERYSECRET456"),
+            operation_id="getPet",
+            relative_path="/pets/secret-id-123",
+            operation_path="/pets/{petId}",
+            trace_id=_TRACE_ID,
+        )
+    )
+
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "no_credential_binding"
+    (event,) = await _denial_events(ctx)
+    assert event.trace_id == _TRACE_ID
+    assert event.created_by == agent_id
+    assert event.actor_id == agent_id
+    assert event.actor_type == "agent"
+    assert event.data is not None
+    assert event.data["reason"] == "no_credential_binding"
+    assert event.data["mode"] == "direct"
+    assert {k: event.data[k] for k in _DENIAL_IDENTITY_KEYS} == {
+        "api_vendor": _VENDOR,
+        "api_name": _API_NAME,
+        "api_version": _API_VERSION,
+        "operation_id": "getPet",
+        "operation_method": "GET",
+        "operation_path": "/pets/{petId}",
+    }
+    assert await _events_of_type(ctx, EventType.CREDENTIAL_BINDING_UNSERVED) == []
+    recorded = f"{event.summary} {event.detail} {json.dumps(event.data)}"
+    for secret in ("secret-id-123", "QUERYSECRET456", "SECRET", "X-Api-Key"):
+        assert secret not in recorded
+
+
 async def test_unserved_api_denial_event_carries_trace_id(
     integration_context: Context, clean_tables: None
 ) -> None:
@@ -411,12 +467,9 @@ async def test_unserved_api_denial_event_carries_trace_id(
     )
 
     assert verdict.allowed is False
-    async with ctx.admin_db.session() as session:
-        result = await session.execute(
-            select(Event).where(Event.type == EventType.CREDENTIAL_BINDING_UNSERVED)
-        )
-        (event,) = result.scalars()
+    (event,) = await _events_of_type(ctx, EventType.CREDENTIAL_BINDING_UNSERVED)
     assert event.trace_id == _TRACE_ID
+    assert await _denial_events(ctx) == []
 
 
 class _PetsResolver:
