@@ -38,7 +38,7 @@ from tests.harness.http_doubles import spec_client
 
 pytestmark = pytest.mark.integration
 
-_IMPORT_SVC = "jentic_one.registry.services.import_service"
+_IMPORT_SVC = "jentic_one.registry.services.import_overlay"
 
 MINIMAL_OPENAPI = json.dumps(
     {
