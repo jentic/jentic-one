@@ -1427,10 +1427,9 @@ async def test_complete_from_callback_refuses_state_replay(
     # double-fire the token exchange. The nonce is consumed
     # atomically in the shared ``consume_callback_state`` prologue;
     # the second call raises ``StateReplayedError`` before the vendor
-    # HTTP is even opened. This test pins that the router's raw-state
-    # → service path enforces one-shot semantics on the session flow
-    # too — the same guarantee ``ConnectService.complete`` has always
-    # given the standalone flow.
+    # HTTP is even opened. This test pins one-shot nonce semantics on
+    # both session and standalone callback paths, with the vendor
+    # exchange occurring only on the first callback.
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     created = await svc.create_session(
