@@ -73,9 +73,11 @@ import — see [how server URLs are resolved](importing-apis.md#server-urls).
 
 httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the
 operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
-the UI. It is encrypted at rest and never returned to a caller — it is
-decrypted only inside the broker, at execution time. How a stored credential
-covers an API and how the broker picks one at execution time:
+the UI. It is encrypted at rest. `POST /credentials` echoes the just-supplied
+secret once in its create response; subsequent reads return only redacted
+details. The broker decrypts the stored secret in-process at execution time
+and injects it into the upstream request without exposing it to the agent.
+How a stored credential covers an API and how the broker picks one at execution time:
 [How credential resolution works](credentials-and-toolkits.md).
 
 ## 5. Grant access
