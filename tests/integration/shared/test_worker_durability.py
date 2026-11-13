@@ -27,7 +27,7 @@ from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.db.errors import DatabaseCommitOutcomeUnknownError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.events import emit_event
-from jentic_one.shared.executions import record_execution
+from jentic_one.shared.executions import ExecutionRecordInput, record_execution
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.worker import _COMPLETION_MAX_RETRIES, WorkerLoop
 from jentic_one.shared.models import ExecutionStatus, JobKind, JobStatus
@@ -482,13 +482,15 @@ async def test_reclaim_refuses_execution_with_persisted_dispatch_evidence(
         if signal == "execution_record":
             await record_execution(
                 session,
-                execution_id=execution_id,
-                toolkit_id=None,
-                trace_id=trace_id,
-                started_at=datetime.now(UTC),
-                status=ExecutionStatus.COMPLETED,
-                actor_id="agnt_test",
-                actor_type="agent",
+                ExecutionRecordInput(
+                    execution_id=execution_id,
+                    toolkit_id=None,
+                    trace_id=trace_id,
+                    started_at=datetime.now(UTC),
+                    status=ExecutionStatus.COMPLETED,
+                    actor_id="agnt_test",
+                    actor_type="agent",
+                ),
             )
         elif signal == "credential_accessed":
             await emit_event(
