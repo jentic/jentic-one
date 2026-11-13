@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,11 @@ var dataFileCommands = []string{"execute", "api"}
 // returning whether any network request reached the server, the stderr stream
 // emitted in agent mode, and the command error.
 func runBodyCommand(t *testing.T, cmdKind string, onHit func(*http.Request), bodyArgs ...string) (hit bool, stderr string, err error) {
+	t.Helper()
+	return runBodyCommandAt(t, cmdKind, "", onHit, bodyArgs...)
+}
+
+func runBodyCommandAt(t *testing.T, cmdKind, target string, onHit func(*http.Request), bodyArgs ...string) (hit bool, stderr string, err error) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
@@ -50,9 +56,12 @@ func runBodyCommand(t *testing.T, cmdKind string, onHit func(*http.Request), bod
 		root := TreeBuilder()(deps)
 		root.SetOut(outBuf)
 		root.SetErr(errBuf)
+		if target == "" {
+			target = "POST:/v1/pets"
+		}
 		args := append([]string{
 			"--mode", "agent",
-			"execute", "POST:/v1/pets",
+			"execute", target,
 			"--broker-scheme", "http",
 			"--broker-host", srv.Listener.Addr().String(),
 		}, bodyArgs...)
@@ -69,7 +78,10 @@ func runBodyCommand(t *testing.T, cmdKind string, onHit func(*http.Request), bod
 		root := TreeBuilder()(deps)
 		root.SetOut(outBuf)
 		root.SetErr(errBuf)
-		args := append([]string{"--mode", "agent", "api", "POST", "/agents"}, bodyArgs...)
+		if target == "" {
+			target = "/agents"
+		}
+		args := append([]string{"--mode", "agent", "api", "POST", target}, bodyArgs...)
 		root.SetArgs(args)
 		stderr = captureStderr(t, func() {
 			err = root.Execute()
@@ -103,7 +115,7 @@ func writeSparseFile(t *testing.T, dir, name string, size int64) string {
 // assertBodyTooLarge verifies both the returned *ux.CodedError and the agent
 // stderr JSON envelope carry MISSING_ARGUMENT + details.reason="body_too_large"
 // and the expected limit_bytes / total_bytes (#1793).
-func assertBodyTooLarge(t *testing.T, err error, stderr string, wantLimit, wantMinTotal int64) {
+func assertBodyTooLarge(t *testing.T, err error, stderr string, wantLimit, wantMinTotal int64) *ux.CodedError {
 	t.Helper()
 	coded := wantUsageError(t, err, "request body limit")
 	if got := coded.Details["reason"]; got != "body_too_large" {
@@ -130,6 +142,7 @@ func assertBodyTooLarge(t *testing.T, err error, stderr string, wantLimit, wantM
 	if env.Details["limit_bytes"] != float64(wantLimit) {
 		t.Errorf("envelope details.limit_bytes = %v, want %d", env.Details["limit_bytes"], wantLimit)
 	}
+	return coded
 }
 
 // TestDataFile_MaxBodyBytesBoundary pins the real 64 MiB ceiling
@@ -168,7 +181,10 @@ func TestDataFile_MaxBodyBytesBoundary(t *testing.T) {
 			if hit {
 				t.Fatalf("%s dialed the server for an over-limit --data-file", cmdKind)
 			}
-			assertBodyTooLarge(t, err, stderr, sdkclient.MaxBodyBytes, sdkclient.MaxBodyBytes+1)
+			coded := assertBodyTooLarge(t, err, stderr, sdkclient.MaxBodyBytes, sdkclient.MaxBodyBytes+1)
+			if _, ok := coded.Details["total_bytes_lower_bound"]; ok {
+				t.Errorf("stat-known size must stay exact, details = %v", coded.Details)
+			}
 		})
 	}
 }
@@ -194,7 +210,13 @@ func TestDataFile_GrowAfterStatBounded(t *testing.T) {
 			if hit {
 				t.Fatalf("%s dialed the server after --data-file grew past limit", cmdKind)
 			}
-			assertBodyTooLarge(t, err, stderr, limit, limit+1)
+			coded := assertBodyTooLarge(t, err, stderr, limit, limit+1)
+			if coded.Details["total_bytes"] != limit+1 || coded.Details["total_bytes_lower_bound"] != true {
+				t.Errorf("details = %v, want total_bytes=%d and total_bytes_lower_bound=true", coded.Details, limit+1)
+			}
+			if !strings.Contains(coded.Msg, "is at least 513 bytes") {
+				t.Errorf("message = %q, want an explicit lower bound", coded.Msg)
+			}
 		})
 	}
 }
@@ -245,6 +267,34 @@ func TestDataFile_NonRegularAndMissingPaths(t *testing.T) {
 			hit, _, err := runBodyCommand(t, cmdKind, nil, "--data-file", missing)
 			if hit {
 				t.Fatalf("%s dialed the server for a missing --data-file", cmdKind)
+			}
+			wantUsageError(t, err, "cannot read --data-file")
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("err = %v, want errors.Is(..., os.ErrNotExist)", err)
+			}
+		})
+	}
+}
+
+// TestDataFile_InvalidRejectedBeforeRemoteLookups pins local validation ahead
+// of live-spec retrieval and remote operation inspection (#1793).
+func TestDataFile_InvalidRejectedBeforeRemoteLookups(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.json")
+	cases := []struct {
+		name    string
+		cmdKind string
+		target  string
+		extra   []string
+	}{
+		{name: "api live spec", cmdKind: "api", target: "/agents", extra: []string{"--live"}},
+		{name: "execute operation inspection", cmdKind: "execute", target: "POST:https://upstream.example/v1/pets"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--data-file", missing}, tc.extra...)
+			hit, _, err := runBodyCommandAt(t, tc.cmdKind, tc.target, nil, args...)
+			if hit {
+				t.Fatalf("%s performed remote I/O before rejecting the missing data file", tc.name)
 			}
 			wantUsageError(t, err, "cannot read --data-file")
 			if !errors.Is(err, os.ErrNotExist) {

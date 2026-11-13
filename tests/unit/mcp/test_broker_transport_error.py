@@ -55,9 +55,9 @@ def _body(problem: dict[str, Any]) -> bytes:
 _PARITY_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "retry-after-parity.json"
 
 
-def _load_retry_after_parity_cases() -> list[dict[str, Any]]:
+def _load_retry_after_parity_cases(key: str = "cases") -> list[dict[str, Any]]:
     data = json.loads(_PARITY_FIXTURE.read_text(encoding="utf-8"))
-    cases = list(data["cases"])
+    cases = list(data[key])
     assert cases
     return cases
 
@@ -281,6 +281,30 @@ def test_mcp_retry_after_matches_shared_parity_vectors(case: dict[str, Any]) -> 
         httpx.Headers(items, encoding="utf-8"),
         _body({"type": "circuit_open", "title": "Circuit open"}),
         retry_safe=False,
+    )
+    assert got is not None
+    assert got.details is not None
+    assert got.extra is not None
+    assert got.details.get("retry_after_s") == want
+    assert got.extra.get("retry_after_s") == want
+
+
+@pytest.mark.parametrize(
+    "case", _load_retry_after_parity_cases("http_date_cases"), ids=lambda c: c["name"]
+)
+def test_mcp_http_date_matches_shared_parity_vectors(case: dict[str, Any]) -> None:
+    """Mounted MCP errors apply the shared fixed-clock HTTP-date vectors."""
+    headers = _headers("broker", retry_after=case["header"])
+    want = case["seconds"]
+    now_epoch = 1_609_459_200.0
+    assert ex.retry_after_seconds(headers, now_epoch=now_epoch) == want
+
+    got = ex.classify_broker_transport_error(
+        503,
+        headers,
+        _body({"type": "circuit_open", "title": "Circuit open"}),
+        retry_safe=False,
+        now_epoch=now_epoch,
     )
     assert got is not None
     assert got.details is not None

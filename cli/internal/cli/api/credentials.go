@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/client/paginate"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -156,6 +156,8 @@ func decodeCredentialRead[T any](credentialID string, do func() (*http.Response,
 	return &payload, nil
 }
 
+var credentialReadBodyLimit = sdkclient.MaxBodyBytes
+
 func doCredentialRead(do func() (*http.Response, error)) (*rawCredentialResp, error) {
 	rsp, err := do()
 	if err != nil {
@@ -165,7 +167,7 @@ func doCredentialRead(do func() (*http.Response, error)) (*rawCredentialResp, er
 		return nil, nil
 	}
 	defer func() { _ = rsp.Body.Close() }()
-	body, err := io.ReadAll(rsp.Body)
+	body, err := sdkclient.ReadAllBounded(rsp.Body, credentialReadBodyLimit)
 	if err != nil {
 		return nil, fmt.Errorf("read credential response: %w", err)
 	}
@@ -174,12 +176,19 @@ func doCredentialRead(do func() (*http.Response, error)) (*rawCredentialResp, er
 
 // credentialReadErr maps control-plane HTTP failures on `creds list`
 // (credentialID == "") and `creds show` (credentialID != "") onto the CLI's
-// coded taxonomy (#1429). Transport and non-HTTP errors pass through verbatim
-// for asCoded.
+// coded taxonomy (#1429). Failures without an HTTP response use the transport
+// row, while SDK auth/config sentinels retain their existing classification.
 func credentialReadErr(err error, credentialID string) error {
 	var he *HTTPError
 	if !errors.As(err, &he) || he == nil {
-		return err
+		classified := classifyTransportErr(err)
+		var coded *ux.CodedError
+		if errors.As(classified, &coded) && coded.Code == ux.CodeTransportError {
+			withAction := *coded
+			withAction.Actionable = "Run `jentic doctor` to verify the control-plane URL and connectivity, then retry."
+			return &withAction
+		}
+		return classified
 	}
 	detail := credentialProblemDetail(he)
 

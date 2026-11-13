@@ -265,9 +265,9 @@ func TestBrokerTransportErrorCarriesReason(t *testing.T) {
 	}
 }
 
-// TestRetryAfterSecondsParity replays the shared delay-seconds vector file
+// TestRetryAfterSecondsParity replays the shared vector file
 // (tests/fixtures/retry-after-parity.json) so Go, MCP and the broker enforce
-// identical rounding, grammar and one-day cap rules (#1991).
+// identical delay grammar, HTTP-date, rounding and one-day cap rules (#1991).
 func TestRetryAfterSecondsParity(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", "retry-after-parity.json"))
 	if err != nil {
@@ -279,6 +279,12 @@ func TestRetryAfterSecondsParity(t *testing.T) {
 			Header  *string `json:"header"`
 			Seconds *int    `json:"seconds"`
 		} `json:"cases"`
+		HTTPDateNowEpoch float64 `json:"http_date_now_epoch"`
+		HTTPDateCases    []struct {
+			Name    string  `json:"name"`
+			Header  *string `json:"header"`
+			Seconds *int    `json:"seconds"`
+		} `json:"http_date_cases"`
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatalf("decode shared Retry-After parity fixture: %v", err)
@@ -308,6 +314,24 @@ func TestRetryAfterSecondsParity(t *testing.T) {
 			want := float64(*tc.Seconds)
 			if got != want {
 				t.Errorf("RetryAfterSeconds(%q) = %v, want %v", label, got, want)
+			}
+		})
+	}
+	if len(fixture.HTTPDateCases) == 0 {
+		t.Fatal("shared Retry-After parity fixture contains no HTTP-date cases")
+	}
+	now := time.Unix(int64(fixture.HTTPDateNowEpoch), 0).UTC()
+	for _, tc := range fixture.HTTPDateCases {
+		t.Run("http_date/"+tc.Name, func(t *testing.T) {
+			if tc.Header == nil || tc.Seconds == nil {
+				t.Fatal("HTTP-date parity cases require a header and expected seconds")
+			}
+			h := http.Header{}
+			h.Set("Retry-After", *tc.Header)
+			got, ok := retryAfterSecondsAt(h, now)
+			if !ok || got != float64(*tc.Seconds) {
+				t.Errorf("retryAfterSecondsAt(%q, %v) = (%v, %v), want (%v, true)",
+					*tc.Header, now, got, ok, *tc.Seconds)
 			}
 		})
 	}

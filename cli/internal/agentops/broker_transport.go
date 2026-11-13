@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -184,7 +185,7 @@ func retryAfterSecondsAt(h http.Header, now time.Time) (float64, bool) {
 	if secs, ok := parseDelaySeconds(v); ok {
 		return float64(secs), true
 	}
-	if when, err := http.ParseTime(v); err == nil {
+	if when, err := parseRetryAfterDate(v); err == nil {
 		delta := when.Sub(now)
 		if delta <= 0 {
 			return 0, true
@@ -199,6 +200,52 @@ func retryAfterSecondsAt(h http.Header, now time.Time) (float64, bool) {
 		return float64(secs), true
 	}
 	return 0, false
+}
+
+// retryAfterDateCaseFolder matches Python's case-insensitive weekday, month,
+// and GMT parsing without changing any other date text.
+var retryAfterDateCaseFolder = strings.NewReplacer(
+	"mon", "Mon", "tue", "Tue", "wed", "Wed", "thu", "Thu",
+	"fri", "Fri", "sat", "Sat", "sun", "Sun",
+	"jan", "Jan", "feb", "Feb", "mar", "Mar", "apr", "Apr",
+	"may", "May", "jun", "Jun", "jul", "Jul", "aug", "Aug",
+	"sep", "Sep", "oct", "Oct", "nov", "Nov", "dec", "Dec",
+	"gmt", "GMT",
+)
+
+// parseRetryAfterDate accepts the standard HTTP-date layouts and the numeric,
+// colon-zone, -0000, case-insensitive, and zone-less forms that Python's
+// email.utils parser accepts. A zone-less value is pinned to UTC, never the
+// host's local timezone.
+func parseRetryAfterDate(raw string) (time.Time, error) {
+	var err error
+	for _, candidate := range []string{raw, normalizeRetryAfterDate(raw)} {
+		var when time.Time
+		if when, err = http.ParseTime(candidate); err == nil {
+			return when, nil
+		}
+		if when, err = mail.ParseDate(candidate); err == nil {
+			return when, nil
+		}
+		if when, err = mail.ParseDate(candidate + " -0000"); err == nil {
+			return when, nil
+		}
+	}
+	return time.Time{}, err
+}
+
+func normalizeRetryAfterDate(raw string) string {
+	normalized := retryAfterDateCaseFolder.Replace(strings.ToLower(raw))
+	if len(normalized) < 6 {
+		return normalized
+	}
+	zoneAt := len(normalized) - 6
+	zone := normalized[zoneAt:]
+	if (zone[0] == '+' || zone[0] == '-') && zone[3] == ':' &&
+		isASCIIDigits(zone[1:3]) && isASCIIDigits(zone[4:]) {
+		return normalized[:zoneAt] + zone[:3] + zone[4:]
+	}
+	return normalized
 }
 
 // parseDelaySeconds parses an unsigned ASCII decimal delay (^[0-9]+(\.[0-9]+)?$),

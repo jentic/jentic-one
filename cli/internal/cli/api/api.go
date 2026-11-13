@@ -20,13 +20,14 @@ import (
 )
 
 type apiOptions struct {
-	data        string
-	dataFile    string
-	failOnError bool
-	raw         bool
-	live        bool
-	query       []string
-	headers     []string
+	data         string
+	dataFile     string
+	dataFileBody io.Reader
+	failOnError  bool
+	raw          bool
+	live         bool
+	query        []string
+	headers      []string
 }
 
 // newAPICmd is the `jentic api` passthrough: a gh-api-style authenticated escape
@@ -81,6 +82,19 @@ func runAPICall(cmd *cobra.Command, app *app, opts *apiOptions, method, path str
 	raw, err := clictx.GetControlRawClient(cmd.Context())
 	if err != nil {
 		return reportCoded(aud, err)
+	}
+
+	// A selected data file is validated before a live-spec request. Stdin stays
+	// in resolveAPIBody so its explicit and implicit reads retain their ordering.
+	if opts.dataFile != "" && opts.data != "-" {
+		opts.dataFileBody, err = readDataFile(opts.dataFile)
+		if err != nil {
+			var coded *ux.CodedError
+			if errors.As(err, &coded) {
+				return reportCoded(aud, coded)
+			}
+			return reportCoded(aud, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: err.Error(), Cause: err})
+		}
 	}
 
 	// Path allowlist: unless --raw (loopback only), the path must match a spec
@@ -186,6 +200,9 @@ func resolveAPIBody(opts *apiOptions) (io.Reader, error) {
 		// `jentic api` (#1354).
 		return readStdinBody()
 	case opts.dataFile != "":
+		if opts.dataFileBody != nil {
+			return opts.dataFileBody, nil
+		}
 		return readDataFile(opts.dataFile)
 	case opts.data != "":
 		return strings.NewReader(opts.data), nil

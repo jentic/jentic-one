@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -529,10 +530,45 @@ func TestCredentialsList_ErrorClassification(t *testing.T) {
 	}
 }
 
-// TestCredentialsRead_TransportAndNonHTTPFailuresPassThrough pins #1429:
-// transport failures without an HTTP response (and SDK auth/config sentinels)
-// pass through credentialReadErr untouched so existing asCoded handling holds.
-func TestCredentialsRead_TransportAndNonHTTPFailuresPassThrough(t *testing.T) {
+func TestDoCredentialReadBoundsResponseBody(t *testing.T) {
+	originalLimit := credentialReadBodyLimit
+	credentialReadBodyLimit = 16
+	t.Cleanup(func() { credentialReadBodyLimit = originalLimit })
+
+	read := func(body string) (*rawCredentialResp, error) {
+		return doCredentialRead(func() (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})
+	}
+
+	raw, err := read(strings.Repeat("a", 16))
+	if err != nil {
+		t.Fatalf("exact-limit response: %v", err)
+	}
+	if raw == nil || len(raw.body) != 16 {
+		t.Errorf("exact-limit response = %+v, want 16 buffered bytes", raw)
+	}
+
+	raw, err = read(strings.Repeat("a", 17))
+	if raw != nil {
+		t.Errorf("over-limit response = %+v, want nil", raw)
+	}
+	if !errors.Is(err, sdkclient.ErrBodyTooLarge) {
+		t.Fatalf("over-limit error = %v, want ErrBodyTooLarge", err)
+	}
+	coded := asCoded(credentialReadErr(err, ""))
+	if coded.Code != ux.CodeTransportError || coded.Actionable == "" {
+		t.Errorf("over-limit classification = %+v, want actionable TRANSPORT_ERROR", coded)
+	}
+}
+
+// TestCredentialsRead_TransportAndNonHTTPFailures pins #1429: failures without
+// an HTTP response are TRANSPORT_ERROR, while SDK auth/config sentinels retain
+// their existing classification.
+func TestCredentialsRead_TransportAndNonHTTPFailures(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -553,8 +589,11 @@ func TestCredentialsRead_TransportAndNonHTTPFailuresPassThrough(t *testing.T) {
 				t.Errorf("stdout = %q, want empty", stdout)
 			}
 			var coded *ux.CodedError
-			if !errors.As(runErr, &coded) || coded.Code != ux.CodeInternalError {
-				t.Errorf("err = %T (%v), want INTERNAL_ERROR via existing asCoded fallback", runErr, runErr)
+			if !errors.As(runErr, &coded) || coded.Code != ux.CodeTransportError {
+				t.Errorf("err = %T (%v), want TRANSPORT_ERROR", runErr, runErr)
+			}
+			if coded == nil || !strings.Contains(coded.Actionable, "jentic doctor") {
+				t.Errorf("actionable = %q, want jentic doctor recovery", coded.Actionable)
 			}
 			if strings.Contains(stderr, "not found") || strings.Contains(stderr, "unexpected backend response") {
 				t.Errorf("stderr = %q, transport error must not fabricate an HTTP status error", stderr)

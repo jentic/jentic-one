@@ -78,7 +78,7 @@ func readDataFileBounded(path string, limit int64) (io.Reader, error) {
 
 	data, err := sdkclient.ReadAllBounded(f, limit)
 	if errors.Is(err, sdkclient.ErrBodyTooLarge) {
-		return nil, dataFileTooLargeError(path, limit+1, limit)
+		return nil, dataFileTooLargeLowerBoundError(path, limit+1, limit)
 	}
 	if err != nil {
 		return nil, dataFileReadError(path, err)
@@ -109,15 +109,29 @@ func checkRegularDataFile(path string, fi os.FileInfo, limit int64) error {
 
 // dataFileTooLargeError returns the coded size refusal for --data-file,
 // matching multipartTooLargeError's MISSING_ARGUMENT + details.reason="body_too_large"
-// machine contract (#1793). totalBytes is a lower bound when overflow is
-// caught mid-read by ReadAllBounded.
+// machine contract (#1793).
 func dataFileTooLargeError(path string, totalBytes, limit int64) error {
+	return dataFileSizeError(path, totalBytes, limit, false)
+}
+
+func dataFileTooLargeLowerBoundError(path string, totalBytes, limit int64) error {
+	return dataFileSizeError(path, totalBytes, limit, true)
+}
+
+func dataFileSizeError(path string, totalBytes, limit int64, lowerBound bool) error {
+	msg := fmt.Sprintf("--data-file %s is %d bytes, over the %d-byte (%d MiB) request body limit",
+		path, totalBytes, limit, limit>>20)
+	details := map[string]any{"reason": "body_too_large", "total_bytes": totalBytes, "limit_bytes": limit}
+	if lowerBound {
+		msg = fmt.Sprintf("--data-file %s is at least %d bytes, over the %d-byte (%d MiB) request body limit",
+			path, totalBytes, limit, limit>>20)
+		details["total_bytes_lower_bound"] = true
+	}
 	return &ux.CodedError{
-		Code: ux.CodeMissingArgument,
-		Msg: fmt.Sprintf("--data-file %s is %d bytes, over the %d-byte (%d MiB) request body limit",
-			path, totalBytes, limit, limit>>20),
+		Code:       ux.CodeMissingArgument,
+		Msg:        msg,
 		Actionable: "Pass a smaller request body file; --data-file cannot exceed the 64 MiB transport ceiling.",
-		Details:    map[string]any{"reason": "body_too_large", "total_bytes": totalBytes, "limit_bytes": limit},
+		Details:    details,
 	}
 }
 
