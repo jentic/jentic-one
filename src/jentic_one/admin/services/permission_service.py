@@ -187,6 +187,7 @@ class PermissionService:
                     ),
                     origin=identity.origin.value,
                 )
+        self._ctx.invalidate_broker_caches(user_id=user_id)
         return [g.permission for g in grants]
 
     async def validate_grants(self, granter_user_id: str, permissions: list[str]) -> None:

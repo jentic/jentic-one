@@ -16,11 +16,13 @@ from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     AccessTokenRepository,
     ActorPermissionGrantRepository,
     AgentRepository,
+    UserPermissionGrantRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
@@ -46,6 +48,9 @@ async def clean_tokens(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(AccessToken))
             await session.execute(delete(RefreshToken))
             await session.execute(delete(ActorPermissionGrant))
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.created_by == _SEED_MARKER)
+            )
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
             await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
             await session.commit()
@@ -55,7 +60,13 @@ async def clean_tokens(integration_context: Context) -> AsyncGenerator[None, Non
     await _truncate()
 
 
-async def _seed_user(ctx: Context, user_id: str, *, active: bool = True) -> str:
+async def _seed_user(
+    ctx: Context,
+    user_id: str,
+    *,
+    active: bool = True,
+    permissions: set[str] | None = None,
+) -> str:
     async with ctx.admin_db.session() as session:
         user = await UserRepository.create(
             session,
@@ -66,6 +77,14 @@ async def _seed_user(ctx: Context, user_id: str, *, active: bool = True) -> str:
             active=active,
             created_by=_SEED_MARKER,
         )
+        if permissions:
+            await UserPermissionGrantRepository.set_permissions(
+                session,
+                user.id,
+                permissions=permissions,
+                granted_by=None,
+                created_by=_SEED_MARKER,
+            )
         await session.commit()
         return user.id
 
@@ -95,8 +114,12 @@ async def test_issue_pair_lifecycle(
     token_service: TokenService, integration_context: Context, clean_tokens: None
 ) -> None:
     """Full lifecycle: issue -> introspect (active) -> revoke -> introspect (inactive)."""
-    user_id = await _seed_user(integration_context, "usr_test1")
-    access, refresh = await token_service.issue_pair(user_id, ActorType.USER, ["read", "write"])
+    user_id = await _seed_user(
+        integration_context, "usr_test1", permissions={"apis:read", "apis:write"}
+    )
+    access, refresh = await token_service.issue_pair(
+        user_id, ActorType.USER, ["apis:read", "apis:write"]
+    )
 
     assert access.startswith("at_")
     assert refresh.startswith("rt_")
@@ -104,7 +127,7 @@ async def test_issue_pair_lifecycle(
     result = await token_service.introspect(access)
     assert result["active"] is True
     assert result["sub"] == user_id
-    assert result["scope"] == "read write"
+    assert result["scope"] == "apis:read apis:write"
 
     await token_service.revoke(access, identity=Identity(sub=user_id, email="test@local"))
 
@@ -116,14 +139,14 @@ async def test_refresh_rotation(
     token_service: TokenService, integration_context: Context, clean_tokens: None
 ) -> None:
     """Issue -> refresh -> verify new pair works, old is consumed."""
-    user_id = await _seed_user(integration_context, "usr_test2")
-    access1, refresh1 = await token_service.issue_pair(user_id, ActorType.USER, ["read"])
+    user_id = await _seed_user(integration_context, "usr_test2", permissions={"apis:read"})
+    access1, refresh1 = await token_service.issue_pair(user_id, ActorType.USER, ["apis:read"])
 
     access2, refresh2, scopes2 = await token_service.refresh(refresh1)
 
     assert access2.startswith("at_")
     assert refresh2.startswith("rt_")
-    assert scopes2 == ["read"]
+    assert scopes2 == ["apis:read"]
     assert access2 != access1
     assert refresh2 != refresh1
 

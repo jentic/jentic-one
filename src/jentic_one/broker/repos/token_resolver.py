@@ -10,6 +10,7 @@ from sqlalchemy import Boolean, text
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import effective_user_oauth_scopes
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -117,14 +118,13 @@ class InProcessTokenResolver:
             if row is None:
                 return None
 
-            # The mint-time snapshot is an OAuth2 scope set; cross it into the
-            # permission vocabulary the rest of the platform enforces on.
-            permissions = scopes_to_permissions(_as_scope_list(row.scopes))
+            raw_scopes = _as_scope_list(row.scopes)
 
             # Long-lived agent tokens (is_ephemeral=False) resolve permissions
             # live from actor_permission_grants so grant edits take effect
-            # immediately. Ephemeral minted tokens keep their downscoped snapshot;
-            # user tokens do not draw permissions from actor_permission_grants.
+            # immediately. Ephemeral agent tokens keep their downscoped snapshot.
+            # User tokens intersect their snapshot with live user_permission_grants
+            # expanded through effective_user_oauth_scopes (#1442).
             if not row.is_ephemeral and row.actor_type == ActorType.AGENT.value:
                 grants = await session.execute(
                     text(
@@ -135,6 +135,17 @@ class InProcessTokenResolver:
                     {"actor_id": row.actor_id, "actor_type": row.actor_type},
                 )
                 permissions = [str(g.permission) for g in grants.all()]
+            elif row.actor_type == ActorType.USER.value:
+                user_grants = await session.execute(
+                    text("SELECT permission FROM user_permission_grants WHERE user_id = :user_id"),
+                    {"user_id": row.actor_id},
+                )
+                user_ceiling = effective_user_oauth_scopes(
+                    {str(g.permission) for g in user_grants.all()}
+                )
+                permissions = scopes_to_permissions([s for s in raw_scopes if s in user_ceiling])
+            else:
+                permissions = scopes_to_permissions(raw_scopes)
 
         # SQLite returns DATETIME columns from a ``text()`` query as ISO strings
         # (Postgres returns aware ``datetime``); normalise so comparisons and the
