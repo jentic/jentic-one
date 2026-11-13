@@ -22,7 +22,7 @@ from sqlalchemy import delete, func, select, text
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
     _streaming_persist_pending,

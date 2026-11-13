@@ -12,7 +12,9 @@ from jentic_one.broker.core.errors import CircuitOpenError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution import service as service_module
 from jentic_one.broker.services.execution.service import default_broker, run_execution
-from jentic_one.broker.web.routers.execute import _emit_streaming_circuit_event
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _emit_streaming_circuit_event,
+)
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.resilience import CircuitBreaker

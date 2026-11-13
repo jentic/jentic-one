@@ -20,7 +20,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
     _streaming_persist_gate,
@@ -115,7 +115,10 @@ def _write_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _noop(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr("jentic_one.broker.web.routers.execute.persist_streaming_execution", _noop)
+    monkeypatch.setattr(
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
+        _noop,
+    )
 
 
 @pytest.mark.asyncio

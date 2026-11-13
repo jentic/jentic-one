@@ -81,7 +81,7 @@ ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # persists against its own admin pool. A Semaphore belongs to the loop
         # that created it and guards a per-process pool, so the bound is
         # process-local by construction and cannot live on the state backend.
-        ("broker/web/routers/execute.py", "_persist_gates"),
+        ("broker/services/execution/streaming_persistence.py", "_persist_gates"),
     },
 )
 

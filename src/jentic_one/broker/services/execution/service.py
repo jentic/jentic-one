@@ -85,7 +85,8 @@ async def emit_circuit_open_event(
     operator-facing event. The buffered path emits it in the request's own
     transaction; the streaming path, whose error response must not wait on the
     admin database, emits it off the request before and independently of the
-    execution record (see ``_emit_streaming_circuit_event`` in the router).
+    execution record (see ``_emit_streaming_circuit_event`` in
+    ``streaming_persistence``).
 
     The rate limit is the breaker's own per-host claim
     (``CircuitOpenError.report``), checked by the caller: of every refusal an
