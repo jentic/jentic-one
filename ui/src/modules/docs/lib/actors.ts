@@ -2,16 +2,18 @@
  * Actor / endpoint transforms — the data behind the "actor explorer".
  *
  * This is the browser-side mirror of the `jentic endpoints` CLI command
- * (cli/internal/cmd/endpoints.go): it reads the same `/reference/endpoints.json`
- * payload and applies the *same* two operations:
+ * (`cli/internal/cli/api/endpoints.go`): it reads the same
+ * `/reference/endpoints.json` payload and applies the same two operations:
  *
  *   1. filter by actor type — keep endpoints whose `actor_types` include the
  *      selected actor (`user` | `agent`);
- *   2. group by typical caller — the advisory bucket the CLI prints
- *      (Agent-facing / Operator-facing / Any authenticated / Public).
+ *   2. group by typical caller — classify into the same four advisory caller
+ *      buckets (`agent`, `operator`, `any`, `public`), using shorter UI
+ *      heading labels paired with separate blurbs.
  *
- * Keeping the rules identical means the docs page and the CLI can never tell a
- * different story about who can call what. Pure functions over the payload.
+ * Sharing these filter and group rules keeps actor and caller-bucket
+ * membership consistent between the docs page and the CLI. Pure functions over
+ * the payload.
  */
 import type { ReferenceEndpoint, ReferencePayload } from '@/modules/docs/api/types';
 
