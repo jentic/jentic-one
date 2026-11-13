@@ -138,15 +138,18 @@ async def handle_database_unavailable(
     whether the write was applied before retrying.
     """
     log_database_unavailable(logger, "broker_database_unavailable", exc, path=request.url.path)
+    outcome_unknown = isinstance(exc, DatabaseCommitOutcomeUnknownError)
     detail = (
         DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
-        if isinstance(exc, DatabaseCommitOutcomeUnknownError)
+        if outcome_unknown
         else "The broker's database is temporarily unavailable"
     )
+    headers = None if outcome_unknown else {"Retry-After": str(exc.retry_after_s)}
     return problem_response(
         503,
         detail,
         type="database_unavailable",
+        headers=headers,
         instance=request.url.path,
     )
 

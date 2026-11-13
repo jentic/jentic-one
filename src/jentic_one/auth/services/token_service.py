@@ -198,7 +198,14 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         # Delete is terminal: a deleted row is refused even if it reads active.
-        return user is not None and user.active and user.deleted_at is None
+        # Forced password rotation fences opaque USER OAuth tokens until the
+        # required password change clears must_change_password (#1297).
+        return (
+            user is not None
+            and user.active
+            and user.deleted_at is None
+            and not user.must_change_password
+        )
     return False
 
 
@@ -280,6 +287,16 @@ class TokenService:
         now = datetime.now(UTC)
 
         async def _write(session: AsyncSession) -> None:
+            if actor_type == ActorType.USER:
+                # Reset holds this lock while it fences the user and sweeps tokens.
+                user = await UserRepository.get_by_id_for_update(session, actor_id)
+                if (
+                    user is None
+                    or not user.active
+                    or user.deleted_at is not None
+                    or user.must_change_password
+                ):
+                    raise InvalidGrantError("actor is not active")
             await AccessTokenRepository.create(
                 session,
                 token_hash=access_hash,
@@ -360,6 +377,11 @@ class TokenService:
         grant_ceiling: frozenset[str] | None = None
 
         async with self._ctx.admin_db.transaction() as session:
+            candidate = await RefreshTokenRepository.get_by_hash(session, token_hash)
+            if candidate is not None and candidate.actor_type == ActorType.USER:
+                # Reset locks the user before its token sweep. Take the same
+                # order here, then refresh the token row under its own lock.
+                await UserRepository.get_by_id_for_update(session, candidate.actor_id)
             rt = await RefreshTokenRepository.get_by_hash(session, token_hash, for_update=True)
 
             if rt is None or rt.revoked_at is not None:

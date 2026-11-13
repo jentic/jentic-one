@@ -79,7 +79,8 @@ class InProcessTokenResolver:
             # bare deletion would drop a residual row into ELSE 'active'.
             "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
-            "   (SELECT CASE WHEN u.active AND u.deleted_at IS NULL"
+            "   (SELECT CASE"
+            "     WHEN u.active AND u.deleted_at IS NULL AND NOT u.must_change_password"
             "     THEN 'active' ELSE 'disabled' END"
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"

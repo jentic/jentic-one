@@ -183,27 +183,23 @@ type AgentDirective struct {
 type AgentDirectiveStrategy string
 
 // AsyncQueuedResponse Handle returned when the Broker queues an upstream call for async
-// execution — the `202` body on an async execution. The Broker
-// does not expose a polling surface of its own; `_links.self`
-// is an absolute URL into the platform's control plane, where
-// the queued work surfaces as a `kind: execution` job. Poll
-// that URL for status, and follow its `_links.result` to
-// collect the upstream response body once `status` is
-// `completed`.
+// execution — the `202` body on an async execution. `_links.self`
+// is an absolute URL to `GET /jobs/{job_id}` on the Broker, so any
+// credential the Broker accepted on enqueue (including trusted-issuer
+// JWTs) can poll status and follow `_links.result` to collect the
+// stored execution result.
 //
-// Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123","status":"queued"}
+// Examples: {"_links":{"self":"https://broker.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123","status":"queued"}
 type AsyncQueuedResponse struct {
-	// UnderscoreLinks HAL-style link relations pointing into the control-plane job
-	// record for the queued job. `self` always
-	// points at the control-plane job record; the broker does
-	// not expose its own polling surface.
+	// UnderscoreLinks HAL-style link relations pointing to the caller-scoped job
+	// status endpoint on the Broker.
 	//
 	//
-	// Examples: {"self":"https://control.your-instance.example/jobs/job_abc123"}
+	// Examples: {"self":"https://broker.your-instance.example/jobs/job_abc123"}
 	UnderscoreLinks struct {
-		// Self Absolute URL of the control-plane job record. Poll this for status and result links.
+		// Self Absolute URL of `GET /jobs/{job_id}` on the Broker. Poll this for status and result links.
 		//
-		// Examples: https://control.your-instance.example/jobs/job_abc123
+		// Examples: https://broker.your-instance.example/jobs/job_abc123
 		Self string `json:"self"`
 	} `json:"_links"`
 
@@ -505,6 +501,77 @@ type HeldExecutionAcceptedResponse struct {
 // HeldExecutionAcceptedResponseStatus Always `held`.
 type HeldExecutionAcceptedResponseStatus string
 
+// JobLinksResponse Hypermedia links for a Broker-polled execution job.
+type JobLinksResponse struct {
+	// Execution URL of the related execution record on the control plane; null if none.
+	//
+	// Examples: https://control.your-instance.example/executions/exec_abc123
+	Execution *string `json:"execution,omitempty"`
+
+	// Result URL of the job result on the Broker when an unexpired result is stored; null otherwise.
+	//
+	// Examples: https://broker.your-instance.example/jobs/job_abc123/result
+	Result *string `json:"result,omitempty"`
+
+	// Self URL of this job on the Broker.
+	//
+	// Examples: https://broker.your-instance.example/jobs/job_abc123
+	Self string `json:"self"`
+}
+
+// JobResponse Caller-scoped execution job representation returned by `GET /jobs/{job_id}` on the Broker.
+//
+// Examples: {"_links":{"execution":"https://control.your-instance.example/executions/exec_abc123","result":"https://broker.your-instance.example/jobs/job_abc123/result","self":"https://broker.your-instance.example/jobs/job_abc123"},"actor_id":"agnt_abc123","actor_type":"agent","created_at":"2026-01-15T09:30:00Z","error":null,"execution_id":"exec_abc123","job_id":"job_abc123","kind":"execution","status":"completed","updated_at":"2026-01-15T09:30:05Z"}
+type JobResponse struct {
+	// UnderscoreLinks Hypermedia links for a Broker-polled execution job.
+	UnderscoreLinks JobLinksResponse `json:"_links"`
+
+	// ActorId Subject that enqueued the job.
+	//
+	// Examples: agnt_abc123
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorType Kind of actor that enqueued the job (`agent` or `user`).
+	//
+	// Examples: agent
+	ActorType string `json:"actor_type"`
+
+	// CreatedAt When the job was created (RFC 3339).
+	//
+	// Examples: 2026-01-15T09:30:00Z
+	CreatedAt time.Time `json:"created_at"`
+
+	// Error Error message recorded for the job; null if none.
+	//
+	// Examples: Upstream returned HTTP 502 Bad Gateway
+	Error *string `json:"error,omitempty"`
+
+	// ExecutionId ID of the execution record linked to the job, if any.
+	//
+	// Examples: exec_abc123
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// JobId Unique ID of the job.
+	//
+	// Examples: job_abc123
+	JobId string `json:"job_id"`
+
+	// Kind Kind of job (`execution` for Broker-enqueued jobs).
+	//
+	// Examples: execution
+	Kind string `json:"kind"`
+
+	// Status Lifecycle state (`queued`, `running`, `held`, `completed`, `failed`, `cancelled`, or `dead_letter`).
+	//
+	// Examples: completed
+	Status string `json:"status"`
+
+	// UpdatedAt When the job was last updated (RFC 3339); null if never updated.
+	//
+	// Examples: 2026-01-15T09:30:05Z
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
 // ReadinessResponse Saturation-aware readiness probe response — the body returned by
 // `GET /ready`. `status: ready` (HTTP `200`) means the
 // instance is below the saturation threshold; `status: unready` (HTTP
@@ -559,6 +626,11 @@ type JenticCredentialName = string
 
 // JenticRevision Examples: ["stripe:payments:2023-10-16=3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"], ["stripe:payments:2023-10-16=rev_3f2b8c1e7d4a4e9ba6c51d2e3f4a5b6c","shopify:admin:2024-01=8a1d4c2e-5b6f-4a7e-9c3d-2e1f0a9b8c7d"]
 type JenticRevision = []string
+
+// JobId Unique ID of the execution job.
+//
+// Examples: job_abc123
+type JobId = string
 
 // Prefer Examples: respond-async
 type Prefer = string
@@ -652,6 +724,73 @@ type ExecuteAsync struct {
 //
 // Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Forbidden = BrokerProblem
+
+// JobNotCompleted RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type JobNotCompleted = BrokerProblem
+
+// JobNotFound RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type JobNotFound = BrokerProblem
+
+// JobResultApplicationJSON Stored execution result document.
+type JobResultApplicationJSON map[string]interface{}
+
+// JobResultApplicationProblemPlusJSON RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type JobResultApplicationProblemPlusJSON = BrokerProblem
+
+// JobResultExpired RFC 9457 Problem Details body for every Broker error. Extends the
+// shared Jentic `ProblemDetails` schema with the Broker's
+// agent-recovery members: `error_origin` says *who* failed, and
+// `agent_directive` (when present) is a machine-actionable recovery
+// instruction an agent can follow without parsing prose. `title`
+// repeats `detail` on Broker-originated errors.
+//
+// This body is emitted for errors the Broker raises. An error the
+// upstream returns is mirrored verbatim in the upstream's own format,
+// so a non-2xx carries this shape only when `Jentic-Error-Origin` is
+// `broker` (or absent, on an authentication failure) — see **Reading
+// the response** in the API overview.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
+type JobResultExpired = BrokerProblem
 
 // MethodNotAllowed RFC 9457 Problem Details body for every Broker error. Extends the
 // shared Jentic `ProblemDetails` schema with the Broker's
@@ -1500,6 +1639,40 @@ type ClientInterface interface {
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// BrokerGetJob Get a job
+	//
+	// Poll a caller-owned `kind: execution` job enqueued on the Broker.
+	// Authenticates with the Broker's token validator (opaque `at_…`
+	// tokens, `jak_…` agent API keys, and trusted-issuer JWTs) and requires
+	// `capabilities:execute`.
+	//
+	// Reads are strictly scoped to the enqueuing actor (`created_by` and
+	// `actor_type`): another actor's job, or a non-execution job, answers
+	// `404 job_not_found`. When an unexpired result is stored (for a
+	// `completed` job, or a `failed` job that recorded an actionable
+	// result), `_links.result` points to `GET /jobs/{job_id}/result` on the
+	// Broker.
+	//
+	// Corresponds with GET /jobs/{job_id} (the `BrokerGetJob` operationId).
+	BrokerGetJob(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BrokerGetJobResult Get a job's result
+	//
+	// Collect the stored result of a finished caller-owned execution job.
+	// Authenticates with the Broker's token validator and requires
+	// `capabilities:execute`.
+	//
+	// Serves the stored result for a `completed` job, or a `failed` job
+	// that recorded an actionable result (such as an approved execution
+	// whose upstream call or run-time authorization failed, or a held
+	// execution that never ran). Answers `404` when no execution job with
+	// this ID belongs to the caller, `409` while the job is active or
+	// failed without a stored result, and `410` once an approved
+	// execution's result is past `held_executions.result_retention_seconds`.
+	//
+	// Corresponds with GET /jobs/{job_id}/result (the `BrokerGetJobResult` operationId).
+	BrokerGetJobResult(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReady Saturation-aware readiness probe
 	//
 	// Readiness probe distinct from liveness (`/health`). Returns `200`
@@ -1602,6 +1775,60 @@ type ClientInterface interface {
 // Corresponds with GET /health (the `GetHealth` operationId).
 func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BrokerGetJob Get a job
+//
+// Poll a caller-owned `kind: execution` job enqueued on the Broker.
+// Authenticates with the Broker's token validator (opaque `at_…`
+// tokens, `jak_…` agent API keys, and trusted-issuer JWTs) and requires
+// `capabilities:execute`.
+//
+// Reads are strictly scoped to the enqueuing actor (`created_by` and
+// `actor_type`): another actor's job, or a non-execution job, answers
+// `404 job_not_found`. When an unexpired result is stored (for a
+// `completed` job, or a `failed` job that recorded an actionable
+// result), `_links.result` points to `GET /jobs/{job_id}/result` on the
+// Broker.
+//
+// Corresponds with GET /jobs/{job_id} (the `BrokerGetJob` operationId).
+func (c *Client) BrokerGetJob(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBrokerGetJobRequest(c.Server, jobId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BrokerGetJobResult Get a job's result
+//
+// Collect the stored result of a finished caller-owned execution job.
+// Authenticates with the Broker's token validator and requires
+// `capabilities:execute`.
+//
+// Serves the stored result for a `completed` job, or a `failed` job
+// that recorded an actionable result (such as an approved execution
+// whose upstream call or run-time authorization failed, or a held
+// execution that never ran). Answers `404` when no execution job with
+// this ID belongs to the caller, `409` while the job is active or
+// failed without a stored result, and `410` once an approved
+// execution's result is past `held_executions.result_retention_seconds`.
+//
+// Corresponds with GET /jobs/{job_id}/result (the `BrokerGetJobResult` operationId).
+func (c *Client) BrokerGetJobResult(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBrokerGetJobResultRequest(c.Server, jobId)
 	if err != nil {
 		return nil, err
 	}
@@ -1791,6 +2018,74 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBrokerGetJobRequest constructs an http.Request for the BrokerGetJob method
+func NewBrokerGetJobRequest(server string, jobId JobId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "job_id", jobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/jobs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBrokerGetJobResultRequest constructs an http.Request for the BrokerGetJobResult method
+func NewBrokerGetJobResultRequest(server string, jobId JobId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "job_id", jobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/jobs/%s/result", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2552,6 +2847,44 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /health (the `GetHealth` operationId).
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthHTTPResp, error)
 
+	// BrokerGetJobWithResponse Get a job
+	//
+	// Poll a caller-owned `kind: execution` job enqueued on the Broker.
+	// Authenticates with the Broker's token validator (opaque `at_…`
+	// tokens, `jak_…` agent API keys, and trusted-issuer JWTs) and requires
+	// `capabilities:execute`.
+	//
+	// Reads are strictly scoped to the enqueuing actor (`created_by` and
+	// `actor_type`): another actor's job, or a non-execution job, answers
+	// `404 job_not_found`. When an unexpired result is stored (for a
+	// `completed` job, or a `failed` job that recorded an actionable
+	// result), `_links.result` points to `GET /jobs/{job_id}/result` on the
+	// Broker.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /jobs/{job_id} (the `BrokerGetJob` operationId).
+	BrokerGetJobWithResponse(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*BrokerGetJobHTTPResp, error)
+
+	// BrokerGetJobResultWithResponse Get a job's result
+	//
+	// Collect the stored result of a finished caller-owned execution job.
+	// Authenticates with the Broker's token validator and requires
+	// `capabilities:execute`.
+	//
+	// Serves the stored result for a `completed` job, or a `failed` job
+	// that recorded an actionable result (such as an approved execution
+	// whose upstream call or run-time authorization failed, or a held
+	// execution that never ran). Answers `404` when no execution job with
+	// this ID belongs to the caller, `409` while the job is active or
+	// failed without a stored result, and `410` once an approved
+	// execution's result is past `held_executions.result_retention_seconds`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /jobs/{job_id}/result (the `BrokerGetJobResult` operationId).
+	BrokerGetJobResultWithResponse(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*BrokerGetJobResultHTTPResp, error)
+
 	// GetReadyWithResponse Saturation-aware readiness probe
 	//
 	// Readiness probe distinct from liveness (`/health`). Returns `200`
@@ -2749,6 +3082,333 @@ func (r GetHealthHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHealthHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// BrokerGetJobHTTPResp401Headers the declared response headers of an HTTP 401 response for BrokerGetJob
+type BrokerGetJobHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobHTTPResp403Headers the declared response headers of an HTTP 403 response for BrokerGetJob
+type BrokerGetJobHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobHTTPResp404Headers the declared response headers of an HTTP 404 response for BrokerGetJob
+type BrokerGetJobHTTPResp404Headers struct {
+	JenticErrorOrigin *string
+}
+
+// BrokerGetJobHTTPResp422Headers the declared response headers of an HTTP 422 response for BrokerGetJob
+type BrokerGetJobHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobHTTPResp500Headers the declared response headers of an HTTP 500 response for BrokerGetJob
+type BrokerGetJobHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobHTTPResp503Headers the declared response headers of an HTTP 503 response for BrokerGetJob
+type BrokerGetJobHTTPResp503Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// BrokerGetJobHTTPRespDefaultHeaders the declared response headers of an HTTP default response for BrokerGetJob
+type BrokerGetJobHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+type BrokerGetJobHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *JobResponse
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *JobNotFound
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ValidationError
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ServerError
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ServiceUnavailable
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Default
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *BrokerGetJobHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *BrokerGetJobHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *BrokerGetJobHTTPResp404Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *BrokerGetJobHTTPResp422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *BrokerGetJobHTTPResp500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *BrokerGetJobHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *BrokerGetJobHTTPRespDefaultHeaders
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r BrokerGetJobHTTPResp) GetJSON200() *JobResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSON404() *JobNotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSON422() *ValidationError {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSON500() *ServerError {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSON503() *ServiceUnavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BrokerGetJobHTTPResp) GetApplicationproblemJSONDefault() *Default {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BrokerGetJobHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BrokerGetJobHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BrokerGetJobHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BrokerGetJobHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// BrokerGetJobResultHTTPResp401Headers the declared response headers of an HTTP 401 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp401Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobResultHTTPResp403Headers the declared response headers of an HTTP 403 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp403Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobResultHTTPResp404Headers the declared response headers of an HTTP 404 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp404Headers struct {
+	JenticErrorOrigin *string
+}
+
+// BrokerGetJobResultHTTPResp409Headers the declared response headers of an HTTP 409 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp409Headers struct {
+	JenticErrorOrigin *string
+}
+
+// BrokerGetJobResultHTTPResp410Headers the declared response headers of an HTTP 410 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp410Headers struct {
+	JenticErrorOrigin *string
+}
+
+// BrokerGetJobResultHTTPResp422Headers the declared response headers of an HTTP 422 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp422Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobResultHTTPResp500Headers the declared response headers of an HTTP 500 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp500Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+// BrokerGetJobResultHTTPResp503Headers the declared response headers of an HTTP 503 response for BrokerGetJobResult
+type BrokerGetJobResultHTTPResp503Headers struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+	RetryAfter           *string
+}
+
+// BrokerGetJobResultHTTPRespDefaultHeaders the declared response headers of an HTTP default response for BrokerGetJobResult
+type BrokerGetJobResultHTTPRespDefaultHeaders struct {
+	JenticErrorOrigin    *string
+	JenticUpstreamStatus *int
+}
+
+type BrokerGetJobResultHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *JobResultApplicationJSON
+	// ApplicationproblemJSON200 the response for an HTTP 200 `application/problem+json` response
+	ApplicationproblemJSON200 *JobResultApplicationProblemPlusJSON
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *JobNotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *JobNotCompleted
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *JobResultExpired
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ValidationError
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ServerError
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ServiceUnavailable
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Default
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *BrokerGetJobResultHTTPResp401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *BrokerGetJobResultHTTPResp403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *BrokerGetJobResultHTTPResp404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *BrokerGetJobResultHTTPResp409Headers
+	// Headers410 the parsed response headers for an HTTP 410 response
+	Headers410 *BrokerGetJobResultHTTPResp410Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *BrokerGetJobResultHTTPResp422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *BrokerGetJobResultHTTPResp500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *BrokerGetJobResultHTTPResp503Headers
+	// HeadersDefault the parsed response headers for an HTTP default response
+	HeadersDefault *BrokerGetJobResultHTTPRespDefaultHeaders
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r BrokerGetJobResultHTTPResp) GetJSON200() *JobResultApplicationJSON {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON200 returns the response for an HTTP 200 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON200() *JobResultApplicationProblemPlusJSON {
+	return r.ApplicationproblemJSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON404() *JobNotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON409() *JobNotCompleted {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON410() *JobResultExpired {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON422() *ValidationError {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON500() *ServerError {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSON503() *ServiceUnavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BrokerGetJobResultHTTPResp) GetApplicationproblemJSONDefault() *Default {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BrokerGetJobResultHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BrokerGetJobResultHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BrokerGetJobResultHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BrokerGetJobResultHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4750,6 +5410,56 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 	return ParseGetHealthHTTPResp(rsp)
 }
 
+// BrokerGetJobWithResponse Get a job
+//
+// Poll a caller-owned `kind: execution` job enqueued on the Broker.
+// Authenticates with the Broker's token validator (opaque `at_…`
+// tokens, `jak_…` agent API keys, and trusted-issuer JWTs) and requires
+// `capabilities:execute`.
+//
+// Reads are strictly scoped to the enqueuing actor (`created_by` and
+// `actor_type`): another actor's job, or a non-execution job, answers
+// `404 job_not_found`. When an unexpired result is stored (for a
+// `completed` job, or a `failed` job that recorded an actionable
+// result), `_links.result` points to `GET /jobs/{job_id}/result` on the
+// Broker.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /jobs/{job_id} (the `BrokerGetJob` operationId).
+func (c *ClientWithResponses) BrokerGetJobWithResponse(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*BrokerGetJobHTTPResp, error) {
+	rsp, err := c.BrokerGetJob(ctx, jobId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBrokerGetJobHTTPResp(rsp)
+}
+
+// BrokerGetJobResultWithResponse Get a job's result
+//
+// Collect the stored result of a finished caller-owned execution job.
+// Authenticates with the Broker's token validator and requires
+// `capabilities:execute`.
+//
+// Serves the stored result for a `completed` job, or a `failed` job
+// that recorded an actionable result (such as an approved execution
+// whose upstream call or run-time authorization failed, or a held
+// execution that never ran). Answers `404` when no execution job with
+// this ID belongs to the caller, `409` while the job is active or
+// failed without a stored result, and `410` once an approved
+// execution's result is past `held_executions.result_retention_seconds`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /jobs/{job_id}/result (the `BrokerGetJobResult` operationId).
+func (c *ClientWithResponses) BrokerGetJobResultWithResponse(ctx context.Context, jobId JobId, reqEditors ...RequestEditorFn) (*BrokerGetJobResultHTTPResp, error) {
+	rsp, err := c.BrokerGetJobResult(ctx, jobId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBrokerGetJobResultHTTPResp(rsp)
+}
+
 // GetReadyWithResponse Saturation-aware readiness probe
 //
 // Readiness probe distinct from liveness (`/health`). Returns `200`
@@ -5028,6 +5738,441 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 		response.Headers503 = &headers
 	case true:
 		var headers GetHealthHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseBrokerGetJobHTTPResp parses an HTTP response from a BrokerGetJobWithResponse call
+func ParseBrokerGetJobHTTPResp(rsp *http.Response) (*BrokerGetJobHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BrokerGetJobHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JobResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest JobNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ServerError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ServiceUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Default
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers BrokerGetJobHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers BrokerGetJobHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers BrokerGetJobHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 422:
+		var headers BrokerGetJobHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers BrokerGetJobHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers BrokerGetJobHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
+	case true:
+		var headers BrokerGetJobHTTPRespDefaultHeaders
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.HeadersDefault = &headers
+	}
+
+	return response, nil
+}
+
+// ParseBrokerGetJobResultHTTPResp parses an HTTP response from a BrokerGetJobResultWithResponse call
+func ParseBrokerGetJobResultHTTPResp(rsp *http.Response) (*BrokerGetJobResultHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BrokerGetJobResultHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.Header.Get("Content-Type") == "application/json" && rsp.StatusCode == 200:
+		var dest JobResultApplicationJSON
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.Header.Get("Content-Type") == "application/problem+json" && rsp.StatusCode == 200:
+		var dest JobResultApplicationProblemPlusJSON
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest JobNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest JobNotCompleted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest JobResultExpired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ServerError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ServiceUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Default
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers BrokerGetJobResultHTTPResp401Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers BrokerGetJobResultHTTPResp403Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers BrokerGetJobResultHTTPResp404Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers BrokerGetJobResultHTTPResp409Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 410:
+		var headers BrokerGetJobResultHTTPResp410Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		response.Headers410 = &headers
+	case rsp.StatusCode == 422:
+		var headers BrokerGetJobResultHTTPResp422Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers BrokerGetJobResultHTTPResp500Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers BrokerGetJobResultHTTPResp503Headers
+		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticErrorOrigin = &value
+		}
+		if values := rsp.Header.Values("Jentic-Upstream-Status"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Upstream-Status", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.JenticUpstreamStatus = &value
+		}
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
+	case true:
+		var headers BrokerGetJobResultHTTPRespDefaultHeaders
 		if values := rsp.Header.Values("Jentic-Error-Origin"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Jentic-Error-Origin", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
