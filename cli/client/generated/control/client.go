@@ -3857,7 +3857,7 @@ type CredentialBindRequest struct {
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 //
-// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"state":"pending","suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingEntry struct {
 	// BoundAt When the credential was bound (RFC 3339).
 	//
@@ -3883,6 +3883,11 @@ type CredentialBindingEntry struct {
 	//
 	// Examples: [{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}]
 	Serves *[]ServedApiRef `json:"serves,omitempty"`
+
+	// State Lifecycle state of the bound credential (`pending`, `connected` or `failed`); null if the credential cannot be resolved.
+	//
+	// Examples: pending
+	State *string `json:"state,omitempty"`
 
 	// Suspended Whether the binding is suspended; the agent cannot execute through it until resumed.
 	//
@@ -5844,7 +5849,7 @@ type McpConfigRuntime string
 
 // MeAgent Identity response for an agent actor.
 //
-// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
+// Examples: {"approved_by":"usr_6968b3987ee4c3ec0b4ee3b9","credential_bindings":[{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"state":"pending","suspended":false,"suspended_reason":"api_deleted"}],"id":"agnt_6968b3984d1c238dbe7e2e29","name":"invoice-reconciler","parent_agent_id":"agnt_6968b3984d1c238dbe7e2e29","permissions":["apis:read","capabilities:execute"],"status":"active","token_permissions":["apis:read","capabilities:execute"],"type":"agent"}
 type MeAgent struct {
 	// ApprovedBy ID of the user who approved the agent; null if not approved.
 	//
@@ -5853,7 +5858,7 @@ type MeAgent struct {
 
 	// CredentialBindings Credentials bound directly to the agent.
 	//
-	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"state":"pending","suspended":false,"suspended_reason":"api_deleted"}]
 	CredentialBindings *[]CredentialBindingEntry `json:"credential_bindings,omitempty"`
 
 	// Id Unique ID of the agent.

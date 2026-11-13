@@ -42,6 +42,7 @@ export class UsersService {
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
+                429: `Too many login attempts from this client network.`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
