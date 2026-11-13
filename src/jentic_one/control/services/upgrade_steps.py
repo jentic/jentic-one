@@ -51,6 +51,9 @@ import structlog
 
 from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
+from jentic_one.control.services.credential_identity_repair import (
+    CredentialIdentityRepairService,
+)
 from jentic_one.control.services.rule_set_curation import (
     CrossOwnerAttachment,
     RuleSetCurationResult,
@@ -98,6 +101,13 @@ class UpgradeStepSpec:
 
 
 RULE_SETS_MARK_CURATED = "rule_sets_mark_curated"
+CREDENTIAL_IDENTITY_REPAIR = "credential_identity_repair"
+
+#: Maximum backup rows embedded inline in ``upgrade_steps.summary``; larger runs
+#: direct the operator to ``jentic_one repair-credential-identities --backup-out``.
+_INLINE_BACKUP_ROW_LIMIT = 200
+#: Maximum per-row operator warning/conflict lines emitted on stderr per run.
+_IDENTITY_REPAIR_WARNING_LIMIT = 50
 
 
 #: Leads the per-binding warnings of ``rule_sets_mark_curated``.
@@ -163,9 +173,55 @@ async def _mark_curated_rule_sets(ctx: Context) -> UpgradeStepOutcome:
     )
 
 
+async def _repair_credential_identities(ctx: Context) -> UpgradeStepOutcome:
+    result = await CredentialIdentityRepairService(ctx).run(dry_run=False)
+    total_repaired = (
+        result.repaired_apis + result.repaired_credentials + result.repaired_connect_sessions
+    )
+    summary: dict[str, Any] = {
+        "apis_scanned": result.apis_scanned,
+        "credentials_scanned": result.credentials_scanned,
+        "repaired_apis": result.repaired_apis,
+        "repaired_credentials": result.repaired_credentials,
+        "repaired_connect_sessions": result.repaired_connect_sessions,
+        "unresolvable_count": result.unresolvable_count,
+        "conflict_count": result.conflict_count,
+    }
+    if 0 < total_repaired <= _INLINE_BACKUP_ROW_LIMIT:
+        summary["backup"] = result.backup
+
+    warning_findings = [f for f in result.findings if f.category in ("conflict", "unresolvable")]
+    lines = [f.format_operator_line() for f in warning_findings[:_IDENTITY_REPAIR_WARNING_LIMIT]]
+    if len(warning_findings) > _IDENTITY_REPAIR_WARNING_LIMIT:
+        lines.append(
+            f"...and {len(warning_findings) - _IDENTITY_REPAIR_WARNING_LIMIT} more "
+            "(run `jentic_one repair-credential-identities --dry-run` for the full report)"
+        )
+
+    if result.failed_closed:
+        return UpgradeStepOutcome(
+            name=CREDENTIAL_IDENTITY_REPAIR,
+            action="failed",
+            summary=summary,
+            failed=True,
+            warnings=tuple(lines),
+        )
+    return UpgradeStepOutcome(
+        name=CREDENTIAL_IDENTITY_REPAIR,
+        action="performed",
+        summary=summary,
+        warnings=tuple(lines),
+    )
+
+
 #: Every step, in run order.
 STEPS: tuple[UpgradeStepSpec, ...] = (
     UpgradeStepSpec(name=RULE_SETS_MARK_CURATED, run=_mark_curated_rule_sets, repeatable=True),
+    UpgradeStepSpec(
+        name=CREDENTIAL_IDENTITY_REPAIR,
+        run=_repair_credential_identities,
+        repeatable=True,
+    ),
 )
 
 #: Names of deleted steps that ``--skip-upgrade-step`` still accepts (as a
