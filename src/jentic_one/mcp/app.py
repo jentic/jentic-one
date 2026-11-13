@@ -87,7 +87,10 @@ from jentic_one.mcp.tools import CallEnv, dispatch_mcp_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.errors import DatabaseUnavailableError
+from jentic_one.shared.db.errors import (
+    DB_UNAVAILABLE_RETRY_AFTER_S,
+    DatabaseUnavailableError,
+)
 from jentic_one.shared.events.mcp_session import (
     SESSION_ID_HEADER,
     schedule_mcp_http_session_emit,
@@ -190,8 +193,9 @@ def _database_unavailable(method: str) -> Response:
     Same Problem Details body as the REST surfaces' ``database_unavailable``;
     the static detail never echoes the driver error.
     """
+    headers = {"Retry-After": str(DB_UNAVAILABLE_RETRY_AFTER_S)}
     if method == "HEAD":
-        return Response(status_code=503)
+        return Response(status_code=503, headers=headers)
     return JSONResponse(
         status_code=503,
         content={
@@ -200,6 +204,7 @@ def _database_unavailable(method: str) -> Response:
             "status": 503,
             "detail": "The database is temporarily unavailable; please retry.",
         },
+        headers=headers,
         media_type="application/problem+json",
     )
 

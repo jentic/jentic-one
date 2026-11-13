@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, Connection
 from sqlalchemy.exc import (
     DataError,
     DBAPIError,
@@ -19,6 +19,7 @@ from sqlalchemy.exc import (
     InvalidRequestError,
     OperationalError,
 )
+from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -56,13 +57,34 @@ logger = structlog.get_logger(__name__)
 _COMMIT_IN_FLIGHT = "jentic_commit_in_flight"
 
 
+# Static detail for pool-checkout exhaustion so ``QueuePool`` sizing, overflow
+# counts, and SQLAlchemy error URLs never escape via ``str(exc)`` (CWE-209).
+_POOL_TIMEOUT_DETAIL = "connection pool checkout timed out"
+
+
+def _pool_timeout_unavailable() -> DatabaseUnavailableError:
+    """Build a CWE-209-redacted unavailable error for a pool-checkout timeout."""
+    return DatabaseUnavailableError(_POOL_TIMEOUT_DETAIL)
+
+
 class _CommitTrackingSession(Session):
-    """ORM session that flags the window in which a commit is running."""
+    """ORM session that flags commits in flight and maps pool checkout timeouts."""
 
     def commit(self) -> None:
         self.info[_COMMIT_IN_FLIGHT] = True
         super().commit()
         self.info.pop(_COMMIT_IN_FLIGHT, None)
+
+    def _connection_for_bind(
+        self,
+        engine: Any,
+        execution_options: Any = None,
+        **kw: Any,
+    ) -> Connection:
+        try:
+            return super()._connection_for_bind(engine, execution_options=execution_options, **kw)
+        except SATimeoutError as exc:
+            raise _pool_timeout_unavailable() from exc
 
 
 def _connection_lost_error(sess: AsyncSession, exc: BaseException) -> DatabaseUnavailableError:
@@ -119,6 +141,24 @@ async def _rollback_after_connection_loss(sess: AsyncSession) -> None:
 def get_database_url(config: DatabaseConfig) -> URL:
     """Build an async SQLAlchemy database URL from a DatabaseConfig."""
     return get_backend(config).make_url(config)
+
+
+@asynccontextmanager
+async def _connect_engine(engine: AsyncEngine) -> AsyncGenerator[AsyncConnection, None]:
+    """Check out a raw ``AsyncConnection``, mapping only pool checkout timeouts.
+
+    Only ``raw.start()`` is wrapped so timeouts or errors raised inside the
+    caller block propagate unchanged.
+    """
+    raw = engine.connect()
+    try:
+        await raw.start()
+    except SATimeoutError as exc:
+        raise _pool_timeout_unavailable() from exc
+    try:
+        yield raw
+    finally:
+        await raw.close()
 
 
 async def _release_advisory_lock(conn: AsyncConnection, key: int) -> None:
@@ -213,7 +253,10 @@ class _SharedAdvisoryLockMultiplexer:
         if self._autocommit_conn is not None:
             return self._autocommit_conn
         raw = self._engine.connect()
-        await raw.start()
+        try:
+            await raw.start()
+        except SATimeoutError as exc:
+            raise _pool_timeout_unavailable() from exc
         try:
             autocommit = await raw.execution_options(isolation_level="AUTOCOMMIT")
         except BaseException:
@@ -517,7 +560,7 @@ class DatabaseSession:
         if self._is_sqlite:
             yield
             return
-        async with self.engine.connect() as raw:
+        async with _connect_engine(self.engine) as raw:
             conn = await raw.execution_options(isolation_level="AUTOCOMMIT")
             await conn.execute(text("SELECT pg_advisory_lock(:key)"), {"key": key})
             try:
@@ -548,7 +591,7 @@ class DatabaseSession:
         if self._is_sqlite:
             yield True
             return
-        async with self.engine.connect() as raw:
+        async with _connect_engine(self.engine) as raw:
             conn = await raw.execution_options(isolation_level="AUTOCOMMIT")
             acquired = bool(
                 (
