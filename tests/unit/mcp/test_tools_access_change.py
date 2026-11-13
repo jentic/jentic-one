@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp.shared.exceptions import MCPError
 
+import jentic_one.mcp.access as access_mod
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.integrations.connect_session_service import (
     AmendedSession,
@@ -104,7 +105,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeService.edits = []
     _FakeService.amends = []
     _FakeService.error = None
-    monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeService)
+    monkeypatch.setattr(access_mod, "ConnectSessionService", _FakeService)
 
 
 async def test_the_callers_own_binding_is_edited_and_the_poll_token_withheld() -> None:
