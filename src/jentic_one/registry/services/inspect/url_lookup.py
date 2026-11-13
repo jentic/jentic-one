@@ -220,18 +220,6 @@ class URLLookupService:
                 host=host,
                 segment_count=segment_count,
             )
-            if not candidates:
-                regex_candidates = await UrlIndexRepository.lookup_by_host_regex(
-                    self._session,
-                    revision_id=revision_id,
-                    method=method,
-                    segment_count=segment_count,
-                )
-                candidates = [
-                    c
-                    for c in regex_candidates
-                    if c.row.host_regex and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
-                ]
         else:
             candidates = await UrlIndexRepository.lookup_by_host_live(
                 self._session,
@@ -239,30 +227,55 @@ class URLLookupService:
                 host=host,
                 segment_count=segment_count,
             )
-            if not candidates:
+
+        ranked = self._rank_candidates(candidates, path, host, segment_count)
+        if ranked is None:
+            if revision_id is not None:
+                regex_candidates = await UrlIndexRepository.lookup_by_host_regex(
+                    self._session,
+                    revision_id=revision_id,
+                    method=method,
+                    segment_count=segment_count,
+                )
+            else:
                 regex_candidates = await UrlIndexRepository.lookup_by_host_regex_live(
                     self._session,
                     method=method,
                     segment_count=segment_count,
                 )
-                candidates = [
-                    c
-                    for c in regex_candidates
-                    if c.row.host_regex and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
-                ]
+            candidates = [
+                c
+                for c in regex_candidates
+                if c.row.host_regex and re.fullmatch(c.row.host_regex, host, re.IGNORECASE)
+            ]
+            ranked = self._rank_candidates(candidates, path, host, segment_count)
 
-        if not candidates:
-            return None
-
-        if len(candidates) > MAX_CANDIDATES:
-            raise TooManyCandidatesError()
-
-        ranked = self._match_and_rank(candidates, path, host)
         is_legacy_row = (
             ranked is not None and URL_INDEX_FORMAT_MARKER not in ranked.candidate.row.path_regex
         )
         if ranked is not None and is_legacy_row:
             await self._resolve_legacy_server_variables(ranked, host=host, path=path)
+        return ranked
+
+    @staticmethod
+    def _rank_candidates(
+        candidates: list[UrlIndexCandidate], path: str, host: str, segment_count: int
+    ) -> _RankedMatch | None:
+        if len(candidates) <= MAX_CANDIDATES:
+            return URLLookupService._match_and_rank(candidates, path, host)
+
+        # Exact-segment matches outrank every multi-segment match, so a matching
+        # exact set is decisive even when the widened query is over cap.
+        exact_candidates = [c for c in candidates if c.row.segment_count == segment_count]
+        if len(exact_candidates) > MAX_CANDIDATES:
+            raise TooManyCandidatesError()
+        ranked = (
+            URLLookupService._match_and_rank(exact_candidates, path, host)
+            if exact_candidates
+            else None
+        )
+        if ranked is None:
+            raise TooManyCandidatesError()
         return ranked
 
     async def _resolve_legacy_server_variables(
@@ -313,25 +326,24 @@ class URLLookupService:
             host=host,
             segment_count=segment_count,
         )
-        if not any_method:
+        matching_methods = {
+            candidate.method
+            for candidate in any_method
+            if _match_candidate_path(candidate, path, segment_count) is not None
+        }
+        if not matching_methods:
             any_method = await UrlIndexRepository.lookup_by_host_regex_any_method(
                 self._session,
                 revision_id=revision_id,
                 segment_count=segment_count,
             )
-            any_method = [
-                c
-                for c in any_method
-                if c.host_regex and re.fullmatch(c.host_regex, host, re.IGNORECASE)
-            ]
-
-        if not any_method:
-            return
-
-        matching_methods: set[str] = set()
-        for candidate in any_method:
-            if _match_candidate_path(candidate, path, segment_count) is not None:
-                matching_methods.add(candidate.method)
+            matching_methods = {
+                candidate.method
+                for candidate in any_method
+                if candidate.host_regex
+                and re.fullmatch(candidate.host_regex, host, re.IGNORECASE)
+                and _match_candidate_path(candidate, path, segment_count) is not None
+            }
 
         if matching_methods:
             raise MethodNotAllowedError(sorted(matching_methods))

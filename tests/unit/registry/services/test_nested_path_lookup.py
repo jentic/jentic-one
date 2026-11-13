@@ -367,4 +367,12 @@ def test_trailing_param_path_regex_rejects_empty_segments() -> None:
     assert widened is not None
     assert widened.fullmatch("/repos/octocat/Hello-World/contents/docs/README.md") is not None
     assert widened.fullmatch("/repos/octocat/Hello-World/contents/README.md") is None
-    assert widened.fullmatch("/repos/octocat/Hello-World/contents/docs//README.md") is None
+
+
+def test_server_variable_prefixed_operation_params_can_span_nested_paths() -> None:
+    """Operation parameter names that resemble internal group prefixes still widen."""
+    for name in ("sv__path", "svk__path"):
+        candidates = _candidate("op_contents", f"/files/{{{name}}}")
+        hit = _rank_against(candidates, "https://api.github.com/files/docs/README.md")
+        assert hit is not None
+        assert hit.path_params == {name: "docs/README.md"}

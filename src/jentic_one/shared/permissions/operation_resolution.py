@@ -77,10 +77,19 @@ def _normalize_path_template(template: str) -> str:
     return normalized
 
 
-def _compile_spec_template(normalized_template: str) -> tuple[re.Pattern[str], bool]:
+def _compile_spec_template(
+    normalized_template: str, *, widen_trailing: bool = False
+) -> tuple[re.Pattern[str], bool]:
     parts = _PATH_PARAM_RE.split(normalized_template)
     raw_tokens = [parts[i] for i in range(1, len(parts), 2)]
     is_parameterized = bool(raw_tokens)
+    trailing_token = (
+        raw_tokens[-1]
+        if raw_tokens
+        and parts[-1] == ""
+        and normalized_template.rsplit("/", 1)[-1] == "{" + raw_tokens[-1] + "}"
+        else None
+    )
 
     catch_all_by_name: dict[str, bool] = {}
     group_by_name: dict[str, str] = {}
@@ -112,41 +121,132 @@ def _compile_spec_template(normalized_template: str) -> tuple[re.Pattern[str], b
         if group in seen_groups:
             regex_parts.append(f"(?P={group})")
         else:
+            if (
+                widen_trailing
+                and idx == len(parts) - 2
+                and part == trailing_token
+                and part
+                and part[0] not in _RFC6570_OPERATORS
+            ):
+                body = "[^/]+(?:/[^/]+)+"
             seen_groups.add(group)
             regex_parts.append(f"(?P<{group}>{body})")
     regex_parts.append("$")
     return re.compile("".join(regex_parts)), is_parameterized
 
 
+_SpecificityKey = tuple[int, bool, int, bool, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _SpecPathMatch:
+    key: _SpecificityKey
+    is_multi_segment: bool
+    literal_positions: frozenset[int]
+
+
+def _is_literal_segment(segment: str) -> bool:
+    return "{" not in segment and "**" not in segment
+
+
+def _template_parts(normalized_template: str) -> list[str]:
+    return [] if normalized_template == "/" else normalized_template.strip("/").split("/")
+
+
 def _specificity_key(
-    normalized_template: str, *, is_parameterized: bool
-) -> tuple[bool, int, int, int]:
-    template_parts = normalized_template.strip("/").split("/")
-    literal_count = sum(1 for p in template_parts if not p.startswith("{"))
-    first_literal_pos = next(
-        (i for i, p in enumerate(template_parts) if not p.startswith("{")),
-        len(template_parts),
+    normalized_template: str,
+    *,
+    is_parameterized: bool,
+    is_multi_segment: bool,
+    is_implicit_trailing: bool,
+) -> _SpecificityKey:
+    template_parts = _template_parts(normalized_template)
+    literal_indices = [i for i, p in enumerate(template_parts) if _is_literal_segment(p)]
+    literal_count = len(literal_indices)
+    first_literal_pos = literal_indices[0] if literal_indices else -1
+    last_literal_pos = literal_indices[-1] if literal_indices else -1
+    return (
+        1 if is_multi_segment else 0,
+        is_parameterized,
+        -literal_count,
+        is_implicit_trailing,
+        first_literal_pos,
+        -last_literal_pos,
     )
-    last_literal_pos = next(
-        (i for i, p in reversed(list(enumerate(template_parts))) if not p.startswith("{")),
-        -1,
-    )
-    return (is_parameterized, -literal_count, first_literal_pos, -last_literal_pos)
 
 
-def match_spec_path(
-    template: str, normalized_request_path: str
-) -> tuple[bool, tuple[bool, int, int, int]]:
-    """Match a normalized server-relative request path against a spec path template.
+def _literal_positions(
+    normalized_template: str, request_segment_count: int, *, is_catch_all: bool
+) -> frozenset[int]:
+    template_parts = _template_parts(normalized_template)
+    if not is_catch_all:
+        return frozenset(i for i, p in enumerate(template_parts) if _is_literal_segment(p))
+    catch_all_indices = [i for i, p in enumerate(template_parts) if "{+" in p or "**" in p]
+    if not catch_all_indices:
+        return frozenset(i for i, p in enumerate(template_parts) if _is_literal_segment(p))
+    first_catch = catch_all_indices[0]
+    last_catch = catch_all_indices[-1]
+    positions: set[int] = set()
+    for i, part in enumerate(template_parts):
+        if not _is_literal_segment(part):
+            continue
+        if i < first_catch:
+            positions.add(i)
+        elif i > last_catch:
+            offset_from_end = len(template_parts) - 1 - i
+            req_idx = request_segment_count - 1 - offset_from_end
+            if req_idx >= 0:
+                positions.add(req_idx)
+    return frozenset(positions)
 
-    Mirrors ``URLLookupService._match_and_rank`` specificity ordering so dry-run
-    resolution picks the exact operation live URL lookup selects within an API.
-    """
+
+def _match_spec_path(template: str, normalized_request_path: str) -> _SpecPathMatch | None:
     normalized_template = _normalize_path_template(template)
     pattern, is_parameterized = _compile_spec_template(normalized_template)
+    is_catch_all = "{+" in normalized_template or "**" in normalized_template
+    request_has_catch_all_syntax = (
+        "**" in normalized_request_path or "{+" in normalized_request_path
+    )
+    if request_has_catch_all_syntax and not is_catch_all:
+        return None
+    # Live lookup classifies these request paths as catch-all-shaped and queries
+    # only explicit catch-all rows, whose segment counts then compare as exact.
+    is_multi_segment = is_catch_all and not request_has_catch_all_syntax
+    is_implicit_trailing = False
     if pattern.fullmatch(normalized_request_path) is None:
-        return False, (True, 0, 0, 0)
-    return True, _specificity_key(normalized_template, is_parameterized=is_parameterized)
+        if is_catch_all:
+            return None
+        pattern, _ = _compile_spec_template(normalized_template, widen_trailing=True)
+        if pattern.fullmatch(normalized_request_path) is None:
+            return None
+        is_multi_segment = True
+        is_implicit_trailing = True
+    return _SpecPathMatch(
+        key=_specificity_key(
+            normalized_template,
+            is_parameterized=is_parameterized,
+            is_multi_segment=is_multi_segment,
+            is_implicit_trailing=is_implicit_trailing,
+        ),
+        is_multi_segment=is_multi_segment,
+        literal_positions=_literal_positions(
+            normalized_template,
+            len(normalized_request_path.strip("/").split("/")),
+            is_catch_all=is_catch_all,
+        ),
+    )
+
+
+def match_spec_path(template: str, normalized_request_path: str) -> tuple[bool, _SpecificityKey]:
+    """Match a normalized server-relative request path against a spec path template.
+
+    Mirrors ``URLLookupService._match_and_rank`` matching and specificity ordering,
+    including nested values for ordinary trailing parameters and RFC 6570 catch-alls.
+    """
+    matched = _match_spec_path(template, normalized_request_path)
+    if matched is None:
+        return False, (1, True, 0, False, 0, 0)
+    return True, matched.key
 
 
 def resolve_live_operation(
@@ -190,19 +290,32 @@ def _best_for_api(
         methods_to_try.append("GET")
 
     for target_method in methods_to_try:
-        ranked: list[tuple[tuple[bool, int, int, int], LiveOperationRow]] = []
+        ranked: list[tuple[_SpecPathMatch, LiveOperationRow]] = []
         for row in api_rows:
             if row.method.upper() != target_method:
                 continue
-            matched, key = match_spec_path(row.path, normalized_path)
-            if matched:
-                ranked.append((key, row))
+            matched = _match_spec_path(row.path, normalized_path)
+            if matched is not None:
+                ranked.append((matched, row))
         if not ranked:
             continue
-        ranked.sort(key=lambda item: item[0])
-        best_key = ranked[0][0]
-        winners = [row for key, row in ranked if key == best_key]
-        return winners, len(winners) > 1
+        ranked.sort(key=lambda item: item[0].key)
+        best_match, best_row = ranked[0]
+        if not best_match.is_multi_segment:
+            winners = [row for matched, row in ranked if matched.key == best_match.key]
+            return winners, len(winners) > 1
+        conflicts = [
+            row
+            for matched, row in ranked
+            if row is not best_row
+            and (
+                matched.key == best_match.key
+                or not (matched.literal_positions <= best_match.literal_positions)
+            )
+        ]
+        if conflicts:
+            return [best_row, *conflicts], True
+        return [best_row], False
     return [], False
 
 

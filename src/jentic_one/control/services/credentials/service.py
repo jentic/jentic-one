@@ -971,8 +971,8 @@ class CredentialService:
         if needs_operation_resolution:
             if self._ctx.has_db("registry"):
                 async with self._ctx.registry_db.session() as reg_session:
-                    live_ops = await RegistryApiLookupRepository.live_operations_for_vendor(
-                        reg_session, scope.vendor
+                    live_ops = await RegistryApiLookupRepository.live_operations_for_scope(
+                        reg_session, scope
                     )
                 resolved_op = resolve_dry_run_operation(
                     live_ops,

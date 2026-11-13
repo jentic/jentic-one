@@ -18,6 +18,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.shared.models.api_identity import CredentialScope, credential_covers
 from jentic_one.shared.permissions.operation_resolution import LiveOperationRow
 
 _IDENTITIES_FOR_VENDOR = text(
@@ -27,13 +28,12 @@ _IDENTITY_FOR_CATALOG_API_ID = text(
     "SELECT vendor, name FROM apis WHERE catalog_api_id = :catalog_api_id "
     "ORDER BY created_at, id LIMIT 1"
 )
-_LIVE_OPERATIONS_FOR_VENDOR = text(
+_LIVE_OPERATIONS_FOR_VENDOR = (
     "SELECT a.vendor, a.name, a.version, o.id, o.operation_id, o.method, o.path "
     "FROM apis a "
     "JOIN api_revisions r ON r.id = a.current_revision_id "
     "JOIN operations o ON o.revision_id = r.id "
     "WHERE a.vendor = :vendor AND r.state IN ('published', 'imported') "
-    "ORDER BY a.name, a.version, o.path, o.method"
 )
 
 
@@ -68,11 +68,44 @@ class RegistryApiLookupRepository:
         return (row.vendor, row.name) if row is not None else None
 
     @staticmethod
-    async def live_operations_for_vendor(
-        session: AsyncSession, vendor: str
+    async def live_operations_for_scope(
+        session: AsyncSession, scope: CredentialScope
     ) -> list[LiveOperationRow]:
-        """Every operation belonging to a live revision under ``vendor``."""
-        rows = (await session.execute(_LIVE_OPERATIONS_FOR_VENDOR, {"vendor": vendor})).all()
+        """Every operation in a live revision covered by the credential scope."""
+        sql = _LIVE_OPERATIONS_FOR_VENDOR
+        params = {"vendor": scope.vendor}
+        if scope.name is not None or scope.version is not None:
+            identities = await RegistryApiLookupRepository.identities_for_vendor(
+                session, scope.vendor
+            )
+            covered = [
+                (name, version)
+                for name, version in identities
+                if credential_covers(scope, vendor=scope.vendor, name=name, version=version)
+            ]
+            if not covered:
+                return []
+            # Canonical identity matching happens in Python because slugification
+            # is not portable SQL. The raw values still narrow the operation query
+            # instead of loading the vendor's whole live catalog.
+            if scope.name is not None:
+                names = sorted({name for name, _version in covered})
+                placeholders = []
+                for index, name in enumerate(names):
+                    key = f"name_{index}"
+                    params[key] = name
+                    placeholders.append(f":{key}")
+                sql += "AND a.name IN (" + ", ".join(placeholders) + ") "
+            if scope.version is not None:
+                versions = sorted({version for _name, version in covered})
+                placeholders = []
+                for index, version in enumerate(versions):
+                    key = f"version_{index}"
+                    params[key] = version
+                    placeholders.append(f":{key}")
+                sql += "AND a.version IN (" + ", ".join(placeholders) + ") "
+        sql += "ORDER BY a.name, a.version, o.path, o.method"
+        rows = (await session.execute(text(sql), params)).all()
         return [
             LiveOperationRow(
                 api_vendor=str(row[0]),
@@ -84,4 +117,10 @@ class RegistryApiLookupRepository:
                 path=str(row[6]),
             )
             for row in rows
+            if credential_covers(
+                scope,
+                vendor=str(row[0]),
+                name=str(row[1]),
+                version=str(row[2]),
+            )
         ]

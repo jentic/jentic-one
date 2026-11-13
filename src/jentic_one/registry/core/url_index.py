@@ -485,7 +485,13 @@ def trailing_param_path_regex(
     if match is None:
         return None
     group = match.group(1)
-    if group.startswith((_SV_GROUP_PREFIX, _SV_FIXED_GROUP_PREFIX)):
+    normalized_template = normalize_path_template(path_template)
+    trailing_token = PATH_PARAM_RE.fullmatch(normalized_template.rsplit("/", 1)[-1])
+    if trailing_token is None:
+        return None
+    trailing_name, _ = _split_param_token(trailing_token.group(1))
+    templates = (*((operation_path,) if operation_path is not None else ()), normalized_template)
+    if path_param_group_names(*templates).get(trailing_name) != group:
         return None
     widened = source[: match.start()] + f"/(?P<{group}>[^/]+(?:/[^/]+)+)$"
     return re.compile(widened)

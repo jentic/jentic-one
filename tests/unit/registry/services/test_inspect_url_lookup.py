@@ -225,6 +225,135 @@ async def test_too_many_candidates_raises_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exact_match_resolves_when_widened_candidates_exceed_cap() -> None:
+    """An exact route stays decisive when trailing-param candidates exceed the cap."""
+    exact = _make_index_entry(
+        operation_id="op_exact",
+        path_template="/v1/exact/deep/match",
+        path_regex=r"^/v1/exact/deep/match$",
+        segment_count=4,
+    )
+    shorter = [
+        _make_index_entry(
+            operation_id=f"op_{i}",
+            path_template=f"/v1/resource{i}/{{tail}}",
+            path_regex=rf"^/v1/resource{i}/(?P<tail>[^/]+)$",
+            param_names=["tail"],
+            segment_count=3,
+        )
+        for i in range(MAX_CANDIDATES + 1)
+    ]
+
+    with patch(
+        "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host",
+        new_callable=AsyncMock,
+        return_value=[*shorter, exact],
+    ):
+        result = await URLLookupService(AsyncMock()).resolve(
+            method="GET",
+            url="https://api.example.com/v1/exact/deep/match",
+            revision_id=REVISION_ID,
+        )
+
+    assert result is not None
+    assert result.operation_id == "op_exact"
+
+
+@pytest.mark.asyncio
+async def test_regex_host_fallback_runs_when_concrete_paths_do_not_match() -> None:
+    """A nonmatching concrete-host row does not hide a matching templated-host row."""
+    concrete = _make_index_entry(
+        operation_id="op_other",
+        path_template="/other/{id}",
+        path_regex=r"^/other/(?P<id>[^/]+)$",
+        param_names=["id"],
+    )
+    templated = _make_index_entry(
+        operation_id="op_file",
+        host=None,
+        host_regex=r"^[^.]+\.example\.com$",
+        path_template="/files/{path}",
+        path_regex=r"^/files/(?P<path>[^/]+)$",
+        param_names=["path"],
+    )
+
+    with (
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host",
+            new_callable=AsyncMock,
+            return_value=[concrete],
+        ),
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_regex",
+            new_callable=AsyncMock,
+            return_value=[templated],
+        ) as regex_lookup,
+    ):
+        result = await URLLookupService(AsyncMock()).resolve(
+            method="GET",
+            url="https://api.example.com/files/a",
+            revision_id=REVISION_ID,
+        )
+
+    assert result is not None
+    assert result.operation_id == "op_file"
+    assert result.path_params == {"path": "a"}
+    regex_lookup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_method_not_allowed_checks_regex_hosts_after_concrete_path_miss() -> None:
+    """A concrete row for another path does not suppress templated-host method discovery."""
+    concrete = _make_index_entry(
+        operation_id="op_other",
+        method="POST",
+        path_template="/other/{id}",
+        path_regex=r"^/other/(?P<id>[^/]+)$",
+        param_names=["id"],
+    )
+    templated = _make_index_entry(
+        operation_id="op_file",
+        method="POST",
+        host=None,
+        host_regex=r"^[^.]+\.example\.com$",
+        path_template="/files/{path}",
+        path_regex=r"^/files/(?P<path>[^/]+)$",
+        param_names=["path"],
+    )
+
+    with (
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_regex",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_any_method",
+            new_callable=AsyncMock,
+            return_value=[concrete.row],
+        ),
+        patch(
+            "jentic_one.registry.services.inspect.url_lookup.UrlIndexRepository.lookup_by_host_regex_any_method",
+            new_callable=AsyncMock,
+            return_value=[templated.row],
+        ),
+        pytest.raises(MethodNotAllowedError) as exc_info,
+    ):
+        await URLLookupService(AsyncMock()).resolve(
+            method="GET",
+            url="https://api.example.com/files/a",
+            revision_id=REVISION_ID,
+        )
+
+    assert exc_info.value.allowed_methods == ["POST"]
+
+
+@pytest.mark.asyncio
 async def test_head_falls_back_to_get() -> None:
     """HEAD requests should fall back to GET if no HEAD route exists."""
     get_entry = _make_index_entry(
