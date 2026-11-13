@@ -34,12 +34,22 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.errors import IngestJobError
+from jentic_one.registry.ingest.stages.base import BasePipelineStage
+from jentic_one.registry.ingest.stages.extract_api import CreateRevisionStage, ResolveApiStage
+from jentic_one.registry.ingest.stages.extract_operations import ExtractOperationsStage
+from jentic_one.registry.ingest.stages.extract_security import ExtractSecuritySchemesStage
+from jentic_one.registry.ingest.stages.extract_servers import ExtractServersStage
+from jentic_one.registry.ingest.stages.persist import FinalizeStage, StoreSpecFileStage
+from jentic_one.registry.ingest.stages.resolve_servers import ResolveServerUrlsStage
+from jentic_one.registry.ingest.stages.search_text import BuildSearchTextForOperationsStage
+from jentic_one.registry.ingest.stages.url_index import BuildURLIndexStage
+from jentic_one.registry.ingest.stages.validation import ValidateOpenAPISpec
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.errors import DatabaseUnavailableError
+from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.worker import WorkerLoop
@@ -231,6 +241,24 @@ _SINGLE_SOURCE_PREFIX = "all 1 import source(s) failed: source[0]: "
 @pytest.mark.parametrize(
     ("client", "url", "expected_error"),
     [
+        pytest.param(
+            _client_raising(httpx.UnsupportedProtocol("unsupported protocol")),
+            _URL_SOURCE["url"],
+            "failed to fetch URL: ",
+            id="unsupported-protocol",
+        ),
+        pytest.param(
+            _client_raising(httpx.LocalProtocolError("invalid local request")),
+            _URL_SOURCE["url"],
+            "failed to fetch URL: ",
+            id="local-protocol",
+        ),
+        pytest.param(
+            _client_raising(httpx.DecodingError("corrupt response")),
+            _URL_SOURCE["url"],
+            "failed to fetch URL: ",
+            id="decoding-error",
+        ),
         pytest.param(
             _client_answering(404),
             _URL_SOURCE["url"],
@@ -543,3 +571,63 @@ async def test_deterministic_pipeline_refusal_logs_nothing_at_error_level(
         "import_source_failed",
         "job_failed_non_retryable",
     ]
+
+
+_UNEXPECTED_STAGE_TYPES: tuple[type[BasePipelineStage], ...] = (
+    ValidateOpenAPISpec,
+    ResolveServerUrlsStage,
+    ResolveApiStage,
+    CreateRevisionStage,
+    ExtractOperationsStage,
+    ExtractServersStage,
+    BuildURLIndexStage,
+    ExtractSecuritySchemesStage,
+    StoreSpecFileStage,
+    FinalizeStage,
+    BuildSearchTextForOperationsStage,
+)
+_UNEXPECTED_ACTIVE_DETAIL = (
+    'duplicate key value violates unique constraint "ix_api_revisions_one_active": '
+    "internal stage detail"
+)
+
+
+async def _raise_unexpected_active_conflict(*args: Any, **kwargs: Any) -> None:
+    raise DatabaseIntegrityError(_UNEXPECTED_ACTIVE_DETAIL)
+
+
+@pytest.mark.parametrize(
+    "stage_type", _UNEXPECTED_STAGE_TYPES, ids=lambda stage_type: stage_type.name
+)
+async def test_unexpected_stage_failure_retains_stage_diagnostic_and_traceback(
+    integration_context: Context,
+    admin_db: DatabaseSession,
+    clean_jobs: None,
+    clean_registry: None,
+    monkeypatch: pytest.MonkeyPatch,
+    stage_type: type[BasePipelineStage],
+) -> None:
+    """Pins #2029: an active-index cause cannot disguise an internal stage failure."""
+    monkeypatch.setattr(stage_type, "_run", _raise_unexpected_active_conflict)
+    source = _inline(_BASE, origin="catalog")
+    del source["origin"]
+
+    with structlog.testing.capture_logs() as logs:
+        job = await _run_import_attempt(integration_context, admin_db, [source])
+
+    assert job.status == JobStatus.QUEUED
+    assert job.attempts == 1
+    assert job.visible_at is not None
+    assert job.error == (f"{_SINGLE_SOURCE_PREFIX}Stage '{stage_type.name}' failed unexpectedly")
+    assert "another revision of this API version is already active" not in (job.error or "")
+    assert "internal stage detail" not in (job.error or "")
+    assert "ix_api_revisions_one_active" not in (job.error or "")
+
+    stage_log = next(event for event in logs if event["event"] == "stage_unexpected_error")
+    assert stage_log["stage"] == stage_type.name
+    assert stage_log["log_level"] == "error"
+    assert stage_log["exc_info"] is True
+    import_log = next(event for event in logs if event["event"] == "import_source_failed")
+    assert import_log["log_level"] == "error"
+    assert import_log["retryable"] is True
+    assert import_log["exc_info"] is True

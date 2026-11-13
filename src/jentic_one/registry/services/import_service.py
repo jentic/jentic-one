@@ -7,6 +7,7 @@ It fetches/parses OpenAPI/Arazzo sources and creates draft ApiRevisions.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -119,43 +120,44 @@ ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
 # different content, so /mcp must not report the spec as already imported.
 ACTIVE_REVISION_CONFLICT_ERROR = "another revision of this API version is already active"
 
-# Bounds the exception-chain walk in _exception_chain.
-_MAX_CHAIN_DEPTH = 8
 
-
-def _exception_chain(exc: BaseException) -> list[BaseException]:
-    """``exc`` and the exceptions it was raised from or while handling, outermost first.
+def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    """Yield ``exc`` and its causes or contexts, outermost first, without a depth cutoff.
 
     Follows ``__cause__``, then an unsuppressed ``__context__`` (an exception
     raised inside an ``except`` block without ``from``), as a rendered
-    traceback does. Bounded and cycle-safe.
+    traceback does. Identity-based cycle detection terminates loops while still
+    exposing transient causes beneath arbitrarily deep wrappers.
     """
-    chain: list[BaseException] = []
     seen: set[int] = set()
     link: BaseException | None = exc
-    while link is not None and id(link) not in seen and len(chain) < _MAX_CHAIN_DEPTH:
+    while link is not None and id(link) not in seen:
         seen.add(id(link))
-        chain.append(link)
+        yield link
         if link.__cause__ is not None:
             link = link.__cause__
         elif not link.__suppress_context__:
             link = link.__context__
         else:
             link = None
-    return chain
 
 
 def _is_active_revision_conflict(exc: BaseException) -> bool:
     """True when the failure is a lost race for the one-active revision slot.
 
     The integrity error can arrive raw (at commit) or under the
-    ``DuplicateRevisionError`` the revision stage raises for it.
+    ``DuplicateRevisionError`` the revision stage raises for it. An
+    ``UnexpectedStageError`` always keeps its internal-failure classification:
+    an active-index cause does not turn a stage bug into an expected race.
     """
+    chain = tuple(_exception_chain(exc))
+    if any(isinstance(link, UnexpectedStageError) for link in chain):
+        return False
     return any(
         isinstance(link, DatabaseIntegrityError)
         and is_duplicate_revision_conflict(link)
         and not is_duplicate_digest_conflict(link)
-        for link in _exception_chain(exc)
+        for link in chain
     )
 
 
@@ -196,6 +198,11 @@ _RETRYABLE_INGEST_ERRORS: tuple[type[BaseIngestError], ...] = (
 )
 
 
+def _is_retryable_fetch_failure(exc: BaseException) -> bool:
+    """True when a transient fetch error appears anywhere in the exception chain."""
+    return any(isinstance(link, RetryableFetchError) for link in _exception_chain(exc))
+
+
 class _SourcePhase(StrEnum):
     """Which step of importing one source was running when it failed."""
 
@@ -228,7 +235,9 @@ def _is_deterministic_source_failure(exc: Exception, *, phase: _SourcePhase) -> 
     if phase == _SourcePhase.VALIDATE:
         return isinstance(exc, ValidationError)
     if phase == _SourcePhase.LOAD:
-        return isinstance(exc, BaseIngestError) and not isinstance(exc, RetryableFetchError)
+        if _is_retryable_fetch_failure(exc):
+            return False
+        return isinstance(exc, BaseIngestError)
     if _is_active_revision_conflict(exc):
         return False
     if isinstance(exc, DatabaseIntegrityError):
@@ -361,7 +370,7 @@ class ImportHandler:
                             error_type=type(exc).__name__,
                             error=readable_error,
                         )
-                    elif isinstance(exc, RetryableFetchError) or _is_active_revision_conflict(exc):
+                    elif _is_retryable_fetch_failure(exc) or _is_active_revision_conflict(exc):
                         # An expected transient condition: the job is retried.
                         all_failures_deterministic = False
                         logger.warning(
