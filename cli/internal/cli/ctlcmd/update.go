@@ -229,82 +229,21 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  CLI already at the latest release; updating the stack only."))
 	}
 
-	if !opts.yes {
-		ok, err := confirmApply(doCLI, doStack, brewManaged, repo, ref)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			fmt.Fprintln(a.Out, theme.Dim.Render("update cancelled"))
-			return nil
-		}
-	}
-
-	// In a *combined* docker-mode run, preflight the stack here — before
-	// updateCLI swaps the binaries — so a stopped daemon or a host port held by
-	// another container fails fast instead of leaving new binaries against an
-	// old, un-rebuilt stack (#976). Scoped to doCLI so we don't probe/announce
-	// twice on the stack-only path (updateStackDocker preflights itself); the
-	// preflighted flag then tells the stack step to skip its own checks. The
-	// daemon probe may poll (~30s) for a cold-starting daemon.
-	preflighted := false
-	if doCLI && doStack && manifest.Mode == config.ModeDocker && proc.FileExists(a.Paths.ComposePath()) {
-		if err := a.preflightDockerStack(ctx); err != nil {
-			return err
-		}
-		preflighted = true
-	}
-
-	cliUpdated := false
-	cliLanded := ""
-	if doCLI {
-		var landed config.CLIUpdate
-		if brewManaged {
-			caskVersion, err := upgradeBrewCLI(a, ctx, latest, latestKnown)
-			if err != nil {
-				return err
-			}
-			// brew is a clean no-op while the cask lags the release; only a cask
-			// that actually moved past the recorded version counts as an update.
-			// An unreadable cask version is assumed to have moved (brew succeeded).
-			cliUpdated = caskVersion == "" || update.NewerAvailable(cliVersion, caskVersion)
-			if cliUpdated && caskVersion != "" {
-				landed = config.CLIUpdate{Version: "v" + strings.TrimPrefix(caskVersion, "v")}
-			}
-		} else {
-			if landed, err = swapCLI(a, ctx, repo, ref, ctlTarget); err != nil {
-				return err
-			}
-			cliUpdated = true
-		}
-		if cliUpdated {
-			// Record what the CLI half installed before the stack half runs, so
-			// a stack failure leaves the manifest naming the new CLI and the old
-			// stack — the next run's verdict and CLI-skip read these (#976).
-			a.recordCLIUpdate(landed)
-			cliLanded = landed.Version
-			// A new CLI can ship new skill bodies, so refresh every INSTALLED
-			// skill to keep the old CLI's guidance from lingering, respecting the
-			// user-edit guard (edited blocks are skipped + warned, never
-			// clobbered without --force). Best-effort: the binaries are already
-			// swapped, so a skill-refresh failure must not fail the update — it
-			// only leaves skills a `jentic skill update` away.
-			refreshSkills(a)
-		}
-	}
-	if doStack {
-		if err := rebuildStack(a, ctx, manifest.Mode, manifest.DB, ref, pinned, preflighted); err != nil {
-			if cliUpdated {
-				return newStackDivergedError(err, cliTargetLabel(brewManaged, cliLanded), ref, stackVersion, stackRetryCommand(ref, pinned))
-			}
-			return err
-		}
-		// Only now is the stack genuinely at `ref`. Recording it earlier (or
-		// alongside the CLI half) is what let a failed/skipped stack rebuild
-		// advertise itself as current and wedge every later update (#943).
-		a.recordStackBuild(ref)
-	}
-	return nil
+	return a.applyUpdate(ctx, updatePlan{
+		manifest:     manifest,
+		repo:         repo,
+		ref:          ref,
+		latest:       latest,
+		ctlTarget:    ctlTarget,
+		cliVersion:   cliVersion,
+		stackVersion: stackVersion,
+		pinned:       pinned,
+		latestKnown:  latestKnown,
+		brewManaged:  brewManaged,
+		doCLI:        doCLI,
+		doStack:      doStack,
+		skipConfirm:  opts.yes,
+	})
 }
 
 // Package-level seams over update's external effects (release lookup, CLI
@@ -756,7 +695,15 @@ func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[st
 	token := os.Getenv("GITHUB_TOKEN")
 	staged := map[string]string{}
 	for _, name := range []string{ctlBinaryName, apiBinaryName} {
-		res, derr := update.DownloadAndVerify(ctx, repo, tag, name, runtime.GOOS, runtime.GOARCH, token, stage)
+		res, derr := update.DownloadAndVerify(ctx, update.DownloadRequest{
+			Repo:     repo,
+			Tag:      tag,
+			Binary:   name,
+			GOOS:     runtime.GOOS,
+			GOARCH:   runtime.GOARCH,
+			Token:    token,
+			StageDir: stage,
+		})
 		if derr != nil {
 			cleanup()
 			if update.IsVerificationError(derr) {

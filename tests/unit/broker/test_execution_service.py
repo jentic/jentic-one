@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +11,8 @@ import pytest
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
+from jentic_one.shared.executions import ExecutionRecordInput, record_execution
+from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.schemas import OperationInfo
 from tests.unit.fake_tx import SessionScope
 
@@ -72,9 +76,10 @@ async def test_actor_fields_forwarded_to_record_execution() -> None:
         )
 
     mock_record.assert_called_once()
-    call_kwargs = mock_record.call_args.kwargs
-    assert call_kwargs["actor_id"] == "agt_abc123"
-    assert call_kwargs["actor_type"] == "agent"
+    record = mock_record.call_args.args[1]
+    assert isinstance(record, ExecutionRecordInput)
+    assert record.actor_id == "agt_abc123"
+    assert record.actor_type == "agent"
 
 
 @pytest.mark.asyncio
@@ -97,9 +102,10 @@ async def test_actor_fields_are_required() -> None:
             actor_type="user",
         )
 
-    call_kwargs = mock_record.call_args.kwargs
-    assert call_kwargs["actor_id"] == "usr_default"
-    assert call_kwargs["actor_type"] == "user"
+    record = mock_record.call_args.args[1]
+    assert isinstance(record, ExecutionRecordInput)
+    assert record.actor_id == "usr_default"
+    assert record.actor_type == "user"
 
 
 @pytest.mark.asyncio
@@ -122,8 +128,9 @@ async def test_operation_info_forwarded_to_record_execution() -> None:
             actor_type="agent",
         )
 
-    operation = mock_record.call_args.kwargs["operation"]
-    assert operation == OperationInfo(id="getThing", path="/v1/things", method="GET")
+    record = mock_record.call_args.args[1]
+    assert isinstance(record, ExecutionRecordInput)
+    assert record.operation == OperationInfo(id="getThing", path="/v1/things", method="GET")
 
 
 @pytest.mark.asyncio
@@ -154,3 +161,32 @@ async def test_run_execution_invokes_on_outcome_before_admin_db_transaction() ->
         )
 
     assert events == ["dispatched", "on_outcome", "tx_open"]
+
+
+@pytest.mark.asyncio
+async def test_execution_record_input_is_frozen_slotted_and_validates_status() -> None:
+    """ExecutionRecordInput is frozen/slotted and rejects non-terminal status."""
+    record = ExecutionRecordInput(
+        execution_id="exec_1",
+        toolkit_id=None,
+        trace_id="a" * 32,
+        started_at=datetime.now(UTC),
+        status=ExecutionStatus.COMPLETED,
+        actor_id="agt_abc123",
+        actor_type="agent",
+    )
+    assert not hasattr(record, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        record.status = ExecutionStatus.FAILED  # type: ignore[misc]
+
+    bad_record = ExecutionRecordInput(
+        execution_id="exec_bad",
+        toolkit_id=None,
+        trace_id="a" * 32,
+        started_at=datetime.now(UTC),
+        status="pending",  # type: ignore[arg-type]
+        actor_id="agt_abc123",
+        actor_type="agent",
+    )
+    with pytest.raises(ValueError, match="Only terminal statuses allowed, got: 'pending'"):
+        await record_execution(_session_mock(), bad_record)

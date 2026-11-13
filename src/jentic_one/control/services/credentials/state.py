@@ -188,12 +188,13 @@ async def consume_callback_state(
 ) -> ConnectState:
     """Decode + verify + one-shot-consume a callback state JWT.
 
-    This is the shared prologue for every OAuth callback path — the
-    standalone-credential ``ConnectService.complete`` and the
-    connect-session ``ConnectSessionService.complete_from_callback``
-    both call through here so replay protection stays in one place.
-    Introducing a second callback path without this helper is how the
-    session-mode nonce-consume was originally missed.
+    Every OAuth callback path must invoke this helper before acting on
+    callback data — currently ``ConnectService.complete``,
+    ``ConnectSessionService.complete_from_callback``, and
+    ``ConnectSessionService.mark_terminal_from_callback``. Shared
+    signature and browser-binding checks plus atomic one-shot nonce
+    consumption prevent a callback path from bypassing replay
+    protection.
 
     ``browser_binding`` is the value of the browser-binding cookie the
     callback request carried (``None`` when absent).
@@ -211,10 +212,11 @@ async def consume_callback_state(
         claim is refused. Runs before the nonce is consumed, so a refused
         callback writes nothing and the flow stays completable from the
         right browser.
-      * Nonce not previously consumed → ``StateReplayedError``. Atomic
-        via ``ConnectNonceRepository.consume`` (Postgres
+      * Nonce already consumed → ``StateReplayedError``. Atomic via
+        ``ConnectNonceRepository.consume`` (Postgres
         ``ON CONFLICT DO NOTHING`` on the ``nonce`` unique index) —
-        two concurrent callbacks race on the DB, only one wins.
+        two concurrent callbacks race on the DB, only one wins, and the
+        first successful consumption returns the decoded state.
     """
     state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
     state = decode_state(state_secret, raw_state)

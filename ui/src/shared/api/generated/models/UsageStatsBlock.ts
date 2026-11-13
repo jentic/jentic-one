@@ -7,7 +7,7 @@
  */
 export type UsageStatsBlock = {
     /**
-     * Number of asynchronous executions a worker is running right now, regardless of the window. Queued executions not yet picked up by a worker are not counted. The same filters apply as for `pending`.
+     * Number of asynchronous executions running on workers when this aggregate was sampled, independent of the selected historical window. Cached responses reuse that sample for up to 30 seconds. Queued executions not yet picked up by a worker are not counted. The same filters apply as for `pending`.
      */
     active_now: number;
     /**

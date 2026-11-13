@@ -14,7 +14,9 @@ from jentic_one.registry.services.errors import (
     NotePreconditionFailedError,
 )
 from jentic_one.registry.services.note_service import NoteService
+from jentic_one.registry.services.schemas import NoteCreate, NoteQuery, NoteResource, NoteUpdate
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.schemas.api_reference import APIReference
 
 _IDENTITY = Identity(sub="usr_test", email="test@example.com")
 
@@ -77,8 +79,12 @@ async def test_create_resolves_api_and_stamps_created_by() -> None:
     ):
         svc = NoteService(ctx)
         view = await svc.create(
-            resource_api=("stripe", "payments", "2023-10-16"),
-            body="Test",
+            NoteCreate(
+                resource=NoteResource(
+                    api=APIReference(vendor="stripe", name="payments", version="2023-10-16")
+                ),
+                body="Test",
+            ),
             identity=Identity(sub="user@test.com", email="test@local"),
         )
 
@@ -93,7 +99,10 @@ async def test_create_rejects_zero_resources() -> None:
     ctx = _make_ctx()
     svc = NoteService(ctx)
     with pytest.raises(InvalidNoteResourceError, match="Exactly one"):
-        await svc.create(body="Test", identity=_IDENTITY)
+        await svc.create(
+            NoteCreate(resource=NoteResource(), body="Test"),
+            identity=_IDENTITY,
+        )
 
 
 @pytest.mark.asyncio
@@ -102,9 +111,13 @@ async def test_create_rejects_multiple_resources() -> None:
     svc = NoteService(ctx)
     with pytest.raises(InvalidNoteResourceError, match="Only one"):
         await svc.create(
-            resource_api=("stripe", "payments", "2023-10-16"),
-            resource_operation_id="op_123",
-            body="Test",
+            NoteCreate(
+                resource=NoteResource(
+                    api=APIReference(vendor="stripe", name="payments", version="2023-10-16"),
+                    operation_id="op_123",
+                ),
+                body="Test",
+            ),
             identity=_IDENTITY,
         )
 
@@ -120,7 +133,15 @@ async def test_create_rejects_nonexistent_api() -> None:
     ):
         svc = NoteService(ctx)
         with pytest.raises(InvalidNoteResourceError, match="not found"):
-            await svc.create(resource_api=("ghost", "api", "v1"), body="Test", identity=_IDENTITY)
+            await svc.create(
+                NoteCreate(
+                    resource=NoteResource(
+                        api=APIReference(vendor="ghost", name="api", version="v1")
+                    ),
+                    body="Test",
+                ),
+                identity=_IDENTITY,
+            )
 
 
 @pytest.mark.asyncio
@@ -134,7 +155,13 @@ async def test_create_rejects_nonexistent_operation() -> None:
     ):
         svc = NoteService(ctx)
         with pytest.raises(InvalidNoteResourceError, match="Operation"):
-            await svc.create(resource_operation_id="op_missing", body="Test", identity=_IDENTITY)
+            await svc.create(
+                NoteCreate(
+                    resource=NoteResource(operation_id="op_missing"),
+                    body="Test",
+                ),
+                identity=_IDENTITY,
+            )
 
 
 @pytest.mark.asyncio
@@ -158,7 +185,13 @@ async def test_create_links_operation_by_pk_only() -> None:
         ) as mock_create,
     ):
         svc = NoteService(ctx)
-        await svc.create(resource_operation_id="op_abc123", body="Test", identity=_IDENTITY)
+        await svc.create(
+            NoteCreate(
+                resource=NoteResource(operation_id="op_abc123"),
+                body="Test",
+            ),
+            identity=_IDENTITY,
+        )
 
     mock_get_by_ids.assert_awaited_once()
     await_args = mock_get_by_ids.await_args
@@ -225,9 +258,45 @@ async def test_update_bumps_revision() -> None:
         ),
     ):
         svc = NoteService(ctx)
-        view = await svc.update("note_abc123def456ghi789", body="New body", identity=_IDENTITY)
+        view = await svc.update(
+            "note_abc123def456ghi789",
+            NoteUpdate(body="New body"),
+            identity=_IDENTITY,
+        )
 
     assert view.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_update_omitted_vs_null_fields_forwarded_to_repository() -> None:
+    ctx = _make_ctx()
+    note = _make_note(revision=1)
+    updated_note = _make_note(revision=2)
+
+    omitted = NoteUpdate(body="New body")
+    assert "type" not in omitted.model_dump(exclude_unset=True)
+
+    cleared = NoteUpdate(type=None)
+    assert cleared.model_dump(exclude_unset=True) == {"type": None}
+
+    with (
+        patch(
+            "jentic_one.registry.services.note_service.NoteRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=note,
+        ),
+        patch(
+            "jentic_one.registry.services.note_service.NoteRepository.update_fields",
+            new_callable=AsyncMock,
+            return_value=updated_note,
+        ) as mock_update_fields,
+    ):
+        svc = NoteService(ctx)
+        await svc.update("note_abc123def456ghi789", omitted, identity=_IDENTITY)
+        assert mock_update_fields.call_args.kwargs == {"body": "New body"}
+
+        await svc.update("note_abc123def456ghi789", cleared, identity=_IDENTITY)
+        assert mock_update_fields.call_args.kwargs == {"type": None}
 
 
 @pytest.mark.asyncio
@@ -243,7 +312,10 @@ async def test_update_raises_412_on_stale_if_match() -> None:
         svc = NoteService(ctx)
         with pytest.raises(NotePreconditionFailedError) as exc_info:
             await svc.update(
-                "note_abc123def456ghi789", if_match=1, body="New body", identity=_IDENTITY
+                "note_abc123def456ghi789",
+                NoteUpdate(body="New body"),
+                if_match=1,
+                identity=_IDENTITY,
             )
         assert exc_info.value.expected == 1
         assert exc_info.value.actual == 3
@@ -302,7 +374,7 @@ async def test_list_page_unresolvable_api_filter_returns_empty() -> None:
         ) as mock_list,
     ):
         svc = NoteService(ctx)
-        page = await svc.list_page(api="ghost:api:v1", identity=_IDENTITY)
+        page = await svc.list_page(NoteQuery(api="ghost:api:v1"), identity=_IDENTITY)
 
     assert page.data == []
     assert page.has_more is False
@@ -328,7 +400,7 @@ async def test_list_page_resolves_api_filter_to_ids() -> None:
         ) as mock_list,
     ):
         svc = NoteService(ctx)
-        page = await svc.list_page(api="stripe", identity=_IDENTITY)
+        page = await svc.list_page(NoteQuery(api="stripe"), identity=_IDENTITY)
 
     assert len(page.data) == 1
     assert mock_resolve.call_args.kwargs == {"vendor": "stripe", "name": None, "version": None}

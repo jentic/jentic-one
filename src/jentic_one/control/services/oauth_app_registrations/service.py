@@ -22,7 +22,11 @@ from jentic_one.control.services.oauth_app_registrations.errors import (
     SecretRotationNotSupportedError,
 )
 from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+    DeviceAuthorizationRegistrationCreate,
     OAuthAppRegistrationFlowKind,
+    OAuthAppRegistrationQuery,
+    OAuthAppRegistrationUpdate,
     OAuthAppRegistrationView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -30,7 +34,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import EgressConfig, resolved_control_egress
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditReason
-from jentic_one.shared.pagination import decode_cursor, encode_cursor
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
 
@@ -42,34 +46,26 @@ class OAuthAppRegistrationService:
 
     async def create_authorization_code(
         self,
+        payload: AuthorizationCodeRegistrationCreate,
         *,
-        name: str,
-        api_vendor: str,
-        catalog_api_id: str,
-        display_name: str,
-        client_id: str,
-        client_secret: str,
-        authorize_url: str,
-        token_url: str,
-        default_scopes: list[str] | None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
         egress = resolved_control_egress(self._ctx.config)
-        authorize_url = await _validate_endpoint_url("authorize_url", authorize_url, egress)
-        token_url = await _validate_endpoint_url("token_url", token_url, egress)
-        encrypted = self._ctx.encryption.encrypt(client_secret)
+        authorize_url = await _validate_endpoint_url("authorize_url", payload.authorize_url, egress)
+        token_url = await _validate_endpoint_url("token_url", payload.token_url, egress)
+        encrypted = self._ctx.encryption.encrypt(payload.client_secret.get_secret_value())
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_authorization_code(
                 session,
-                name=name,
-                api_vendor=api_vendor,
-                client_id=client_id,
+                name=payload.name,
+                api_vendor=payload.api_vendor,
+                client_id=payload.client_id,
                 encrypted_client_secret=encrypted,
                 authorize_url=authorize_url,
                 token_url=token_url,
-                catalog_api_id=catalog_api_id,
-                display_name=display_name,
-                default_scopes=default_scopes,
+                catalog_api_id=payload.catalog_api_id,
+                display_name=payload.display_name,
+                default_scopes=payload.default_scopes,
                 created_by=identity.sub,
             )
             view = _project(registration, dependent_credential_count=0)
@@ -82,12 +78,12 @@ class OAuthAppRegistrationService:
             actor_type=identity.actor_type.value,
             actor_id=identity.sub,
             after={
-                "name": name,
-                "api_vendor": api_vendor,
-                "catalog_api_id": catalog_api_id,
-                "display_name": display_name,
+                "name": payload.name,
+                "api_vendor": payload.api_vendor,
+                "catalog_api_id": payload.catalog_api_id,
+                "display_name": payload.display_name,
                 "flow_kind": FLOW_KIND_AUTH_CODE,
-                "client_id": client_id,
+                "client_id": payload.client_id,
             },
             origin=identity.origin.value,
         )
@@ -95,33 +91,28 @@ class OAuthAppRegistrationService:
 
     async def create_device_authorization(
         self,
+        payload: DeviceAuthorizationRegistrationCreate,
         *,
-        name: str,
-        api_vendor: str,
-        catalog_api_id: str,
-        display_name: str,
-        client_id: str,
-        authorization_endpoint: str,
-        token_endpoint: str,
-        default_scopes: list[str] | None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
         egress = resolved_control_egress(self._ctx.config)
         authorization_endpoint = await _validate_endpoint_url(
-            "authorization_endpoint", authorization_endpoint, egress
+            "authorization_endpoint", payload.authorization_endpoint, egress
         )
-        token_endpoint = await _validate_endpoint_url("token_endpoint", token_endpoint, egress)
+        token_endpoint = await _validate_endpoint_url(
+            "token_endpoint", payload.token_endpoint, egress
+        )
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.create_device_authorization(
                 session,
-                name=name,
-                api_vendor=api_vendor,
-                client_id=client_id,
+                name=payload.name,
+                api_vendor=payload.api_vendor,
+                client_id=payload.client_id,
                 authorization_endpoint=authorization_endpoint,
                 token_endpoint=token_endpoint,
-                catalog_api_id=catalog_api_id,
-                display_name=display_name,
-                default_scopes=default_scopes,
+                catalog_api_id=payload.catalog_api_id,
+                display_name=payload.display_name,
+                default_scopes=payload.default_scopes,
                 created_by=identity.sub,
             )
             view = _project(registration, dependent_credential_count=0)
@@ -134,12 +125,12 @@ class OAuthAppRegistrationService:
             actor_type=identity.actor_type.value,
             actor_id=identity.sub,
             after={
-                "name": name,
-                "api_vendor": api_vendor,
-                "catalog_api_id": catalog_api_id,
-                "display_name": display_name,
+                "name": payload.name,
+                "api_vendor": payload.api_vendor,
+                "catalog_api_id": payload.catalog_api_id,
+                "display_name": payload.display_name,
                 "flow_kind": FLOW_KIND_DEVICE_AUTHORIZATION,
-                "client_id": client_id,
+                "client_id": payload.client_id,
             },
             origin=identity.origin.value,
         )
@@ -155,29 +146,23 @@ class OAuthAppRegistrationService:
             )
         return _project(registration, dependent_credential_count=count)
 
-    async def list_page(
-        self,
-        *,
-        api_vendor: str | None = None,
-        flow_kind: str | None = None,
-        include_inactive: bool = False,
-        cursor: str | None = None,
-        limit: int = 50,
-    ) -> tuple[list[OAuthAppRegistrationView], bool, str | None]:
-        """List registrations. Returns ``(data, has_more, next_cursor)``."""
-        decoded_cursor = decode_cursor(cursor, id_kind="str") if cursor is not None else None
+    async def list_page(self, query: OAuthAppRegistrationQuery) -> Page[OAuthAppRegistrationView]:
+        """List registrations with cursor-based pagination."""
+        decoded_cursor = (
+            decode_cursor(query.cursor, id_kind="str") if query.cursor is not None else None
+        )
         async with self._ctx.control_db.session() as session:
             rows = await OAuthAppRegistrationRepository.list_page(
                 session,
-                api_vendor=api_vendor,
-                flow_kind=flow_kind,
-                include_inactive=include_inactive,
+                api_vendor=query.api_vendor,
+                flow_kind=query.flow_kind,
+                include_inactive=query.include_inactive,
                 cursor=decoded_cursor,
-                limit=limit + 1,
+                limit=query.limit + 1,
             )
-            has_more = len(rows) > limit
+            has_more = len(rows) > query.limit
             if has_more:
-                rows = rows[:limit]
+                rows = rows[: query.limit]
             counts = await OAuthAppRegistrationRepository.dependent_credential_counts(
                 session, [row.id for row in rows]
             )
@@ -186,32 +171,25 @@ class OAuthAppRegistrationService:
             last = rows[-1]
             next_cursor = encode_cursor(last.created_at, last.id)
         views = [_project(row, dependent_credential_count=counts.get(row.id, 0)) for row in rows]
-        return views, has_more, next_cursor
+        return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
     async def update(
         self,
         registration_id: str,
+        payload: OAuthAppRegistrationUpdate,
         *,
-        name: str | None = None,
-        display_name: str | None = None,
-        default_scopes: list[str] | None = None,
-        authorize_url: str | None = None,
-        token_url: str | None = None,
-        authorization_endpoint: str | None = None,
-        token_endpoint: str | None = None,
-        is_active: bool | None = None,
         identity: Identity,
     ) -> OAuthAppRegistrationView:
         egress = resolved_control_egress(self._ctx.config)
         authorize_url = await _validate_optional_endpoint_url(
-            "authorize_url", authorize_url, egress
+            "authorize_url", payload.authorize_url, egress
         )
-        token_url = await _validate_optional_endpoint_url("token_url", token_url, egress)
+        token_url = await _validate_optional_endpoint_url("token_url", payload.token_url, egress)
         authorization_endpoint = await _validate_optional_endpoint_url(
-            "authorization_endpoint", authorization_endpoint, egress
+            "authorization_endpoint", payload.authorization_endpoint, egress
         )
         token_endpoint = await _validate_optional_endpoint_url(
-            "token_endpoint", token_endpoint, egress
+            "token_endpoint", payload.token_endpoint, egress
         )
         async with self._ctx.control_db.transaction() as session:
             registration = await OAuthAppRegistrationRepository.get_by_id(session, registration_id)
@@ -220,13 +198,17 @@ class OAuthAppRegistrationService:
 
             before = _snapshot(registration)
 
-            if name is not None or display_name is not None or is_active is not None:
+            if (
+                payload.name is not None
+                or payload.display_name is not None
+                or payload.is_active is not None
+            ):
                 await OAuthAppRegistrationRepository.update_base(
                     session,
                     registration_id,
-                    name=name,
-                    display_name=display_name,
-                    is_active=is_active,
+                    name=payload.name,
+                    display_name=payload.display_name,
+                    is_active=payload.is_active,
                 )
 
             if registration.flow_kind == FLOW_KIND_AUTH_CODE:
@@ -245,13 +227,13 @@ class OAuthAppRegistrationService:
                         "authorization-code registrations cannot move token_url to a different "
                         "origin (scheme, host or port); create a new registration instead"
                     )
-                if any(v is not None for v in (authorize_url, token_url, default_scopes)):
+                if any(v is not None for v in (authorize_url, token_url, payload.default_scopes)):
                     await OAuthAppRegistrationRepository.update_authorization_code_details(
                         session,
                         registration_id,
                         authorize_url=authorize_url,
                         token_url=token_url,
-                        default_scopes=default_scopes,
+                        default_scopes=payload.default_scopes,
                     )
             else:
                 if authorize_url is not None or token_url is not None:
@@ -281,14 +263,15 @@ class OAuthAppRegistrationService:
                         "instead"
                     )
                 if any(
-                    v is not None for v in (authorization_endpoint, token_endpoint, default_scopes)
+                    v is not None
+                    for v in (authorization_endpoint, token_endpoint, payload.default_scopes)
                 ):
                     await OAuthAppRegistrationRepository.update_device_authorization_details(
                         session,
                         registration_id,
                         authorization_endpoint=authorization_endpoint,
                         token_endpoint=token_endpoint,
-                        default_scopes=default_scopes,
+                        default_scopes=payload.default_scopes,
                     )
 
             # Explicitly refresh the base row + the two extension relationships.

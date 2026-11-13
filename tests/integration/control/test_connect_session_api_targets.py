@@ -91,6 +91,9 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     BasicSecret,
     BearerSecret,
 )
+from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+)
 from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
@@ -622,15 +625,17 @@ async def test_connect_oauth_api_uses_a_covering_config_entry(env: Context) -> N
 
 async def _register_app(ctx: Context, name: str = "Widgets app") -> str:
     view = await OAuthAppRegistrationService(ctx).create_authorization_code(
-        name=name,
-        api_vendor="widgets",
-        catalog_api_id=_CATALOG_ID,
-        display_name="Widgets",
-        client_id=f"client-{name}",
-        client_secret="registration-secret",  # pragma: allowlist secret
-        authorize_url="https://auth.widgets.example/authorize",
-        token_url="https://auth.widgets.example/token",
-        default_scopes=["read"],
+        AuthorizationCodeRegistrationCreate(
+            name=name,
+            api_vendor="widgets",
+            catalog_api_id=_CATALOG_ID,
+            display_name="Widgets",
+            client_id=f"client-{name}",
+            client_secret=SecretStr("registration-secret"),
+            authorize_url="https://auth.widgets.example/authorize",
+            token_url="https://auth.widgets.example/token",
+            default_scopes=["read"],
+        ),
         identity=_ADMIN,
     )
     return view.id

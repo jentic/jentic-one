@@ -42,16 +42,26 @@ def _mutating_tools() -> list[str]:
     A hand-written list is the defect it is meant to catch: a fourth handler
     reaching the service passes silently, which is exactly how the route half
     of this file came to omit ``:rebase``. The handlers are read out of the
-    module instead, so the set cannot fall behind the code.
+    registered handler modules instead, so the set cannot fall behind the code.
     """
-    tree = ast.parse(Path(tools.__file__).read_text())
-    found = []
-    for node in tree.body:
-        if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("handle_"):
-            continue
-        body = ast.unparse(node)
-        if any(f".{call}(" in body for call in _MUTATING_SERVICE_CALLS):
-            found.append(node.name)
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for handler in tools.HANDLERS.values():
+        source_file = inspect.getsourcefile(handler)
+        assert source_file is not None
+        path = Path(source_file).resolve()
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    found: set[str] = set()
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if not isinstance(node, ast.AsyncFunctionDef) or not node.name.startswith("handle_"):
+                continue
+            body = ast.unparse(node)
+            if any(f".{call}(" in body for call in _MUTATING_SERVICE_CALLS):
+                found.add(node.name)
     return sorted(found)
 
 

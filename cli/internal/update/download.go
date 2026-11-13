@@ -154,6 +154,18 @@ func cosignAvailable() bool {
 	return err == nil
 }
 
+// DownloadRequest identifies a release binary artifact and its verification
+// and staging context.
+type DownloadRequest struct {
+	Repo     string
+	Tag      string
+	Binary   string
+	GOOS     string
+	GOARCH   string
+	Token    string
+	StageDir string
+}
+
 // DownloadResult is the outcome of a verified download: the extracted binary
 // path in stageDir and any non-fatal warning (e.g. cosign absent).
 type DownloadResult struct {
@@ -161,19 +173,19 @@ type DownloadResult struct {
 	Warning    string
 }
 
-// DownloadAndVerify fetches the release archive for `binary` at `tag`, enforces
-// the sha256 gate against the release checksums.txt (fail-closed), verifies the
+// DownloadAndVerify fetches the release archive described by req, enforces the
+// sha256 gate against the release checksums.txt (fail-closed), verifies the
 // cosign signature when cosign is present (a bad signature aborts; absence
-// warns), extracts the archive into stageDir, and returns the path to the
+// warns), extracts the archive into req.StageDir, and returns the path to the
 // extracted binary. It is the runtime analogue of the installer's download mode
 // and shares the AssetName construction so the two never diverge.
-func DownloadAndVerify(ctx context.Context, repo, tag, binary, goos, goarch, token, stageDir string) (*DownloadResult, error) {
-	asset := AssetName(binary, tag, goos, goarch)
-	archive, err := httpGet(ctx, releaseAssetURL(repo, tag, asset), token)
+func DownloadAndVerify(ctx context.Context, req DownloadRequest) (*DownloadResult, error) {
+	asset := AssetName(req.Binary, req.Tag, req.GOOS, req.GOARCH)
+	archive, err := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, asset), req.Token)
 	if err != nil {
 		return nil, err
 	}
-	checksums, err := httpGet(ctx, releaseAssetURL(repo, tag, "checksums.txt"), token)
+	checksums, err := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, "checksums.txt"), req.Token)
 	if err != nil {
 		return nil, err
 	}
@@ -186,18 +198,18 @@ func DownloadAndVerify(ctx context.Context, repo, tag, binary, goos, goarch, tok
 	// but a PRESENT-cosign verification failure is hard.
 	var warn string
 	if cosignAvailable() {
-		sig, sigErr := httpGet(ctx, releaseAssetURL(repo, tag, "checksums.txt.sig"), token)
-		cert, certErr := httpGet(ctx, releaseAssetURL(repo, tag, "checksums.txt.pem"), token)
+		sig, sigErr := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, "checksums.txt.sig"), req.Token)
+		cert, certErr := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, "checksums.txt.pem"), req.Token)
 		if sigErr != nil || certErr != nil {
 			warn = "cosign is installed but the release signature/cert could not be fetched; verified sha256 only"
-		} else if _, verr := verifyCosign(ctx, tag, checksums, sig, cert, stageDir); verr != nil {
+		} else if _, verr := verifyCosign(ctx, req.Tag, checksums, sig, cert, req.StageDir); verr != nil {
 			return nil, verr
 		}
 	} else {
 		warn = "signature not verified (install cosign to verify the release signature)"
 	}
 
-	binPath, err := extractBinary(asset, archive, binary, goos, stageDir)
+	binPath, err := extractBinary(asset, archive, req.Binary, req.GOOS, req.StageDir)
 	if err != nil {
 		return nil, err
 	}

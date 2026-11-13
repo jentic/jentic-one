@@ -48,7 +48,7 @@ from jentic_one.shared.events.repeated_failure import (
     RepeatedFailureCounter,
     maybe_emit_repeated_failure,
 )
-from jentic_one.shared.executions import record_execution
+from jentic_one.shared.executions import ExecutionRecordInput, record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
@@ -85,7 +85,8 @@ async def emit_circuit_open_event(
     operator-facing event. The buffered path emits it in the request's own
     transaction; the streaming path, whose error response must not wait on the
     admin database, emits it off the request before and independently of the
-    execution record (see ``_emit_streaming_circuit_event`` in the router).
+    execution record (see ``_emit_streaming_circuit_event`` in
+    ``streaming_persistence``).
 
     The rate limit is the breaker's own per-host claim
     (``CircuitOpenError.report``), checked by the caller: of every refusal an
@@ -422,24 +423,26 @@ async def persist_streaming_execution(
 
     await record_execution(
         session,
-        execution_id=execution_id,
-        toolkit_id=ctx_req.toolkit_id,
-        trace_id=ctx_req.trace_id,
-        started_at=started_at,
-        status=status,
-        duration_ms=persisted_ms,
-        operation=ctx_req.operation,
-        api_vendor=ctx_req.api_vendor,
-        api_name=ctx_req.api_name,
-        api_version=ctx_req.api_version,
-        http_status=http_status,
-        error=error,
-        pinned_revisions=ctx_req.pinned_revisions,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        credential_id=ctx_req.credential_id,
-        credential_name=ctx_req.credential_name,
+        ExecutionRecordInput(
+            execution_id=execution_id,
+            toolkit_id=ctx_req.toolkit_id,
+            trace_id=ctx_req.trace_id,
+            started_at=started_at,
+            status=status,
+            duration_ms=persisted_ms,
+            operation=ctx_req.operation,
+            api_vendor=ctx_req.api_vendor,
+            api_name=ctx_req.api_name,
+            api_version=ctx_req.api_version,
+            http_status=http_status,
+            error=error,
+            pinned_revisions=ctx_req.pinned_revisions,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+            credential_id=ctx_req.credential_id,
+            credential_name=ctx_req.credential_name,
+        ),
     )
 
     # Third-party auth failure on the streaming path — mirrors run_execution
@@ -485,24 +488,26 @@ async def _persist(
 ) -> None:
     await record_execution(
         session,
-        execution_id=execution_id,
-        toolkit_id=ctx_req.toolkit_id,
-        trace_id=ctx_req.trace_id,
-        started_at=started_at,
-        status=status,
-        duration_ms=duration_ms,
-        operation=ctx_req.operation,
-        api_vendor=ctx_req.api_vendor,
-        api_name=ctx_req.api_name,
-        api_version=ctx_req.api_version,
-        http_status=http_status,
-        error=error,
-        pinned_revisions=ctx_req.pinned_revisions,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        credential_id=ctx_req.credential_id,
-        credential_name=ctx_req.credential_name,
+        ExecutionRecordInput(
+            execution_id=execution_id,
+            toolkit_id=ctx_req.toolkit_id,
+            trace_id=ctx_req.trace_id,
+            started_at=started_at,
+            status=status,
+            duration_ms=duration_ms,
+            operation=ctx_req.operation,
+            api_vendor=ctx_req.api_vendor,
+            api_name=ctx_req.api_name,
+            api_version=ctx_req.api_version,
+            http_status=http_status,
+            error=error,
+            pinned_revisions=ctx_req.pinned_revisions,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+            credential_id=ctx_req.credential_id,
+            credential_name=ctx_req.credential_name,
+        ),
     )
 
 

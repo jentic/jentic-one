@@ -13,12 +13,15 @@ import (
 )
 
 // resetOptions collects the two escape-hatch flags. Neither is a convenience:
-// --force is the ONLY way to skip the typed-name confirmation (there is no safe
-// default for destruction), and --delete-home is the ONLY non-interactive way to
-// opt into deleting the agent's home (interactively it is a separate typed
-// prompt). Used together they enable scripted teardown; alone, --delete-home
-// still requires the interactive home confirmation to have no effect other than
-// pre-answering it, and is inert without --force in a non-interactive shell.
+//   - --force skips typed-name confirmation and is required for non-interactive
+//     reset; without --delete-home, forced reset preserves the agent's home.
+//   - --force --delete-home enables non-interactive home deletion; forced
+//     home deletion requires --delete-home.
+//   - Without --force, an interactive reset with an agent home asks a separate
+//     home-deletion question, and its answer determines deletion even when
+//     --delete-home was supplied.
+//   - Without --force in a non-interactive shell, reset is refused before home
+//     deletion.
 type resetOptions struct {
 	deleteHome bool
 	force      bool

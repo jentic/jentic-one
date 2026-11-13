@@ -29,7 +29,7 @@ from jentic_one.broker.core.errors import (
 )
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution import service as service_module
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
 )
@@ -331,7 +331,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
     started_at = datetime.now(UTC)
 
     with patch(
-        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
         await _persist_streaming_outcome(
@@ -378,7 +378,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
     started_at = datetime.now(UTC)
 
     with patch(
-        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
         await _persist_streaming_outcome(
@@ -888,7 +888,7 @@ async def test_persist_outcome_without_upstream_status_records_failed(cancelled:
     started_at = datetime.now(UTC)
 
     with patch(
-        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
         await _persist_streaming_outcome(
@@ -1044,7 +1044,7 @@ async def test_an_outcome_with_neither_a_status_nor_an_error_records_failed() ->
     with (
         structlog.testing.capture_logs() as logs,
         patch(
-            "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+            "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
             new_callable=AsyncMock,
         ) as mock_persist,
     ):

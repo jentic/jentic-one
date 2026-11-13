@@ -17,7 +17,7 @@ import pytest
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.models.events import EventType
 
-_SVC = "jentic_one.registry.services.import_service"
+_SVC = "jentic_one.registry.services.import_overlay"
 
 
 def _ctx() -> MagicMock:

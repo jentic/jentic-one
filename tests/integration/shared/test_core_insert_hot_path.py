@@ -29,7 +29,7 @@ from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos import event_repo
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.events import emit_credential_access, emit_event, emit_event_best_effort
-from jentic_one.shared.executions import record_execution
+from jentic_one.shared.executions import ExecutionRecordInput, record_execution
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
@@ -70,18 +70,20 @@ def _count_flushes(session: AsyncSession) -> list[int]:
 async def _record(session: AsyncSession, execution_id: str) -> str:
     return await record_execution(
         session,
-        execution_id=execution_id,
-        toolkit_id=None,
-        trace_id=_TRACE,
-        started_at=datetime.now(UTC),
-        status=ExecutionStatus.COMPLETED,
-        duration_ms=12,
-        operation=OperationInfo(id="op_1822", path="/v1/things", method="GET"),
-        api_vendor="example.com",
-        http_status=200,
-        actor_id=_ACTOR,
-        actor_type="agent",
-        credential_id="cred_1822",
+        ExecutionRecordInput(
+            execution_id=execution_id,
+            toolkit_id=None,
+            trace_id=_TRACE,
+            started_at=datetime.now(UTC),
+            status=ExecutionStatus.COMPLETED,
+            duration_ms=12,
+            operation=OperationInfo(id="op_1822", path="/v1/things", method="GET"),
+            api_vendor="example.com",
+            http_status=200,
+            actor_id=_ACTOR,
+            actor_type="agent",
+            credential_id="cred_1822",
+        ),
     )
 
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest
 
-from jentic_one.registry.services.note_service import UNSET, NoteService, NoteView
+from jentic_one.registry.services.note_service import NoteService, NoteView
+from jentic_one.registry.services.schemas import NoteQuery
 from jentic_one.registry.web.schemas.notes import (
     NoteApiReference,
     NoteCreateRequest,
@@ -108,25 +109,7 @@ async def create_note(
 ) -> JSONResponse:
     """Create a new note attached to a registry resource."""
     svc = NoteService(ctx)
-    resource_api = None
-    if body.resource.api is not None:
-        resource_api = (
-            body.resource.api.vendor,
-            body.resource.api.name,
-            body.resource.api.version,
-        )
-    view = await svc.create(
-        resource_api=resource_api,
-        resource_operation_id=body.resource.operation_id,
-        resource_execution_id=body.resource.execution_id,
-        resource_credential_id=body.resource.credential_id,
-        type=body.type.value if body.type is not None else None,
-        body=body.body,
-        confidence=body.confidence.value if body.confidence is not None else None,
-        source=body.source.value if body.source is not None else None,
-        identity=identity,
-        related_execution_id=body.related_execution_id,
-    )
+    view = await svc.create(body.to_service_model(), identity=identity)
 
     resp = _build_response(request, view)
     return JSONResponse(status_code=201, content=resp.model_dump(mode="json", by_alias=True))
@@ -186,14 +169,16 @@ async def list_notes(
     """
     svc = NoteService(ctx)
     page = await svc.list_page(
-        limit=limit,
-        cursor=cursor,
-        api=api,
-        operation_id=operation_id,
-        execution_id=execution_id,
-        credential_id=credential_id,
-        type=type,
-        created_by=created_by,
+        NoteQuery(
+            limit=limit,
+            cursor=cursor,
+            api=api,
+            operation_id=operation_id,
+            execution_id=execution_id,
+            credential_id=credential_id,
+            type=type,
+            created_by=created_by,
+        ),
         identity=identity,
     )
 
@@ -251,28 +236,12 @@ async def update_note(
     revision = _parse_if_match(if_match, instance=request.url.path)
 
     svc = NoteService(ctx)
-
-    kwargs: dict[str, Any] = {}
-    if "body" in body.model_fields_set:
-        kwargs["body"] = body.body
-    if "type" in body.model_fields_set:
-        kwargs["type"] = body.type.value if body.type is not None else None
-    else:
-        kwargs["type"] = UNSET
-    if "confidence" in body.model_fields_set:
-        kwargs["confidence"] = body.confidence.value if body.confidence is not None else None
-    else:
-        kwargs["confidence"] = UNSET
-    if "source" in body.model_fields_set:
-        kwargs["source"] = body.source.value if body.source is not None else None
-    else:
-        kwargs["source"] = UNSET
-    if "related_execution_id" in body.model_fields_set:
-        kwargs["related_execution_id"] = body.related_execution_id
-    else:
-        kwargs["related_execution_id"] = UNSET
-
-    view = await svc.update(note_id, if_match=revision, identity=identity, **kwargs)
+    view = await svc.update(
+        note_id,
+        body.to_service_model(),
+        if_match=revision,
+        identity=identity,
+    )
 
     resp = _build_response(request, view)
     content = resp.model_dump(mode="json", by_alias=True)
