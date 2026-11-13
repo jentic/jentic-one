@@ -33,6 +33,8 @@ env:
   # default token used by our own workflows, e.g. issue-intake-label applying
   # ai-intake and the followup clearing status labels).
   HARNESS_BOT: jentic-harness
+  # Software Factory (v2), which takes over from the harness repo by repo.
+  SF_BOT: jentic-factory
   # Space-separated exact labels + glob prefixes that are restricted.
   # Everything the harness manages (type, area:*, severity:*, fit:*, feasibility:*)
   # + human-authority status labels + the security label (route via needs-human /
@@ -85,7 +87,7 @@ jobs:
           # workflows acting as github-actions. The [bot] forms are quoted so the
           # brackets are matched literally, not as a glob character class.
           case "$ACTOR" in
-            "$HARNESS_BOT"|"${HARNESS_BOT}[bot]"|"github-actions"|"github-actions[bot]")
+            "$HARNESS_BOT"|"${HARNESS_BOT}[bot]"|"$SF_BOT"|"${SF_BOT}[bot]"|"github-actions"|"github-actions[bot]")
               echo "Applied by trusted automation ($ACTOR) — allowed."
               exit 0
               ;;

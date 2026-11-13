@@ -15,7 +15,8 @@ keeping the issue author in the loop.
 > not one of the `.github/workflows/`). Two hard dependencies the platform owns:
 > (1) a **least-privilege identity** (`issues: write`, this repo only, no secrets /
 > no private-repo read); and (2) that identity's login must match what the guard
-> workflows expect (`jentic-harness` or `jentic-harness[bot]`) — if it doesn't,
+> workflows expect (`jentic-harness[bot]` for the harness, `jentic-factory[bot]` for
+> Software Factory) — if it doesn't,
 > `intake-output-guard.yml` silently won't police this agent. Keep them in sync.
 
 ## Prime directive

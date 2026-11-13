@@ -38,6 +38,8 @@ concurrency:
 
 env:
   HARNESS_BOT: jentic-harness
+  # Software Factory (v2), which takes over intake from the harness.
+  SF_BOT: jentic-factory
   # Labels that exist in labels.yml but the harness must never apply itself:
   # security (route via needs-human + SECURITY.md), the human-authority verdicts,
   # and the privileged AI trigger labels.
@@ -56,7 +58,9 @@ jobs:
     # platform's actual bot identity.
     if: >-
       github.event.sender.login == 'jentic-harness' ||
-      github.event.sender.login == 'jentic-harness[bot]'
+      github.event.sender.login == 'jentic-harness[bot]' ||
+      github.event.sender.login == 'jentic-factory' ||
+      github.event.sender.login == 'jentic-factory[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
