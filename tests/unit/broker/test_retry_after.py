@@ -10,15 +10,35 @@ capped at the deadline.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from email.utils import format_datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from jentic_one.broker.core.retry_after import parse_retry_after_seconds
 
+_PARITY_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "retry-after-parity.json"
+
+
+def _load_parity_cases() -> list[dict[str, Any]]:
+    data = json.loads(_PARITY_FIXTURE.read_text(encoding="utf-8"))
+    cases = list(data["cases"])
+    assert cases
+    return cases
+
+
 # A fixed "now" (2021-01-01T00:00:00Z) so date math is deterministic.
 _NOW = 1_609_459_200.0
+
+
+@pytest.mark.parametrize("case", _load_parity_cases(), ids=lambda c: c["name"])
+def test_broker_retry_after_matches_shared_parity_vectors(case: dict[str, Any]) -> None:
+    """Pins #1991: the broker rate-limit normalizer applies the shared Retry-After vectors."""
+    headers: dict[str, str] = {} if case["header"] is None else {"Retry-After": case["header"]}
+    assert parse_retry_after_seconds(headers, now_epoch=_NOW) == case["seconds"]
 
 
 def test_no_signal_returns_none() -> None:

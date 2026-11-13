@@ -3,7 +3,6 @@ package agentops
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -163,24 +162,83 @@ func BrokerTransportError(r *ExecuteResult, retrySafe bool) *ux.CodedError {
 	}
 }
 
-// RetryAfterSeconds parses a Retry-After header (delta-seconds, or an HTTP-date
-// converted to the seconds remaining, floored at zero). ok is false when the
-// header is absent or unparseable, so callers never relay a made-up delay.
+// maxRetryAfterSeconds caps a Retry-After wait at one day, matching
+// jentic_one.shared.http.retry_after.MAX_RETRY_AFTER_S (#1991).
+const maxRetryAfterSeconds = 86400
+
+// RetryAfterSeconds parses a Retry-After header to whole seconds (matching
+// jentic_one.shared.http.retry_after.parse_retry_after): non-negative ASCII
+// decimal delay-seconds (a fraction rounds up; a sign, exponent or non-ASCII
+// digit is rejected), or an HTTP-date converted to the seconds remaining
+// (floored at zero), capped at one day (86400s). ok is false when the header is
+// absent or unparseable, so callers never relay a made-up delay.
 func RetryAfterSeconds(h http.Header) (float64, bool) {
+	return retryAfterSecondsAt(h, time.Now())
+}
+
+func retryAfterSecondsAt(h http.Header, now time.Time) (float64, bool) {
 	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
 		return 0, false
 	}
-	if secs, err := strconv.ParseFloat(v, 64); err == nil {
-		if secs < 0 || math.IsNaN(secs) || math.IsInf(secs, 0) {
-			return 0, false
-		}
-		return secs, true
+	if secs, ok := parseDelaySeconds(v); ok {
+		return float64(secs), true
 	}
 	if when, err := http.ParseTime(v); err == nil {
-		return math.Max(0, math.Ceil(time.Until(when).Seconds())), true
+		delta := when.Sub(now)
+		if delta <= 0 {
+			return 0, true
+		}
+		if delta >= maxRetryAfterSeconds*time.Second {
+			return maxRetryAfterSeconds, true
+		}
+		secs := int(delta / time.Second)
+		if delta%time.Second != 0 {
+			secs++
+		}
+		return float64(secs), true
 	}
 	return 0, false
+}
+
+// parseDelaySeconds parses an unsigned ASCII decimal delay (^[0-9]+(\.[0-9]+)?$),
+// rounding any non-zero fraction up and capping at maxRetryAfterSeconds without
+// overflowing on arbitrarily long digit strings.
+func parseDelaySeconds(raw string) (int, bool) {
+	whole, frac, hasDot := strings.Cut(raw, ".")
+	if !isASCIIDigits(whole) {
+		return 0, false
+	}
+	if hasDot && !isASCIIDigits(frac) {
+		return 0, false
+	}
+	whole = strings.TrimLeft(whole, "0")
+	if len(whole) > 5 { // len("86400") == 5
+		return maxRetryAfterSeconds, true
+	}
+	secs := 0
+	for i := range len(whole) {
+		secs = secs*10 + int(whole[i]-'0')
+	}
+	if strings.TrimLeft(frac, "0") != "" {
+		secs++
+	}
+	if secs > maxRetryAfterSeconds {
+		return maxRetryAfterSeconds, true
+	}
+	return secs, true
+}
+
+func isASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // waitPhrase renders the wait a retry should honour: the broker's Retry-After

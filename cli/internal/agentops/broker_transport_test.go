@@ -1,7 +1,10 @@
 package agentops
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +136,26 @@ func TestBrokerTransportError(t *testing.T) {
 			want: true, wantRetryable: true, wantRec: RecoverWait, wantAfter: float64(7),
 		},
 		{
+			name: "fractional Retry-After rounds up to whole seconds",
+			res:  brokerTransportResult(503, "broker", "1.5", `{"type":"circuit_open","title":"open","status":503}`),
+			want: true, wantRetryable: true, wantRec: RecoverWait, wantAfter: float64(2),
+		},
+		{
+			name: "oversized Retry-After caps at one day",
+			res:  brokerTransportResult(503, "broker", "999999", `{"type":"circuit_open","title":"open","status":503}`),
+			want: true, wantRetryable: true, wantRec: RecoverWait, wantAfter: float64(86400),
+		},
+		{
+			name: "signed Retry-After is not relayed",
+			res:  brokerTransportResult(503, "broker", "+5", `{"type":"circuit_open","title":"open","status":503}`),
+			want: true, wantRetryable: true, wantRec: RecoverWait,
+		},
+		{
+			name: "exponent Retry-After is not relayed",
+			res:  brokerTransportResult(503, "broker", "1e3", `{"type":"circuit_open","title":"open","status":503}`),
+			want: true, wantRetryable: true, wantRec: RecoverWait,
+		},
+		{
 			name: "unparseable Retry-After is not relayed",
 			res:  brokerTransportResult(503, "broker", "soon", `{"type":"circuit_open","title":"open","status":503}`),
 			want: true, wantRetryable: true, wantRec: RecoverWait,
@@ -242,36 +265,106 @@ func TestBrokerTransportErrorCarriesReason(t *testing.T) {
 	}
 }
 
-func TestRetryAfterSeconds(t *testing.T) {
+// TestRetryAfterSecondsParity replays the shared delay-seconds vector file
+// (tests/fixtures/retry-after-parity.json) so Go, MCP and the broker enforce
+// identical rounding, grammar and one-day cap rules (#1991).
+func TestRetryAfterSecondsParity(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", "retry-after-parity.json"))
+	if err != nil {
+		t.Fatalf("read shared Retry-After parity fixture: %v", err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Name    string  `json:"name"`
+			Header  *string `json:"header"`
+			Seconds *int    `json:"seconds"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("decode shared Retry-After parity fixture: %v", err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("shared Retry-After parity fixture contains no cases")
+	}
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			h := http.Header{}
+			label := "<absent>"
+			if tc.Header != nil {
+				h.Set("Retry-After", *tc.Header)
+				label = *tc.Header
+			}
+			got, ok := RetryAfterSeconds(h)
+			wantOK := tc.Seconds != nil
+			if ok != wantOK {
+				t.Fatalf("RetryAfterSeconds(%q) ok = %v, want %v (got %v)", label, ok, wantOK, got)
+			}
+			if !wantOK {
+				if got != 0 {
+					t.Errorf("RetryAfterSeconds(%q) = %v on unparseable input, want 0", label, got)
+				}
+				return
+			}
+			want := float64(*tc.Seconds)
+			if got != want {
+				t.Errorf("RetryAfterSeconds(%q) = %v, want %v", label, got, want)
+			}
+		})
+	}
+}
+
+func TestRetryAfterSecondsHTTPDate(t *testing.T) {
 	future := time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)
 	past := time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)
-	cases := []struct {
-		value  string
-		wantOK bool
-		check  func(float64) bool
+	farFuture := time.Now().Add(30 * 24 * time.Hour).UTC().Format(http.TimeFormat)
+	liveCases := []struct {
+		name  string
+		value string
+		check func(float64) bool
 	}{
-		{"", false, nil},
-		{"12", true, func(s float64) bool { return s == 12 }},
-		{" 3 ", true, func(s float64) bool { return s == 3 }},
-		{"0", true, func(s float64) bool { return s == 0 }},
-		{"-1", false, nil},
-		{"soon", false, nil},
-		{future, true, func(s float64) bool { return s > 60 && s <= 91 }},
-		{past, true, func(s float64) bool { return s == 0 }},
+		{"near future", future, func(s float64) bool { return s > 60 && s <= 91 }},
+		{"past date floors at zero", past, func(s float64) bool { return s == 0 }},
+		{"far future caps at one day", farFuture, func(s float64) bool { return s == 86400 }},
 	}
-	for _, tc := range cases {
-		h := http.Header{}
-		if tc.value != "" {
+	for _, tc := range liveCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := http.Header{}
 			h.Set("Retry-After", tc.value)
-		}
-		got, ok := RetryAfterSeconds(h)
-		if ok != tc.wantOK {
-			t.Errorf("RetryAfterSeconds(%q) ok = %v, want %v", tc.value, ok, tc.wantOK)
-			continue
-		}
-		if ok && !tc.check(got) {
-			t.Errorf("RetryAfterSeconds(%q) = %v", tc.value, got)
-		}
+			got, ok := RetryAfterSeconds(h)
+			if !ok {
+				t.Fatalf("RetryAfterSeconds(%q) ok = false, want true", tc.value)
+			}
+			if !tc.check(got) {
+				t.Errorf("RetryAfterSeconds(%q) = %v", tc.value, got)
+			}
+		})
+	}
+
+	fixedNow := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fixedCases := []struct {
+		name string
+		now  time.Time
+		when time.Time
+		want float64
+	}{
+		{"exact future whole seconds", fixedNow, fixedNow.Add(45 * time.Second), 45},
+		{"sub-second remaining rounds up", fixedNow.Add(500 * time.Millisecond), fixedNow.Add(45 * time.Second), 45},
+		{"sub-second past next whole second rounds up", fixedNow.Add(-500 * time.Millisecond), fixedNow.Add(45 * time.Second), 46},
+		{"sub-second past date floors at zero", fixedNow.Add(500 * time.Millisecond), fixedNow, 0},
+		{"past date floors at zero", fixedNow, fixedNow.Add(-2 * time.Minute), 0},
+		{"exact one-day cap", fixedNow, fixedNow.Add(86400 * time.Second), 86400},
+		{"far-future date caps at one day", fixedNow, fixedNow.Add(30 * 24 * time.Hour), 86400},
+	}
+	for _, tc := range fixedCases {
+		t.Run("deterministic/"+tc.name, func(t *testing.T) {
+			h := http.Header{}
+			h.Set("Retry-After", tc.when.UTC().Format(http.TimeFormat))
+			got, ok := retryAfterSecondsAt(h, tc.now)
+			if !ok || got != tc.want {
+				t.Errorf("retryAfterSecondsAt(%q, %v) = (%v, %v), want (%v, true)",
+					h.Get("Retry-After"), tc.now, got, ok, tc.want)
+			}
+		})
 	}
 }
 

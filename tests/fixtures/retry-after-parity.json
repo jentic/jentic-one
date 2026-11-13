@@ -1,0 +1,250 @@
+{
+	"_readme": "Shared Retry-After delay-seconds parity vectors (#1991) consumed by Go (cli/internal/agentops/broker_transport_test.go), the shared parser (tests/unit/shared/http/test_retry_after.py), the broker normalizer (tests/unit/broker/test_retry_after.py), and the mounted MCP classifier (tests/unit/mcp/test_broker_transport_error.py). Clock-dependent HTTP-date cases live in each language's own unit tests. Do NOT edit a single consumer to work around a failure — keep one Retry-After delay-seconds rule across every surface.",
+	"cases": [
+		{
+			"name": "absent header",
+			"header": null,
+			"seconds": null
+		},
+		{
+			"name": "empty string",
+			"header": "",
+			"seconds": null
+		},
+		{
+			"name": "spaces only",
+			"header": "   ",
+			"seconds": null
+		},
+		{
+			"name": "tabs and spaces only",
+			"header": "\t \t",
+			"seconds": null
+		},
+		{
+			"name": "zero",
+			"header": "0",
+			"seconds": 0
+		},
+		{
+			"name": "multiple zeros",
+			"header": "000",
+			"seconds": 0
+		},
+		{
+			"name": "integer seconds",
+			"header": "12",
+			"seconds": 12
+		},
+		{
+			"name": "integer seconds with surrounding spaces",
+			"header": " 3 ",
+			"seconds": 3
+		},
+		{
+			"name": "integer seconds with surrounding tabs",
+			"header": "\t30\t",
+			"seconds": 30
+		},
+		{
+			"name": "leading zeros",
+			"header": "00042",
+			"seconds": 42
+		},
+		{
+			"name": "many leading zeros before small delay",
+			"header": "000000000042",
+			"seconds": 42
+		},
+		{
+			"name": "zero with single zero fraction",
+			"header": "0.0",
+			"seconds": 0
+		},
+		{
+			"name": "zero with multiple zero fraction",
+			"header": "0.000",
+			"seconds": 0
+		},
+		{
+			"name": "sub-second fraction rounds up to 1",
+			"header": "0.2",
+			"seconds": 1
+		},
+		{
+			"name": "tiny fraction beyond float64 precision rounds up",
+			"header": "3.00000000000000000001",
+			"seconds": 4
+		},
+		{
+			"name": "half-second fraction rounds up",
+			"header": "1.5",
+			"seconds": 2
+		},
+		{
+			"name": "whole number with .0 stays exact",
+			"header": "3.0",
+			"seconds": 3
+		},
+		{
+			"name": "whole number with .000 stays exact",
+			"header": "3.000",
+			"seconds": 3
+		},
+		{
+			"name": "trimmed fractional seconds round up",
+			"header": " 2.01 ",
+			"seconds": 3
+		},
+		{
+			"name": "just below one-day cap",
+			"header": "86399",
+			"seconds": 86399
+		},
+		{
+			"name": "fraction just below cap rounds up to cap",
+			"header": "86399.1",
+			"seconds": 86400
+		},
+		{
+			"name": "exact one-day cap",
+			"header": "86400",
+			"seconds": 86400
+		},
+		{
+			"name": "exact one-day cap with zero fraction",
+			"header": "86400.0",
+			"seconds": 86400
+		},
+		{
+			"name": "fractional above one-day cap",
+			"header": "86400.1",
+			"seconds": 86400
+		},
+		{
+			"name": "one second above one-day cap",
+			"header": "86401",
+			"seconds": 86400
+		},
+		{
+			"name": "large fractional delay capped",
+			"header": "123456789.5",
+			"seconds": 86400
+		},
+		{
+			"name": "huge digit string capped without overflow",
+			"header": "999999999999999999999999999999",
+			"seconds": 86400
+		},
+		{
+			"name": "plus sign rejected",
+			"header": "+1",
+			"seconds": null
+		},
+		{
+			"name": "plus five rejected",
+			"header": "+5",
+			"seconds": null
+		},
+		{
+			"name": "negative integer rejected",
+			"header": "-1",
+			"seconds": null
+		},
+		{
+			"name": "negative zero rejected",
+			"header": "-0",
+			"seconds": null
+		},
+		{
+			"name": "lowercase exponent rejected",
+			"header": "1e3",
+			"seconds": null
+		},
+		{
+			"name": "uppercase exponent rejected",
+			"header": "1E3",
+			"seconds": null
+		},
+		{
+			"name": "fractional exponent rejected",
+			"header": "1.5e2",
+			"seconds": null
+		},
+		{
+			"name": "leading dot rejected",
+			"header": ".5",
+			"seconds": null
+		},
+		{
+			"name": "trailing dot rejected",
+			"header": "5.",
+			"seconds": null
+		},
+		{
+			"name": "multiple dots rejected",
+			"header": "1.2.3",
+			"seconds": null
+		},
+		{
+			"name": "underscore separator rejected",
+			"header": "1_000",
+			"seconds": null
+		},
+		{
+			"name": "short underscore separator rejected",
+			"header": "1_0",
+			"seconds": null
+		},
+		{
+			"name": "NaN rejected",
+			"header": "NaN",
+			"seconds": null
+		},
+		{
+			"name": "lowercase nan rejected",
+			"header": "nan",
+			"seconds": null
+		},
+		{
+			"name": "Inf rejected",
+			"header": "Inf",
+			"seconds": null
+		},
+		{
+			"name": "lowercase inf rejected",
+			"header": "inf",
+			"seconds": null
+		},
+		{
+			"name": "plus Inf rejected",
+			"header": "+Inf",
+			"seconds": null
+		},
+		{
+			"name": "minus Inf rejected",
+			"header": "-Inf",
+			"seconds": null
+		},
+		{
+			"name": "non-ASCII Arabic-Indic digits rejected",
+			"header": "١٢",
+			"seconds": null
+		},
+		{
+			"name": "non-numeric word rejected",
+			"header": "soon",
+			"seconds": null
+		},
+		{
+			"name": "unit suffix rejected",
+			"header": "12s",
+			"seconds": null
+		},
+		{
+			"name": "internal whitespace rejected",
+			"header": "1 2",
+			"seconds": null
+		}
+	]
+}
