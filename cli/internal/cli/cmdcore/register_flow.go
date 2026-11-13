@@ -19,22 +19,33 @@ import (
 // command the user actually ran so the documented resume path is correct.
 const registerResumeHint = "Waiting for approval (Ctrl-C to stop and resume later with `jentic register`)..."
 
+// registrationRequest groups the resolved target and options for one
+// register-and-wait run.
+type registrationRequest struct {
+	identity   string
+	envName    string
+	baseURL    string
+	clientName string
+	timeout    time.Duration
+	force      bool
+}
+
 // registerAndWait is the shared register-and-wait body: mint the env-scoped key
 // if absent, perform RFC 7591 DCR (reusing an existing registration so the
 // flow is resumable), persist client_id/status, then wait for operator
 // approval by attempting the token exchange — exactly the credential every
 // data command will use, so success here IS end-to-end proof.
-func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, clientName string, timeout time.Duration, force bool) error {
+func (a *App) registerAndWait(ctx context.Context, req registrationRequest) error {
 	st := theme.StylesFromContext(ctx)
-	ref := auth.IdentityRef{Identity: identity, Environment: envName}
+	ref := auth.IdentityRef{Identity: req.identity, Environment: req.envName}
 
 	// A jak_* API-key identity has nothing to register: the key IS the
 	// long-lived credential.
 	if key, err := auth.ReadAPIKey(ref); err == nil && key != "" {
-		a.registerProgress(ctx, st.Infof("Identity %q already authenticates to %q with an API key; nothing to register.", identity, envName))
+		a.registerProgress(ctx, st.Infof("Identity %q already authenticates to %q with an API key; nothing to register.", req.identity, req.envName))
 		if isMachineCtx(ctx) {
 			ux.FromContext(ctx).Render(ux.Result{
-				Status: ux.StatusRegistered, Resource: "identity", Name: identity,
+				Status: ux.StatusRegistered, Resource: "identity", Name: req.identity,
 				Message: "already authenticates with an API key",
 			})
 		}
@@ -54,8 +65,8 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	if err != nil {
 		return err
 	}
-	reg := cfg.Identities[identity].Environments[envName]
-	if force {
+	reg := cfg.Identities[req.identity].Environments[req.envName]
+	if req.force {
 		// Re-register: drop the old registration AND its cached tokens (they
 		// were minted as the old client_id and can only confuse from here).
 		reg = sdkconfig.EnvRegState{}
@@ -67,7 +78,7 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	// Both Dynamic Client Registration and the approval-wait token exchange
 	// ride the environment's SEC-20 CA-pinned client when ca_cert_path is
 	// configured, failing closed on a broken bundle (#1205).
-	hc, err := clictx.AuthHTTPClient(ctx, cfg.Environments[envName].CACertPath)
+	hc, err := clictx.AuthHTTPClient(ctx, cfg.Environments[req.envName].CACertPath)
 	if err != nil {
 		return err
 	}
@@ -75,8 +86,8 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	clientID := reg.ClientID
 	claimToken := ""
 	if clientID == "" {
-		a.registerProgress(ctx, st.Infof("Registering agent %q with %s ...", clientName, baseURL))
-		r, rerr := auth.RegisterWithClient(hc, baseURL, clientName, auth.PublicKeyToJWKS(pub))
+		a.registerProgress(ctx, st.Infof("Registering agent %q with %s ...", req.clientName, req.baseURL))
+		r, rerr := auth.RegisterWithClient(hc, req.baseURL, req.clientName, auth.PublicKeyToJWKS(pub))
 		if rerr != nil {
 			// AGT-21: DCR is the most common failure point (control plane
 			// unreachable / TLS / 4xx). Surface it as a coded TRANSPORT_ERROR so
@@ -98,12 +109,12 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 		if status == "" {
 			status = "pending"
 		}
-		if err := saveRegState(identity, envName, clientID, status); err != nil {
+		if err := saveRegState(req.identity, req.envName, clientID, status); err != nil {
 			return err
 		}
 		a.registerProgress(ctx, st.Successf("Registered: client_id=%s status=%s", clientID, status))
 	} else {
-		a.registerProgress(ctx, st.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, identity, envName))
+		a.registerProgress(ctx, st.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, req.identity, req.envName))
 	}
 
 	// If claiming is enabled, guide the HUMAN to take ownership. This is shown
@@ -112,124 +123,18 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	// backend the console claim page does claim (sets owner_id) AND approve
 	// (pending -> active) — both are required before this agent can mint a
 	// token. No-op on the OSS default (empty token).
-	a.presentClaimAffordance(ctx, baseURL, clientID, claimToken)
+	a.presentClaimAffordance(ctx, req.baseURL, clientID, claimToken)
 
-	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName, HTTPClient: hc}
-	if err := a.waitForApproval(ctx, creds, clientID, timeout, claimToken != ""); err != nil {
+	creds := auth.Credentials{BaseURL: req.baseURL, IdentityName: req.identity, EnvironmentName: req.envName, HTTPClient: hc}
+	if err := a.waitForApproval(ctx, creds, clientID, req.timeout, claimToken != ""); err != nil {
 		return err
 	}
-	if err := saveRegState(identity, envName, clientID, "approved"); err != nil {
+	if err := saveRegState(req.identity, req.envName, clientID, "approved"); err != nil {
 		return err
 	}
 
-	if isMachineCtx(ctx) {
-		// Machine mode: one JSON Result on stdout is the terminal success signal,
-		// replacing the human "Token minted" / "Ready:" prose (which stays
-		// suppressed by registerProgress). If claiming is enabled, surface the
-		// fact machine-readably (never the token in prose) so an automated caller
-		// can route a human to complete the claim — an agent cannot claim itself.
-		res := ux.Result{
-			Status: ux.StatusRegistered, Resource: "identity", Name: identity, ID: clientID,
-			Message: "approved; token minted",
-		}
-		if claimToken != "" {
-			// A claim needs a HUMAN (an agent cannot claim itself), so the machine
-			// signal is the fact + where a human goes — not the raw token, which
-			// the key-based redactor would mask anyway and which the agent cannot
-			// action. The human-readable token is shown once via presentClaimAffordance.
-			res.Fields = map[string]any{
-				"claim_required": true,
-				"claim_url":      agentClaimURL(baseURL, clientID, ""),
-				"claim_command":  fmt.Sprintf("jentic identity claim %s --token <claim_token>", clientID),
-			}
-		}
-		ux.FromContext(ctx).Render(res)
-		return nil
-	}
-	fmt.Fprintln(a.Out, st.Successf("Token minted for %s.", identity))
-	// Make the active identity unambiguous and switching obvious: register may
-	// have created a NEW per-identity context (env "-" identity), so spell out
-	// who you now are and how to move between agents. This is the same name
-	// RegisterSetup activated.
-	contextName := sdkconfig.SanitizeName(envName + "-" + identity)
-	fmt.Fprintf(a.Out, "\n%s\n", st.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
-	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Switch agents:"), st.Command.Render("jentic context use <name>"))
-	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("See all:      "), st.Command.Render("jentic context list"))
-	// Human-context nudge (UX6): `register` mints tokens only — it silently skips
-	// the agent skill + MCP entry that `setup` adds. A person who reached here
-	// by hand may have wanted the full setup, so point them at it. This whole
-	// success block is human-only (machine mode returned above), so no TTY guard
-	// is needed.
-	fmt.Fprintf(a.Out, "\n%s %s%s\n",
-		st.Dim.Render("Tip:"),
-		st.Command.Render("jentic setup"),
-		st.Dim.Render(" also installs the agent skill and MCP entry — run it if you're setting up a coding agent."))
-	// Multi-agent case: registering a SECOND agent into an env creates its own
-	// per-identity context and silently makes it active (RegisterSetup). Spell
-	// out WHY a new context appeared and how to get back, so a user who now sees
-	// an unfamiliar active context isn't left wondering what happened to their
-	// first agent (UX5).
-	if prev := siblingContextInEnv(envName, contextName); prev != "" {
-		fmt.Fprintf(a.Out, "\n%s\n", st.Dimf(
-			"Created a new context %q (another agent in env %q); your previous context %q is unchanged.",
-			contextName, envName, prev))
-		fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Switch back:  "), st.Command.Render("jentic context use "+prev))
-	}
-	a.printNextSteps(st)
+	a.renderRegistrationSuccess(ctx, req, clientID, claimToken != "")
 	return nil
-}
-
-// siblingContextInEnv returns the name of an existing context bound to the same
-// environment as (but a different context than) the one just registered — the
-// signal that this register minted a SECOND agent into an env that already had
-// one. Returns "" when there is no such sibling (the common single-agent case)
-// or the config can't be read. Deterministic (lowest name) so the "switch back"
-// pointer is stable.
-func siblingContextInEnv(envName, currentContext string) string {
-	cfg, err := sdkconfig.Load()
-	if err != nil {
-		return ""
-	}
-	prev := ""
-	for name, c := range cfg.Contexts {
-		if name == currentContext || c.Environment != envName {
-			continue
-		}
-		if prev == "" || name < prev {
-			prev = name
-		}
-	}
-	return prev
-}
-
-// printNextSteps teaches the core discover -> inspect -> execute workflow after a
-// successful register. Bare `jentic register` on an already-configured machine
-// just re-mints, so this block is what
-// makes "what do I do now?" obvious — a few copy-pasteable examples plus the
-// pointer to full help, in place of a bare "Ready:" line.
-func (a *App) printNextSteps(st theme.Styles) {
-	fmt.Fprintf(a.Out, "\n%s\n", st.Heading.Render("Next steps"))
-	steps := []struct{ desc, cmd string }{
-		{"Browse the API catalog", "jentic catalog"},
-		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
-		{"See what you can run right now", "jentic whoami"},
-		{"A fresh agent is bound to no APIs — ask your operator to connect one and bind you (dashboard)", ""},
-		{"Inspect that operation (paste the target search printed)", "jentic inspect <METHOD:url from search>"},
-		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},
-	}
-	for _, s := range steps {
-		if s.cmd == "" {
-			fmt.Fprintf(a.Out, "  %s\n", st.Dim.Render(s.desc))
-			continue
-		}
-		fmt.Fprintf(a.Out, "  %s\n    %s\n", st.Dim.Render(s.desc), st.Command.Render(s.cmd))
-	}
-	fmt.Fprintf(a.Out, "\n%s %s\n", st.Dim.Render("See all commands:"), st.Command.Render("jentic --help"))
-	// Advertise doctor as the first thing to run when stuck (UX9): it is
-	// read-only and each of its warnings already carries the exact remediation,
-	// but it lives under "Local agent client" and isn't surfaced at the moments
-	// of confusion.
-	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Stuck? Check your setup:"), st.Command.Render("jentic doctor"))
 }
 
 // saveRegState persists the (identity, environment) registration record.
