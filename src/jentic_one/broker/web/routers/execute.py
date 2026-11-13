@@ -28,6 +28,8 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from jentic.problem_details import ProblemDetailException
+from starlette import exceptions as starlette_exceptions
+from starlette.applications import Starlette
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -44,6 +46,7 @@ from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     AsyncCookieEncryptionUnavailableError,
+    BrokerError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     PayloadTooLargeError,
@@ -59,6 +62,7 @@ from jentic_one.broker.core.headers import (
     header_safe_value,
 )
 from jentic_one.broker.core.idempotency import fingerprint
+from jentic_one.broker.core.problem import discovery_error_problem, status_for_broker_error
 from jentic_one.broker.core.proxy_headers import (
     PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
@@ -88,9 +92,13 @@ from jentic_one.broker.services.execution.authorization import (
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
+    ServerErrorClassifier,
+    UnmappedFailure,
+    UnmappedFailureRecorder,
     default_broker,
     emit_circuit_open_event,
     persist_streaming_execution,
+    persist_unmapped_failure,
     run_execution,
 )
 from jentic_one.broker.services.idempotency import (
@@ -107,6 +115,13 @@ from jentic_one.broker.web.deps import (
     RequireExecuteAccess,
     get_repeated_failure_counter,
 )
+from jentic_one.broker.web.errors import (
+    handle_broker_error,
+    handle_database_unavailable,
+    handle_discovery_error,
+    handle_http_exception,
+    handle_validation,
+)
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
@@ -119,7 +134,7 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import AppConfig, UpstreamClientConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.discovery.errors import OperationNotFoundError
+from jentic_one.shared.discovery.errors import DiscoveryError, OperationNotFoundError
 from jentic_one.shared.events import (
     emit_event_best_effort,
     mint_trace_id,
@@ -154,6 +169,11 @@ from jentic_one.shared.url import has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.errors import (
+    request_validation_error_handler,
+    state_backend_capacity_error_handler,
+    unhandled_exception_handler,
+)
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
@@ -164,31 +184,38 @@ _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
     unit="{persist}",
     description=(
-        "Streaming execution records not persisted, by reason: write_error (the "
-        "write raised), backlog_timeout (no slot within "
-        "broker.streaming_persist_acquire_timeout_s) or cancelled (abandoned "
-        "while waiting or writing; a record cancelled while writing may still "
-        "have landed)"
+        "Off-request execution records not persisted, by kind (streaming or "
+        "unmapped_failure) and reason: write_error (the write raised), "
+        "backlog_timeout (no slot within broker.streaming_persist_acquire_timeout_s) "
+        "or cancelled (abandoned while waiting or writing; a record cancelled "
+        "while writing may still have landed)"
     ),
 )
 _streaming_persist_pending = _meter.create_up_down_counter(
     "broker.streaming_execution.persist_pending",
     unit="{persist}",
     description=(
-        "Streaming execution persists in this process that have not finished, by "
-        "state: waiting (queued for a broker.streaming_persist_max_concurrency "
-        "slot) or in_flight (holding a slot and writing)"
+        "Off-request execution persists in this process that have not finished, "
+        "by kind (streaming or unmapped_failure) and state: waiting (queued for a "
+        "broker.streaming_persist_max_concurrency slot) or in_flight (holding a "
+        "slot and writing)"
     ),
 )
-_PENDING_WAITING = {"state": "waiting"}
-_PENDING_IN_FLIGHT = {"state": "in_flight"}
 # The ``error`` recorded for an outcome that has no upstream status and names
 # no failure — a breach of the ``StreamingOutcome`` contract by an injected
 # broker, recorded rather than mistaken for a completed call.
 _MISSING_OUTCOME_ERROR = "server_error: missing_outcome_error"
-_REASON_WRITE_ERROR = {"reason": "write_error"}
-_REASON_BACKLOG_TIMEOUT = {"reason": "backlog_timeout"}
-_REASON_CANCELLED = {"reason": "cancelled"}
+_REASON_WRITE_ERROR = "write_error"
+_REASON_BACKLOG_TIMEOUT = "backlog_timeout"
+_REASON_CANCELLED = "cancelled"
+_KIND_STREAMING = "streaming"
+_KIND_UNMAPPED_FAILURE = "unmapped_failure"
+
+
+def _persist_attributes(kind: str, **fields: str) -> dict[str, str]:
+    return {"kind": kind, **fields}
+
+
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
     description=(
@@ -204,7 +231,7 @@ _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 @dataclass(frozen=True, slots=True)
 class _StreamingPersistGate:
-    """The semaphore bounding one Context's concurrent streaming persists."""
+    """The semaphore bounding one Context's concurrent off-request execution persists."""
 
     loop: asyncio.AbstractEventLoop
     limit: int
@@ -228,7 +255,7 @@ def _effective_persist_limit(config: AppConfig) -> int:
 
 
 def _streaming_persist_gate(ctx: Context) -> _StreamingPersistGate:
-    """The gate bounding ``ctx``'s concurrent streaming persists on this loop.
+    """The gate bounding ``ctx``'s concurrent off-request execution persists on this loop.
 
     Logs ``streaming_persist_limit_clamped`` when the gate is built with a
     limit below the configured one, so the effective cap is never silent.
@@ -250,23 +277,29 @@ def _streaming_persist_gate(ctx: Context) -> _StreamingPersistGate:
     return gate
 
 
-def _record_persist_failed(outcome: StreamingOutcome, ctx_req: ExecuteRequestContext) -> None:
+def _record_persist_failed(execution_id: str, trace_id: str | None, *, kind: str) -> None:
     """Count and log a persist whose write raised (call from an ``except``)."""
-    _streaming_persist_failures.add(1, _REASON_WRITE_ERROR)
+    _streaming_persist_failures.add(1, _persist_attributes(kind, reason=_REASON_WRITE_ERROR))
+    event = (
+        "unmapped_failure_persist_failed"
+        if kind == _KIND_UNMAPPED_FAILURE
+        else "streaming_execution_persist_failed"
+    )
     logger.error(
-        "streaming_execution_persist_failed",
-        execution_id=outcome.execution_id,
-        trace_id=ctx_req.trace_id,
-        reason=_REASON_WRITE_ERROR["reason"],
+        event,
+        execution_id=execution_id,
+        trace_id=trace_id,
+        reason=_REASON_WRITE_ERROR,
         exc_info=True,
     )
 
 
 def _record_persist_abandoned(
-    outcome: StreamingOutcome,
-    ctx_req: ExecuteRequestContext,
+    execution_id: str,
+    trace_id: str | None,
     *,
-    reason: dict[str, str],
+    kind: str,
+    reason: str,
     stage: str,
     **fields: object,
 ) -> None:
@@ -276,12 +309,17 @@ def _record_persist_abandoned(
     ``writing`` (cancelled inside the transaction, so the record may or may not
     have landed). An expected condition, so no traceback.
     """
-    _streaming_persist_failures.add(1, reason)
+    _streaming_persist_failures.add(1, _persist_attributes(kind, reason=reason))
+    event = (
+        "unmapped_failure_persist_abandoned"
+        if kind == _KIND_UNMAPPED_FAILURE
+        else "streaming_execution_persist_abandoned"
+    )
     logger.error(
-        "streaming_execution_persist_abandoned",
-        execution_id=outcome.execution_id,
-        trace_id=ctx_req.trace_id,
-        reason=reason["reason"],
+        event,
+        execution_id=execution_id,
+        trace_id=trace_id,
+        reason=reason,
         stage=stage,
         **fields,
     )
@@ -290,8 +328,10 @@ def _record_persist_abandoned(
 async def _acquire_persist_slot(
     semaphore: asyncio.Semaphore,
     timeout_s: float,
-    outcome: StreamingOutcome,
-    ctx_req: ExecuteRequestContext,
+    execution_id: str,
+    trace_id: str | None,
+    *,
+    kind: str,
 ) -> bool:
     """Wait up to ``timeout_s`` for a persist slot; ``False`` when it timed out.
 
@@ -299,24 +339,32 @@ async def _acquire_persist_slot(
     abandoned; the cancellation is re-raised. No permit is held on any path
     that does not return ``True``.
     """
-    _streaming_persist_pending.add(1, _PENDING_WAITING)
+    waiting = _persist_attributes(kind, state="waiting")
+    _streaming_persist_pending.add(1, waiting)
     try:
         async with asyncio.timeout(timeout_s):
             await semaphore.acquire()
     except TimeoutError:
         _record_persist_abandoned(
-            outcome,
-            ctx_req,
+            execution_id,
+            trace_id,
+            kind=kind,
             reason=_REASON_BACKLOG_TIMEOUT,
             stage="waiting",
             acquire_timeout_s=timeout_s,
         )
         return False
     except asyncio.CancelledError:
-        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="waiting")
+        _record_persist_abandoned(
+            execution_id,
+            trace_id,
+            kind=kind,
+            reason=_REASON_CANCELLED,
+            stage="waiting",
+        )
         raise
     finally:
-        _streaming_persist_pending.add(-1, _PENDING_WAITING)
+        _streaming_persist_pending.add(-1, waiting)
     return True
 
 
@@ -410,11 +458,18 @@ async def _persist_streaming_outcome(
         semaphore = _streaming_persist_gate(ctx).semaphore
         acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
     except Exception:
-        _record_persist_failed(outcome, ctx_req)
+        _record_persist_failed(outcome.execution_id, ctx_req.trace_id, kind=_KIND_STREAMING)
         return
-    if not await _acquire_persist_slot(semaphore, acquire_timeout_s, outcome, ctx_req):
+    if not await _acquire_persist_slot(
+        semaphore,
+        acquire_timeout_s,
+        outcome.execution_id,
+        ctx_req.trace_id,
+        kind=_KIND_STREAMING,
+    ):
         return
-    _streaming_persist_pending.add(1, _PENDING_IN_FLIGHT)
+    in_flight = _persist_attributes(_KIND_STREAMING, state="in_flight")
+    _streaming_persist_pending.add(1, in_flight)
     try:
         async with ctx.admin_db.transaction() as session:
             await persist_streaming_execution(
@@ -434,13 +489,164 @@ async def _persist_streaming_outcome(
                 cancelled=outcome.cancelled,
             )
     except asyncio.CancelledError:
-        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")
+        _record_persist_abandoned(
+            outcome.execution_id,
+            ctx_req.trace_id,
+            kind=_KIND_STREAMING,
+            reason=_REASON_CANCELLED,
+            stage="writing",
+        )
         raise
     except Exception:
-        _record_persist_failed(outcome, ctx_req)
+        _record_persist_failed(outcome.execution_id, ctx_req.trace_id, kind=_KIND_STREAMING)
     finally:
         semaphore.release()
-        _streaming_persist_pending.add(-1, _PENDING_IN_FLIGHT)
+        _streaming_persist_pending.add(-1, in_flight)
+
+
+async def _persist_unmapped_failure(
+    failure: UnmappedFailure,
+    ctx: Context,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+    origin: str | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
+) -> None:
+    """Persist an unmapped buffered failure through the shared off-request gate.
+
+    Failures propagate to the background-task supervisor after their execution
+    ids are logged and counted. In particular, a slot-wait timeout is a failed
+    background task, never a completed one; no failure here starts another
+    execution-record write.
+    """
+    try:
+        semaphore = _streaming_persist_gate(ctx).semaphore
+        acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
+    except Exception:
+        _record_persist_failed(failure.execution_id, ctx_req.trace_id, kind=_KIND_UNMAPPED_FAILURE)
+        raise
+    acquired = await _acquire_persist_slot(
+        semaphore,
+        acquire_timeout_s,
+        failure.execution_id,
+        ctx_req.trace_id,
+        kind=_KIND_UNMAPPED_FAILURE,
+    )
+    if not acquired:
+        raise TimeoutError("unmapped failure persistence slot wait timed out")
+    in_flight = _persist_attributes(_KIND_UNMAPPED_FAILURE, state="in_flight")
+    _streaming_persist_pending.add(1, in_flight)
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await persist_unmapped_failure(
+                session,
+                failure,
+                ctx_req=ctx_req,
+                actor_id=actor_id,
+                actor_type=actor_type,
+                origin=origin,
+                security_config=ctx.config.security,
+                repeated_failure_counter=repeated_failure_counter,
+            )
+    except asyncio.CancelledError:
+        _record_persist_abandoned(
+            failure.execution_id,
+            ctx_req.trace_id,
+            kind=_KIND_UNMAPPED_FAILURE,
+            reason=_REASON_CANCELLED,
+            stage="writing",
+        )
+        raise
+    except Exception:
+        _record_persist_failed(failure.execution_id, ctx_req.trace_id, kind=_KIND_UNMAPPED_FAILURE)
+        raise
+    finally:
+        semaphore.release()
+        _streaming_persist_pending.add(-1, in_flight)
+
+
+def _unmapped_failure_recorder(
+    request: Request, ctx: Context, ctx_req: ExecuteRequestContext, identity: Identity
+) -> UnmappedFailureRecorder:
+    """Schedule a buffered unmapped-failure write without delaying its 500."""
+    background_tasks = get_background_tasks(request.app)
+    timeout_s = ctx.config.broker.streaming_persist_timeout_s
+
+    async def _record(failure: UnmappedFailure) -> None:
+        if background_tasks is None:
+            logger.warning(
+                "unmapped_failure_record_skipped",
+                execution_id=failure.execution_id,
+                trace_id=ctx_req.trace_id,
+                reason="no_background_task_registry",
+            )
+            return
+        background_tasks.spawn(
+            _persist_unmapped_failure(
+                failure,
+                ctx,
+                ctx_req,
+                identity.sub,
+                identity.actor_type.value,
+                origin=identity.origin.value,
+                repeated_failure_counter=get_repeated_failure_counter(request),
+            ),
+            kind="unmapped_failure_persist",
+            timeout_s=timeout_s,
+            log_fields={"execution_id": failure.execution_id, "trace_id": ctx_req.trace_id},
+        )
+
+    return _record
+
+
+_FIXED_STATUS_BY_HANDLER: dict[object, int] = {
+    handle_validation: 422,
+    request_validation_error_handler: 422,
+    state_backend_capacity_error_handler: 503,
+    handle_database_unavailable: 503,
+    unhandled_exception_handler: 500,
+}
+
+
+def _handler_maps_to_server_error(
+    handler: object, exc: Exception, *, use_declared_status: bool
+) -> bool:
+    """Classify one selected handler using only its identity and exception metadata."""
+    if handler is handle_broker_error and isinstance(exc, BrokerError):
+        return status_for_broker_error(exc) == 500
+    if handler is handle_discovery_error and isinstance(exc, DiscoveryError):
+        return int(discovery_error_problem(exc)["status"]) == 500
+    if handler is handle_http_exception and isinstance(exc, starlette_exceptions.HTTPException):
+        return exc.status_code == 500
+    fixed_status = _FIXED_STATUS_BY_HANDLER.get(handler)
+    if fixed_status is not None:
+        return fixed_status == 500
+    status_code: object = getattr(exc, "status_code", None) if use_declared_status else None
+    return not isinstance(status_code, int) or status_code == 500
+
+
+def _server_error_classifier(app: Starlette) -> ServerErrorClassifier:
+    """Match Starlette's handler precedence without invoking the selected handler.
+
+    A class-level extension handler declares a non-500 response with
+    ``exc.status_code``. A status-code registration only selects a handler; it
+    does not establish that handler's response status, so an unknown one fails
+    safe to generic 500 auditing.
+    """
+    handlers = app.exception_handlers
+
+    def _is_server_error(exc: Exception) -> bool:
+        if isinstance(exc, starlette_exceptions.HTTPException) and exc.status_code in handlers:
+            return _handler_maps_to_server_error(
+                handlers[exc.status_code], exc, use_declared_status=False
+            )
+        for cls in type(exc).__mro__:
+            if cls in handlers:
+                return _handler_maps_to_server_error(handlers[cls], exc, use_declared_status=True)
+        return True
+
+    return _is_server_error
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -1041,6 +1247,8 @@ async def _execute_buffered(
         on_dispatched=on_dispatched,
         on_pre_send_error=on_pre_send_error,
         on_outcome=on_outcome,
+        on_unmapped_failure=_unmapped_failure_recorder(request, ctx, ctx_req, identity),
+        is_server_error=_server_error_classifier(request.app),
     )
 
 

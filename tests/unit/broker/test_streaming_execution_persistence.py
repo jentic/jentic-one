@@ -426,7 +426,7 @@ async def test_persist_failure_is_logged_not_raised() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
-        mock_counter.assert_called_once_with(1, {"reason": "write_error"})
+        mock_counter.assert_called_once_with(1, {"kind": "streaming", "reason": "write_error"})
 
 
 async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() -> None:
@@ -460,7 +460,7 @@ async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() ->
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    mock_counter.assert_called_once_with(1, {"reason": "cancelled"})
+    mock_counter.assert_called_once_with(1, {"kind": "streaming", "reason": "cancelled"})
     (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert abandoned["execution_id"] == "exec-p-4"
     assert abandoned["trace_id"] == "trace-1"

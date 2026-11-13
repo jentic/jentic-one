@@ -256,13 +256,16 @@ async def derive_credential_bindings(
     method: str = "",
     path: str = "",
     trace_id: str | None = None,
+    operation_id: str | None = None,
+    operation_path: str | None = None,
     connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
 
     ``0 → 403`` (no binding / suspended binding / credential identity
-    mismatch — with the operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit
-    for the pre-binding nothing-serves case). Candidate *selection* among
+    mismatch). An unserved API emits ``CREDENTIAL_BINDING_UNSERVED``; a served
+    API with no binding emits ``PBAC_DENIED`` with the actor, API and operation
+    template. Candidate *selection* among
     ``N ≥ 1`` (name header → most-specific-wins → ``Jentic-Credential-Id``
     tie-breaker → 409) is owned by ``CredentialService.select``, which shares
     the resolver with injection so selection and injection can never disagree.
@@ -311,6 +314,18 @@ async def derive_credential_bindings(
         if not derivation.api_served and isinstance(denial, ActionDeniedError):
             await _emit_credential_binding_unserved(
                 ctx, api=api, identity=identity, trace_id=trace_id
+            )
+        elif derivation.api_served and isinstance(denial, ActionDeniedError):
+            await _emit_pbac_denied(
+                ctx,
+                identity=identity,
+                api=api,
+                reason=DenialReason.NO_CREDENTIAL_BINDING,
+                summary="Operation denied: no credential binding covers this API",
+                trace_id=trace_id,
+                operation_id=operation_id,
+                operation_method=method or None,
+                operation_path=operation_path,
             )
         raise denial
     return derivation
@@ -409,6 +424,45 @@ def _report_base_path_divergence(
     )
 
 
+async def _emit_pbac_denied(
+    ctx: Context,
+    *,
+    identity: Identity,
+    api: APIReference,
+    reason: DenialReason,
+    summary: str,
+    trace_id: str | None,
+    operation_id: str | None,
+    operation_method: str | None,
+    operation_path: str | None,
+) -> None:
+    """Record actor/API denial evidence without concrete request material."""
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.PBAC_DENIED,
+                severity=EventSeverity.WARNING,
+                summary=summary,
+                trace_id=valid_trace_id_or_none(trace_id),
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "reason": reason.value,
+                    "mode": "direct",
+                    "api_vendor": api.vendor,
+                    "api_name": api.name,
+                    "api_version": api.version,
+                    "operation_id": operation_id,
+                    "operation_method": operation_method,
+                    "operation_path": operation_path,
+                },
+            )
+    except Exception:
+        logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
+
+
 async def _deny(
     ctx: Context,
     *,
@@ -435,33 +489,17 @@ async def _deny(
         1,
         {"reason": reason.value, "mode": "direct", "vendor": api.vendor},
     )
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await emit_event_best_effort(
-                session,
-                type=EventType.PBAC_DENIED,
-                severity=EventSeverity.WARNING,
-                summary=summary,
-                trace_id=valid_trace_id_or_none(trace_id),
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-                # Flat keys, matching the other broker events that name an API
-                # or operation (``credential.accessed``,
-                # ``broker.execution_repeated_failure``).
-                data={
-                    "reason": reason.value,
-                    "mode": "direct",
-                    "api_vendor": api.vendor,
-                    "api_name": api.name,
-                    "api_version": api.version,
-                    "operation_id": operation_id,
-                    "operation_method": operation_method,
-                    "operation_path": operation_path,
-                },
-            )
-    except Exception:
-        logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
+    await _emit_pbac_denied(
+        ctx,
+        identity=identity,
+        api=api,
+        reason=reason,
+        summary=summary,
+        trace_id=trace_id,
+        operation_id=operation_id,
+        operation_method=operation_method,
+        operation_path=operation_path,
+    )
     raise ActionDeniedError(
         detail=detail,
         type="action_denied",
@@ -528,6 +566,8 @@ async def authorize_execution(
         method=method,
         path=path,
         trace_id=trace_id,
+        operation_id=operation_id,
+        operation_path=operation_path,
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
