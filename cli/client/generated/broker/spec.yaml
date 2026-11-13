@@ -26,7 +26,7 @@ info:
     has one auditable choke-point, and credentials rotate centrally
     without redeploying callers. Sync responses return `200` with the
     upstream body; a call sent with `Prefer: respond-async` returns
-    `202` with a polling link into the control plane.
+    `202` with a polling link to `GET /jobs/{job_id}` on the Broker.
 
     Auth: every operation expects `Authorization: Bearer <token>` except
     `GET /health`. Broker-added metadata is confined to the `Jentic-*`
@@ -76,11 +76,11 @@ info:
     `504 upstream_timeout`.
 
     Async is opt-in. `Prefer: respond-async` queues the call and returns
-    `202` immediately with a polling link into the control plane; the
-    preference the Broker acted on comes back in `Preference-Applied`. A
-    `202` also arrives unrequested when a `require-approval` permission rule
-    holds the call for human approval — the two `202` bodies are told apart
-    by `status` (`queued` vs `held`).
+    `202` immediately with a polling link (`_links.self`) to `GET /jobs/{job_id}`
+    on the Broker; the preference the Broker acted on comes back in
+    `Preference-Applied`. A `202` also arrives unrequested when a
+    `require-approval` permission rule holds the call for human approval —
+    the two `202` bodies are told apart by `status` (`queued` vs `held`).
 
     ## Reading the response
 
@@ -298,6 +298,86 @@ paths:
                     reason: draining
         "500":
           $ref: "#/components/responses/ServerError"
+        default:
+          $ref: "#/components/responses/Default"
+  /jobs/{job_id}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [Executions]
+      operationId: brokerGetJob
+      summary: Get a job
+      description: |
+        Poll a caller-owned `kind: execution` job enqueued on the Broker.
+        Authenticates with the Broker's token validator (opaque `at_…`
+        tokens, `jak_…` agent API keys, and trusted-issuer JWTs) and requires
+        `capabilities:execute`.
+
+        Reads are strictly scoped to the enqueuing actor (`created_by` and
+        `actor_type`): another actor's job, or a non-execution job, answers
+        `404 job_not_found`. When an unexpired result is stored (for a
+        `completed` job, or a `failed` job that recorded an actionable
+        result), `_links.result` points to `GET /jobs/{job_id}/result` on the
+        Broker.
+      responses:
+        "200":
+          description: The caller-owned execution job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/Default"
+  /jobs/{job_id}/result:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [Executions]
+      operationId: brokerGetJobResult
+      summary: Get a job's result
+      description: |
+        Collect the stored result of a finished caller-owned execution job.
+        Authenticates with the Broker's token validator and requires
+        `capabilities:execute`.
+
+        Serves the stored result for a `completed` job, or a `failed` job
+        that recorded an actionable result (such as an approved execution
+        whose upstream call or run-time authorization failed, or a held
+        execution that never ran). Answers `404` when no execution job with
+        this ID belongs to the caller, `409` while the job is active or
+        failed without a stored result, and `410` once an approved
+        execution's result is past `held_executions.result_retention_seconds`.
+      responses:
+        "200":
+          $ref: "#/components/responses/JobResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "409":
+          $ref: "#/components/responses/JobNotCompleted"
+        "410":
+          $ref: "#/components/responses/JobResultExpired"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
         default:
           $ref: "#/components/responses/Default"
   /{upstream_url}:
@@ -753,6 +833,18 @@ components:
         examples:
           - jentic-auth;dur=1.4, jentic-cred;dur=3.0, jentic-upstream;dur=84.2, jentic-total;dur=97.6
   parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: Unique ID of the execution job.
+      example: job_abc123
+      schema:
+        type: string
+        title: Job Id
+        description: Unique ID of the execution job.
+        examples:
+          - job_abc123
     UpstreamUrl:
       name: upstream_url
       in: path
@@ -1115,18 +1207,16 @@ components:
       title: AsyncQueuedResponse
       description: |
         Handle returned when the Broker queues an upstream call for async
-        execution — the `202` body on an async execution. The Broker
-        does not expose a polling surface of its own; `_links.self`
-        is an absolute URL into the platform's control plane, where
-        the queued work surfaces as a `kind: execution` job. Poll
-        that URL for status, and follow its `_links.result` to
-        collect the upstream response body once `status` is
-        `completed`.
+        execution — the `202` body on an async execution. `_links.self`
+        is an absolute URL to `GET /jobs/{job_id}` on the Broker, so any
+        credential the Broker accepted on enqueue (including trusted-issuer
+        JWTs) can poll status and follow `_links.result` to collect the
+        stored execution result.
       examples:
         - status: queued
           job_id: job_abc123
           _links:
-            self: https://control.your-instance.example/jobs/job_abc123
+            self: https://broker.your-instance.example/jobs/job_abc123
       required:
         - status
         - job_id
@@ -1149,21 +1239,119 @@ components:
           type: object
           title: AsyncQueuedResponseLinks
           description: |
-            HAL-style link relations pointing into the control-plane job
-            record for the queued job. `self` always
-            points at the control-plane job record; the broker does
-            not expose its own polling surface.
+            HAL-style link relations pointing to the caller-scoped job
+            status endpoint on the Broker.
           examples:
-            - self: https://control.your-instance.example/jobs/job_abc123
+            - self: https://broker.your-instance.example/jobs/job_abc123
           required:
             - self
           properties:
             self:
               type: string
               format: uri
-              description: Absolute URL of the control-plane job record. Poll this for status and result links.
+              description: Absolute URL of `GET /jobs/{job_id}` on the Broker. Poll this for status and result links.
               examples:
-                - https://control.your-instance.example/jobs/job_abc123
+                - https://broker.your-instance.example/jobs/job_abc123
+    JobLinksResponse:
+      type: object
+      title: JobLinksResponse
+      description: Hypermedia links for a Broker-polled execution job.
+      required:
+        - self
+      properties:
+        self:
+          type: string
+          format: uri
+          description: URL of this job on the Broker.
+          examples:
+            - https://broker.your-instance.example/jobs/job_abc123
+        result:
+          type: [string, "null"]
+          format: uri
+          description: URL of the job result on the Broker when an unexpired result is stored; null otherwise.
+          examples:
+            - https://broker.your-instance.example/jobs/job_abc123/result
+        execution:
+          type: [string, "null"]
+          format: uri
+          description: URL of the related execution record on the control plane; null if none.
+          examples:
+            - https://control.your-instance.example/executions/exec_abc123
+    JobResponse:
+      type: object
+      title: JobResponse
+      description: Caller-scoped execution job representation returned by `GET /jobs/{job_id}` on the Broker.
+      examples:
+        - job_id: job_abc123
+          kind: execution
+          status: completed
+          execution_id: exec_abc123
+          error: null
+          created_at: "2026-01-15T09:30:00Z"
+          updated_at: "2026-01-15T09:30:05Z"
+          actor_id: agnt_abc123
+          actor_type: agent
+          _links:
+            self: https://broker.your-instance.example/jobs/job_abc123
+            result: https://broker.your-instance.example/jobs/job_abc123/result
+            execution: https://control.your-instance.example/executions/exec_abc123
+      required:
+        - job_id
+        - kind
+        - status
+        - created_at
+        - actor_type
+        - _links
+      properties:
+        job_id:
+          type: string
+          description: Unique ID of the job.
+          examples:
+            - job_abc123
+        kind:
+          type: string
+          description: Kind of job (`execution` for Broker-enqueued jobs).
+          examples:
+            - execution
+        status:
+          type: string
+          description: Lifecycle state (`queued`, `running`, `held`, `completed`, `failed`, `cancelled`, or `dead_letter`).
+          examples:
+            - completed
+        execution_id:
+          type: [string, "null"]
+          description: ID of the execution record linked to the job, if any.
+          examples:
+            - exec_abc123
+        error:
+          type: [string, "null"]
+          description: Error message recorded for the job; null if none.
+          examples:
+            - Upstream returned HTTP 502 Bad Gateway
+        created_at:
+          type: string
+          format: date-time
+          description: When the job was created (RFC 3339).
+          examples:
+            - "2026-01-15T09:30:00Z"
+        updated_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the job was last updated (RFC 3339); null if never updated.
+          examples:
+            - "2026-01-15T09:30:05Z"
+        actor_id:
+          type: [string, "null"]
+          description: Subject that enqueued the job.
+          examples:
+            - agnt_abc123
+        actor_type:
+          type: string
+          description: Kind of actor that enqueued the job (`agent` or `user`).
+          examples:
+            - agent
+        _links:
+          $ref: "#/components/schemas/JobLinksResponse"
     HeldExecutionAcceptedResponse:
       type: object
       title: HeldExecutionAcceptedResponse
@@ -1398,9 +1586,10 @@ components:
         Execution queued — or held for human approval when a
         `require-approval` permission rule matched (`status: held`; see
         `HeldExecutionAcceptedResponse`). For a queued call, follow
-        `_links.self` to the control plane to poll the job and collect the
-        upstream response body once `status` is `completed`. The body
-        stays readable from `/jobs/{id}/result`; it is not removed on read.
+        `_links.self` on the Broker to poll `GET /jobs/{job_id}` and collect
+        the stored execution result from `_links.result` once `status` reaches
+        a terminal state with a stored result. The body stays readable from
+        `/jobs/{job_id}/result`; it is not removed on read.
 
         A `202` is never an idempotent replay: queueing happens before the
         `Idempotency-Key` is claimed, so re-sending the call with the same
@@ -1453,7 +1642,7 @@ components:
                 status: queued
                 job_id: job_abc123
                 _links:
-                  self: https://control.your-instance.example/jobs/job_abc123
+                  self: https://broker.your-instance.example/jobs/job_abc123
             held:
               summary: Call held for human approval by a require-approval rule.
               value:
@@ -1477,6 +1666,106 @@ components:
                   self: https://control.your-instance.example/executions/holds/held_abc123
                   result: https://control.your-instance.example/executions/holds/held_abc123/result
                   withdraw: https://control.your-instance.example/executions/holds/held_abc123:withdraw
+    JobResult:
+      description: |
+        Stored result of a finished caller-owned execution job. Returns the
+        JSON execution document (`execution_id`, `status`, `http_status`,
+        `duration_ms`, optional base64 `body_b64`, and optional `problem`),
+        or an RFC 9457 `application/problem+json` body for a held execution
+        that never ran. The `Content-Type` header echoes the stored result's
+        media type while the body remains JSON.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            description: Stored execution result document.
+          examples:
+            completed_execution:
+              summary: Completed async execution result.
+              value:
+                execution_id: exec_abc123
+                status: completed
+                http_status: 200
+                duration_ms: 412
+                body_b64: eyJpZCI6IndfMSJ9
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            approval_denied:
+              summary: Held execution denied before running.
+              value:
+                type: approval_denied
+                title: Execution denied
+                status: 403
+                detail: Denied by reviewer
+                error_origin: broker
+    JobNotFound:
+      description: |
+        No execution job with this ID is visible to the caller (`job_not_found`).
+        A job belonging to another actor, or a non-execution job, is
+        indistinguishable from one that never existed.
+      headers:
+        Jentic-Error-Origin:
+          $ref: "#/components/headers/JenticErrorOrigin"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            job_not_found:
+              summary: Job missing or owned by another actor.
+              value:
+                type: job_not_found
+                title: "Job 'job_abc123' not found"
+                status: 404
+                detail: "Job 'job_abc123' not found"
+                error_origin: broker
+                instance: /jobs/job_abc123
+    JobNotCompleted:
+      description: |
+        The job has no stored result to serve (`job_not_completed`) — it is
+        still active, cancelled, dead-lettered, or failed without recording
+        a result row.
+      headers:
+        Jentic-Error-Origin:
+          $ref: "#/components/headers/JenticErrorOrigin"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            job_not_completed:
+              summary: Job is still active or failed with no stored result.
+              value:
+                type: job_not_completed
+                title: "Job 'job_abc123' is not completed"
+                status: 409
+                detail: "Job 'job_abc123' is not completed"
+                error_origin: broker
+                instance: /jobs/job_abc123/result
+    JobResultExpired:
+      description: |
+        The job's stored result has passed its retention window
+        (`job_result_expired`, e.g. past `held_executions.result_retention_seconds`).
+      headers:
+        Jentic-Error-Origin:
+          $ref: "#/components/headers/JenticErrorOrigin"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/BrokerProblem"
+          examples:
+            job_result_expired:
+              summary: Stored job result is past its retention window.
+              value:
+                type: job_result_expired
+                title: "Result for job 'job_abc123' has expired"
+                status: 410
+                detail: "Result for job 'job_abc123' has expired"
+                error_origin: broker
+                instance: /jobs/job_abc123/result
     BadRequest:
       description: |
         Request rejected before reaching the upstream — malformed JSON,

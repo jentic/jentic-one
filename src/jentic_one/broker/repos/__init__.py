@@ -4,12 +4,14 @@ from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.repos.agent_rule_evaluator import AgentRuleEvaluator
 from jentic_one.broker.repos.api_key_resolver import ApiKeyResolver
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
+from jentic_one.broker.repos.job_repo import BrokerJobRepository
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 
 __all__ = [
     "ActorStatusResolver",
     "AgentRuleEvaluator",
     "ApiKeyResolver",
+    "BrokerJobRepository",
     "CredentialBindingResolver",
     "InProcessTokenResolver",
 ]

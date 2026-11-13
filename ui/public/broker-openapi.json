@@ -154,6 +154,21 @@
         },
         "style": "simple"
       },
+      "JobId": {
+        "description": "Unique ID of the execution job.",
+        "example": "job_abc123",
+        "in": "path",
+        "name": "job_id",
+        "required": true,
+        "schema": {
+          "description": "Unique ID of the execution job.",
+          "examples": [
+            "job_abc123"
+          ],
+          "title": "Job Id",
+          "type": "string"
+        }
+      },
       "Prefer": {
         "description": "RFC 7240 processing preference. `respond-async` queues the call and\nreturns `202` immediately instead of waiting for the upstream; it is\nthe only token the Broker acts on. The preference it applied is\nechoed in `Preference-Applied`.\n",
         "example": "respond-async",
@@ -530,7 +545,7 @@
                 "summary": "Freshly queued async execution.",
                 "value": {
                   "_links": {
-                    "self": "https://control.your-instance.example/jobs/job_abc123"
+                    "self": "https://broker.your-instance.example/jobs/job_abc123"
                   },
                   "job_id": "job_abc123",
                   "status": "queued"
@@ -556,7 +571,7 @@
             }
           }
         },
-        "description": "Execution queued — or held for human approval when a\n`require-approval` permission rule matched (`status: held`; see\n`HeldExecutionAcceptedResponse`). For a queued call, follow\n`_links.self` to the control plane to poll the job and collect the\nupstream response body once `status` is `completed`. The body\nstays readable from `/jobs/{id}/result`; it is not removed on read.\n\nA `202` is never an idempotent replay: queueing happens before the\n`Idempotency-Key` is claimed, so re-sending the call with the same\nkey queues a second job under a new `job_id`.\n",
+        "description": "Execution queued — or held for human approval when a\n`require-approval` permission rule matched (`status: held`; see\n`HeldExecutionAcceptedResponse`). For a queued call, follow\n`_links.self` on the Broker to poll `GET /jobs/{job_id}` and collect\nthe stored execution result from `_links.result` once `status` reaches\na terminal state with a stored result. The body stays readable from\n`/jobs/{job_id}/result`; it is not removed on read.\n\nA `202` is never an idempotent replay: queueing happens before the\n`Idempotency-Key` is claimed, so re-sending the call with the same\nkey queues a second job under a new `job_id`.\n",
         "headers": {
           "Jentic-Api-Vendor": {
             "description": "API vendor hostname that was called.",
@@ -762,6 +777,131 @@
           },
           "Jentic-Upstream-Status": {
             "$ref": "#/components/headers/JenticUpstreamStatus"
+          }
+        }
+      },
+      "JobNotCompleted": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "job_not_completed": {
+                "summary": "Job is still active or failed with no stored result.",
+                "value": {
+                  "detail": "Job 'job_abc123' is not completed",
+                  "error_origin": "broker",
+                  "instance": "/jobs/job_abc123/result",
+                  "status": 409,
+                  "title": "Job 'job_abc123' is not completed",
+                  "type": "job_not_completed"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/BrokerProblem"
+            }
+          }
+        },
+        "description": "The job has no stored result to serve (`job_not_completed`) — it is\nstill active, cancelled, dead-lettered, or failed without recording\na result row.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          }
+        }
+      },
+      "JobNotFound": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "job_not_found": {
+                "summary": "Job missing or owned by another actor.",
+                "value": {
+                  "detail": "Job 'job_abc123' not found",
+                  "error_origin": "broker",
+                  "instance": "/jobs/job_abc123",
+                  "status": 404,
+                  "title": "Job 'job_abc123' not found",
+                  "type": "job_not_found"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/BrokerProblem"
+            }
+          }
+        },
+        "description": "No execution job with this ID is visible to the caller (`job_not_found`).\nA job belonging to another actor, or a non-execution job, is\nindistinguishable from one that never existed.\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
+          }
+        }
+      },
+      "JobResult": {
+        "content": {
+          "application/json": {
+            "examples": {
+              "completed_execution": {
+                "summary": "Completed async execution result.",
+                "value": {
+                  "body_b64": "eyJpZCI6IndfMSJ9",
+                  "duration_ms": 412,
+                  "execution_id": "exec_abc123",
+                  "http_status": 200,
+                  "status": "completed"
+                }
+              }
+            },
+            "schema": {
+              "additionalProperties": true,
+              "description": "Stored execution result document.",
+              "type": "object"
+            }
+          },
+          "application/problem+json": {
+            "examples": {
+              "approval_denied": {
+                "summary": "Held execution denied before running.",
+                "value": {
+                  "detail": "Denied by reviewer",
+                  "error_origin": "broker",
+                  "status": 403,
+                  "title": "Execution denied",
+                  "type": "approval_denied"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/BrokerProblem"
+            }
+          }
+        },
+        "description": "Stored result of a finished caller-owned execution job. Returns the\nJSON execution document (`execution_id`, `status`, `http_status`,\n`duration_ms`, optional base64 `body_b64`, and optional `problem`),\nor an RFC 9457 `application/problem+json` body for a held execution\nthat never ran. The `Content-Type` header echoes the stored result's\nmedia type while the body remains JSON.\n"
+      },
+      "JobResultExpired": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "job_result_expired": {
+                "summary": "Stored job result is past its retention window.",
+                "value": {
+                  "detail": "Result for job 'job_abc123' has expired",
+                  "error_origin": "broker",
+                  "instance": "/jobs/job_abc123/result",
+                  "status": 410,
+                  "title": "Result for job 'job_abc123' has expired",
+                  "type": "job_result_expired"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/BrokerProblem"
+            }
+          }
+        },
+        "description": "The job's stored result has passed its retention window\n(`job_result_expired`, e.g. past `held_executions.result_retention_seconds`).\n",
+        "headers": {
+          "Jentic-Error-Origin": {
+            "$ref": "#/components/headers/JenticErrorOrigin"
           }
         }
       },
@@ -1180,11 +1320,11 @@
         "type": "object"
       },
       "AsyncQueuedResponse": {
-        "description": "Handle returned when the Broker queues an upstream call for async\nexecution — the `202` body on an async execution. The Broker\ndoes not expose a polling surface of its own; `_links.self`\nis an absolute URL into the platform's control plane, where\nthe queued work surfaces as a `kind: execution` job. Poll\nthat URL for status, and follow its `_links.result` to\ncollect the upstream response body once `status` is\n`completed`.\n",
+        "description": "Handle returned when the Broker queues an upstream call for async\nexecution — the `202` body on an async execution. `_links.self`\nis an absolute URL to `GET /jobs/{job_id}` on the Broker, so any\ncredential the Broker accepted on enqueue (including trusted-issuer\nJWTs) can poll status and follow `_links.result` to collect the\nstored execution result.\n",
         "examples": [
           {
             "_links": {
-              "self": "https://control.your-instance.example/jobs/job_abc123"
+              "self": "https://broker.your-instance.example/jobs/job_abc123"
             },
             "job_id": "job_abc123",
             "status": "queued"
@@ -1192,17 +1332,17 @@
         ],
         "properties": {
           "_links": {
-            "description": "HAL-style link relations pointing into the control-plane job\nrecord for the queued job. `self` always\npoints at the control-plane job record; the broker does\nnot expose its own polling surface.\n",
+            "description": "HAL-style link relations pointing to the caller-scoped job\nstatus endpoint on the Broker.\n",
             "examples": [
               {
-                "self": "https://control.your-instance.example/jobs/job_abc123"
+                "self": "https://broker.your-instance.example/jobs/job_abc123"
               }
             ],
             "properties": {
               "self": {
-                "description": "Absolute URL of the control-plane job record. Poll this for status and result links.",
+                "description": "Absolute URL of `GET /jobs/{job_id}` on the Broker. Poll this for status and result links.",
                 "examples": [
-                  "https://control.your-instance.example/jobs/job_abc123"
+                  "https://broker.your-instance.example/jobs/job_abc123"
                 ],
                 "format": "uri",
                 "type": "string"
@@ -1547,6 +1687,159 @@
         "title": "HeldExecutionAcceptedResponse",
         "type": "object"
       },
+      "JobLinksResponse": {
+        "description": "Hypermedia links for a Broker-polled execution job.",
+        "properties": {
+          "execution": {
+            "description": "URL of the related execution record on the control plane; null if none.",
+            "examples": [
+              "https://control.your-instance.example/executions/exec_abc123"
+            ],
+            "format": "uri",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": {
+            "description": "URL of the job result on the Broker when an unexpired result is stored; null otherwise.",
+            "examples": [
+              "https://broker.your-instance.example/jobs/job_abc123/result"
+            ],
+            "format": "uri",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "self": {
+            "description": "URL of this job on the Broker.",
+            "examples": [
+              "https://broker.your-instance.example/jobs/job_abc123"
+            ],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "self"
+        ],
+        "title": "JobLinksResponse",
+        "type": "object"
+      },
+      "JobResponse": {
+        "description": "Caller-scoped execution job representation returned by `GET /jobs/{job_id}` on the Broker.",
+        "examples": [
+          {
+            "_links": {
+              "execution": "https://control.your-instance.example/executions/exec_abc123",
+              "result": "https://broker.your-instance.example/jobs/job_abc123/result",
+              "self": "https://broker.your-instance.example/jobs/job_abc123"
+            },
+            "actor_id": "agnt_abc123",
+            "actor_type": "agent",
+            "created_at": "2026-01-15T09:30:00Z",
+            "error": null,
+            "execution_id": "exec_abc123",
+            "job_id": "job_abc123",
+            "kind": "execution",
+            "status": "completed",
+            "updated_at": "2026-01-15T09:30:05Z"
+          }
+        ],
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/JobLinksResponse"
+          },
+          "actor_id": {
+            "description": "Subject that enqueued the job.",
+            "examples": [
+              "agnt_abc123"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actor_type": {
+            "description": "Kind of actor that enqueued the job (`agent` or `user`).",
+            "examples": [
+              "agent"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the job was created (RFC 3339).",
+            "examples": [
+              "2026-01-15T09:30:00Z"
+            ],
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "description": "Error message recorded for the job; null if none.",
+            "examples": [
+              "Upstream returned HTTP 502 Bad Gateway"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution_id": {
+            "description": "ID of the execution record linked to the job, if any.",
+            "examples": [
+              "exec_abc123"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_id": {
+            "description": "Unique ID of the job.",
+            "examples": [
+              "job_abc123"
+            ],
+            "type": "string"
+          },
+          "kind": {
+            "description": "Kind of job (`execution` for Broker-enqueued jobs).",
+            "examples": [
+              "execution"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Lifecycle state (`queued`, `running`, `held`, `completed`, `failed`, `cancelled`, or `dead_letter`).",
+            "examples": [
+              "completed"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the job was last updated (RFC 3339); null if never updated.",
+            "examples": [
+              "2026-01-15T09:30:05Z"
+            ],
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "status",
+          "created_at",
+          "actor_type",
+          "_links"
+        ],
+        "title": "JobResponse",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "description": "Saturation-aware readiness probe response — the body returned by\n`GET /ready`. `status: ready` (HTTP `200`) means the\ninstance is below the saturation threshold; `status: unready` (HTTP\n`503`) means in-flight load is at/near the admission cap and the load\nbalancer should drain this instance. `saturation` is the current\nin-flight count as a fraction of the configured cap.\n",
         "examples": [
@@ -1623,7 +1916,7 @@
       "name": "Jentic Platform Team",
       "url": "https://jentic.com"
     },
-    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; a call sent with `Prefer: respond-async` returns\n`202` with a polling link into the control plane.\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nCredential, agent-binding, and API-revision management live on the\n[control plane](https://control.your-instance.example), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Executing a request\n\nThe HTTP method you use on `/{upstream_url}` is the method the Broker\nsends to the upstream service — every standard method (`GET`, `POST`,\n`PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`) is supported. Request\nheaders and body are forwarded as-is; the Broker injects the caller's\nstored credentials for the target API.\n\nThe path, query, and header parameters documented on `/{upstream_url}`\napply to every method. Per-method operations only differ in semantic\nintent and (for methods that conventionally carry a body) in\n`requestBody` shape.\n\n## Sync vs async\n\nBy default the Broker executes the call synchronously, waiting for the\nupstream up to the deployment's upstream timeout (`broker.upstream_timeout_s`,\n30 seconds by default) and answering `200` with the upstream response.\nExceeding that timeout is a failure, not a hand-off: the call answers\n`504 upstream_timeout`.\n\nAsync is opt-in. `Prefer: respond-async` queues the call and returns\n`202` immediately with a polling link into the control plane; the\npreference the Broker acted on comes back in `Preference-Applied`. A\n`202` also arrives unrequested when a `require-approval` permission rule\nholds the call for human approval — the two `202` bodies are told apart\nby `status` (`queued` vs `held`).\n\n## Reading the response\n\nErrors the Broker raises itself (authentication and authorization\nfailures, missing or ambiguous credentials, URL-resolution failures,\nsize caps, policy denials, giving up on the upstream) use an RFC 9457\nProblem Details body (`application/problem+json`) — the `BrokerProblem`\nschema, which is the shared `ProblemDetails` schema from\n[jentic/api-problem-details](https://github.com/jentic/api-problem-details)\nplus the Broker's `error_origin` and `agent_directive` members.\nField-level validation failures populate the `errors[]` extension.\n\nAn error the *upstream* returns is **not** rewritten: its status, body\nand `Content-Type` are forwarded verbatim, exactly as a `200` would be.\nAttribution therefore lives in the response headers, not in the body:\n\n| On a non-2xx response | Who failed | Body shape |\n|---|---|---|\n| `Jentic-Error-Origin: broker` | The Broker — it rejected the request shape, could not resolve or authorize the call, or gave up on the upstream (timeout, dropped or refused connection, deadline, failed token refresh, oversized response). The upstream either was never called or never answered. | `application/problem+json` (`BrokerProblem`), with `error_origin: broker` repeated in the body |\n| `Jentic-Error-Origin: upstream` with `Jentic-Upstream-Status: {status}` | The upstream API answered with this status and the Broker mirrored it. | The upstream's own body and `Content-Type`, verbatim — problem+json only if the upstream itself speaks it |\n| Neither header | The request never reached the Broker's error handler — an absent, malformed, expired or untrusted bearer token (`401`), or an intermediary between caller and Broker. | `application/problem+json` without `error_origin`, or whatever the intermediary emits |\n\n`Jentic-Upstream-Status` is the authoritative signal that a status came\nfrom the upstream: present means the upstream answered, absent means it\ndid not. This matters because most statuses are reachable from both\norigins — a `404` is an unregistered upstream URL from the Broker and a\nmissing resource from the upstream; a `429` is the caller's Broker\nrate-limit window or the upstream's own throttle.\n\nKey recovery on the problem `type` rather than the bare status: one\nstatus carries types with different retry safety, and one type can\nappear at more than one status. When `agent_directive` is present it is\na machine-actionable recovery instruction an agent can switch on via\n`agent_directive.strategy` without parsing prose.\n\n## Idempotency\n\nOptional `Idempotency-Key` request header (IETF\ndraft-ietf-httpapi-idempotency-key). If present, the Broker claims the\nkey before dispatch, records the synchronous response for 24 hours, and\nreplays it for any subsequent request that reuses the key — so a retry\nof a timed-out or dropped call cannot execute the upstream twice. Keys\nare scoped per-caller and should be unique per logical operation\n(UUIDv4 recommended, max 255 chars).\n\nReplays are signalled with `Idempotent-Replayed: true` on the response.\nIf the same key is reused with a different request body, method,\nresolved credential or upstream URL, the Broker returns\n`409 idempotency_conflict`; while the first request is still running, a\nreuse returns `409 idempotency_in_progress` with `Retry-After`. Replay\ncovers synchronous responses only: a `Prefer: respond-async` call is\nqueued before the key is claimed, so re-sending it under the same key\nqueues a second job with a new `job_id`.\n\n## Proxied upstream headers\n\nOn synchronous responses, upstream API response headers are forwarded\nas-is. Hop-by-hop headers (RFC 7230 §6.1) and the Broker's own\ntrace/metadata headers are not proxied — every Broker-added header lives\nunder the `Jentic-*` namespace, so `Jentic-*` is unambiguously the\nBroker's and anything else belongs to the upstream.\n\n## Revision pinning\n\nBy default the Broker resolves the upstream URL against the target\nAPI's `current_revision_id` (the `published` revision registered on the\ncontrol plane). To test a `draft` revision with real credentials before\npromoting it, attach the `Jentic-Revision` request header — its\nparameter documentation on `/{upstream_url}` carries the full syntax,\nthe errors a bad pin returns, and how pins are recorded for audit.\n\n## Security\n\nThe Broker validates every `upstream_url` against the set of registered\nAPIs before forwarding. Arbitrary URLs that do not resolve to a known,\nregistered API endpoint are rejected with `404` — the Broker is **not**\nan open proxy. This allowlist check is the spec's primary SSRF\nmitigation boundary: credentials are never injected into requests\ntargeting unregistered hosts.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), the credential used (`Jentic-Credential-Id` /\n`Jentic-Credential-Name`), and the upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane: its execution endpoints\nreturn a brokered call's metadata (latency, status, pinned revisions,\ncaller) and per-step trace, its job endpoints carry async status and\nthe upstream-body pickup, and its event feed carries the audit trail.\nThe signatures live in the\n[Control API spec](https://control.your-instance.example/openapi.json),\nnot here; every record is keyed by the `Jentic-Execution-Id` on the\nbrokered response.\n\nExecution records store metadata only — never request or response\nbodies. An async call's upstream response body is stored as the job\nresult and stays readable from `/jobs/{id}/result` indefinitely;\nonly an approved (held) execution's result expires, after\n`held_executions.result_retention_seconds`. Execution records,\nevents, audit entries and other job results are kept indefinitely:\nthere is no API or setting to prune them yet, so trim them at the\ndatabase level (see the operations monitoring guide).\n",
+    "description": "## Overview\n\nThe Broker is the platform's stateless data plane. Send it any\nHTTP request with the upstream URL as the path; it injects the\ncaller's stored credentials, forwards method/headers/body as-is,\nand returns the upstream response.\n\n```\nPOST https://broker.your-instance.example/petstore.swagger.io/v2/pet\n```\n\nSecrets stay off agents and end-user devices, outbound traffic\nhas one auditable choke-point, and credentials rotate centrally\nwithout redeploying callers. Sync responses return `200` with the\nupstream body; a call sent with `Prefer: respond-async` returns\n`202` with a polling link to `GET /jobs/{job_id}` on the Broker.\n\nAuth: every operation expects `Authorization: Bearer <token>` except\n`GET /health`. Broker-added metadata is confined to the `Jentic-*`\nheader namespace — anything else on a response belongs to the\nupstream.\n\nCredential, agent-binding, and API-revision management live on the\n[control plane](https://control.your-instance.example), not here.\n\n## Path format\n\nThe request path **is** the upstream URL. The broker reconstructs the\nfull target from your path, adding `https://` when no scheme is present:\n\n| You send | Broker proxies to |\n|----------|-------------------|\n| `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |\n| `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |\n| `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |\n| `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |\n\nFor HTTPS upstream targets (the common case), omit the scheme — just use\n`/{host}/{path}`. For plain HTTP targets (e.g. local development), include\nthe full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.\n\nQuery strings pass through as-is: `/api.example.com/search?q=foo` works.\n\n## Executing a request\n\nThe HTTP method you use on `/{upstream_url}` is the method the Broker\nsends to the upstream service — every standard method (`GET`, `POST`,\n`PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`) is supported. Request\nheaders and body are forwarded as-is; the Broker injects the caller's\nstored credentials for the target API.\n\nThe path, query, and header parameters documented on `/{upstream_url}`\napply to every method. Per-method operations only differ in semantic\nintent and (for methods that conventionally carry a body) in\n`requestBody` shape.\n\n## Sync vs async\n\nBy default the Broker executes the call synchronously, waiting for the\nupstream up to the deployment's upstream timeout (`broker.upstream_timeout_s`,\n30 seconds by default) and answering `200` with the upstream response.\nExceeding that timeout is a failure, not a hand-off: the call answers\n`504 upstream_timeout`.\n\nAsync is opt-in. `Prefer: respond-async` queues the call and returns\n`202` immediately with a polling link (`_links.self`) to `GET /jobs/{job_id}`\non the Broker; the preference the Broker acted on comes back in\n`Preference-Applied`. A `202` also arrives unrequested when a\n`require-approval` permission rule holds the call for human approval —\nthe two `202` bodies are told apart by `status` (`queued` vs `held`).\n\n## Reading the response\n\nErrors the Broker raises itself (authentication and authorization\nfailures, missing or ambiguous credentials, URL-resolution failures,\nsize caps, policy denials, giving up on the upstream) use an RFC 9457\nProblem Details body (`application/problem+json`) — the `BrokerProblem`\nschema, which is the shared `ProblemDetails` schema from\n[jentic/api-problem-details](https://github.com/jentic/api-problem-details)\nplus the Broker's `error_origin` and `agent_directive` members.\nField-level validation failures populate the `errors[]` extension.\n\nAn error the *upstream* returns is **not** rewritten: its status, body\nand `Content-Type` are forwarded verbatim, exactly as a `200` would be.\nAttribution therefore lives in the response headers, not in the body:\n\n| On a non-2xx response | Who failed | Body shape |\n|---|---|---|\n| `Jentic-Error-Origin: broker` | The Broker — it rejected the request shape, could not resolve or authorize the call, or gave up on the upstream (timeout, dropped or refused connection, deadline, failed token refresh, oversized response). The upstream either was never called or never answered. | `application/problem+json` (`BrokerProblem`), with `error_origin: broker` repeated in the body |\n| `Jentic-Error-Origin: upstream` with `Jentic-Upstream-Status: {status}` | The upstream API answered with this status and the Broker mirrored it. | The upstream's own body and `Content-Type`, verbatim — problem+json only if the upstream itself speaks it |\n| Neither header | The request never reached the Broker's error handler — an absent, malformed, expired or untrusted bearer token (`401`), or an intermediary between caller and Broker. | `application/problem+json` without `error_origin`, or whatever the intermediary emits |\n\n`Jentic-Upstream-Status` is the authoritative signal that a status came\nfrom the upstream: present means the upstream answered, absent means it\ndid not. This matters because most statuses are reachable from both\norigins — a `404` is an unregistered upstream URL from the Broker and a\nmissing resource from the upstream; a `429` is the caller's Broker\nrate-limit window or the upstream's own throttle.\n\nKey recovery on the problem `type` rather than the bare status: one\nstatus carries types with different retry safety, and one type can\nappear at more than one status. When `agent_directive` is present it is\na machine-actionable recovery instruction an agent can switch on via\n`agent_directive.strategy` without parsing prose.\n\n## Idempotency\n\nOptional `Idempotency-Key` request header (IETF\ndraft-ietf-httpapi-idempotency-key). If present, the Broker claims the\nkey before dispatch, records the synchronous response for 24 hours, and\nreplays it for any subsequent request that reuses the key — so a retry\nof a timed-out or dropped call cannot execute the upstream twice. Keys\nare scoped per-caller and should be unique per logical operation\n(UUIDv4 recommended, max 255 chars).\n\nReplays are signalled with `Idempotent-Replayed: true` on the response.\nIf the same key is reused with a different request body, method,\nresolved credential or upstream URL, the Broker returns\n`409 idempotency_conflict`; while the first request is still running, a\nreuse returns `409 idempotency_in_progress` with `Retry-After`. Replay\ncovers synchronous responses only: a `Prefer: respond-async` call is\nqueued before the key is claimed, so re-sending it under the same key\nqueues a second job with a new `job_id`.\n\n## Proxied upstream headers\n\nOn synchronous responses, upstream API response headers are forwarded\nas-is. Hop-by-hop headers (RFC 7230 §6.1) and the Broker's own\ntrace/metadata headers are not proxied — every Broker-added header lives\nunder the `Jentic-*` namespace, so `Jentic-*` is unambiguously the\nBroker's and anything else belongs to the upstream.\n\n## Revision pinning\n\nBy default the Broker resolves the upstream URL against the target\nAPI's `current_revision_id` (the `published` revision registered on the\ncontrol plane). To test a `draft` revision with real credentials before\npromoting it, attach the `Jentic-Revision` request header — its\nparameter documentation on `/{upstream_url}` carries the full syntax,\nthe errors a bad pin returns, and how pins are recorded for audit.\n\n## Security\n\nThe Broker validates every `upstream_url` against the set of registered\nAPIs before forwarding. Arbitrary URLs that do not resolve to a known,\nregistered API endpoint are rejected with `404` — the Broker is **not**\nan open proxy. This allowlist check is the spec's primary SSRF\nmitigation boundary: credentials are never injected into requests\ntargeting unregistered hosts.\n\n## Tracing and audit\n\nEvery brokered response carries W3C trace context (`traceparent`,\n`tracestate`) and a `Jentic-*` header layer with the execution ID\n(`exec_…`), the credential used (`Jentic-Credential-Id` /\n`Jentic-Credential-Name`), and the upstream API reference\n(`vendor:name:version`). OpenTelemetry clients pick this up\nautomatically; nothing else needs to parse `tracestate`.\n\nTo see what happened, ask the control plane: its execution endpoints\nreturn a brokered call's metadata (latency, status, pinned revisions,\ncaller) and per-step trace, its job endpoints carry async status and\nthe upstream-body pickup, and its event feed carries the audit trail.\nThe signatures live in the\n[Control API spec](https://control.your-instance.example/openapi.json),\nnot here; every record is keyed by the `Jentic-Execution-Id` on the\nbrokered response.\n\nExecution records store metadata only — never request or response\nbodies. An async call's upstream response body is stored as the job\nresult and stays readable from `/jobs/{id}/result` indefinitely;\nonly an approved (held) execution's result expires, after\n`held_executions.result_retention_seconds`. Execution records,\nevents, audit entries and other job results are kept indefinitely:\nthere is no API or setting to prune them yet, so trim them at the\ndatabase level (see the operations monitoring guide).\n",
     "license": {
       "identifier": "Apache-2.0",
       "name": "Apache-2.0"
@@ -1685,6 +1978,101 @@
           "System"
         ]
       }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "description": "Poll a caller-owned `kind: execution` job enqueued on the Broker.\nAuthenticates with the Broker's token validator (opaque `at_…`\ntokens, `jak_…` agent API keys, and trusted-issuer JWTs) and requires\n`capabilities:execute`.\n\nReads are strictly scoped to the enqueuing actor (`created_by` and\n`actor_type`): another actor's job, or a non-execution job, answers\n`404 job_not_found`. When an unexpired result is stored (for a\n`completed` job, or a `failed` job that recorded an actionable\nresult), `_links.result` points to `GET /jobs/{job_id}/result` on the\nBroker.\n",
+        "operationId": "brokerGetJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "The caller-owned execution job."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "default": {
+            "$ref": "#/components/responses/Default"
+          }
+        },
+        "summary": "Get a job",
+        "tags": [
+          "Executions"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/JobId"
+        }
+      ]
+    },
+    "/jobs/{job_id}/result": {
+      "get": {
+        "description": "Collect the stored result of a finished caller-owned execution job.\nAuthenticates with the Broker's token validator and requires\n`capabilities:execute`.\n\nServes the stored result for a `completed` job, or a `failed` job\nthat recorded an actionable result (such as an approved execution\nwhose upstream call or run-time authorization failed, or a held\nexecution that never ran). Answers `404` when no execution job with\nthis ID belongs to the caller, `409` while the job is active or\nfailed without a stored result, and `410` once an approved\nexecution's result is past `held_executions.result_retention_seconds`.\n",
+        "operationId": "brokerGetJobResult",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/JobResult"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobNotCompleted"
+          },
+          "410": {
+            "$ref": "#/components/responses/JobResultExpired"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "default": {
+            "$ref": "#/components/responses/Default"
+          }
+        },
+        "summary": "Get a job's result",
+        "tags": [
+          "Executions"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/JobId"
+        }
+      ]
     },
     "/ready": {
       "get": {

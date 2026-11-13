@@ -38,6 +38,9 @@ from jentic_one.broker.core.errors import (
     IdempotencyUnavailableError,
     InvalidCredentialNameError,
     InvalidRevisionPinError,
+    JobNotCompletedError,
+    JobNotFoundError,
+    JobResultExpiredError,
     MutationRequiresIdempotencyKeyError,
     PayloadTooLargeError,
     RateLimitExceededError,
@@ -97,6 +100,9 @@ STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     UpstreamBodyInterruptedError: 502,
     RunnerSchemeUnsupportedError: 501,
     RunnerUnavailableError: 503,
+    JobNotFoundError: 404,
+    JobNotCompletedError: 409,
+    JobResultExpiredError: 410,
 }
 
 

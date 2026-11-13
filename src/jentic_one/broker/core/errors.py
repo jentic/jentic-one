@@ -395,3 +395,33 @@ class RunnerUnavailableError(BrokerError):
     agent can retry — distinct from :class:`RunnerSchemeUnsupportedError` (501,
     no such runner at all).
     """
+
+
+class JobNotFoundError(BrokerError):
+    """No broker execution job with this id is visible to the caller (404)."""
+
+    default_type = "job_not_found"
+
+    def __init__(self, job_id: str, *, instance: str | None = None) -> None:
+        super().__init__(f"Job '{job_id}' not found", instance=instance)
+        self.job_id = job_id
+
+
+class JobNotCompletedError(BrokerError):
+    """The job has no stored result to serve — still active or failed with no result row (409)."""
+
+    default_type = "job_not_completed"
+
+    def __init__(self, job_id: str, *, instance: str | None = None) -> None:
+        super().__init__(f"Job '{job_id}' is not completed", instance=instance)
+        self.job_id = job_id
+
+
+class JobResultExpiredError(BrokerError):
+    """The job's stored result is past its retention window (410)."""
+
+    default_type = "job_result_expired"
+
+    def __init__(self, job_id: str, *, instance: str | None = None) -> None:
+        super().__init__(f"Result for job '{job_id}' has expired", instance=instance)
+        self.job_id = job_id
