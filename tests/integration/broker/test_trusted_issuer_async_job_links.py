@@ -485,12 +485,19 @@ async def _running_planes(
             await _cleanup_seeded(ctx)
 
 
-@pytest.mark.parametrize("jobs_api_base_url", ["http://admin.local", None])
+@pytest.mark.parametrize(
+    ("jobs_api_base_url", "upstream_content_type"),
+    [
+        ("http://admin.local", "application/json; charset=utf-8"),
+        (None, "application/json"),
+    ],
+)
 async def test_trusted_issuer_async_202_poll_and_completed_result_e2e(
     integration_config: AppConfig,
     jwks_server: _JwksServer,
     signing_key: ec.EllipticCurvePrivateKey,
     jobs_api_base_url: str | None,
+    upstream_content_type: str,
 ) -> None:
     """A trusted-JWKS agent follows 202 -> _links.self -> _links.result end-to-end."""
     token = _mint_jwks_token(signing_key)
@@ -498,6 +505,7 @@ async def test_trusted_issuer_async_202_poll_and_completed_result_e2e(
         integration_config,
         jwks_server.url,
         jobs_api_base_url=jobs_api_base_url,
+        upstream_content_type=upstream_content_type,
     ) as (_ctx, planes, worker):
         # Control plane continues to reject broker-only external JWKS tokens.
         admin_probe = await planes.admin.get("/jobs", headers={"Authorization": f"Bearer {token}"})
@@ -554,7 +562,7 @@ async def test_trusted_issuer_async_202_poll_and_completed_result_e2e(
 
         result_resp = await planes.get(result_url, token=token)
         assert result_resp.status_code == 200, result_resp.text
-        assert result_resp.headers["content-type"].startswith("application/json")
+        assert result_resp.headers["content-type"] == "application/json"
         result_json = result_resp.json()
         assert result_json["status"] == "completed"
         assert result_json["http_status"] == 201

@@ -167,10 +167,13 @@ def test_match_spec_path_specificity_and_rfc6570_catch_all() -> None:
     assert matched_param is True
     assert key_lit < key_param
 
-    matched_catch, _ = match_spec_path("/files/{+filepath}", "/files/a/b/c.txt")
+    matched_catch, key_catch = match_spec_path("/files/{+filepath}", "/files/a/b/c.txt")
     assert matched_catch is True
-    matched_single, _ = match_spec_path("/files/{filepath}", "/files/a/b/c.txt")
-    assert matched_single is False
+    matched_trailing, key_trailing = match_spec_path("/files/{filepath}", "/files/a/b/c.txt")
+    assert matched_trailing is True
+    assert key_catch < key_trailing
+    assert match_spec_path("/files/{filepath}", "/files/a")[0] is True
+    assert match_spec_path("/files/id-{filepath}", "/files/id-a/b")[0] is False
 
     # Repeated parameter name enforces equality via backreference.
     assert match_spec_path("/orgs/{id}/mirrors/{id}", "/orgs/acme/mirrors/acme")[0] is True
@@ -193,6 +196,91 @@ def test_resolve_dry_run_operation_prefers_literal_and_handles_head_fallback() -
     assert resolved.operation_id == "get_special"
     assert resolved.registry_operation_id == _OTHER_PK
     assert resolved.ambiguous_operation_ids == frozenset()
+
+
+def test_resolve_dry_run_operation_uses_live_nested_path_precedence() -> None:
+    trailing = LiveOperationRow("acme", "files", "1.0", _REG_PK, "get_file", "GET", "/files/{path}")
+    catch_all = LiveOperationRow(
+        "acme", "files", "1.0", _OTHER_PK, "get_catch_all", "GET", "/files/{+path}"
+    )
+    scope = CredentialScope(vendor="acme", name="files", version="1.0")
+
+    resolved = resolve_dry_run_operation(
+        [trailing, catch_all],
+        scope=scope,
+        method="GET",
+        normalized_path="/files/a/b.txt",
+        requested_operation_id=None,
+    )
+    assert resolved.operation_id == "get_catch_all"
+    assert resolved.registry_operation_id == _OTHER_PK
+
+    exact = LiveOperationRow(
+        "acme", "files", "1.0", "op_" + "1234abcd" * 5, "get_exact", "GET", "/files/a/b.txt"
+    )
+    resolved = resolve_dry_run_operation(
+        [trailing, catch_all, exact],
+        scope=scope,
+        method="GET",
+        normalized_path="/files/a/b.txt",
+        requested_operation_id=None,
+    )
+    assert resolved.operation_id == "get_exact"
+    assert resolved.ambiguous_operation_ids == frozenset()
+
+
+def test_resolve_dry_run_operation_rejects_incomparable_catch_all_matches() -> None:
+    rows = [
+        LiveOperationRow("acme", "files", "1.0", _REG_PK, "prefix", "GET", "/{+prefix}/b"),
+        LiveOperationRow("acme", "files", "1.0", _OTHER_PK, "suffix", "GET", "/a/{+suffix}"),
+    ]
+    resolved = resolve_dry_run_operation(
+        rows,
+        scope=CredentialScope(vendor="acme", name="files", version="1.0"),
+        method="GET",
+        normalized_path="/a/x/b",
+        requested_operation_id=None,
+    )
+    assert resolved.operation_id is None
+    assert resolved.registry_operation_id is None
+    assert resolved.ambiguous_operation_ids == frozenset({"prefix", "suffix"})
+
+
+def test_explicit_catch_all_does_not_widen_an_ordinary_trailing_parameter() -> None:
+    """Only implicit trailing parameters, never explicit catch-all routes, widen."""
+    assert match_spec_path("/{+prefix}/b/{tail}", "/a/b/c/d")[0] is False
+    rows = [
+        LiveOperationRow(
+            "acme", "files", "1.0", _REG_PK, "prefix_tail", "GET", "/{+prefix}/b/{tail}"
+        ),
+        LiveOperationRow("acme", "files", "1.0", _OTHER_PK, "rest", "GET", "/{+rest}"),
+    ]
+    resolved = resolve_dry_run_operation(
+        rows,
+        scope=CredentialScope(vendor="acme", name="files", version="1.0"),
+        method="GET",
+        normalized_path="/a/b/c/d",
+        requested_operation_id=None,
+    )
+    assert resolved.operation_id == "rest"
+    assert resolved.registry_operation_id == _OTHER_PK
+
+
+def test_catch_all_syntax_in_request_uses_live_candidate_gate() -> None:
+    """Literal catch-all markers restrict live and dry-run lookup to catch-all rows."""
+    rows = [
+        LiveOperationRow("acme", "files", "1.0", _REG_PK, "ordinary", "GET", "/files/{name}"),
+        LiveOperationRow("acme", "files", "1.0", _OTHER_PK, "rest", "GET", "/files/{+path}"),
+    ]
+    resolved = resolve_dry_run_operation(
+        rows,
+        scope=CredentialScope(vendor="acme", name="files", version="1.0"),
+        method="GET",
+        normalized_path="/files/a**",
+        requested_operation_id=None,
+    )
+    assert resolved.operation_id == "rest"
+    assert resolved.registry_operation_id == _OTHER_PK
 
 
 def test_resolve_live_operation_handles_synthetic_non_pk_operation_id() -> None:

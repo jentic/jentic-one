@@ -16,21 +16,32 @@ Pins that across ``auth`` and ``broker``:
 
 from __future__ import annotations
 
+import asyncio
 import secrets
+from collections.abc import Coroutine
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
+from sqlalchemy import text
 
-from jentic_one.admin.repos import OAuthClientRepository, UserRepository
+from jentic_one.admin.repos import (
+    AccessTokenRepository,
+    AuthorizationCodeRepository,
+    OAuthClientRepository,
+    RefreshTokenRepository,
+    UserRepository,
+)
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.permission_service import PermissionService
-from jentic_one.auth.services.authorize_service import AuthorizeService
+from jentic_one.auth.services.authorize_service import AuthorizeService, _hash_code
 from jentic_one.auth.services.errors import ConsentAgentNotEligibleError, InvalidGrantError
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
-from jentic_one.auth.services.token_service import TokenService
+from jentic_one.auth.services.token_service import TokenService, _hash_token
 from jentic_one.broker.core.setup import install_broker_auth
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
@@ -43,6 +54,7 @@ from jentic_one.shared.auth.permission_catalog import (
     USERS_READ,
     USERS_WRITE,
 )
+from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.web.app_factory import create_combined_app
@@ -629,6 +641,9 @@ async def test_must_change_password_flag_fences_user_oauth_issuance_resolution_a
         await token_svc.refresh(refresh)
 
     with pytest.raises(InvalidGrantError):
+        await token_svc.issue_pair(user_id, ActorType.USER, ["openid"])
+
+    with pytest.raises(InvalidGrantError):
         await authorize_svc.issue_authorization_code(
             user_id=user_id,
             client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
@@ -799,3 +814,165 @@ async def test_change_password_restores_oauth_flow_without_reviving_pre_reset_to
         )
     finally:
         ctx.config.broker.resolve_cache_ttl_seconds = prior_ttl
+
+
+async def _wait_for_oauth_insert_lock(ctx: Context, table: str) -> None:
+    """Wait until the credential INSERT blocks on its uncommitted unique-hash twin."""
+    probe = text(
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE wait_event_type = 'Lock' AND datname = current_database() "
+        "AND pid <> pg_backend_pid() AND query ILIKE :statement_pattern"
+    )
+    async with asyncio.timeout(10):
+        while True:
+            async with ctx.admin_db.session() as session:
+                count = await session.execute(
+                    probe, {"statement_pattern": f"%INSERT INTO {table}%"}
+                )
+                if int(count.scalar_one()) > 0:
+                    return
+            await asyncio.sleep(0.02)
+
+
+async def _wait_for_reset_completion_or_lock(
+    ctx: Context, reset_task: asyncio.Task[None], *, minimum_lock_waits: int
+) -> None:
+    """Wait until reset finishes or the expected concurrent lock waits are visible."""
+    probe = text(
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE wait_event_type = 'Lock' AND datname = current_database() "
+        "AND pid <> pg_backend_pid()"
+    )
+    async with asyncio.timeout(10):
+        while not reset_task.done():
+            async with ctx.admin_db.session() as session:
+                if int((await session.execute(probe)).scalar_one()) >= minimum_lock_waits:
+                    return
+            await asyncio.sleep(0.02)
+
+
+@pytest.mark.parametrize("operation_kind", ["code", "exchange", "refresh"])
+async def test_password_reset_sweeps_oauth_writes_blocked_inside_transaction(
+    operation_kind: str,
+    local_login_ctx: Context,
+    second_auth_process: Context,
+    integration_config: AppConfig,
+    clean_grants: None,
+    clean_user_secrets: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1297: reset consumes or revokes credentials committed by an overlapping write."""
+    if integration_config.databases.admin.backend == "sqlite":
+        pytest.skip("SQLite does not provide the PostgreSQL row locks used by this race")
+
+    ctx = local_login_ctx
+    user_id, email = await seed_password_user(ctx, f"usr_1297_race_{operation_kind}")
+    await seed_permissions(ctx, user_id, [APIS_READ])
+    authorize_svc = AuthorizeService(ctx)
+    token_svc = TokenService(ctx)
+
+    operation: Coroutine[Any, Any, Any]
+    if operation_kind == "refresh":
+        _, original_refresh = await token_svc.issue_pair(user_id, ActorType.USER, ["openid"])
+        operation = token_svc.refresh(original_refresh)
+    elif operation_kind == "exchange":
+        original_code = await authorize_svc.issue_authorization_code(
+            user_id=user_id,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            code_challenge=code_challenge(CODE_VERIFIER),
+            scopes="openid",
+        )
+        operation = authorize_svc.exchange_code(
+            code=original_code,
+            code_verifier=CODE_VERIFIER,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+        )
+    else:
+        operation = authorize_svc.issue_authorization_code(
+            user_id=user_id,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            code_challenge=code_challenge(CODE_VERIFIER),
+            scopes="openid",
+        )
+
+    expires_at = datetime.now(UTC) + timedelta(minutes=5)
+    if operation_kind == "code":
+        code_plain = f"code_1297_race_{operation_kind}"
+        monkeypatch.setattr(
+            "jentic_one.auth.services.authorize_service.secrets.token_urlsafe",
+            lambda _: code_plain,
+        )
+        blocked_hash = _hash_code(code_plain)
+        table = "authorization_codes"
+    else:
+        monkeypatch.setattr(
+            "jentic_one.auth.services.token_service._generate_token",
+            lambda prefix: f"{prefix}1297_race_{operation_kind}",
+        )
+        blocked_hash = _hash_token(f"at_1297_race_{operation_kind}")
+        table = "access_tokens"
+
+    async def _reset() -> None:
+        await AuthService(second_auth_process).reset_password(
+            email=email, temporary_password=_TEMP_PASSWORD
+        )
+
+    async with second_auth_process.admin_db.session() as blocker_session:
+        if operation_kind == "code":
+            await AuthorizationCodeRepository.create(
+                blocker_session,
+                code_hash=blocked_hash,
+                user_id=user_id,
+                client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+                redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+                code_challenge=code_challenge(CODE_VERIFIER),
+                scopes="openid",
+                nonce=None,
+                expires_at=expires_at,
+                created_by=user_id,
+            )
+        else:
+            await AccessTokenRepository.create(
+                blocker_session,
+                token_hash=blocked_hash,
+                actor_id=user_id,
+                actor_type=ActorType.USER,
+                scopes=["openid"],
+                token_family_id=f"tfam_race_{operation_kind}",
+                expires_at=expires_at,
+                created_by=user_id,
+            )
+
+        async with asyncio.TaskGroup() as tasks:
+            operation_task = tasks.create_task(operation)
+            await _wait_for_oauth_insert_lock(ctx, table)
+            reset_task = tasks.create_task(_reset())
+            try:
+                await _wait_for_reset_completion_or_lock(ctx, reset_task, minimum_lock_waits=2)
+            finally:
+                # Rolling back the real uncommitted twin releases the INSERT.
+                await blocker_session.rollback()
+
+    result = operation_task.result()
+    async with ctx.admin_db.session() as session:
+        if operation_kind == "code":
+            assert isinstance(result, str)
+            code_row = await AuthorizationCodeRepository.get_by_hash(session, _hash_code(result))
+            assert code_row is not None
+            assert code_row.consumed_at is not None
+        else:
+            assert isinstance(result, tuple)
+            access_token, refresh_token = result[:2]
+            assert isinstance(access_token, str)
+            assert isinstance(refresh_token, str)
+            access_row = await AccessTokenRepository.get_by_hash(session, _hash_token(access_token))
+            refresh_row = await RefreshTokenRepository.get_by_hash(
+                session, _hash_token(refresh_token)
+            )
+            assert access_row is not None
+            assert access_row.revoked_at is not None
+            assert refresh_row is not None
+            assert refresh_row.revoked_at is not None

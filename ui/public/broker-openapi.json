@@ -875,7 +875,7 @@
             }
           }
         },
-        "description": "Stored result of a finished caller-owned execution job. Returns the\nJSON execution document (`execution_id`, `status`, `http_status`,\n`duration_ms`, optional base64 `body_b64`, and optional `problem`),\nor an RFC 9457 `application/problem+json` body for a held execution\nthat never ran. The `Content-Type` header echoes the stored result's\nmedia type while the body remains JSON.\n"
+        "description": "Stored result of a finished caller-owned execution job. Returns the\nJSON execution document (`execution_id`, `status`, `http_status`,\n`duration_ms`, optional base64 `body_b64`, and optional `problem`),\nor an RFC 9457 `application/problem+json` body for a held execution\nthat never ran. Declared JSON `Content-Type` values omit optional\nparameters; other stored media types pass through unchanged while the\nbody remains JSON.\n"
       },
       "JobResultExpired": {
         "content": {

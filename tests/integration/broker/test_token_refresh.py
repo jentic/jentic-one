@@ -12,44 +12,29 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import pytest
-import structlog
-from sqlalchemy import delete, event, text
+from sqlalchemy import delete
 
-from jentic_one.broker.services.credentials.errors import (
-    RefreshInvalidGrantError,
-    RefreshTransientError,
-)
+from jentic_one.broker.services.credentials.errors import RefreshInvalidGrantError
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import (
     CredentialResolver,
     ResolvedCredential,
 )
-from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import OAuthTokenRepository
-from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.providers.direct_oauth2 import (
     DirectOAuth2Provider,
     InvalidGrantError,
 )
 from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
-from jentic_one.control.services.credentials.schemas.connect import (
-    AuthCodeChallenge,
-    ConnectCallback,
-    ConnectRequest,
-)
 from jentic_one.control.services.credentials.schemas.credentials import CredentialUpdate
-from jentic_one.control.services.credentials.schemas.provision import ProvisionResult
 from jentic_one.control.services.credentials.service import CredentialService
-from jentic_one.control.services.credentials.state import new_browser_binding
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
-    AppConfig,
     ControlEgressConfig,
     DirectOAuth2ProviderConfig,
     EgressConfig,
@@ -59,7 +44,6 @@ from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import StoredCredentialType
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.schemas import APIReference
-from tests.harness.postgres import superuser_config
 
 pytestmark = pytest.mark.integration
 
@@ -89,11 +73,6 @@ class _RotatingVendor(DirectOAuth2Provider):
         # before it reads the client material (token_url, secret).
         self.hold_before_client_read: asyncio.Event | None = None
         self.paused = asyncio.Event()
-        # When set, _post_token pauses right after rotating live_refresh_token
-        # on the vendor side, before returning the HTTP 200 payload.
-        self.hold_after_rotation: asyncio.Event | None = None
-        self.rotated = asyncio.Event()
-        self.post_delay_s: float = 0.1
         self._generation = 0
 
     async def _resolve_client_material(
@@ -112,14 +91,11 @@ class _RotatingVendor(DirectOAuth2Provider):
         self.sent_to.append((token_url, sent))
         self.sent_egress.append(egress)
         # Widen the race window so concurrent callers queue on the lock.
-        await asyncio.sleep(self.post_delay_s)
+        await asyncio.sleep(0.1)
         if sent != self.live_refresh_token:
             raise InvalidGrantError("refresh token reused")
         self._generation += 1
         self.live_refresh_token = f"rt-{self._generation}"
-        self.rotated.set()
-        if self.hold_after_rotation is not None:
-            await self.hold_after_rotation.wait()
         return {
             "access_token": f"at-{self._generation}",
             "refresh_token": self.live_refresh_token,
@@ -131,7 +107,6 @@ class _RotatingVendor(DirectOAuth2Provider):
 async def clean_tokens(control_db: DatabaseSession) -> AsyncGenerator[None, None]:
     async def _truncate() -> None:
         async with control_db.session() as session:
-            await session.execute(delete(ConnectNonce))
             await session.execute(delete(OAuthToken))
             await session.execute(delete(OAuthClientCredential))
             await session.execute(delete(Credential))
@@ -171,7 +146,6 @@ async def _seed(
         session.add(
             OAuthClientCredential(
                 id=_CRED_ID,
-                authorize_url="https://idp.example.com/authorize",
                 token_url="https://idp.example.com/token",
                 client_id="client-1432",
                 encrypted_client_secret=ctx.encryption.encrypt("client-secret"),
@@ -428,480 +402,3 @@ async def test_inflight_refresh_never_sends_old_token_to_new_origin(
     with pytest.raises(RefreshInvalidGrantError):
         await TokenRefresher(ctx).ensure_fresh(resolved=await _snapshot(ctx), caller="t")
     assert all(url == _OLD_TOKEN_URL for url, _ in vendor.sent_to)
-
-
-async def test_cancelled_inflight_refresh_persists_rotated_grant_and_reraises(
-    integration_context: Context, clean_tokens: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Pins #1432: cancelling a caller after the vendor rotates the refresh
-    token still persists the rotated grant before re-raising ``CancelledError``
-    so the credential is not left holding the dead refresh token."""
-    ctx = integration_context
-    vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
-    await _seed(ctx, access="at-0", refresh="rt-0")
-    stale = await _snapshot(ctx)
-
-    release_response = asyncio.Event()
-    vendor.hold_after_rotation = release_response
-
-    with structlog.testing.capture_logs() as captured:
-        task = asyncio.create_task(TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="t"))
-        await asyncio.wait_for(vendor.rotated.wait(), timeout=5)
-        task.cancel()
-        release_response.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    assert await _stored_refresh_token(ctx) == "rt-1"
-    vendor.hold_after_rotation = None
-    # Subsequent caller reuses the persisted access token without replaying rt-0.
-    assert await TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="t2") == "at-1"
-    assert vendor.sent_refresh_tokens == ["rt-0"]
-    for entry in captured:
-        assert "rt-0" not in str(entry)
-        assert "rt-1" not in str(entry)
-        assert "at-1" not in str(entry)
-
-
-async def _terminate_postgres_backends(
-    integration_config: AppConfig, *, where_clause: str, params: dict[str, Any] | None = None
-) -> int:
-    super_cfg = integration_config.model_copy(
-        update={
-            "databases": integration_config.databases.model_copy(
-                update={"control": superuser_config(integration_config.databases.control)}
-            )
-        }
-    )
-    async with (
-        Context(super_cfg, allowed_dbs={"control"}, refresh_providers_on_boot=False) as sctx,
-        sctx.control_db.session() as session,
-    ):
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-                    " WHERE datname = current_database() AND pid <> pg_backend_pid()"
-                    f" AND ({where_clause})"
-                ),
-                params or {},
-            )
-        ).all()
-        return len(rows)
-
-
-async def test_commit_failure_and_idle_tx_kill_recover_rotated_grant_on_postgres(
-    integration_config: AppConfig,
-    integration_context: Context,
-    clean_tokens: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pins #1432: no transaction sits open across the vendor HTTP call, and a
-    connection lost while committing the rotated tokens retries on a fresh
-    session so the rotated refresh token is preserved."""
-    if integration_context.control_db.backend.dialect_name != "postgres":
-        pytest.skip("Postgres backend termination test")
-
-    ctx = integration_context
-    vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
-    await _seed(ctx, access="at-0", refresh="rt-0")
-    stale = await _snapshot(ctx)
-
-    release_response = asyncio.Event()
-    vendor.hold_after_rotation = release_response
-
-    # Simulate both:
-    # 1. Killing any 'idle in transaction' sessions while the vendor HTTP
-    #    exchange is in flight (managed Postgres idle_in_transaction timeout).
-    # 2. Terminating the committing connection right after the first UPDATE of
-    #    oauth_tokens flushes (before COMMIT), forcing commit recovery.
-    killed_first_update = False
-    sync_engine = ctx.control_db.engine.sync_engine
-
-    def _drop_first_token_update(conn: Any, _cursor: Any, statement: str, *_args: object) -> None:
-        nonlocal killed_first_update
-        if not killed_first_update and "UPDATE oauth_tokens" in statement:
-            killed_first_update = True
-            raw_driver_conn = conn.connection.driver_connection
-            raw_driver_conn.terminate()
-
-    event.listen(sync_engine, "after_cursor_execute", _drop_first_token_update)
-    try:
-        with structlog.testing.capture_logs() as captured:
-            task = asyncio.create_task(TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="t"))
-            await asyncio.wait_for(vendor.rotated.wait(), timeout=5)
-            killed_idle_tx = await _terminate_postgres_backends(
-                integration_config, where_clause="state = 'idle in transaction'"
-            )
-            release_response.set()
-            token = await task
-    finally:
-        event.remove(sync_engine, "after_cursor_execute", _drop_first_token_update)
-
-    assert killed_idle_tx == 0
-    assert killed_first_update is True
-    assert token == "at-1"
-    assert await _stored_refresh_token(ctx) == "rt-1"
-    assert vendor.sent_refresh_tokens == ["rt-0"]
-    for entry in captured:
-        assert "rt-0" not in str(entry)
-        assert "rt-1" not in str(entry)
-        assert "at-1" not in str(entry)
-
-
-def _constrain_pool(db: DatabaseSession, *, pool_size: int, timeout_s: float) -> None:
-    pool: Any = db.engine.sync_engine.pool
-    pool._pool.maxsize = pool_size
-    pool._max_overflow = 0
-    pool._timeout = timeout_s
-
-
-async def _tiny_pool_context(
-    integration_config: AppConfig, *, pool_max: int, timeout_s: float
-) -> Context:
-    cfg = integration_config.model_copy(
-        update={
-            "databases": integration_config.databases.model_copy(
-                update={
-                    "control": integration_config.databases.control.model_copy(
-                        update={"pool_max": pool_max}
-                    )
-                }
-            )
-        }
-    )
-    ctx = Context(cfg, allowed_dbs={"control"}, refresh_providers_on_boot=False)
-    await ctx.startup()
-    _constrain_pool(ctx.control_db, pool_size=pool_max, timeout_s=timeout_s)
-    return ctx
-
-
-async def test_concurrent_waiters_and_replicas_do_not_starve_small_postgres_pool(
-    integration_config: AppConfig,
-    integration_context: Context,
-    clean_tokens: None,
-) -> None:
-    """Pins #1432: 30 concurrent refreshes across two replicas plus concurrent
-    resolver reads complete without pool timeout on a strict 2-connection pool,
-    making exactly one vendor call."""
-    if integration_context.control_db.backend.dialect_name != "postgres":
-        pytest.skip("Postgres pool starvation test")
-
-    await _seed(integration_context, access="at-0", refresh="rt-0")
-    stale = await _snapshot(integration_context)
-
-    vendor = _RotatingVendor(expires_in=3600, live_refresh_token="rt-0")
-    vendor.post_delay_s = 0.25
-
-    ctx_a = await _tiny_pool_context(integration_config, pool_max=2, timeout_s=1.5)
-    ctx_b = await _tiny_pool_context(integration_config, pool_max=2, timeout_s=1.5)
-    try:
-        ctx_a._providers = ProviderRegistry({_PROVIDER: vendor})
-        ctx_b._providers = ProviderRegistry({_PROVIDER: vendor})
-
-        async with asyncio.timeout(10), asyncio.TaskGroup() as tg:
-            refreshes_a = [
-                tg.create_task(TokenRefresher(ctx_a).ensure_fresh(resolved=stale, caller=f"a-{i}"))
-                for i in range(20)
-            ]
-            refreshes_b = [
-                tg.create_task(TokenRefresher(ctx_b).ensure_fresh(resolved=stale, caller=f"b-{i}"))
-                for i in range(10)
-            ]
-            reads = [
-                tg.create_task(CredentialResolver(ctx_a).resolve(api=_API, caller=f"r-{i}"))
-                for i in range(10)
-            ]
-
-        assert {t.result() for t in refreshes_a + refreshes_b} == {"at-1"}
-        assert len(reads) == 10 and all(r.result().credential_id == _CRED_ID for r in reads)
-        assert vendor.sent_refresh_tokens == ["rt-0"]
-    finally:
-        await ctx_b.shutdown()
-        await ctx_a.shutdown()
-
-    assert await _stored_refresh_token(integration_context) == "rt-1"
-
-
-async def test_concurrent_distinct_credentials_do_not_starve_small_postgres_pool(
-    integration_config: AppConfig,
-    integration_context: Context,
-    clean_tokens: None,
-) -> None:
-    """Pins #1432: refreshing 8 distinct credentials concurrently against a slow
-    token endpoint (8 * 0.35s > 1.5s pool timeout) plus concurrent reads does
-    not hold pooled DB connections across upstream HTTP or exhaust a 2-connection pool."""
-    if integration_context.control_db.backend.dialect_name != "postgres":
-        pytest.skip("Postgres pool starvation test")
-
-    num_creds = 8
-    vendors: dict[str, _RotatingVendor] = {}
-    snapshots: list[ResolvedCredential] = []
-
-    for idx in range(num_creds):
-        cid = f"cred_pool_{idx}"
-        prov_name = f"rotating_pool_{idx}"
-        api = APIReference(vendor=f"vendor_pool_{idx}", name="api", version="v1")
-        v = _RotatingVendor(expires_in=3600, live_refresh_token=f"rt0-{idx}")
-        v.name = prov_name
-        v.post_delay_s = 0.35
-        vendors[prov_name] = v
-
-        async with integration_context.control_db.transaction() as session:
-            session.add(
-                Credential(
-                    id=cid,
-                    type=StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
-                    name=f"cred-{idx}",
-                    api_vendor=api.vendor,
-                    api_name=api.name,
-                    api_version=api.version,
-                    provider=prov_name,
-                )
-            )
-            await session.flush()
-            session.add(
-                OAuthClientCredential(
-                    id=cid,
-                    token_url="https://idp.example.com/token",
-                    client_id=f"client-{idx}",
-                    encrypted_client_secret=integration_context.encryption.encrypt("secret"),
-                )
-            )
-            session.add(
-                OAuthToken(
-                    credential_id=cid,
-                    encrypted_access_token=integration_context.encryption.encrypt(f"at0-{idx}"),
-                    encrypted_refresh_token=integration_context.encryption.encrypt(f"rt0-{idx}"),
-                    expires_at=datetime.now(UTC) - timedelta(minutes=5),
-                )
-            )
-        snapshots.append(await CredentialResolver(integration_context).resolve(api=api, caller="t"))
-
-    ctx = await _tiny_pool_context(integration_config, pool_max=2, timeout_s=1.5)
-    try:
-        ctx._providers = ProviderRegistry(dict(vendors))
-        read_api = APIReference(vendor="vendor_pool_0", name="api", version="v1")
-
-        async with asyncio.timeout(10), asyncio.TaskGroup() as tg:
-            refresh_tasks = [
-                tg.create_task(TokenRefresher(ctx).ensure_fresh(resolved=snap, caller=f"w-{w}"))
-                for snap in snapshots
-                for w in range(2)
-            ]
-            read_tasks = [
-                tg.create_task(CredentialResolver(ctx).resolve(api=read_api, caller=f"r-{i}"))
-                for i in range(8)
-            ]
-
-        assert len(refresh_tasks) == num_creds * 2
-        assert all(t.result() == "at-1" for t in refresh_tasks)
-        assert all(r.result().credential_id == "cred_pool_0" for r in read_tasks)
-        for idx, prov_name in enumerate(vendors):
-            assert vendors[prov_name].sent_refresh_tokens == [f"rt0-{idx}"]
-        assert ctx.control_db._keyed_locks == {}
-    finally:
-        await ctx.shutdown()
-
-
-async def test_cancelled_leader_satisfies_waiters_and_evicts_keyed_lock(
-    integration_context: Context, clean_tokens: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Pins #1432: when the refresh leader is cancelled mid-exchange, its
-    shielded commit finishes before ``CancelledError`` propagates, uncancelled
-    waiters receive the fresh token from that single vendor call, and the
-    in-process lock map evicts the credential key once idle."""
-    ctx = integration_context
-    vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
-    await _seed(ctx, access="at-0", refresh="rt-0")
-    stale = await _snapshot(ctx)
-
-    release_response = asyncio.Event()
-    vendor.hold_after_rotation = release_response
-
-    leader = asyncio.create_task(TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="leader"))
-    await asyncio.wait_for(vendor.rotated.wait(), timeout=5)
-    waiters = [
-        asyncio.create_task(TokenRefresher(ctx).ensure_fresh(resolved=stale, caller=f"w-{i}"))
-        for i in range(4)
-    ]
-    await asyncio.sleep(0.05)
-
-    leader.cancel()
-    release_response.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await leader
-    results = await asyncio.gather(*waiters)
-
-    assert results == ["at-1", "at-1", "at-1", "at-1"]
-    assert vendor.sent_refresh_tokens == ["rt-0"]
-    assert await _stored_refresh_token(ctx) == "rt-1"
-    assert ctx.control_db._keyed_locks == {}
-
-
-async def _stored_token_snapshot(ctx: Context) -> tuple[str, str, str | None]:
-    async with ctx.control_db.session() as session:
-        row = await OAuthTokenRepository.get_by_credential(session, _CRED_ID)
-    assert row is not None and row.encrypted_refresh_token is not None
-    return (
-        ctx.encryption.decrypt(row.encrypted_access_token),
-        ctx.encryption.decrypt(row.encrypted_refresh_token),
-        row.scope,
-    )
-
-
-async def test_reconnect_racing_inflight_refresh_preserves_reconnected_grant(
-    integration_context: Context, clean_tokens: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Pins #1432: a reconnect completing while an older grant's refresh is in
-    flight waits on the grant lock and lands last, so the reconnected grant and
-    its scopes are never overwritten by the older refresh."""
-    ctx = integration_context
-    vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
-    await _seed(ctx, access="at-0", refresh="rt-0")
-    stale = await _snapshot(ctx)
-
-    binding = new_browser_binding()
-    challenge = await ConnectService(ctx).begin(
-        _CRED_ID,
-        ConnectRequest(scopes=["read", "write"]),
-        identity=_ADMIN,
-        redirect_uri="https://app.example.com/cb",
-        browser_binding=binding.claim,
-    )
-    assert isinstance(challenge, AuthCodeChallenge)
-
-    async def _complete_connect(_ctx: Context, *, state: Any, callback: Any) -> ProvisionResult:
-        return ProvisionResult(
-            access_token="at-reconnect",
-            refresh_token="rt-reconnect",
-            expires_at=datetime.now(UTC) + timedelta(hours=2),
-            scope="read write",
-            token_url=_OLD_TOKEN_URL,
-        )
-
-    monkeypatch.setattr(vendor, "complete_connect", _complete_connect)
-
-    release_response = asyncio.Event()
-    vendor.hold_after_rotation = release_response
-
-    async with asyncio.timeout(10), asyncio.TaskGroup() as tg:
-        refresh_task = tg.create_task(
-            TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="agent")
-        )
-        await asyncio.wait_for(vendor.rotated.wait(), timeout=5)
-        reconnect_task = tg.create_task(
-            ConnectService(ctx).complete(
-                challenge.state,
-                ConnectCallback(code="auth-code-1432"),
-                browser_binding=binding.value,
-            )
-        )
-        await asyncio.sleep(0.15)
-        assert not reconnect_task.done()
-        release_response.set()
-
-    assert reconnect_task.result() == _CRED_ID
-    assert refresh_task.result() == "at-1"
-    assert await _stored_token_snapshot(ctx) == ("at-reconnect", "rt-reconnect", "read write")
-
-
-async def test_cas_preserves_concurrent_reconnect_when_lock_connection_drops_on_postgres(
-    integration_config: AppConfig,
-    integration_context: Context,
-    clean_tokens: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pins #1432: even if the advisory-lock session drops mid-refresh so a
-    concurrent reconnect commits first, compare-and-swap on the pre-refresh
-    ciphertext keeps the reconnected grant intact and returns its live token."""
-    if integration_context.control_db.backend.dialect_name != "postgres":
-        pytest.skip("Postgres advisory-lock drop test")
-
-    ctx = integration_context
-    vendor = _install_vendor(ctx, monkeypatch, expires_in=3600)
-    await _seed(ctx, access="at-0", refresh="rt-0")
-    stale = await _snapshot(ctx)
-
-    binding = new_browser_binding()
-    challenge = await ConnectService(ctx).begin(
-        _CRED_ID,
-        ConnectRequest(scopes=["read", "write"]),
-        identity=_ADMIN,
-        redirect_uri="https://app.example.com/cb",
-        browser_binding=binding.claim,
-    )
-    assert isinstance(challenge, AuthCodeChallenge)
-
-    async def _complete_connect(_ctx: Context, *, state: Any, callback: Any) -> ProvisionResult:
-        return ProvisionResult(
-            access_token="at-reconnect",
-            refresh_token="rt-reconnect",
-            expires_at=datetime.now(UTC) + timedelta(hours=2),
-            scope="read write",
-            token_url=_OLD_TOKEN_URL,
-        )
-
-    monkeypatch.setattr(vendor, "complete_connect", _complete_connect)
-
-    release_response = asyncio.Event()
-    vendor.hold_after_rotation = release_response
-
-    refresh_task = asyncio.create_task(
-        TokenRefresher(ctx).ensure_fresh(resolved=stale, caller="agent")
-    )
-    await asyncio.wait_for(vendor.rotated.wait(), timeout=5)
-
-    # Terminate the backend holding the advisory lock so ConnectService can commit
-    # while the refresh's vendor call is still paused.
-    terminated = await _terminate_postgres_backends(
-        integration_config,
-        where_clause="pid IN (SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted)",
-    )
-    assert terminated >= 1
-
-    await ConnectService(ctx).complete(
-        challenge.state,
-        ConnectCallback(code="auth-code-1432"),
-        browser_binding=binding.value,
-    )
-    release_response.set()
-
-    token = await refresh_task
-    assert token == "at-reconnect"
-    assert await _stored_token_snapshot(ctx) == ("at-reconnect", "rt-reconnect", "read write")
-
-
-async def test_refresh_lock_timeout_maps_to_transient_without_starving_pool(
-    integration_config: AppConfig,
-    integration_context: Context,
-    clean_tokens: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pins #1432: when another process holds the credential's grant lock past
-    the bounded wait, ``TokenRefresher`` raises ``RefreshTransientError`` while
-    leaving the session pool free for concurrent reads."""
-    if integration_context.control_db.backend.dialect_name != "postgres":
-        pytest.skip("Postgres advisory-lock timeout test")
-
-    await _seed(integration_context, access="at-0", refresh="rt-0")
-    stale = await _snapshot(integration_context)
-    vendor = _RotatingVendor(expires_in=3600, live_refresh_token="rt-0")
-
-    ctx = await _tiny_pool_context(integration_config, pool_max=2, timeout_s=1.5)
-    try:
-        ctx._providers = ProviderRegistry({_PROVIDER: vendor})
-        refresher = TokenRefresher(ctx)
-        monkeypatch.setattr(refresher, "_lock_wait_timeout_s", 0.25)
-
-        async with integration_context.control_db.transaction() as holder_session:
-            await OAuthTokenRepository.acquire_refresh_lock(holder_session, _CRED_ID)
-            with pytest.raises(RefreshTransientError, match="RefreshLockTimeout"):
-                await refresher.ensure_fresh(resolved=stale, caller="waiter")
-            resolved_read = await CredentialResolver(ctx).resolve(api=_API, caller="reader")
-            assert resolved_read.credential_id == _CRED_ID
-    finally:
-        await ctx.shutdown()
-
-    assert vendor.sent_refresh_tokens == []

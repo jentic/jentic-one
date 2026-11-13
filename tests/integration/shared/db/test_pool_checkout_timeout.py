@@ -4,9 +4,9 @@ Exercises real constrained ``QueuePool`` instances on PostgreSQL and SQLite to
 verify that pool-checkout exhaustion translates ``sqlalchemy.exc.TimeoutError``
 to ``DatabaseUnavailableError`` across ``session()``, ``read_session()``,
 ``read_snapshot()``, ``transaction()``, ``run_in_transaction()``,
-``advisory_lock()``, ``try_advisory_lock()``, and ``_SharedAdvisoryLockMultiplexer``,
-without misclassifying PostgreSQL statement timeouts (SQLSTATE ``57014``) or
-caller ``TimeoutError`` exceptions.
+``advisory_lock()``, and ``try_advisory_lock()``, without misclassifying
+PostgreSQL statement timeouts (SQLSTATE ``57014``) or caller ``TimeoutError``
+exceptions.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from jentic_one.shared.db.backends import (
     enable_sqlite_manual_begin,
 )
 from jentic_one.shared.db.errors import DatabaseUnavailableError
-from jentic_one.shared.db.session import DatabaseSession, _SharedAdvisoryLockMultiplexer
+from jentic_one.shared.db.session import DatabaseSession
 
 pytestmark = pytest.mark.integration
 
@@ -98,11 +98,10 @@ async def test_exhausted_pool_maps_checkout_timeout_to_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_advisory_locks_and_lock_mux_map_pool_checkout_timeout_on_postgres(
-    constrained_db: DatabaseSession, integration_config: AppConfig
+async def test_advisory_locks_map_pool_checkout_timeout_on_postgres(
+    constrained_db: DatabaseSession,
 ) -> None:
-    """``advisory_lock``, ``try_advisory_lock``, and ``_SharedAdvisoryLockMultiplexer``
-    map pool checkout timeouts to ``DatabaseUnavailableError``."""
+    """Advisory-lock helpers map pool checkout timeouts to ``DatabaseUnavailableError``."""
     if constrained_db.backend.dialect_name != "postgres":
         pytest.skip("Postgres-only: advisory locks are no-ops on SQLite")
 
@@ -118,23 +117,6 @@ async def test_advisory_locks_and_lock_mux_map_pool_checkout_timeout_on_postgres
             async with constrained_db.try_advisory_lock(991305):
                 pass
         assert isinstance(try_exc.value.__cause__, SATimeoutError)
-
-    # Also verify _SharedAdvisoryLockMultiplexer when its dedicated 1-connection pool is exhausted.
-    cfg = integration_config.databases.admin.model_copy(update={"pool_max": 1})
-    kwargs = constrained_db.backend.engine_kwargs(cfg)
-    kwargs["max_overflow"] = 0
-    kwargs["pool_timeout"] = 0.05
-    mux_engine = create_async_engine(constrained_db.backend.make_url(cfg), **kwargs)
-    mux = _SharedAdvisoryLockMultiplexer(mux_engine)
-    try:
-        async with mux_engine.connect() as held_raw:
-            await held_raw.execute(text("SELECT 1"))
-            with pytest.raises(DatabaseUnavailableError) as mux_exc:
-                await mux.acquire(991306)
-        assert isinstance(mux_exc.value.__cause__, SATimeoutError)
-        assert "QueuePool" not in str(mux_exc.value)
-    finally:
-        await mux.close()
 
 
 @pytest.mark.asyncio

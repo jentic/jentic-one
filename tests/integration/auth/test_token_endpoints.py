@@ -345,7 +345,7 @@ async def test_resolve_reflects_scope_revocation_without_remint(
 
 
 async def test_issue_pair_transient_lock_exhausted_raises_db_unavailable(
-    token_service: TokenService, clean_tokens: None
+    token_service: TokenService, integration_context: Context, clean_tokens: None
 ) -> None:
     """A transient OperationalError that outlasts the retry budget surfaces as 503-mapped error.
 
@@ -357,6 +357,8 @@ async def test_issue_pair_transient_lock_exhausted_raises_db_unavailable(
     tests/unit/auth/web/test_oauth_db_unavailable.py), not a bare 500.
     """
 
+    user_id = await _seed_user(integration_context, "usr_locked")
+
     def _raise_locked(*_args: object, **_kwargs: object) -> None:
         raise OperationalError("INSERT INTO access_tokens", {}, Exception("database is locked"))
 
@@ -364,7 +366,7 @@ async def test_issue_pair_transient_lock_exhausted_raises_db_unavailable(
         patch.object(AccessTokenRepository, "create", side_effect=_raise_locked),
         pytest.raises(DatabaseUnavailableError),
     ):
-        await token_service.issue_pair("usr_locked", ActorType.USER, ["read"])
+        await token_service.issue_pair(user_id, ActorType.USER, ["read"])
 
 
 async def test_issue_pair_transient_lock_then_success(

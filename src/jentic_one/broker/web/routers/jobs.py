@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Request, Response
 from fastapi.responses import JSONResponse
 
-from jentic_one.broker.services.jobs import BrokerJobView
+from jentic_one.broker.services.jobs import BrokerJobResultView, BrokerJobView
 from jentic_one.broker.web.deps import BrokerJobServiceDep, RequireJobAccess
 from jentic_one.broker.web.schemas.jobs import JobLinksResponse, JobResponse
 from jentic_one.shared.context import Context
@@ -72,6 +72,17 @@ async def get_job(
     return _job_response(view, request, ctx)
 
 
+def _result_response(view: BrokerJobResultView) -> Response:
+    """Render stored JSON with a media type declared by the broker contract."""
+    if view.kind == JobKind.EXECUTION and view.content_type:
+        media_type = view.content_type
+        declared_type = media_type.partition(";")[0].strip().lower()
+        if declared_type in ("application/json", "application/problem+json"):
+            media_type = declared_type
+        return Response(content=view.raw_body, media_type=media_type)
+    return JSONResponse(content=view.body)
+
+
 @router.get(
     "/jobs/{job_id}/result",
     operation_id="brokerGetJobResult",
@@ -87,6 +98,4 @@ async def get_job_result(
 ) -> Response:
     """Get the stored result of a finished caller-owned execution job."""
     view = await job_svc.get_result(job_id, identity=identity, instance=request.url.path)
-    if view.kind == JobKind.EXECUTION and view.content_type:
-        return Response(content=view.raw_body, media_type=view.content_type)
-    return JSONResponse(content=view.body)
+    return _result_response(view)

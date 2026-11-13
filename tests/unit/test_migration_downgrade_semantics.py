@@ -225,3 +225,73 @@ def test_single_db_explicit_multi_revision_and_relative_downgrade_succeeds(
     assert run_mod.main(["--db", "control", "--direction", "down", "--target", "-1"]) == 0
     assert _current_rev(sqlite_stack, "control") == great_grandparent
     assert parent != great_grandparent
+
+
+def test_successful_downgrade_with_unavailable_after_status_reports_unknown(
+    sqlite_stack: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A committed downgrade with unreadable revision state requires recovery."""
+    run_mod.upgrade("control")
+    head, parent, _ = _head_and_ancestors("control")
+    capsys.readouterr()
+    real_status = run_mod.status
+    control_status_calls = 0
+
+    def _status(db_name: str) -> tuple[str, list[str], list[str]]:
+        nonlocal control_status_calls
+        if db_name == "control":
+            control_status_calls += 1
+            if control_status_calls > 1:
+                raise RuntimeError("revision status unavailable")
+        return real_status(db_name)
+
+    monkeypatch.setattr(run_mod, "status", _status)
+    code = run_mod.main(["--db", "control", "--direction", "down", "--target", parent])
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+
+    assert code == run_mod.EXIT_PARTIAL_DOWNGRADE
+    assert _current_rev(sqlite_stack, "control") == parent
+    assert f"DOWNGRADE_STATUS control unknown before={head} after=unknown" in combined
+    assert "OVERALL partial_downgrade" in combined
+    assert "revision status unavailable" in combined
+
+
+def test_noop_downgrade_does_not_count_as_mutation_when_later_db_fails(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Confirmed no-op databases do not turn an unchanged failure into a partial downgrade."""
+    assert run_mod.main(["--skip-upgrade-steps"]) == 0
+    assert (
+        run_mod.main(
+            [
+                "--db",
+                "admin",
+                "--direction",
+                "down",
+                "--target",
+                run_mod.SA_DROP_REVISION,
+            ]
+        )
+        == 0
+    )
+    assert run_mod.main(["--db", "registry", "--direction", "down", "--target", "base"]) == 0
+    capsys.readouterr()
+
+    code = run_mod.main(
+        ["--db", "admin", "--db", "registry", "--direction", "down", "--target", "base"]
+    )
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+
+    assert code == 1
+    assert _current_rev(sqlite_stack, "registry") is None
+    assert _current_rev(sqlite_stack, "admin") == run_mod.SA_DROP_REVISION
+    assert "DOWNGRADE_STATUS registry unchanged before=- after=-" in combined
+    assert (
+        f"DOWNGRADE_STATUS admin failed before={run_mod.SA_DROP_REVISION} "
+        f"after={run_mod.SA_DROP_REVISION}" in combined
+    )
+    assert "OVERALL failed" in combined

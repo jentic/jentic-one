@@ -131,12 +131,14 @@ def _make_user_row(
     return row
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_issue_pair_returns_prefixed_tokens(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_user_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
+    mock_user_repo.get_by_id_for_update = AsyncMock(return_value=_make_user_row())
     mock_at_repo.create = AsyncMock(return_value=_make_access_token_row())
     mock_rt_repo.create = AsyncMock(return_value=_make_refresh_token_row())
 
@@ -147,12 +149,14 @@ async def test_issue_pair_returns_prefixed_tokens(
     assert refresh.startswith(REFRESH_TOKEN_PREFIX)
 
 
+@patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_issue_pair_stores_hashed_tokens(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_user_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
+    mock_user_repo.get_by_id_for_update = AsyncMock(return_value=_make_user_row())
     mock_at_repo.create = AsyncMock(return_value=_make_access_token_row())
     mock_rt_repo.create = AsyncMock(return_value=_make_refresh_token_row())
 
@@ -181,6 +185,7 @@ async def test_refresh_rotation_returns_new_pair(
     mock_rt_repo.create = AsyncMock(return_value=_make_refresh_token_row())
     mock_rt_repo.consume = AsyncMock()
     mock_at_repo.create = AsyncMock(return_value=_make_access_token_row())
+    mock_user_repo.get_by_id_for_update = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     svc = TokenService(ctx)
@@ -694,6 +699,7 @@ async def test_refresh_deactivated_user_rejected(
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row()
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_user_repo.get_by_id_for_update = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row(active=False))
 
     svc = TokenService(ctx)
@@ -731,6 +737,7 @@ async def test_refresh_deleted_user_rejected_even_if_row_reads_active(
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
     mock_rt_repo.create = AsyncMock()
     mock_at_repo.create = AsyncMock()
+    mock_user_repo.get_by_id_for_update = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(
         return_value=_make_user_row(active=True, deleted_at=datetime.now(UTC))
     )
@@ -789,6 +796,7 @@ async def test_refresh_approved_client_still_rotates(
     mock_rt_repo.create = AsyncMock(return_value=MagicMock(id="rt_next"))
     mock_rt_repo.consume = AsyncMock()
     mock_at_repo.create = AsyncMock()
+    mock_user_repo.get_by_id_for_update = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
 
     client_row = MagicMock()
@@ -1332,6 +1340,7 @@ async def test_refresh_persists_narrowed_scopes_for_user_tokens(
     mock_rt_repo.create = AsyncMock(return_value=MagicMock(id="rt_next"))
     mock_rt_repo.consume = AsyncMock()
     mock_at_repo.create = AsyncMock()
+    mock_user_repo.get_by_id_for_update = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
     mock_user_grant_repo.get_grants_for_user = AsyncMock(
         return_value=[MagicMock(permission="apis:read")]
@@ -1372,6 +1381,7 @@ async def test_must_change_password_fences_user_resolve_introspect_and_refresh(
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
     mock_rt_repo.consume = AsyncMock()
+    mock_user_repo.get_by_id_for_update = AsyncMock()
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row(must_change_password=True))
     mock_user_grant_repo.get_grants_for_user = AsyncMock(
         return_value=[MagicMock(permission="apis:read")]

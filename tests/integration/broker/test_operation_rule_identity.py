@@ -716,6 +716,86 @@ async def test_ambiguous_operation_ids_across_covered_apis_fail_closed(
 
 
 @pytest.mark.asyncio
+async def test_nested_trailing_path_operation_identity_matches_live_and_dry_run(
+    env: Context,
+) -> None:
+    """Operation-scoped rules resolve the same nested trailing parameter on both paths."""
+    await _import_and_promote(
+        env,
+        paths={
+            "/files/{path}": {
+                "get": {"operationId": "get_file", "responses": {"200": {"description": "OK"}}},
+            },
+        },
+    )
+    cred_id = await _seed_bound_credential(env, cred_id="cred_1081_nested_path")
+
+    async with _control_client(env) as control, _broker_client(env) as broker:
+        base = f"/credentials/{cred_id}/agents/{AGENT_ID}/permissions"
+        await control.put(
+            base,
+            json=[
+                {"effect": "deny", "operations": ["get_file"]},
+                {"effect": "allow", "methods": ["GET"], "path": "/.*", "match_mode": "regex"},
+            ],
+        )
+
+        live = await broker.get(f"/{HOST_A}/api/files/a/b.txt")
+        assert live.status_code == 403, live.text
+        dry = (
+            await control.post(f"{base}:test", json={"method": "GET", "path": "/files/a/b.txt"})
+        ).json()
+        assert dry["allowed"] is False
+        assert dry["effect"] == "deny"
+        assert dry["rule_index"] == 0
+
+        await control.put(base, json=[{"effect": "allow", "operations": ["get_file"]}])
+        live = await broker.get(f"/{HOST_A}/api/files/a/b.txt")
+        assert live.status_code == 200, live.text
+        dry = (
+            await control.post(f"{base}:test", json={"method": "GET", "path": "/files/a/b.txt"})
+        ).json()
+        assert dry["allowed"] is True
+        assert dry["rule_index"] == 0
+
+
+@pytest.mark.asyncio
+async def test_legacy_api_identity_preserves_dry_run_operation_rules(env: Context) -> None:
+    """Canonical credential scopes cover legacy raw API identities in the SQL query."""
+    await _import_and_promote(
+        env,
+        paths={
+            "/items/{item_id}": {
+                "get": {"operationId": "get_item", "responses": {"200": {"description": "OK"}}},
+            },
+        },
+    )
+    async with env.registry_db.transaction() as session:
+        await session.execute(
+            update(Api).where(Api.vendor == VENDOR).values(name="Shop", version=" 1.0.0 ")
+        )
+    cred_id = await _seed_bound_credential(env, cred_id="cred_1081_legacy_identity")
+
+    async with _control_client(env) as control, _broker_client(env) as broker:
+        base = f"/credentials/{cred_id}/agents/{AGENT_ID}/permissions"
+        await control.put(
+            base,
+            json=[
+                {"effect": "deny", "operations": ["get_item"]},
+                {"effect": "allow", "methods": ["GET"], "path": "/.*", "match_mode": "regex"},
+            ],
+        )
+
+        assert (await broker.get(f"/{HOST_A}/api/items/42")).status_code == 403
+        dry = (
+            await control.post(f"{base}:test", json={"method": "GET", "path": "/items/42"})
+        ).json()
+        assert dry["allowed"] is False
+        assert dry["effect"] == "deny"
+        assert dry["rule_index"] == 0
+
+
+@pytest.mark.asyncio
 async def test_default_deny_no_substring_and_relative_path_parity_preserved(
     env: Context,
 ) -> None:

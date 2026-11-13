@@ -51,9 +51,12 @@ def spec() -> IngestSpecification:
 
 
 async def test_search_text_populated_when_enabled(
-    ingest_context: Context, spec: IngestSpecification, clean_registry: None
+    ingest_context: Context,
+    spec: IngestSpecification,
+    clean_registry: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ingest_context.config.search = SearchConfig(enabled=True)
+    monkeypatch.setattr(ingest_context.config, "search", SearchConfig(enabled=True))
 
     ingestor = Ingestor(ingest_context)
     result = await ingestor.ingest(spec, created_by="usr_test")
@@ -78,9 +81,12 @@ async def test_search_text_populated_when_enabled(
 
 
 async def test_search_text_null_when_disabled(
-    ingest_context: Context, spec: IngestSpecification, clean_registry: None
+    ingest_context: Context,
+    spec: IngestSpecification,
+    clean_registry: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ingest_context.config.search = SearchConfig(enabled=False)
+    monkeypatch.setattr(ingest_context.config, "search", SearchConfig(enabled=False))
 
     ingestor = Ingestor(ingest_context)
     result = await ingestor.ingest(spec, created_by="usr_test")

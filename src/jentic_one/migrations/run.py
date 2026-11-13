@@ -497,20 +497,31 @@ def _run_downgrade(dbs: list[str], raw_target: str | None) -> int:
         before = before_by_db[db_name]
         before_fmt = ",".join(before) or "-"
         print(f"==> Rolling back {db_name} to {target}", flush=True)
+        downgrade_returned = False
         try:
             downgrade(db_name, target)
+            downgrade_returned = True
+            _, after, _ = status(db_name)
         except Exception as exc:
             after_err: list[str] | None
             try:
                 _, after_err, _ = status(db_name)
             except Exception:
                 after_err = None
-            outcome = "partial" if after_err is not None and after_err != before else "failed"
+            if after_err is None and downgrade_returned:
+                outcome = "unknown"
+            elif after_err is not None and after_err != before:
+                outcome = "partial"
+            elif downgrade_returned:
+                outcome = "unchanged"
+            else:
+                outcome = "failed"
             results[db_name] = (outcome, before, after_err)
             for untouched_db in order[idx + 1 :]:
                 untouched_revs = before_by_db[untouched_db]
                 results[untouched_db] = ("untouched", untouched_revs, untouched_revs)
             any_mutated = any(kind in ("rolled_back", "partial") for kind, _, _ in results.values())
+            any_unknown = any(kind == "unknown" for kind, _, _ in results.values())
             for name in order:
                 kind, b_revs, a_revs = results[name]
                 b_str = ",".join(b_revs) or "-"
@@ -519,19 +530,22 @@ def _run_downgrade(dbs: list[str], raw_target: str | None) -> int:
                     f"DOWNGRADE_STATUS {name} {kind} before={b_str} after={a_str}",
                     flush=True,
                 )
-            verdict = "partial_downgrade" if any_mutated else "failed"
+            verdict = "partial_downgrade" if any_mutated or any_unknown else "failed"
             print(f"OVERALL {verdict}", flush=True)
             print(
                 f"==> ERROR: downgrade failed on {db_name} ({type(exc).__name__}: {exc})",
                 file=sys.stderr,
                 flush=True,
             )
-            return EXIT_PARTIAL_DOWNGRADE if any_mutated else 1
+            return EXIT_PARTIAL_DOWNGRADE if any_mutated or any_unknown else 1
 
-        _, after, _ = status(db_name)
         after_fmt = ",".join(after) or "-"
-        results[db_name] = ("rolled_back", before, after)
-        print(f"==> {db_name} rolled back ({before_fmt} -> {after_fmt})", flush=True)
+        outcome = "unchanged" if after == before else "rolled_back"
+        results[db_name] = (outcome, before, after)
+        if outcome == "unchanged":
+            print(f"==> {db_name} unchanged ({after_fmt})", flush=True)
+        else:
+            print(f"==> {db_name} rolled back ({before_fmt} -> {after_fmt})", flush=True)
 
     return 0
 

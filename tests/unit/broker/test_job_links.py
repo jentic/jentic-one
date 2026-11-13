@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from starlette.requests import Request
 
@@ -15,9 +16,9 @@ from jentic_one.broker.core.errors import (
     JobResultExpiredError,
 )
 from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
-from jentic_one.broker.services.jobs.schemas import BrokerJobView
+from jentic_one.broker.services.jobs.schemas import BrokerJobResultView, BrokerJobView
 from jentic_one.broker.services.jobs.service import _job_actor_type
-from jentic_one.broker.web.routers.jobs import _job_response
+from jentic_one.broker.web.routers.jobs import _job_response, _result_response
 from jentic_one.shared.config import load_config
 from jentic_one.shared.context import Context
 
@@ -115,3 +116,35 @@ def test_broker_job_errors_map_to_expected_statuses_and_types() -> None:
     assert broker_error_problem(not_done)["type"] == "job_not_completed"
     assert status_for_broker_error(expired) == 410
     assert broker_error_problem(expired)["type"] == "job_result_expired"
+
+
+@pytest.mark.parametrize(
+    ("stored_content_type", "expected_content_type"),
+    [
+        ("application/json; charset=utf-8", "application/json"),
+        ("application/problem+json; charset=utf-8", "application/problem+json"),
+        ("text/plain; charset=iso-8859-1", "text/plain; charset=iso-8859-1"),
+        (
+            "application/vnd.api+json; charset=utf-8",
+            "application/vnd.api+json; charset=utf-8",
+        ),
+    ],
+)
+def test_result_response_normalizes_only_declared_json_media_types(
+    stored_content_type: str, expected_content_type: str
+) -> None:
+    """Declared JSON types omit parameters; other stored media types pass through."""
+    view = BrokerJobResultView(
+        id="jres_1807",
+        job_id="job_1807",
+        kind="execution",
+        body={"ok": True},
+        content_type=stored_content_type,
+        raw_body=b'{"ok":true}',
+        created_at=datetime(2026, 11, 13, 12, 0, tzinfo=UTC),
+    )
+
+    response = _result_response(view)
+
+    assert response.headers["content-type"] == expected_content_type
+    assert response.body == b'{"ok":true}'

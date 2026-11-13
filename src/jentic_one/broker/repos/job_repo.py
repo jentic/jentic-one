@@ -51,6 +51,10 @@ _SELECT_JOB_RESULT = text(
     created_at=UTCDateTime(),
 )
 
+_SELECT_JOB_RESULT_AVAILABILITY = text(
+    "SELECT r.available_until FROM job_results r WHERE r.job_id = :job_id"
+).columns(available_until=UTCDateTime())
+
 
 def _as_aware_datetime(value: datetime | str) -> datetime:
     dt = value if isinstance(value, datetime) else datetime.fromisoformat(value)
@@ -144,10 +148,13 @@ class BrokerJobRepository:
         *,
         now: datetime,
     ) -> bool:
-        result = await BrokerJobRepository.get_result_by_job_id(session, job_id)
-        if result is None:
+        row = (
+            await session.execute(_SELECT_JOB_RESULT_AVAILABILITY, {"job_id": job_id})
+        ).one_or_none()
+        if row is None:
             return False
-        return result.available_until is None or result.available_until > now
+        available_until = _as_optional_aware_datetime(row.available_until)
+        return available_until is None or available_until > now
 
     @staticmethod
     async def get_result_by_job_id(

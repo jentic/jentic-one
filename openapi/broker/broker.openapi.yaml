@@ -1672,8 +1672,9 @@ components:
         JSON execution document (`execution_id`, `status`, `http_status`,
         `duration_ms`, optional base64 `body_b64`, and optional `problem`),
         or an RFC 9457 `application/problem+json` body for a held execution
-        that never ran. The `Content-Type` header echoes the stored result's
-        media type while the body remains JSON.
+        that never ran. Declared JSON `Content-Type` values omit optional
+        parameters; other stored media types pass through unchanged while the
+        body remains JSON.
       content:
         application/json:
           schema:
