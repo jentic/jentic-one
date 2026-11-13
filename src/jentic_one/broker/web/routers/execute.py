@@ -848,6 +848,7 @@ async def _handle(
             server_variables_unresolved=ctx_req.server_variables_unresolved,
             trace_id=ctx_req.trace_id,
             operation_path=resolved.operation.path,
+            spec_operation_id=resolved.operation.operation_id,
         )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids

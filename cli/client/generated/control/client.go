@@ -5675,7 +5675,7 @@ type JobLinksResponse struct {
 	// Examples: https://jentic.example.com/executions/exec_6968b3982706c619fe73f0cf
 	Execution *string `json:"execution,omitempty"`
 
-	// Result URL of the job result; null until the job has completed.
+	// Result URL of the job result when an unexpired result is stored; null otherwise.
 	//
 	// Examples: https://jentic.example.com/jobs/job_6968b3985e8c9902207afaeb/result
 	Result *string `json:"result,omitempty"`
@@ -7884,7 +7884,7 @@ type PermissionRuleReadSchema struct {
 	// Examples: ["GET"]
 	Methods *[]string `json:"methods,omitempty"`
 
-	// Operations OpenAPI operation IDs the rule matches; null matches all.
+	// Operations OpenAPI operationIds the rule matches by exact equality (existing `op_…` registry operation IDs also match their revision); null matches all.
 	//
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
@@ -7933,7 +7933,7 @@ type PermissionRuleSchema struct {
 	// Examples: ["GET"]
 	Methods *[]string `json:"methods,omitempty"`
 
-	// Operations OpenAPI operation IDs to match. None matches all operations.
+	// Operations OpenAPI operationIds to match by exact string equality (survives revision promotion; existing `op_…` registry operation IDs also match their revision). None matches all operations.
 	//
 	// Examples: ["listCharges"]
 	Operations *[]string `json:"operations,omitempty"`
@@ -7963,7 +7963,7 @@ type PermissionTestRequest struct {
 	// Examples: GET
 	Method string `json:"method"`
 
-	// OperationId Optional OpenAPI operation id resolved from the request URL.
+	// OperationId Optional OpenAPI operationId (or `op_…` registry operation ID) of the hypothetical request. When omitted, the dry-run resolves the operation from `(method, path)` against the credential's covered live API(s); when supplied, it must agree with the resolved operation.
 	//
 	// Examples: listCharges
 	OperationId *string `json:"operation_id,omitempty"`
@@ -14137,12 +14137,14 @@ type ClientInterface interface {
 
 	// GetJobResult Get a job's result
 	//
-	// Get the result of a completed job — polymorphic by kind.
+	// Get the stored result of a finished job — polymorphic by kind.
 	//
-	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
-	// running, failed or cancelled), and ``410`` once an
-	// approved execution's result is past
-	// ``held_executions.result_retention_seconds``.
+	// Serves the stored result for a ``completed`` job, or a ``failed`` job that
+	// recorded an actionable result (such as an approved execution whose upstream
+	// call or run-time authorization failed, or a held execution that never ran).
+	// Answers ``409`` while the job is active, cancelled, dead-lettered, or failed
+	// without a stored result, and ``410`` once an approved execution's result is
+	// past ``held_executions.result_retention_seconds``.
 	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -18617,12 +18619,14 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 
 // GetJobResult Get a job's result
 //
-// Get the result of a completed job — polymorphic by kind.
+// Get the stored result of a finished job — polymorphic by kind.
 //
-// Answers “409“ unless the job's “status“ is “completed“ (pending,
-// running, failed or cancelled), and “410“ once an
-// approved execution's result is past
-// “held_executions.result_retention_seconds“.
+// Serves the stored result for a “completed“ job, or a “failed“ job that
+// recorded an actionable result (such as an approved execution whose upstream
+// call or run-time authorization failed, or a held execution that never ran).
+// Answers “409“ while the job is active, cancelled, dead-lettered, or failed
+// without a stored result, and “410“ once an approved execution's result is
+// past “held_executions.result_retention_seconds“.
 //
 // Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -31558,12 +31562,14 @@ type ClientWithResponsesInterface interface {
 
 	// GetJobResultWithResponse Get a job's result
 	//
-	// Get the result of a completed job — polymorphic by kind.
+	// Get the stored result of a finished job — polymorphic by kind.
 	//
-	// Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
-	// running, failed or cancelled), and ``410`` once an
-	// approved execution's result is past
-	// ``held_executions.result_retention_seconds``.
+	// Serves the stored result for a ``completed`` job, or a ``failed`` job that
+	// recorded an actionable result (such as an approved execution whose upstream
+	// call or run-time authorization failed, or a held execution that never ran).
+	// Answers ``409`` while the job is active, cancelled, dead-lettered, or failed
+	// without a stored result, and ``410`` once an approved execution's result is
+	// past ``held_executions.result_retention_seconds``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -38558,6 +38564,8 @@ type LoginHTTPResp struct {
 	ApplicationproblemJSON400 *BadRequest
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -38579,6 +38587,11 @@ func (r LoginHTTPResp) GetApplicationproblemJSON400() *BadRequest {
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r LoginHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
 	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r LoginHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -51515,12 +51528,14 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 
 // GetJobResultWithResponse Get a job's result
 //
-// Get the result of a completed job — polymorphic by kind.
+// Get the stored result of a finished job — polymorphic by kind.
 //
-// Answers “409“ unless the job's “status“ is “completed“ (pending,
-// running, failed or cancelled), and “410“ once an
-// approved execution's result is past
-// “held_executions.result_retention_seconds“.
+// Serves the stored result for a “completed“ job, or a “failed“ job that
+// recorded an actionable result (such as an approved execution whose upstream
+// call or run-time authorization failed, or a held execution that never ran).
+// Answers “409“ while the job is active, cancelled, dead-lettered, or failed
+// without a stored result, and “410“ once an approved execution's result is
+// past “held_executions.result_retention_seconds“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -58113,6 +58128,13 @@ func ParseLoginHTTPResp(rsp *http.Response) (*LoginHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalServerError

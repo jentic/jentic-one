@@ -27,6 +27,7 @@ PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
 # ``in: path`` parameter name. ``+`` (reserved expansion) additionally signals a
 # catch-all that matches across path separators.
 RFC6570_OPERATORS = frozenset("+#./;?&")
+_TRAILING_PARAM_GROUP_RE = re.compile(r"/\(\?P<([A-Za-z_][A-Za-z0-9_]*)>\[\^/\]\+\)\$$")
 
 
 @dataclass
@@ -432,6 +433,62 @@ def count_segments(path: str) -> int:
     if not stripped:
         return 0
     return len(stripped.split("/"))
+
+
+def has_trailing_path_param(path_template: str) -> bool:
+    """Return True if *path_template* ends with a standalone ordinary ``{param}`` segment.
+
+    Only plain single-parameter final segments (e.g. ``/contents/{path}``,
+    ``/{key}``) qualify. RFC 6570 operator expressions (``{+path}``, ``{#frag}``),
+    internal server-variable placeholders (``{~sv0}``), and composite segments
+    with surrounding literals (``/items/id-{id}``) return False.
+    """
+    normalized = normalize_path_template(path_template)
+    if normalized == "/":
+        return False
+    last_segment = normalized.rsplit("/", 1)[-1]
+    match = PATH_PARAM_RE.fullmatch(last_segment)
+    if match is None:
+        return False
+    token = match.group(1)
+    return bool(
+        token and token[0] not in RFC6570_OPERATORS and not token.startswith(_SV_TOKEN_PREFIX)
+    )
+
+
+def trailing_param_path_regex(
+    path_template: str,
+    path_regex: str | re.Pattern[str],
+    *,
+    operation_path: str | None = None,
+) -> re.Pattern[str] | None:
+    """Build a multi-segment regex for an ordinary trailing ``{param}``, or ``None``.
+
+    Rewrites a trailing ``/(?P<name>[^/]+)$`` capture into
+    ``/(?P<name>[^/]+(?:/[^/]+)+)$`` so a final operation parameter can span
+    nested non-empty slash-separated segments (#701, #1422) while keeping
+    preceding parameters single-segment.
+
+    Returns ``None`` when:
+    - *path_template* (or *operation_path*, when given) does not end in a
+      standalone ordinary ``{param}`` segment,
+    - the final group captures a server variable (``sv__*`` / ``svk__*``), or
+    - the final segment is a ``(?P=...)`` back-reference to an earlier
+      single-segment parameter (#1980).
+    """
+    if operation_path is not None and not has_trailing_path_param(operation_path):
+        return None
+    if not has_trailing_path_param(path_template):
+        return None
+    source = path_regex.pattern if isinstance(path_regex, re.Pattern) else path_regex
+    match = _TRAILING_PARAM_GROUP_RE.search(source)
+    if match is None:
+        return None
+    group = match.group(1)
+    if group.startswith((_SV_GROUP_PREFIX, _SV_FIXED_GROUP_PREFIX)):
+        return None
+    widened = source[: match.start()] + f"/(?P<{group}>[^/]+(?:/[^/]+)+)$"
+    return re.compile(widened)
 
 
 def build_index_entry(

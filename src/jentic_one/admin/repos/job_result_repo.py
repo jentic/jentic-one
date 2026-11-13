@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -44,11 +45,28 @@ class JobResultRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def available_job_ids(
+        session: AsyncSession,
+        job_ids: Sequence[str],
+        *,
+        now: datetime,
+    ) -> set[str]:
+        """Return the subset of ``job_ids`` that carry an unexpired ``JobResult``."""
+        if not job_ids:
+            return set()
+        stmt = select(JobResult.job_id).where(
+            JobResult.job_id.in_(job_ids),
+            or_(JobResult.available_until.is_(None), JobResult.available_until > now),
+        )
+        result = await session.execute(stmt)
+        return {str(job_id) for job_id in result.scalars().all()}
+
+    @staticmethod
     async def delete_expired(session: AsyncSession) -> int:
         """Delete job results past their retention window. Returns count of deleted rows."""
         stmt = delete(JobResult).where(
             JobResult.available_until.is_not(None),
-            JobResult.available_until < func.now(),
+            JobResult.available_until <= func.now(),
         )
         result = await session.execute(stmt)
         await session.flush()

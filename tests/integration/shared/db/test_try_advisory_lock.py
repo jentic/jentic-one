@@ -161,3 +161,48 @@ async def test_cancellation_during_the_unlock_discards_the_lock_connection(
             await asyncio.sleep(0.05)
     async with registry_db.try_advisory_lock(_KEY) as again:
         assert again is True
+
+
+async def test_shared_advisory_lock_multiplexes_distinct_keys_on_one_idle_backend(
+    registry_db: DatabaseSession,
+) -> None:
+    """Multiple distinct keys held via ``try_shared_advisory_lock`` share a
+    single ``idle`` backend connection while same-key contention returns
+    ``False`` without releasing the holder's lock."""
+    _require_postgres(registry_db)
+    keys = [advisory_lock_key(f"tests.integration.shared_mux.{i}") for i in range(4)]
+
+    async with (
+        registry_db.try_shared_advisory_lock(keys[0]) as a0,
+        registry_db.try_shared_advisory_lock(keys[1]) as a1,
+        registry_db.try_shared_advisory_lock(keys[2]) as a2,
+        registry_db.try_shared_advisory_lock(keys[3]) as a3,
+    ):
+        assert (a0, a1, a2, a3) == (True, True, True, True)
+        # Same key in the same DatabaseSession is refused rather than re-entered.
+        async with registry_db.try_shared_advisory_lock(keys[0]) as duplicate:
+            assert duplicate is False
+
+        pids: set[int] = set()
+        for k in keys:
+            unsigned = k & 0xFFFF_FFFF_FFFF_FFFF
+            async with registry_db.session() as session:
+                rows = (
+                    await session.execute(
+                        text(
+                            "SELECT a.pid, a.state FROM pg_locks l"
+                            " JOIN pg_stat_activity a ON a.pid = l.pid"
+                            " WHERE l.locktype = 'advisory' AND l.granted"
+                            " AND l.classid = :hi AND l.objid = :lo"
+                        ),
+                        {"hi": unsigned >> 32, "lo": unsigned & 0xFFFFFFFF},
+                    )
+                ).all()
+            assert len(rows) == 1
+            assert rows[0].state == "idle"
+            pids.add(int(rows[0].pid))
+        assert len(pids) == 1
+
+    # All locks are released and the shared connection checks back in once empty.
+    async with registry_db.try_shared_advisory_lock(keys[0]) as reacquired:
+        assert reacquired is True

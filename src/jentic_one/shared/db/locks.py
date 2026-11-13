@@ -30,6 +30,11 @@ def advisory_lock_key(name: str) -> int:
     return int.from_bytes(digest, "big", signed=True)
 
 
+def credential_refresh_lock_key(credential_id: str) -> int:
+    """Return the signed 64-bit advisory-lock key for a credential's OAuth grant."""
+    return advisory_lock_key(f"credentials.refresh.{credential_id}")
+
+
 async def lock_credential_bindings(session: AsyncSession, credential_id: str) -> None:
     """Serialise writes to one credential's ``agent_credential_bindings`` rows.
 

@@ -39,6 +39,7 @@ from jentic_one.broker.core.errors import (
     CredentialIdentityMismatchError,
     CredentialPendingError,
 )
+from jentic_one.broker.repos.operation_scope_repo import OperationScopeRepository
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.provisioning import (
@@ -59,8 +60,13 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_none
 from jentic_one.shared.metrics import get_meter
+from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.permissions.evaluation import PathDivergence
+from jentic_one.shared.permissions.operation_resolution import (
+    colliding_spec_operation_ids,
+    resolve_live_operation,
+)
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 
@@ -482,6 +488,7 @@ async def authorize_execution(
     upstream_url: str | None = None,
     trace_id: str | None = None,
     operation_path: str | None = None,
+    spec_operation_id: str | None = None,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -549,16 +556,50 @@ async def authorize_execution(
     upstream_path = (
         normalize_path(raw_upstream_path or "/") if raw_upstream_path is not None else None
     )
+    candidate_scopes: dict[str, CredentialScope] = {}
     evaluations: dict[str, RuleEvaluation] = {}
+    declaring_apis: list[tuple[str, str]] | None = None
 
-    async def _evaluate_candidate(candidate_id: str) -> RuleEvaluation:
+    async def _colliding_ids_for(scope: CredentialScope | None) -> frozenset[str]:
+        nonlocal declaring_apis
+        if (
+            scope is None
+            or (scope.name is not None and scope.version is not None)
+            or spec_operation_id is None
+            or not ctx.has_db("registry")
+        ):
+            return frozenset()
+        if declaring_apis is None:
+            declaring_apis = await OperationScopeRepository.live_apis_declaring_operation_id(
+                ctx.registry_db,
+                vendor=scope.vendor,
+                spec_operation_id=spec_operation_id,
+            )
+        return colliding_spec_operation_ids(
+            declaring_apis,
+            scope=scope,
+            spec_operation_id=spec_operation_id,
+        )
+
+    async def _evaluate_candidate(
+        candidate_id: str, *, scope: CredentialScope | None = None
+    ) -> RuleEvaluation:
+        resolved_scope = scope if scope is not None else candidate_scopes.get(candidate_id)
+        colliding_ids = await _colliding_ids_for(resolved_scope)
+        resolved_op = resolve_live_operation(
+            spec_operation_id=spec_operation_id,
+            registry_operation_id=operation_id,
+            colliding_operation_ids=colliding_ids,
+        )
         evaluation = await agent_rule_evaluator.evaluate(
             agent_id=identity.sub,
             credential_id=candidate_id,
             rule_set_id=rule_set_ids.get(candidate_id),
             method=method,
             path=path,
-            operation_id=operation_id,
+            operation_id=resolved_op.operation_id,
+            registry_operation_id=resolved_op.registry_operation_id,
+            ambiguous_operation_ids=resolved_op.ambiguous_operation_ids,
             upstream_path=upstream_path if upstream_path != path else None,
         )
         evaluations[candidate_id] = evaluation
@@ -575,7 +616,9 @@ async def authorize_execution(
         # returned as a successful ExecutionAuthorization.
         return viable
 
-    selected_credential = await CredentialService(ctx).select(
+    selected_credential = await CredentialService(
+        ctx, candidate_scopes_out=candidate_scopes
+    ).select(
         api_vendor=api.vendor,
         api_name=api.name,
         api_version=api.version,
@@ -591,9 +634,20 @@ async def authorize_execution(
     )
     assert selected_credential is not None  # api.vendor is concrete (asserted above)
     rule_set_id = rule_set_ids.get(selected_credential.credential_id)
+    selected_scope = (
+        canonical_credential_scope(
+            vendor=selected_credential.api_vendor or api.vendor,
+            name=selected_credential.api_name,
+            version=selected_credential.api_version,
+        )
+        if selected_credential.scope_is_wildcard
+        else None
+    )
     evaluation = evaluations.get(selected_credential.credential_id)
     if evaluation is None:
-        evaluation = await _evaluate_candidate(selected_credential.credential_id)
+        evaluation = await _evaluate_candidate(
+            selected_credential.credential_id, scope=selected_scope
+        )
     if evaluation.divergence is not None:
         _report_base_path_divergence(
             evaluation.divergence,

@@ -18,6 +18,7 @@ from jentic_one.registry.core.url_index import (
     normalise_host,
     normalize_path,
     resolve_server_variable_groups,
+    trailing_param_path_regex,
 )
 from jentic_one.registry.repos.operation_repo import OperationRepository
 from jentic_one.registry.repos.url_index_repo import (
@@ -66,11 +67,76 @@ class _RankedMatch:
     operation_id: str
     revision_id: uuid.UUID
     path_params: dict[str, str]
-    specificity_key: tuple[bool, int, int, int]
+    specificity_key: tuple[int, bool, int, bool, int, int]
     candidate: UrlIndexCandidate
+    is_multi_segment: bool = False
+    literal_positions: frozenset[int] = field(default_factory=frozenset)
     server_variables: dict[str, str] = field(default_factory=dict)
     server_variable_defaults: dict[str, str] = field(default_factory=dict)
     server_variables_unresolved: bool = False
+
+
+def _is_literal_segment(segment: str) -> bool:
+    return "{" not in segment and "**" not in segment
+
+
+def _literal_positions(
+    template_parts: list[str], request_segment_count: int, *, is_catch_all: bool
+) -> frozenset[int]:
+    """Request segment indices constrained to literal values by *template_parts*."""
+    if not is_catch_all:
+        return frozenset(i for i, p in enumerate(template_parts) if _is_literal_segment(p))
+    catch_all_indices = [i for i, p in enumerate(template_parts) if "{+" in p or "**" in p]
+    if not catch_all_indices:
+        return frozenset(i for i, p in enumerate(template_parts) if _is_literal_segment(p))
+    first_catch = catch_all_indices[0]
+    last_catch = catch_all_indices[-1]
+    positions: set[int] = set()
+    for i, part in enumerate(template_parts):
+        if not _is_literal_segment(part):
+            continue
+        if i < first_catch:
+            positions.add(i)
+        elif i > last_catch:
+            offset_from_end = len(template_parts) - 1 - i
+            req_idx = request_segment_count - 1 - offset_from_end
+            if req_idx >= 0:
+                positions.add(req_idx)
+    return frozenset(positions)
+
+
+def _match_candidate_path(
+    row: Any,
+    path: str,
+    request_segment_count: int,
+    *,
+    operation_path: str | None = None,
+) -> tuple[re.Match[str], bool, bool] | None:
+    """Match *path* against *row*, returning ``(match, is_multi_segment, is_implicit_trailing)``.
+
+    Exact-segment matches (``row.segment_count == request_segment_count``) run
+    ``row.path_regex`` directly with ``is_multi_segment=False``. Explicit catch-all
+    rows (``row.segment_count == -1``) run ``row.path_regex`` with
+    ``is_multi_segment=True, is_implicit_trailing=False``. Shorter rows with an
+    ordinary trailing operation parameter match multi-segment tails via
+    :func:`trailing_param_path_regex` with ``is_multi_segment=True,
+    is_implicit_trailing=True``.
+    """
+    if row.segment_count == request_segment_count:
+        match = re.fullmatch(row.path_regex, path)
+        return (match, False, False) if match is not None else None
+    if row.segment_count == -1:
+        match = re.fullmatch(row.path_regex, path)
+        return (match, True, False) if match is not None else None
+    if 0 < row.segment_count < request_segment_count:
+        widened = trailing_param_path_regex(
+            row.path_template, row.path_regex, operation_path=operation_path
+        )
+        if widened is None:
+            return None
+        match = widened.fullmatch(path)
+        return (match, True, True) if match is not None else None
+    return None
 
 
 class URLLookupService:
@@ -264,8 +330,7 @@ class URLLookupService:
 
         matching_methods: set[str] = set()
         for candidate in any_method:
-            match = re.fullmatch(candidate.path_regex, path)
-            if match:
+            if _match_candidate_path(candidate, path, segment_count) is not None:
                 matching_methods.add(candidate.method)
 
         if matching_methods:
@@ -275,12 +340,19 @@ class URLLookupService:
     def _match_and_rank(
         candidates: list[UrlIndexCandidate], path: str, host: str = ""
     ) -> _RankedMatch | None:
+        request_segment_count = count_segments(path)
         matches: list[_RankedMatch] = []
         for candidate in candidates:
             row = candidate.row
-            match = re.fullmatch(row.path_regex, path)
-            if not match:
+            matched = _match_candidate_path(
+                row,
+                path,
+                request_segment_count,
+                operation_path=candidate.operation_path,
+            )
+            if matched is None:
                 continue
+            match, is_multi_segment, is_implicit_trailing = matched
             host_groups: dict[str, str | None] = {}
             if row.host_regex and host:
                 host_match = re.fullmatch(row.host_regex, host, re.IGNORECASE)
@@ -293,19 +365,18 @@ class URLLookupService:
                 continue
             path_params = resolved.path_params
             is_parameterized = bool(row.param_names)
-            template_parts = row.path_template.strip("/").split("/")
-            literal_count = sum(1 for p in template_parts if not p.startswith("{"))
-            first_literal_pos = next(
-                (i for i, p in enumerate(template_parts) if not p.startswith("{")),
-                len(template_parts),
+            template_parts = (
+                [] if row.path_template == "/" else row.path_template.strip("/").split("/")
             )
-            last_literal_pos = next(
-                (i for i, p in reversed(list(enumerate(template_parts))) if not p.startswith("{")),
-                -1,
-            )
+            literal_indices = [i for i, p in enumerate(template_parts) if _is_literal_segment(p)]
+            literal_count = len(literal_indices)
+            first_literal_pos = literal_indices[0] if literal_indices else -1
+            last_literal_pos = literal_indices[-1] if literal_indices else -1
             specificity_key = (
+                1 if is_multi_segment else 0,
                 is_parameterized,
                 -literal_count,
+                is_implicit_trailing,
                 first_literal_pos,
                 -last_literal_pos,
             )
@@ -315,6 +386,12 @@ class URLLookupService:
                     revision_id=row.revision_id,
                     path_params=path_params,
                     specificity_key=specificity_key,
+                    is_multi_segment=is_multi_segment,
+                    literal_positions=_literal_positions(
+                        template_parts,
+                        request_segment_count,
+                        is_catch_all=row.segment_count == -1,
+                    ),
                     server_variables=resolved.values,
                     server_variable_defaults=resolved.defaults,
                     candidate=candidate,
@@ -332,13 +409,26 @@ class URLLookupService:
         # only an error *within* the winning revision — its own spec is at fault.
         matches.sort(key=lambda m: m.specificity_key)
         best = matches[0]
-        tied = [
-            m
-            for m in matches
-            if m.specificity_key == best.specificity_key and m.revision_id == best.revision_id
-        ]
-        if len(tied) > 1:
-            raise AmbiguousMatchError(len(tied))
+        same_revision = [m for m in matches if m.revision_id == best.revision_id]
+        if not best.is_multi_segment:
+            tied = [m for m in same_revision if m.specificity_key == best.specificity_key]
+            if len(tied) > 1:
+                raise AmbiguousMatchError(len(tied))
+        else:
+            # Multi-segment matches must strictly subsume any competing multi-segment
+            # candidate in the same revision: equal specificity keys or incomparable
+            # literal segment sets fail closed as ambiguous.
+            conflicts = [
+                m
+                for m in same_revision
+                if m is not best
+                and (
+                    m.specificity_key == best.specificity_key
+                    or not (m.literal_positions <= best.literal_positions)
+                )
+            ]
+            if conflicts:
+                raise AmbiguousMatchError(1 + len(conflicts))
 
         return best
 
@@ -351,8 +441,16 @@ def _match_rebuilt_servers(
         expansion = build_server_index_entries(server.url, server.variables, operation_path)
         for entry in expansion.entries:
             host_match = entry.host_regex.fullmatch(host)
+            if host_match is None:
+                continue
             path_match = entry.path_regex.fullmatch(path)
-            if host_match is None or path_match is None:
+            if path_match is None:
+                widened = trailing_param_path_regex(
+                    entry.path_pattern, entry.path_regex, operation_path=operation_path
+                )
+                if widened is not None:
+                    path_match = widened.fullmatch(path)
+            if path_match is None:
                 continue
             resolved = resolve_server_variable_groups(
                 host_match.groupdict(), path_match.groupdict()

@@ -19,6 +19,9 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import JobStatus
 
+#: Terminal job statuses that may carry a stored ``JobResult``.
+_RESULT_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
+
 
 class JobResultService:
     """Manages job result retrieval.
@@ -38,14 +41,18 @@ class JobResultService:
             if job is None:
                 raise JobNotFoundError(job_id)
 
-            if job.status != JobStatus.COMPLETED:
+            status = str(job.status)
+            if status not in _RESULT_STATUSES:
                 raise JobNotCompletedError(job_id)
 
             result = await JobResultRepository.get_by_job_id(session, job_id)
             if result is None:
+                if status == JobStatus.FAILED.value:
+                    # A failure with no recorded result row has nothing to serve.
+                    raise JobNotCompletedError(job_id)
                 raise JobResultExpiredError(job_id)
 
-            if result.available_until is not None and result.available_until < datetime.now(UTC):
+            if result.available_until is not None and result.available_until <= datetime.now(UTC):
                 raise JobResultExpiredError(job_id)
 
         return self.to_view(result)

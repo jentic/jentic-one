@@ -283,6 +283,8 @@ class AgentRuleEvaluatorProtocol(Protocol):
         method: str,
         path: str,
         operation_id: str | None,
+        registry_operation_id: str | None = None,
+        ambiguous_operation_ids: frozenset[str] = frozenset(),
         upstream_path: str | None = None,
     ) -> RuleEvaluation: ...
 

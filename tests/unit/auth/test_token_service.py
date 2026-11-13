@@ -21,6 +21,9 @@ from jentic_one.shared.models import ActorType
 def _make_ctx() -> MagicMock:
     ctx = MagicMock()
     mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=mock_result)
     ctx.admin_db.transaction.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
     ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -53,7 +56,7 @@ def _make_access_token_row(
     row.token_hash = token_hash
     row.actor_id = actor_id
     row.actor_type = actor_type
-    row.scopes = scopes or ["read", "write"]
+    row.scopes = scopes if scopes is not None else ["apis:read", "apis:write"]
     row.token_family_id = token_family_id
     row.expires_at = expires_at or (datetime.now(UTC) + timedelta(hours=1))
     row.created_at = datetime.now(UTC)
@@ -81,7 +84,7 @@ def _make_refresh_token_row(
     row.token_hash = token_hash
     row.actor_id = actor_id
     row.actor_type = actor_type
-    row.scopes = scopes or ["read", "write"]
+    row.scopes = scopes if scopes is not None else ["apis:read", "apis:write"]
     row.token_family_id = token_family_id
     row.expires_at = expires_at or (datetime.now(UTC) + timedelta(days=7))
     row.created_at = datetime.now(UTC)
@@ -395,15 +398,21 @@ async def test_introspect_not_found_returns_inactive(mock_at_repo: MagicMock) ->
     assert result["active"] is False
 
 
+@patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_resolve_valid_token_returns_identity(
-    mock_at_repo: MagicMock, mock_user_repo: MagicMock
+    mock_at_repo: MagicMock,
+    mock_user_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     at_row = _make_access_token_row()
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(
+        return_value=[MagicMock(permission="apis:write")]
+    )
 
     svc = TokenService(ctx)
     resolved = await svc.resolve_access_token("at_validtoken")
@@ -855,17 +864,22 @@ async def test_introspect_disabled_agent_refresh_token_inactive(
 # ---------- scope intersection for third-party tokens ----------
 
 
+@patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_resolve_intersects_scopes_with_client_allowlist(
     mock_at_repo: MagicMock,
     mock_client_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     """Third-party tokens have scopes intersected with the client's allowed_scopes."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(scopes=["agents:read", "agents:write", "openid"])
     at_row.oauth_client_id = "oc_ext_123"
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(
+        return_value=[MagicMock(permission="agents:write")]
+    )
 
     client_row = MagicMock()
     client_row.active = True
@@ -880,17 +894,22 @@ async def test_resolve_intersects_scopes_with_client_allowlist(
     assert set(resolved.permissions) == {"agents:read", "openid"}
 
 
+@patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_resolve_empty_allowed_scopes_denies_all(
     mock_at_repo: MagicMock,
     mock_client_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     """An empty allowed_scopes list means the client has no permitted scopes."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(scopes=["agents:read", "openid"])
     at_row.oauth_client_id = "oc_ext_456"
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(
+        return_value=[MagicMock(permission="agents:read")]
+    )
 
     client_row = MagicMock()
     client_row.active = True
@@ -905,17 +924,22 @@ async def test_resolve_empty_allowed_scopes_denies_all(
     assert resolved.permissions == []
 
 
+@patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_resolve_null_allowed_scopes_is_unrestricted(
     mock_at_repo: MagicMock,
     mock_client_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     """A client with allowed_scopes=None does not restrict the token's scopes."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(scopes=["agents:read", "agents:write"])
     at_row.oauth_client_id = "oc_ext_789"
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(
+        return_value=[MagicMock(permission="agents:write")]
+    )
 
     client_row = MagicMock()
     client_row.active = True
@@ -1113,6 +1137,7 @@ async def test_resolve_missing_grant_row_fails_closed(
     assert await svc.resolve_access_token("at_grant_missing") is None
 
 
+@patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.token_service.UserRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
@@ -1122,6 +1147,7 @@ async def test_resolve_active_grant_intersects_scopes(
     mock_client_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_user_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     """Grant scopes are the fourth intersection leg: token scopes outside the
     grant set are dropped, and the Identity carries oauth_grant_id."""
@@ -1131,6 +1157,9 @@ async def test_resolve_active_grant_intersects_scopes(
     at_row.oauth_grant_id = "ocg_test123"
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
     mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(
+        return_value=[MagicMock(permission="apis:write")]
+    )
 
     client_row = MagicMock()
     client_row.active = True
@@ -1273,3 +1302,39 @@ async def test_refresh_rechecks_grant_status(
     with pytest.raises(InvalidGrantError, match="revoked"):
         await svc.refresh("rt_grant_revoked", client_id="oc_grant_app")
     mock_rt_repo.consume.assert_not_awaited()
+
+
+@patch("jentic_one.auth.services.token_service.UserPermissionGrantRepository")
+@patch("jentic_one.auth.services.token_service.UserRepository")
+@patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
+@patch("jentic_one.auth.services.token_service.AccessTokenRepository")
+async def test_refresh_persists_narrowed_scopes_for_user_tokens(
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_user_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
+) -> None:
+    """Pins #1442: USER refresh persists narrowed scopes onto rotated rows so
+    revoked permissions cannot be restored on subsequent rotations."""
+    ctx = _make_ctx()
+    rt_row = _make_refresh_token_row(
+        actor_id="usr_narrow",
+        actor_type="user",
+        scopes=["openid", "offline_access", "apis:read", "capabilities:execute"],
+    )
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
+    mock_rt_repo.create = AsyncMock(return_value=MagicMock(id="rt_next"))
+    mock_rt_repo.consume = AsyncMock()
+    mock_at_repo.create = AsyncMock()
+    mock_user_repo.get_by_id = AsyncMock(return_value=_make_user_row())
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(
+        return_value=[MagicMock(permission="apis:read")]
+    )
+
+    svc = TokenService(ctx)
+    _access, _refresh, scopes = await svc.refresh("rt_usernarrow")
+
+    expected = ["openid", "offline_access", "apis:read"]
+    assert scopes == expected
+    assert mock_at_repo.create.call_args.kwargs["scopes"] == expected
+    assert mock_rt_repo.create.call_args.kwargs["scopes"] == expected

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable
+import contextlib
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import structlog
 from sqlalchemy import text
@@ -137,6 +138,165 @@ async def _release_advisory_lock(conn: AsyncConnection, key: int) -> None:
             raise
 
 
+async def _await_shielded[R](coro: Coroutine[Any, Any, R]) -> R:
+    """Await ``coro`` to completion before propagating task cancellation."""
+    task = asyncio.create_task(coro)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        if not task.cancelled():
+            _ = task.exception()
+        raise asyncio.CancelledError
+    return task.result()
+
+
+class _RefCountedKeyLock:
+    """Per-key asyncio lock tracked by waiter count so idle keys are evicted."""
+
+    __slots__ = ("lock", "waiters")
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.waiters = 0
+
+
+class _SharedAdvisoryLockMultiplexer:
+    """Multiplexes non-blocking session-level Postgres advisory locks on one connection.
+
+    A single PostgreSQL backend in ``AUTOCOMMIT`` mode can hold multiple
+    distinct 64-bit advisory lock keys simultaneously while remaining ``idle``
+    (never ``idle in transaction``). Hosting those locks on a dedicated
+    single-connection engine keeps every slot of the main session ``QueuePool``
+    available for short reads and writes, preventing pool exhaustion and nested
+    checkout deadlocks under concurrent long-running operations.
+
+    In-process callers for the same ``key`` are excluded via ``_held_keys`` so
+    PostgreSQL's per-session advisory-lock re-entrancy never grants the same
+    key twice within one ``DatabaseSession``.
+    """
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        self._engine = engine
+        self._io_lock = asyncio.Lock()
+        self._raw_conn: AsyncConnection | None = None
+        self._autocommit_conn: AsyncConnection | None = None
+        self._held_keys: set[int] = set()
+
+    async def acquire(self, key: int) -> bool:
+        task = asyncio.create_task(self._acquire_inner(key))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            exc = None if task.cancelled() else task.exception()
+            if exc is None and task.result():
+                await _await_shielded(self._release_inner(key))
+            raise asyncio.CancelledError
+        return task.result()
+
+    async def release(self, key: int) -> None:
+        await _await_shielded(self._release_inner(key))
+
+    async def close(self) -> None:
+        async with self._io_lock:
+            await self._discard_connection()
+        await self._engine.dispose()
+
+    async def _ensure_connection(self) -> AsyncConnection:
+        if self._autocommit_conn is not None:
+            return self._autocommit_conn
+        raw = self._engine.connect()
+        await raw.start()
+        try:
+            autocommit = await raw.execution_options(isolation_level="AUTOCOMMIT")
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await raw.close()
+            raise
+        self._raw_conn = raw
+        self._autocommit_conn = autocommit
+        return autocommit
+
+    async def _checkin_connection(self) -> None:
+        raw = self._raw_conn
+        self._raw_conn = None
+        self._autocommit_conn = None
+        if raw is not None:
+            try:
+                await raw.close()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await raw.invalidate()
+
+    async def _discard_connection(self) -> None:
+        raw = self._raw_conn
+        self._raw_conn = None
+        self._autocommit_conn = None
+        self._held_keys.clear()
+        if raw is not None:
+            with contextlib.suppress(Exception):
+                await raw.invalidate()
+            with contextlib.suppress(Exception):
+                await raw.close()
+
+    async def _acquire_inner(self, key: int) -> bool:
+        async with self._io_lock:
+            if key in self._held_keys:
+                return False
+            for attempt in range(2):
+                try:
+                    conn = await self._ensure_connection()
+                    acquired = bool(
+                        (
+                            await conn.execute(
+                                text("SELECT pg_try_advisory_lock(:key)"), {"key": key}
+                            )
+                        ).scalar_one()
+                    )
+                except DBAPIError as exc:
+                    await self._discard_connection()
+                    if is_connection_loss(exc):
+                        if attempt == 0:
+                            continue
+                        raise _unavailable(exc) from exc
+                    raise
+                except Exception:
+                    await self._discard_connection()
+                    raise
+
+                if acquired:
+                    self._held_keys.add(key)
+                    return True
+                if not self._held_keys:
+                    await self._checkin_connection()
+                return False
+            return False
+
+    async def _release_inner(self, key: int) -> None:
+        async with self._io_lock:
+            if key not in self._held_keys:
+                return
+            self._held_keys.discard(key)
+            conn = self._autocommit_conn
+            if conn is None:
+                return
+            try:
+                await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+            except Exception as exc:
+                logger.warning("advisory_lock_release_failed", key=key, error=repr(exc))
+                await self._discard_connection()
+                return
+            if not self._held_keys:
+                await self._checkin_connection()
+
+
 class DatabaseSession:
     """Manages a SQLAlchemy async engine and session factory for a single database."""
 
@@ -146,6 +306,8 @@ class DatabaseSession:
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._is_sqlite = self._backend.dialect_name == "sqlite"
+        self._keyed_locks: dict[str, _RefCountedKeyLock] = {}
+        self._lock_mux: _SharedAdvisoryLockMultiplexer | None = None
 
     @property
     def engine(self) -> AsyncEngine:
@@ -190,6 +352,9 @@ class DatabaseSession:
 
     async def close(self) -> None:
         """Dispose the engine and release all connections."""
+        if self._lock_mux is not None:
+            await self._lock_mux.close()
+            self._lock_mux = None
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
@@ -395,6 +560,67 @@ class DatabaseSession:
             finally:
                 if acquired:
                     await _release_advisory_lock(conn, key)
+
+    @asynccontextmanager
+    async def keyed_lock(self, key: str) -> AsyncGenerator[bool, None]:
+        """Serialise in-process callers for ``key`` with automatic idle eviction.
+
+        Yields ``True`` when the caller queued behind an active holder and
+        ``False`` when it acquired immediately. Entries exist only while at
+        least one task holds or awaits ``key``, bounding memory to active
+        concurrency.
+        """
+        entry = self._keyed_locks.get(key)
+        if entry is None:
+            entry = _RefCountedKeyLock()
+            self._keyed_locks[key] = entry
+        waited = entry.lock.locked()
+        entry.waiters += 1
+        try:
+            async with entry.lock:
+                yield waited
+        finally:
+            entry.waiters -= 1
+            if entry.waiters == 0 and self._keyed_locks.get(key) is entry:
+                del self._keyed_locks[key]
+
+    def _ensure_lock_mux(self) -> _SharedAdvisoryLockMultiplexer:
+        if self._engine is None:
+            raise RuntimeError("Database not connected. Call connect() first.")
+        if self._lock_mux is None:
+            lock_cfg = self._config.model_copy(update={"pool_max": 1})
+            url = self._backend.make_url(lock_cfg)
+            kwargs = self._backend.engine_kwargs(lock_cfg)
+            kwargs["max_overflow"] = 0
+            lock_engine = create_async_engine(url, **kwargs)
+            configure_idle_gated_pre_ping(
+                lock_engine,
+                idle_s=self._config.pool_pre_ping_idle_s,
+            )
+            self._lock_mux = _SharedAdvisoryLockMultiplexer(lock_engine)
+        return self._lock_mux
+
+    @asynccontextmanager
+    async def try_shared_advisory_lock(self, key: int) -> AsyncGenerator[bool, None]:
+        """Try to take a non-blocking session-level advisory lock on a shared channel.
+
+        Multiplexes distinct 64-bit advisory lock keys onto a single dedicated
+        ``AUTOCOMMIT`` connection per :class:`DatabaseSession` so concurrent
+        long-running holders (such as OAuth token refreshes across distinct
+        credentials) never occupy or starve the main session ``QueuePool``.
+        Yields ``True`` on acquisition and ``False`` without waiting when
+        held by another caller or process. On SQLite this yields ``True``.
+        """
+        if self._is_sqlite:
+            yield True
+            return
+        mux = self._ensure_lock_mux()
+        acquired = await mux.acquire(key)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                await mux.release(key)
 
     async def run_in_transaction(
         self,

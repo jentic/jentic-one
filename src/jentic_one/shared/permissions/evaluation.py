@@ -15,6 +15,7 @@ paths, so that is the only basis on which preview and enforcement agree
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -26,6 +27,13 @@ from jentic_one.shared.permissions.matching import PathMatcher
 from jentic_one.shared.url_path import normalize_path
 
 _logger = structlog.get_logger(__name__)
+
+_REGISTRY_OPERATION_ID_RE = re.compile(r"^op_[0-9a-f]{40}$")
+
+
+def is_registry_operation_id(value: str) -> bool:
+    """True when ``value`` has the ``op_<40-hex>`` shape of ``Operation.id``."""
+    return _REGISTRY_OPERATION_ID_RE.fullmatch(value) is not None
 
 
 def rule_request_path(
@@ -88,14 +96,60 @@ def is_condition_less(rule: PermissionRule) -> bool:
     return rule.methods is None and rule.path is None and rule.operations is None
 
 
-def rule_matches(rule: PermissionRule, *, method: str, path: str, operation_id: str | None) -> bool:
+def _matches_unambiguous_operation(
+    operations: tuple[str, ...],
+    *,
+    operation_id: str | None,
+    registry_operation_id: str | None,
+    ambiguous_operation_ids: frozenset[str],
+) -> bool:
+    for entry in operations:
+        if is_registry_operation_id(entry):
+            if registry_operation_id is not None and entry == registry_operation_id:
+                return True
+        elif (
+            operation_id is not None
+            and entry == operation_id
+            and entry not in ambiguous_operation_ids
+        ):
+            return True
+    return False
+
+
+def _matches_ambiguous_operation(
+    operations: tuple[str, ...],
+    *,
+    ambiguous_operation_ids: frozenset[str],
+) -> bool:
+    if not ambiguous_operation_ids:
+        return False
+    return any(
+        not is_registry_operation_id(entry) and entry in ambiguous_operation_ids
+        for entry in operations
+    )
+
+
+def rule_matches(
+    rule: PermissionRule,
+    *,
+    method: str,
+    path: str,
+    operation_id: str | None,
+    registry_operation_id: str | None = None,
+    ambiguous_operation_ids: frozenset[str] = frozenset(),
+) -> bool:
     """Return True if ALL defined criteria in the rule match the request."""
     if rule.methods is not None and method.upper() not in rule.methods:
         return False
     if rule.path is not None and not rule.path.matches(path):
         return False
     if rule.operations is not None:
-        return operation_id is not None and operation_id in rule.operations
+        return _matches_unambiguous_operation(
+            rule.operations,
+            operation_id=operation_id,
+            registry_operation_id=registry_operation_id,
+            ambiguous_operation_ids=ambiguous_operation_ids,
+        )
     return True
 
 
@@ -105,6 +159,8 @@ def first_matching_rule(
     method: str,
     path: str,
     operation_id: str | None,
+    registry_operation_id: str | None = None,
+    ambiguous_operation_ids: frozenset[str] = frozenset(),
     binding: str | None = None,
     warn: bool = True,
 ) -> int | None:
@@ -131,8 +187,32 @@ def first_matching_rule(
                     binding=binding,
                 )
             continue
-        if rule_matches(rule, method=method, path=path, operation_id=operation_id):
+        if rule_matches(
+            rule,
+            method=method,
+            path=path,
+            operation_id=operation_id,
+            registry_operation_id=registry_operation_id,
+            ambiguous_operation_ids=ambiguous_operation_ids,
+        ):
             return idx
+        # Fail-closed ambiguity handling: when methods/path match and a rule's
+        # ``operations`` list names an ambiguous ``operationId``, a ``deny`` rule
+        # still denies immediately and a ``require-approval`` rule halts as
+        # default-deny instead of falling through to a broader ``allow``.
+        if (
+            rule.operations is not None
+            and ambiguous_operation_ids
+            and (rule.methods is None or method.upper() in rule.methods)
+            and (rule.path is None or rule.path.matches(path))
+            and _matches_ambiguous_operation(
+                rule.operations, ambiguous_operation_ids=ambiguous_operation_ids
+            )
+        ):
+            if effect == "deny":
+                return idx
+            if effect == "require-approval":
+                return None
     return None
 
 
@@ -159,11 +239,19 @@ def evaluate_rules(
     method: str,
     path: str,
     operation_id: str | None,
+    registry_operation_id: str | None = None,
+    ambiguous_operation_ids: frozenset[str] = frozenset(),
     binding: str | None = None,
 ) -> bool:
     """Evaluate an ordered list of permission rules. Returns True if allowed."""
     idx = first_matching_rule(
-        rules, method=method, path=path, operation_id=operation_id, binding=binding
+        rules,
+        method=method,
+        path=path,
+        operation_id=operation_id,
+        registry_operation_id=registry_operation_id,
+        ambiguous_operation_ids=ambiguous_operation_ids,
+        binding=binding,
     )
     return is_allowed(rules, idx)
 
@@ -207,6 +295,8 @@ def base_path_divergence(
     relative_path: str,
     upstream_path: str,
     operation_id: str | None,
+    registry_operation_id: str | None = None,
+    ambiguous_operation_ids: frozenset[str] = frozenset(),
 ) -> PathDivergence | None:
     """Explain a verdict change caused by a rule carrying the server base path.
 
@@ -220,15 +310,34 @@ def base_path_divergence(
     if relative_path == upstream_path:
         return None
     rel_idx = first_matching_rule(
-        rules, method=method, path=relative_path, operation_id=operation_id, warn=False
+        rules,
+        method=method,
+        path=relative_path,
+        operation_id=operation_id,
+        registry_operation_id=registry_operation_id,
+        ambiguous_operation_ids=ambiguous_operation_ids,
+        warn=False,
     )
     up_idx = first_matching_rule(
-        rules, method=method, path=upstream_path, operation_id=operation_id, warn=False
+        rules,
+        method=method,
+        path=upstream_path,
+        operation_id=operation_id,
+        registry_operation_id=registry_operation_id,
+        ambiguous_operation_ids=ambiguous_operation_ids,
+        warn=False,
     )
     if up_idx is None or rule_verdict(rules, rel_idx) == rule_verdict(rules, up_idx):
         return None
     rule = rules[up_idx]
-    if rule_matches(rule, method=method, path=relative_path, operation_id=operation_id):
+    if rule_matches(
+        rule,
+        method=method,
+        path=relative_path,
+        operation_id=operation_id,
+        registry_operation_id=registry_operation_id,
+        ambiguous_operation_ids=ambiguous_operation_ids,
+    ):
         return None
     effect = rule.effect.lower()
     if effect == "allow":

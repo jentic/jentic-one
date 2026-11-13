@@ -181,12 +181,12 @@ async def test_agent_token_uses_row_scopes(
 async def test_first_party_token_uses_full_permissions(
     sample_config_dict: dict[str, Any],
 ) -> None:
-    """First-party user tokens (no oauth_client_id) use all resolved permissions."""
+    """First-party OIDC-only SPA user tokens (no oauth_client_id) resolve live permissions."""
     ctx = _ctx(sample_config_dict)
     resolved = Identity(
         sub="user-1",
         actor_type=ActorType.USER,
-        permissions=["capabilities:read"],
+        permissions=["openid", "email", "profile"],
         active=True,
         oauth_client_id=None,
     )
@@ -208,3 +208,36 @@ async def test_first_party_token_uses_full_permissions(
         identity = await verify("at_test_token", _fake_request())
 
     assert identity.permissions == ["capabilities:read", "agents:write", "org:admin"]
+
+
+@pytest.mark.asyncio
+async def test_first_party_scoped_user_token_is_not_rebroadened(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """Pins #1442: an explicitly permission-scoped USER token is never widened to full grants."""
+    ctx = _ctx(sample_config_dict)
+    resolved = Identity(
+        sub="user-1",
+        actor_type=ActorType.USER,
+        permissions=["openid", "capabilities:read"],
+        active=True,
+        oauth_client_id=None,
+    )
+
+    with (
+        patch.object(verifier_mod, "TokenService") as mock_ts_cls,
+        patch.object(
+            verifier_mod, "resolve_permissions_for_actor", new_callable=AsyncMock
+        ) as mock_rp,
+        patch.object(verifier_mod, "ApiKeyResolver"),
+    ):
+        mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
+        mock_rp.return_value = (
+            ["capabilities:read", "agents:write", "org:admin"],
+            [],
+        )
+
+        verify = _make_auth_verifier(ctx)
+        identity = await verify("at_test_token", _fake_request())
+
+    assert identity.permissions == ["openid", "capabilities:read"]
