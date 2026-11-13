@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -400,11 +399,11 @@ func resolveExecuteBody(opts *executeOptions) (body io.Reader, mp *multipartBody
 		}
 		return r, nil, nil
 	case opts.dataFile != "":
-		data, readErr := os.ReadFile(opts.dataFile)
+		r, readErr := readDataFile(opts.dataFile)
 		if readErr != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", opts.dataFile, readErr)
+			return nil, nil, readErr
 		}
-		return bytes.NewReader(data), nil, nil
+		return r, nil, nil
 	case opts.data != "":
 		return strings.NewReader(opts.data), nil, nil
 	}

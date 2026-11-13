@@ -1,8 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -116,7 +116,11 @@ func runAPICall(cmd *cobra.Command, app *app, opts *apiOptions, method, path str
 
 	body, berr := resolveAPIBody(opts)
 	if berr != nil {
-		return reportCoded(aud, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: berr.Error()})
+		var coded *ux.CodedError
+		if errors.As(berr, &coded) {
+			return reportCoded(aud, coded)
+		}
+		return reportCoded(aud, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: berr.Error(), Cause: berr})
 	}
 
 	resp, err := client.RawControlRequest(cmd.Context(), raw, method, path, body, opts.headers...)
@@ -182,11 +186,7 @@ func resolveAPIBody(opts *apiOptions) (io.Reader, error) {
 		// `jentic api` (#1354).
 		return readStdinBody()
 	case opts.dataFile != "":
-		data, err := os.ReadFile(opts.dataFile)
-		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", opts.dataFile, err)
-		}
-		return bytes.NewReader(data), nil
+		return readDataFile(opts.dataFile)
 	case opts.data != "":
 		return strings.NewReader(opts.data), nil
 	}
