@@ -66,26 +66,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     pg = op.get_bind().dialect.name == "postgresql"
     for table in _TABLES:
-        if table == "credentials":
-            continue
         if pg:
             op.alter_column(table, "created_by", existing_type=sa.String(255), nullable=False)
         else:
             with op.batch_alter_table(table) as batch:
                 batch.alter_column("created_by", existing_type=sa.String(255), nullable=False)
-    if pg:
-        op.alter_column(
-            "credentials",
-            "created_by",
-            existing_type=sa.String(255),
-            type_=sa.String(30),
-            nullable=False,
-        )
-    else:
-        with op.batch_alter_table("credentials") as batch:
-            batch.alter_column(
-                "created_by",
-                existing_type=sa.String(255),
-                type_=sa.String(30),
-                nullable=False,
-            )

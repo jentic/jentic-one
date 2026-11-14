@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "n5b6c7d8e9f0"
 down_revision: str | None = "m4a5b6c7d8e9"
@@ -41,7 +42,7 @@ def downgrade() -> None:
         "toolkits",
         sa.Column(
             "permissions",
-            sa.JSON(),
+            JSONB().with_variant(sa.JSON(), "sqlite"),
             nullable=False,
             server_default="[]",
         ),
