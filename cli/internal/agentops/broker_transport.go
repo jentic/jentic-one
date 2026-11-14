@@ -203,49 +203,72 @@ func retryAfterSecondsAt(h http.Header, now time.Time) (float64, bool) {
 }
 
 // retryAfterDateCaseFolder matches Python's case-insensitive weekday, month,
-// and GMT parsing without changing any other date text.
+// and GMT/UTC parsing without changing any other date text.
 var retryAfterDateCaseFolder = strings.NewReplacer(
 	"mon", "Mon", "tue", "Tue", "wed", "Wed", "thu", "Thu",
 	"fri", "Fri", "sat", "Sat", "sun", "Sun",
 	"jan", "Jan", "feb", "Feb", "mar", "Mar", "apr", "Apr",
 	"may", "May", "jun", "Jun", "jul", "Jul", "aug", "Aug",
 	"sep", "Sep", "oct", "Oct", "nov", "Nov", "dec", "Dec",
-	"gmt", "GMT",
+	"gmt", "GMT", "utc", "UTC",
 )
 
 // parseRetryAfterDate accepts the standard HTTP-date layouts and the numeric,
 // colon-zone, -0000, case-insensitive, and zone-less forms that Python's
-// email.utils parser accepts. A zone-less value is pinned to UTC, never the
-// host's local timezone.
+// shared Retry-After parser accepts. A zone-less value is pinned to UTC, never
+// the host's local timezone.
 func parseRetryAfterDate(raw string) (time.Time, error) {
-	var err error
-	for _, candidate := range []string{raw, normalizeRetryAfterDate(raw)} {
-		var when time.Time
-		if when, err = http.ParseTime(candidate); err == nil {
-			return when, nil
-		}
-		if when, err = mail.ParseDate(candidate); err == nil {
-			return when, nil
-		}
-		if when, err = mail.ParseDate(candidate + " -0000"); err == nil {
-			return when, nil
-		}
+	candidate := normalizeRetryAfterDate(raw)
+	if candidate == "" {
+		return time.Time{}, http.ErrNotSupported
 	}
-	return time.Time{}, err
+	if when, err := http.ParseTime(candidate); err == nil {
+		return when, nil
+	}
+	return mail.ParseDate(candidate)
 }
 
 func normalizeRetryAfterDate(raw string) string {
+	if head, rest, hasComma := strings.Cut(raw, ","); hasComma {
+		if head == "" || !strings.HasPrefix(rest, " ") || strings.Contains(rest, ",") {
+			return ""
+		}
+	}
 	normalized := retryAfterDateCaseFolder.Replace(strings.ToLower(raw))
-	if len(normalized) < 6 {
+	tokens := strings.Fields(normalized)
+	if len(tokens) < 4 {
+		return ""
+	}
+	isHHMMSS := func(s string) bool {
+		return len(s) == 8 && s[2] == ':' && s[5] == ':' &&
+			isASCIIDigits(s[0:2]) && isASCIIDigits(s[3:5]) && isASCIIDigits(s[6:8])
+	}
+	if isHHMMSS(tokens[len(tokens)-1]) {
+		return normalized + " -0000"
+	}
+	if !isHHMMSS(tokens[len(tokens)-2]) {
+		return ""
+	}
+	last := tokens[len(tokens)-1]
+	if !strings.Contains(raw, ",") && len(tokens) == 5 && len(last) == 4 && isASCIIDigits(last) {
 		return normalized
 	}
-	zoneAt := len(normalized) - 6
-	zone := normalized[zoneAt:]
-	if (zone[0] == '+' || zone[0] == '-') && zone[3] == ':' &&
-		isASCIIDigits(zone[1:3]) && isASCIIDigits(zone[4:]) {
-		return normalized[:zoneAt] + zone[:3] + zone[4:]
+	if last == "GMT" || last == "UTC" {
+		return normalized
 	}
-	return normalized
+	if len(last) == 6 && (last[0] == '+' || last[0] == '-') && last[3] == ':' {
+		last = last[:3] + last[4:]
+	}
+	if len(last) != 5 || (last[0] != '+' && last[0] != '-') || !isASCIIDigits(last[1:]) {
+		return ""
+	}
+	hh := (int(last[1]-'0') * 10) + int(last[2]-'0')
+	mm := (int(last[3]-'0') * 10) + int(last[4]-'0')
+	if hh > 23 || mm > 59 {
+		return ""
+	}
+	tokens[len(tokens)-1] = last
+	return strings.Join(tokens, " ")
 }
 
 // parseDelaySeconds parses an unsigned ASCII decimal delay (^[0-9]+(\.[0-9]+)?$),
