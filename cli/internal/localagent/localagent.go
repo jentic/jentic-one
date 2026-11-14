@@ -14,12 +14,14 @@ package localagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -28,10 +30,42 @@ import (
 // carries no explicit user.
 func DefaultUserName(operator string) string { return operator + "-local-agent" }
 
-// UserExists reports whether an OS account with the given name exists. It shells
-// to `id -u <user>`, which is portable across macOS and Linux.
+const accountSurveyPath = "/usr/bin/id"
+
+// UserExists retains the boolean account probe used by doctor and MCP teardown.
+// Legacy-agent reset uses AgentAccountExists so operational failures cannot be
+// mistaken for an absent account.
 func UserExists(ctx context.Context, user string) bool {
-	return exec.CommandContext(ctx, "id", "-u", user).Run() == nil //nolint:gosec // user is a config-derived account name.
+	exists, _ := AgentAccountExists(ctx, user)
+	return exists
+}
+
+// AgentAccountExists reports whether an OS account exists. Only id's documented
+// status-1 "no such user" result means absence; startup, signal, status, and
+// diagnostic failures are returned to the caller.
+func AgentAccountExists(ctx context.Context, user string) (bool, error) {
+	cmd := withFixedSurveyEnvironment(exec.CommandContext(ctx, accountSurveyPath, "-u", user)) //nolint:gosec // user is a config-derived account name passed as direct argv.
+	out, err := cmd.Output()
+	if err == nil {
+		if _, parseErr := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); parseErr != nil {
+			return false, fmt.Errorf("account survey %s returned an unrecognized identity: %w", accountSurveyPath, parseErr)
+		}
+		return true, nil
+	}
+	exitErr, diagnostics, ok := surveyExitFailure(err)
+	if ok && exitErr.ExitCode() == 1 && absentAccountDiagnostic(user, diagnostics) {
+		return false, nil
+	}
+	return false, surveyProbeError("account survey", accountSurveyPath, err, diagnostics)
+}
+
+func absentAccountDiagnostic(user, diagnostics string) bool {
+	for _, operand := range []string{user, "'" + user + "'", "‘" + user + "’"} {
+		if diagnostics == "id: "+operand+": no such user" {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentConfigDir returns the agent's own legacy V1 jentic config directory
@@ -146,7 +180,7 @@ const macLeafACE = "list,add_file,add_subdirectory,search,delete,delete_child," 
 func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
 		return resetSudoCmd("/usr/bin/find", dir, "!", "-type", "l",
-			"-exec", "/usr/bin/chmod", "-a", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
+			"-exec", "/bin/chmod", "-a", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
 	}
 	script := fixedPATHPrefix + "/usr/bin/setfacl -R -x u:" + shellQuote(agentUser) + " " + shellQuote(dir) +
 		" && /usr/bin/setfacl -R -d -x u:" + shellQuote(agentUser) + " " + shellQuote(dir)
@@ -157,7 +191,7 @@ func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 // directory (non-recursive). reset runs it for every ancestor in AncestorChain.
 func TraverseRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return resetSudoCmd("/usr/bin/chmod", "-a",
+		return resetSudoCmd("/bin/chmod", "-a",
 			"user:"+agentUser+" allow execute", dir)
 	}
 	// -x removes the named-user entry entirely; an ancestor only ever carried the
@@ -166,23 +200,58 @@ func TraverseRevokeCmd(agentUser, dir string) *exec.Cmd {
 }
 
 // AgentACLPresent reports whether dir currently carries any ACL entry for the
-// agent user. `jentic reset` uses it to (a) show a truthful teardown plan —
-// listing only the grants that actually exist on disk and flagging config
-// entries whose ACL has already drifted away — and (b) skip revoking an ACE that
-// is already gone (so macOS `chmod -a` never errors on a missing entry). It runs
-// as whatever user invokes reset (root), reading the ACL, never modifying it.
-func AgentACLPresent(ctx context.Context, agentUser, dir string) bool {
+// agent user. A successful listing without the agent's entry, or the platform's
+// documented missing-path result, means absence. Every other probe failure is
+// returned so reset cannot suppress a required ACL revocation.
+func AgentACLPresent(ctx context.Context, agentUser, dir string) (bool, error) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "darwin" {
-		cmd = exec.CommandContext(ctx, "ls", "-lde", dir) //nolint:gosec // dir is a config-recorded path.
+		cmd = exec.CommandContext(ctx, "/bin/ls", "-lde", dir) //nolint:gosec // dir is a config-recorded path passed as direct argv.
 	} else {
-		cmd = exec.CommandContext(ctx, "getfacl", "-pc", dir) //nolint:gosec // dir is a config-recorded path.
+		cmd = exec.CommandContext(ctx, "/usr/bin/getfacl", "-pc", dir) //nolint:gosec // dir is a config-recorded path passed as direct argv.
 	}
+	cmd = withFixedSurveyEnvironment(cmd)
 	out, err := cmd.Output()
-	if err != nil {
+	if err == nil {
+		return strings.Contains(string(out), aclUserNeedle(agentUser)), nil
+	}
+	exitErr, diagnostics, ok := surveyExitFailure(err)
+	if ok && absentACLPathDiagnostic(exitErr.ExitCode(), dir, diagnostics) {
+		return false, nil
+	}
+	return false, surveyProbeError("ACL survey", cmd.Path, err, diagnostics)
+}
+
+func absentACLPathDiagnostic(status int, dir, diagnostics string) bool {
+	if status != 1 {
 		return false
 	}
-	return strings.Contains(string(out), aclUserNeedle(agentUser))
+	if runtime.GOOS == "darwin" {
+		return diagnostics == "ls: "+dir+": No such file or directory"
+	}
+	for _, operand := range []string{dir, "'" + dir + "'", "‘" + dir + "’"} {
+		if diagnostics == "getfacl: "+operand+": No such file or directory" {
+			return true
+		}
+	}
+	return false
+}
+
+// surveyExitFailure separates an ordinary non-zero utility exit from startup
+// and context failures. Output captures the utility's complete stderr.
+func surveyExitFailure(err error) (*exec.ExitError, string, bool) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return nil, "", false
+	}
+	return exitErr, strings.TrimSpace(string(exitErr.Stderr)), true
+}
+
+func surveyProbeError(kind, path string, err error, diagnostics string) error {
+	if diagnostics == "" {
+		return fmt.Errorf("%s %s: %w", kind, path, err)
+	}
+	return fmt.Errorf("%s %s: %w: %s", kind, path, err, diagnostics)
 }
 
 // aclUserNeedle is the substring that appears in an ACL listing IFF it carries an
@@ -282,11 +351,16 @@ func RemoveSudoersCmd(agentUser string) *exec.Cmd {
 func RemoveAgentSudoersCmd(agentUser string) *exec.Cmd {
 	q := shellQuote("(" + agentUser + ")")
 	script := fixedPATHPrefix + `f=` + shellQuote(sudoersPath) + `; [ -f "$f" ] || exit 0; ` +
-		`tmp="$(/usr/bin/mktemp)"; /usr/bin/grep -vF ` + q + ` "$f" > "$tmp" || true; ` +
-		`if [ -s "$tmp" ]; then ` +
-		`  if /usr/sbin/visudo -cf "$tmp" >/dev/null 2>&1; then /usr/bin/install -m 0440 "$tmp" "$f"; fi; ` +
-		`else /bin/rm -f "$f"; fi; ` +
-		`/bin/rm -f "$tmp"`
+		`tmp="$(/usr/bin/mktemp)" || { status=$?; exit "$status"; }; [ -n "$tmp" ] || exit 1; ` +
+		`status=0; /usr/bin/grep -vF ` + q + ` "$f" > "$tmp" || status=$?; ` +
+		`if [ "$status" -le 1 ]; then status=0; ` +
+		`  if [ -s "$tmp" ]; then ` +
+		`    /usr/sbin/visudo -cf "$tmp" >/dev/null 2>&1 || status=$?; ` +
+		`    if [ "$status" -eq 0 ]; then /usr/bin/install -m 0440 "$tmp" "$f" || status=$?; fi; ` +
+		`  else /bin/rm -f "$f" || status=$?; fi; ` +
+		`fi; ` +
+		`/bin/rm -f "$tmp" || { cleanup=$?; if [ "$status" -eq 0 ]; then status=$cleanup; fi; }; ` +
+		`exit "$status"`
 	return resetSudoCmd("/bin/sh", "-c", script)
 }
 
@@ -460,6 +534,22 @@ func withFixedUtilityPATH(cmd *exec.Cmd) *exec.Cmd {
 		}
 	}
 	filtered = append(filtered, "PATH="+agentSystemPATH)
+	cmd.Env = filtered
+	return cmd
+}
+
+// withFixedSurveyEnvironment pins utility resolution and diagnostic language for
+// unprivileged account and ACL probes.
+func withFixedSurveyEnvironment(cmd *exec.Cmd) *exec.Cmd {
+	cmd = withFixedUtilityPATH(cmd)
+	env := cmd.Env
+	filtered := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "LC_ALL=") {
+			filtered = append(filtered, entry)
+		}
+	}
+	filtered = append(filtered, "LC_ALL=C")
 	cmd.Env = filtered
 	return cmd
 }

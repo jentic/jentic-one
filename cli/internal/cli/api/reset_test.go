@@ -5,8 +5,10 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -664,11 +666,11 @@ func assertResetAbsoluteUtilities(t *testing.T, what string, cmd *exec.Cmd) {
 	case strings.Contains(what, "verify no processes"):
 		required = []string{"/usr/bin/pgrep"}
 	case strings.Contains(what, "read/write grant") && runtime.GOOS == "darwin":
-		required = []string{"/usr/bin/find", "-exec /usr/bin/chmod"}
+		required = []string{"/usr/bin/find", "-exec /bin/chmod"}
 	case strings.Contains(what, "read/write grant"):
 		required = []string{"/usr/bin/setfacl"}
 	case strings.Contains(what, "traverse grant") && runtime.GOOS == "darwin":
-		required = []string{"/usr/bin/chmod"}
+		required = []string{" /bin/chmod -a"}
 	case strings.Contains(what, "traverse grant"):
 		required = []string{"/usr/bin/setfacl"}
 	case strings.Contains(what, "sudoers drop-in"):
@@ -682,6 +684,150 @@ func assertResetAbsoluteUtilities(t *testing.T, what string, cmd *exec.Cmd) {
 		if !strings.Contains(joined, utility) {
 			t.Errorf("%s lacks absolute utility %q: %s", what, utility, joined)
 		}
+	}
+}
+
+func TestSurveyResetUsesTrustedAbsoluteProbes(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := resolvedTempDir(t)
+	grant := filepath.Join(root, "grant")
+	if err := os.Mkdir(grant, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "darwin" {
+		// A real ACE on a temporary directory distinguishes the trusted ls result
+		// from a planted probe that reports failure and suppresses the revoke.
+		output, err := exec.Command("/bin/chmod", "+a", "user:"+me.Username+" allow execute", grant).CombinedOutput()
+		if err != nil {
+			t.Fatalf("grant temporary ACL: %v\n%s", err, output)
+		}
+	}
+
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "planted-probes-ran")
+	t.Setenv("WP0501_PROBE_MARKER", marker)
+	probe := "ls"
+	if runtime.GOOS != "darwin" {
+		probe = "getfacl"
+	}
+	for _, name := range []string{"id", probe} {
+		script := "#!/bin/sh\n/usr/bin/printf '%s\\n' \"$0\" >> \"$WP0501_PROBE_MARKER\"\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+
+	acct := config.AgentAccount{
+		User:           me.Username,
+		AccountCreated: true,
+		GrantedDirs:    []string{grant},
+	}
+	plan := surveyReset(context.Background(), "alice", "", acct)
+	if !plan.accountExists {
+		t.Error("planted id suppressed the live account survey")
+	}
+	if len(plan.acls) != 1 {
+		t.Fatalf("survey ACL count = %d, want 1", len(plan.acls))
+	}
+	if runtime.GOOS == "darwin" && !plan.acls[0].present {
+		t.Error("planted ls suppressed a real temporary ACE")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("survey executed a planted probe: %v", err)
+	}
+
+	// The account deliberately has neither home nor config location. A truthful
+	// account survey must therefore retain process and account teardown steps.
+	steps := buildResetSteps(plan, false)
+	for _, what := range []string{"terminate all processes", "delete the Unix account"} {
+		found := false
+		for _, step := range steps {
+			if strings.Contains(step.What, what) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no-location plan omitted %q after planted id", what)
+		}
+	}
+}
+
+func TestSurveyResetProbeFailuresPreserveNoLocationRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		survey func(*testing.T) (context.Context, config.AgentAccount)
+	}{
+		{
+			name: "account probe startup",
+			survey: func(t *testing.T) (context.Context, config.AgentAccount) {
+				t.Helper()
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, config.AgentAccount{User: "wp0501-no-such-agent", AccountCreated: true}
+			},
+		},
+		{
+			name: "ACL probe unknown failure",
+			survey: func(t *testing.T) (context.Context, config.AgentAccount) {
+				t.Helper()
+				if os.Geteuid() == 0 {
+					t.Skip("permission-denied fixture requires an unprivileged user")
+				}
+				root := resolvedTempDir(t)
+				grant := filepath.Join(root, "grant")
+				if err := os.Mkdir(grant, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(root, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+				return context.Background(), config.AgentAccount{
+					User: "wp0501-no-such-agent", AccountCreated: true, GrantedDirs: []string{grant},
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withXDG(t)
+			ctx, acct := tc.survey(t)
+			out := &bytes.Buffer{}
+			a := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
+			if err := errSeedAgentState(a.Paths, acct); err != nil {
+				t.Fatal(err)
+			}
+			plan := surveyReset(ctx, "alice", "", acct)
+			steps := buildResetSteps(plan, false)
+			if len(steps) == 0 {
+				t.Fatal("test requires a potential mutation step")
+			}
+			marker := filepath.Join(t.TempDir(), "mutation-ran")
+			for i := range steps {
+				steps[i].Cmd = exec.Command("/bin/sh", "-c", `printf ran >> "$1"`, "sh", marker)
+			}
+			err := a.execResetSteps(a.Paths, plan, false, steps)
+			if err == nil || !strings.Contains(err.Error(), "survey") {
+				t.Errorf("unknown survey outcome error = %v, want survey refusal", err)
+			}
+			if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+				t.Errorf("reset mutated after unknown survey outcome: %v", statErr)
+			}
+			if strings.Contains(out.String(), "Reset complete") {
+				t.Errorf("unknown survey outcome emitted success:\n%s", out.String())
+			}
+			st, loadErr := config.LoadAgentState(a.Paths)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if _, ok := st.AgentAccount(); !ok {
+				t.Error("unknown survey outcome cleared the account record")
+			}
+		})
 	}
 }
 
@@ -845,10 +991,13 @@ func TestExecResetStepsACLFailuresAreFatal(t *testing.T) {
 		{name: "sudo denial", script: `printf 'sudo: a password is required\n' >&2; exit 1`, wantStderr: "password is required"},
 		{name: "missing utility", script: `/definitely/missing-acl-utility; exit 127`, wantStderr: "missing-acl-utility"},
 		{name: "recursive walk", script: `printf 'chmod: /grant/file: No such file or directory\n' >&2; exit 1`, wantStderr: "No such file or directory"},
-		{name: "unknown exit status", script: `printf 'chmod: /grant/file: Entry not found\n' >&2; exit 2`, wantStderr: "Entry not found"},
+		{name: "unknown exit status", script: `printf "chmod: Entry not found when attempting delete '/grant/file'\n" >&2; exit 2`, wantStderr: "Entry not found"},
 		{name: "empty diagnostics", script: "exit 1"},
 		{name: "unrecognized diagnostics", script: `printf 'chmod: /grant/file: Operation not permitted\n' >&2; exit 1`, wantStderr: "Operation not permitted"},
-		{name: "mixed diagnostics", script: `printf 'chmod: /grant/a: Entry not found\nchmod: /grant/b: Operation not permitted\n' >&2; exit 1`, wantStderr: "Operation not permitted"},
+		{name: "legacy suffix diagnostic", script: `printf 'chmod: /grant/file: Entry not found\n' >&2; exit 1`, wantStderr: "Entry not found"},
+		{name: "incomplete operand", script: `printf 'chmod: No ACL present\n' >&2; exit 1`, wantStderr: "No ACL present"},
+		{name: "trailing diagnostic", script: `printf "chmod: No ACL present '/grant/file' trailing\n" >&2; exit 1`, wantStderr: "trailing"},
+		{name: "mixed diagnostics", script: `printf "chmod: No ACL present '/grant/a'\nchmod: /grant/b: Operation not permitted\n" >&2; exit 1`, wantStderr: "Operation not permitted"},
 		{name: "signal", script: "kill -TERM $$"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -894,6 +1043,9 @@ func TestExecResetStepsACLFailuresAreFatal(t *testing.T) {
 }
 
 func TestExecResetStepsAllowsOnlyAbsentACEACLDiagnostics(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS chmod absent-ACE diagnostics")
+	}
 	withXDG(t)
 	out := &bytes.Buffer{}
 	errOut := &bytes.Buffer{}
@@ -902,7 +1054,7 @@ func TestExecResetStepsAllowsOnlyAbsentACEACLDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(t.TempDir(), "cleanup-continued")
-	acl := exec.Command("/bin/sh", "-c", `printf 'chmod: /grant/a: Entry not found\nchmod: /grant/b: No ACL present\n' >&2; exit 1`)
+	acl := exec.Command("/bin/sh", "-c", `printf "chmod: No ACL present '/grant/a'\nchmod: Entry not found when attempting delete '/grant/b'\n" >&2; exit 1`)
 	steps := []localagent.AccountStep{
 		{What: "remove read/write grant on /grant", Cmd: acl, BestEffort: true},
 		{What: "delete the Unix account alice-local-agent", Cmd: exec.Command("/bin/sh", "-c", `printf continued > "$1"`, "sh", marker)},
@@ -921,6 +1073,103 @@ func TestExecResetStepsAllowsOnlyAbsentACEACLDiagnostics(t *testing.T) {
 			t.Errorf("benign ACL diagnostic %q was discarded: %q", diagnostic, errOut.String())
 		}
 	}
+}
+
+func TestExecResetStepsSudoersFailuresPreserveState(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		utility        string
+		status         int
+		validatePasses bool
+	}{
+		{name: "mktemp", utility: "/usr/bin/mktemp", status: 42},
+		{name: "inspection", utility: "/usr/bin/grep", status: 2},
+		{name: "visudo", utility: "/usr/sbin/visudo", status: 42},
+		{name: "install", utility: "/usr/bin/install", status: 42, validatePasses: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withXDG(t)
+			root := resolvedTempDir(t)
+			target := filepath.Join(root, "jentic-agent")
+			original := "alice-local-agent ALL=(alice-local-agent) NOPASSWD: /bin/launch\n" +
+				"alice-local-agent-2 ALL=(alice-local-agent-2) NOPASSWD: /bin/sibling\n"
+			if err := os.WriteFile(target, []byte(original), 0o440); err != nil {
+				t.Fatal(err)
+			}
+
+			bin := filepath.Join(root, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			fake := writeResetFakeUtility(t, bin, tc.name, tc.status)
+			built := localagent.RemoveAgentSudoersCmd("alice-local-agent")
+			if len(built.Args) != 4 || built.Args[1] != "/bin/sh" || built.Args[2] != "-c" {
+				t.Fatalf("unexpected sudoers command shape: %v", built.Args)
+			}
+			script := built.Args[3]
+			for old, replacement := range map[string]string{
+				"/etc/sudoers.d/jentic-agent": target,
+				tc.utility:                    fake,
+			} {
+				if !strings.Contains(script, old) {
+					t.Fatalf("sudoers script lacks replacement target %q: %s", old, script)
+				}
+				script = strings.ReplaceAll(script, old, replacement)
+			}
+			if tc.validatePasses {
+				script = strings.ReplaceAll(script, "/usr/sbin/visudo", writeResetFakeUtility(t, bin, "visudo-ok", 0))
+			}
+			if strings.Contains(script, "/etc/sudoers") {
+				t.Fatalf("replay still names a real sudoers path: %s", script)
+			}
+
+			out := &bytes.Buffer{}
+			a := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
+			acct := config.AgentAccount{User: "alice-local-agent", AccountCreated: true}
+			if err := errSeedAgentState(a.Paths, acct); err != nil {
+				t.Fatal(err)
+			}
+			accountMarker := filepath.Join(t.TempDir(), "account-deleted")
+			steps := []localagent.AccountStep{
+				{What: "remove the passwordless-launch sudoers drop-in", Cmd: exec.Command("/bin/sh", "-c", script)},
+				{What: "delete the Unix account alice-local-agent", Cmd: exec.Command("/bin/sh", "-c", `printf deleted > "$1"`, "sh", accountMarker)},
+			}
+			plan := resetPlan{user: acct.User, accountExists: true}
+			if err := a.execResetSteps(a.Paths, plan, false, steps); err == nil {
+				t.Errorf("%s failure returned success", tc.name)
+			}
+			contents, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("read preserved sudoers fixture: %v", err)
+			}
+			if string(contents) != original {
+				t.Errorf("%s failure changed target or sibling rules:\n%s", tc.name, contents)
+			}
+			if _, statErr := os.Stat(accountMarker); !os.IsNotExist(statErr) {
+				t.Errorf("account deletion ran after %s failure: %v", tc.name, statErr)
+			}
+			if strings.Contains(out.String(), "Reset complete") {
+				t.Errorf("%s failure emitted success:\n%s", tc.name, out.String())
+			}
+			st, loadErr := config.LoadAgentState(a.Paths)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if _, ok := st.AgentAccount(); !ok {
+				t.Errorf("%s failure cleared the account record", tc.name)
+			}
+		})
+	}
+}
+
+func writeResetFakeUtility(t *testing.T, dir, name string, status int) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	script := "#!/bin/sh\nexit " + strconv.Itoa(status) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestExecResetStepsRefusesUnresolvedLegacyConfigDir(t *testing.T) {

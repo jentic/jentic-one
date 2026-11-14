@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"os/user"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -39,6 +41,9 @@ func (a *app) confirmFullReset() (bool, error) {
 // execAccountReset runs the privileged teardown steps for the already-surveyed,
 // already-confirmed agent account and removes its record last.
 func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bool) error {
+	if err := validateResetSurvey(plan); err != nil {
+		return err
+	}
 	// Re-validate every operator-editable path the teardown is about to hand to a
 	// privileged command BEFORE the first one runs. The steps do `rm -rf` on the
 	// identity dirs under <homeDir>, chown/`rm -rf <homeDir>`, and ACL edits on
@@ -90,6 +95,15 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	return a.execResetSteps(paths, plan, deleteHome, buildResetSteps(plan, deleteHome))
 }
 
+// validateResetSurvey prevents an unresolved probe from being interpreted as an
+// absent account or ACL and reducing teardown to a record-clearing no-op.
+func validateResetSurvey(plan resetPlan) error {
+	if plan.surveyErr != nil {
+		return fmt.Errorf("refusing to reset: account survey failed: %w", plan.surveyErr)
+	}
+	return nil
+}
+
 // validateResetCredentialLocations refuses to discard the only recorded pointer
 // to legacy credentials when no validated managed home can contain them.
 func validateResetCredentialLocations(plan resetPlan) error {
@@ -105,6 +119,9 @@ func validateResetCredentialLocations(plan resetPlan) error {
 // ACL failures continue only for supported exit statuses and exclusively
 // recognized per-entry absent-ACE diagnostics.
 func (a *app) execResetSteps(paths config.Paths, plan resetPlan, deleteHome bool, steps []localagent.AccountStep) error {
+	if err := validateResetSurvey(plan); err != nil {
+		return err
+	}
 	if err := validateResetCredentialLocations(plan); err != nil {
 		return err
 	}
@@ -169,6 +186,9 @@ func (a *app) execResetSteps(paths config.Paths, plan resetPlan, deleteHome bool
 // contain nothing but exact per-entry absent-ACE results. Startup errors,
 // signals, status 127 and other exit statuses remain fatal even with benign text.
 func benignACLFailure(err error, diagnostics string) bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || diagnostics == "" {
 		return false
@@ -183,10 +203,22 @@ func benignACLFailure(err error, diagnostics string) bool {
 }
 
 func absentACEDiagnostic(line string) bool {
-	if !strings.HasPrefix(line, "chmod: ") {
-		return false
+	for _, prefix := range []string{
+		"chmod: No ACL present '",
+		"chmod: Entry not found when attempting delete '",
+	} {
+		operand, ok := strings.CutPrefix(line, prefix)
+		if !ok || len(operand) < 2 || !strings.HasSuffix(operand, "'") {
+			continue
+		}
+		operand = strings.TrimSuffix(operand, "'")
+		if operand == "" || strings.Contains(operand, "'") ||
+			!filepath.IsAbs(operand) || filepath.Clean(operand) != operand {
+			continue
+		}
+		return true
 	}
-	return strings.HasSuffix(line, ": Entry not found") || strings.HasSuffix(line, ": No ACL present")
+	return false
 }
 
 // aclRemoval is one ACL entry the reset will drop, tagged by layer and whether it
@@ -216,6 +248,7 @@ type resetPlan struct {
 	acls          []aclRemoval
 	accountExists bool
 	skipped       []resetSkippedPath
+	surveyErr     error
 }
 
 // surveyReset resolves the teardown plan for the agent account from two sources:
@@ -229,8 +262,23 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 	if agentUser == "" {
 		agentUser = localagent.DefaultUserName(operator)
 	}
+	plan := resetPlan{
+		user:      agentUser,
+		homeDir:   acct.HomeDir,
+		configDir: acct.ConfigDir,
+		operator:  operator,
+	}
+	if err := localagent.ValidateAgentUser(agentUser); err != nil {
+		plan.surveyErr = fmt.Errorf("invalid recorded agent user: %w", err)
+		return plan
+	}
+	accountExists, err := localagent.AgentAccountExists(ctx, agentUser)
+	if err != nil {
+		plan.surveyErr = err
+		return plan
+	}
+	plan.accountExists = accountExists
 
-	var acls []aclRemoval
 	seenTraverse := map[string]bool{}
 
 	// A dir that is itself a leaf grant must never also be treated as a traverse
@@ -244,12 +292,19 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 		leafDirs[dir] = true
 	}
 
+	probeACL := func(dir string, traverse bool) bool {
+		present, err := localagent.AgentACLPresent(ctx, agentUser, dir)
+		if err != nil {
+			plan.surveyErr = fmt.Errorf("inspect %s: %w", dir, err)
+			return false
+		}
+		plan.acls = append(plan.acls, aclRemoval{traverse: traverse, dir: dir, present: present})
+		return true
+	}
 	for _, dir := range acct.GrantedDirs {
-		acls = append(acls, aclRemoval{
-			traverse: false,
-			dir:      dir,
-			present:  localagent.AgentACLPresent(ctx, agentUser, dir),
-		})
+		if !probeACL(dir, false) {
+			return plan
+		}
 		// Ancestor traverse grants: walk home→leaf and record each ancestor that
 		// still carries the agent's execute ACL. Deduped across all granted dirs,
 		// and skipping any ancestor that is itself a leaf grant (handled above).
@@ -259,23 +314,13 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 					continue
 				}
 				seenTraverse[anc] = true
-				acls = append(acls, aclRemoval{
-					traverse: true,
-					dir:      anc,
-					present:  localagent.AgentACLPresent(ctx, agentUser, anc),
-				})
+				if !probeACL(anc, true) {
+					return plan
+				}
 			}
 		}
 	}
 
-	plan := resetPlan{
-		user:          agentUser,
-		homeDir:       acct.HomeDir,
-		configDir:     acct.ConfigDir,
-		operator:      operator,
-		acls:          acls,
-		accountExists: localagent.UserExists(ctx, agentUser),
-	}
 	_, plan.skipped = filterResetRemovalPaths(plan.homeDir, resetRemovalPaths(plan.homeDir))
 	return plan
 }
@@ -464,6 +509,12 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 // follows as a typed acknowledgement.
 func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out)
+	if plan.surveyErr != nil {
+		fmt.Fprintln(a.Out, theme.Error.Render("⚠  ACCOUNT SURVEY FAILED — reset will not modify the account, filesystem, sudoers, or account record."))
+		fmt.Fprintln(a.Out, theme.Error.Render(fmt.Sprintf("  %v", plan.surveyErr)))
+		fmt.Fprintln(a.Out)
+		return
+	}
 	fmt.Fprintln(a.Out, theme.Error.Render("⚠  DANGER ZONE — jentic reset will PERMANENTLY remove the following for the "+
 		"agent account (user "+plan.user+"). This cannot be undone."))
 	if plan.accountExists {
