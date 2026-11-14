@@ -43,13 +43,13 @@ func TestTeardownCmdShape(t *testing.T) {
 		})
 	}
 
-	// ReownHomeCmd walks with find and execs `chown -fh`: -f suppresses
-	// per-file errors on SIP/TCC-protected macOS template files, and -h
-	// (no-dereference) stops an agent-planted symlink from redirecting the
-	// recursive chown onto a target outside the tree.
+	// ReownHomeCmd walks with find and execs `chown -fh` from each entry's
+	// parent directory: -f suppresses per-file errors on SIP/TCC-protected
+	// macOS template files, -h acts on links themselves, and -execdir avoids
+	// resolving an entry through its full path a second time.
 	reown := strings.Join(ReownHomeCmd("alice", homeDir).Args, " ")
-	if !strings.Contains(reown, "find "+homeDir) || !strings.Contains(reown, "-exec chown -fh alice ") {
-		t.Errorf("re-own must walk with find and exec `chown -fh` (force, no-dereference): %s", reown)
+	if !strings.Contains(reown, "find "+homeDir) || !strings.Contains(reown, "-execdir chown -fh alice ") {
+		t.Errorf("re-own must walk with find and execdir `chown -fh` (force, no-dereference): %s", reown)
 	}
 
 	// DeleteAccountCmd must keep the home (it is settled separately): macOS

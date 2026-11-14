@@ -48,8 +48,9 @@ func AgentConfigDir(homeDir string) string {
 //   - <home>/.jentic              (legacy V1 identity/profiles)
 //
 // `jentic reset` removes all of them even when the home is KEPT, so credential
-// material handed to the agent never survives a teardown in the re-owned home. Every path is a fixed join under the (validated)
-// home, so the list is safe to hand to a privileged rm.
+// material handed to the agent never survives a teardown in the re-owned home.
+// Every path is a fixed join under the validated home. Callers check every path
+// with AssertNoSymlinkComponents before removal.
 func AgentIdentityDirs(homeDir string) []string {
 	return []string{
 		filepath.Join(homeDir, ".config", "jentic"),
@@ -74,6 +75,14 @@ type AccountStep struct {
 	// on those. That is expected and harmless (the agent's actual work is re-owned),
 	// so it must not stop the teardown before the account is deleted.
 	BestEffort bool
+	// FallbackCmd runs when Cmd cannot complete a removal with the agent's own
+	// privileges. Callers re-check NoSymlinkPaths before either command.
+	FallbackCmd *exec.Cmd
+	// NoSymlinkHome and NoSymlinkPaths identify the removal paths whose existing
+	// components must pass AssertNoSymlinkComponents immediately before Cmd and
+	// FallbackCmd run.
+	NoSymlinkHome  string
+	NoSymlinkPaths []string
 }
 
 // chownWalkFilter is the find(1) predicate recursive chowns walk with. They DO
@@ -86,15 +95,17 @@ var chownWalkFilter = []string{"(", "-type", "d", "-o", "-links", "1", ")"}
 
 // recursiveChownCmd re-owns dir's tree to owner without following symlinks
 // (-h, find's default -P walk) and without touching multiply hard-linked
-// non-directories (chownWalkFilter). force adds -f for callers that expect
-// unchangeable entries (macOS SIP/TCC template files). Runs as root.
+// non-directories (chownWalkFilter). -execdir invokes chown from each entry's
+// parent on a ./name path, avoiding a second resolution of the full path.
+// force adds -f for callers that expect unchangeable entries (macOS SIP/TCC
+// template files). Runs as root.
 func recursiveChownCmd(owner, dir string, force bool) *exec.Cmd {
 	flags := "-h"
 	if force {
 		flags = "-fh"
 	}
 	args := append([]string{"find", dir}, chownWalkFilter...)
-	args = append(args, "-exec", "chown", flags, owner, "{}", "+")
+	args = append(args, "-execdir", "chown", flags, owner, "{}", "+")
 	return exec.Command("sudo", args...) //nolint:gosec // owner is a config account name; dir is a resolved path.
 }
 
@@ -219,10 +230,11 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 // dirs (see AgentIdentityDirs: the exported XDG config/state trees plus the
 // legacy ~/.jentic — registration, tokens, and signing key). `jentic reset`
 // runs it even when the agent's home is KEPT, so no credential material
-// outlives the account in the re-owned home. `rm -f` makes absent dirs a no-op. Runs as root because the
-// dirs are owned by the agent account (and are settled before the home
-// re-own/delete step). Returns nil when there is nothing to remove. `--` ends
-// option parsing so a path can never be mistaken for an rm flag.
+// outlives the account in the re-owned home. This elevated builder serves an
+// orphaned home and the checked fallback when run-as-agent removal is denied.
+// `rm -f` makes absent dirs a no-op. Returns nil when there is nothing to
+// remove. `--` ends option parsing so a path can never be mistaken for an rm
+// flag.
 func RemoveAgentIdentityCmd(dirs []string) *exec.Cmd {
 	if len(dirs) == 0 {
 		return nil
@@ -366,11 +378,11 @@ func SeededConfigDirs(agentHome string) []string {
 	return out
 }
 
-// ScrubSeededConfigCmd removes the given absolute seeded-config paths from a kept
-// agent home, run as root because the tree may still be agent-owned when this
-// runs. Recursive (`rm -rf`) because these are directories, but every path is
-// pre-constrained to the agent's home by SeededConfigDirs. Returns nil when there
-// is nothing to scrub so the caller can skip the step cleanly.
+// ScrubSeededConfigCmd removes component-checked seeded-config paths from an
+// orphaned kept home or from the checked elevated fallback. Recursive (`rm -rf`)
+// handles directories, and every path is pre-constrained to the agent's home by
+// SeededConfigDirs. Returns nil when there is nothing to scrub so the caller can
+// skip the step cleanly.
 func ScrubSeededConfigCmd(paths []string) *exec.Cmd {
 	if len(paths) == 0 {
 		return nil

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/user"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -71,32 +72,44 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 		}
 	}
 
-	// Act. Steps run in a fixed order (ACLs → home → sudoers → account); a failure
-	// stops the run with the config entry still recorded so a re-run can finish.
-	// A best-effort step (settling the agent home) is the exception: a macOS home
-	// carries SIP/TCC-protected template files that nobody can chown or remove, so
-	// its re-own/delete legitimately exits non-zero after handling everything else.
-	// We report that and press on to the account deletion rather than abort.
+	// Act. Steps run in a fixed order (processes → ACLs → home → sudoers →
+	// account); a failure stops the run with the config entry still recorded so a
+	// re-run can finish. Every removal path is checked again after its command is
+	// built and immediately before it runs, including the elevated fallback.
 	for _, step := range buildResetSteps(plan, deleteHome) {
 		fmt.Fprintln(a.Out, theme.Infof("• %s", step.What))
 		c := step.Cmd
-		c.Stdout = a.Out
-		// Best-effort steps produce expected per-file stderr (SIP/TCC "Operation not
-		// permitted", or `chmod -a` reporting an ACE already absent); we summarise it
-		// ourselves, so swallow the raw diagnostics rather than flood the terminal.
-		if step.BestEffort {
-			c.Stderr = io.Discard
-		} else {
-			c.Stderr = a.Err
-		}
-		if err := c.Run(); err != nil {
+		run := func() error {
+			c.Stdout = a.Out
+			// Best-effort steps produce expected per-file stderr (SIP/TCC "Operation
+			// not permitted", or `chmod -a` reporting an ACE already absent); we
+			// summarise it ourselves rather than flood the terminal.
 			if step.BestEffort {
-				// Expected residual non-zero exits: SIP/TCC-protected home-template
-				// files nobody can chown (re-own/delete home), and macOS `chmod -a`
-				// reporting the ACE already absent on some subtree entries (leaf
-				// revoke). Neither leaves the teardown incomplete.
+				c.Stderr = io.Discard
+			} else {
+				c.Stderr = a.Err
+			}
+			if step.NoSymlinkHome != "" {
+				for _, path := range step.NoSymlinkPaths {
+					if err := localagent.AssertNoSymlinkComponents(step.NoSymlinkHome, path); err != nil {
+						return fmt.Errorf("removal path failed its safety check: %w", err)
+					}
+				}
+			}
+			return c.Run()
+		}
+
+		err := run()
+		if err != nil && step.FallbackCmd != nil {
+			fmt.Fprintln(a.Out, theme.Warn.Render(
+				"  (agent-privileged removal did not complete; retrying component-checked paths with elevated privileges)"))
+			c = step.FallbackCmd
+			err = run()
+		}
+		if err != nil {
+			if step.BestEffort {
 				fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
-					"  (%s: some entries couldn't be changed — that's expected; continuing)", step.What)))
+					"  (%s: some operations couldn't be completed; continuing)", step.What)))
 				continue
 			}
 			return fmt.Errorf("%s: %w", step.What, err)
@@ -132,6 +145,12 @@ type aclRemoval struct {
 	present bool
 }
 
+// resetSkippedPath records a removal candidate omitted from the plan.
+type resetSkippedPath struct {
+	path   string
+	reason string
+}
+
 // resetPlan is the fully-resolved teardown for the agent account, built by
 // surveyReset and rendered/executed without further disk probing of the record.
 type resetPlan struct {
@@ -140,6 +159,7 @@ type resetPlan struct {
 	operator      string
 	acls          []aclRemoval
 	accountExists bool
+	skipped       []resetSkippedPath
 }
 
 // surveyReset resolves the teardown plan for the agent account from two sources:
@@ -192,13 +212,44 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 		}
 	}
 
-	return resetPlan{
+	plan := resetPlan{
 		user:          agentUser,
 		homeDir:       acct.HomeDir,
 		operator:      operator,
 		acls:          acls,
 		accountExists: localagent.UserExists(ctx, agentUser),
 	}
+	_, plan.skipped = filterResetRemovalPaths(plan.homeDir, resetRemovalPaths(plan.homeDir))
+	return plan
+}
+
+// resetRemovalPaths lists every identity and seeded-config path reset can
+// remove independently of the whole home.
+func resetRemovalPaths(home string) []string {
+	if home == "" {
+		return nil
+	}
+	paths := localagent.AgentIdentityDirs(home)
+	return append(paths, localagent.SeededConfigDirs(home)...)
+}
+
+// filterResetRemovalPaths refuses paths that cannot be inspected safely or that
+// cross an intermediate symlink. Missing paths remain in the removal list so rm
+// can treat them as a no-op.
+func filterResetRemovalPaths(home string, paths []string) (accepted []string, skipped []resetSkippedPath) {
+	for _, path := range paths {
+		err := localagent.AssertNoSymlinkComponents(home, path)
+		if err == nil {
+			accepted = append(accepted, path)
+			continue
+		}
+		reason := "path check failed: " + err.Error()
+		if errors.Is(err, localagent.ErrSymlinkedPath) {
+			reason = "symlinked path component"
+		}
+		skipped = append(skipped, resetSkippedPath{path: path, reason: reason})
+	}
+	return accepted, skipped
 }
 
 // buildResetSteps turns a plan into the ordered, privileged commands the reset
@@ -212,6 +263,17 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 // it last in Go, after every step below has succeeded.
 func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	var steps []localagent.AccountStep
+
+	// (0) Stop processes that could mutate the agent-owned tree during teardown.
+	if plan.accountExists {
+		if kill := localagent.KillAgentProcessesCmd(plan.user); kill != nil {
+			steps = append(steps, localagent.AccountStep{
+				What:       "terminate all processes for agent account " + plan.user,
+				Cmd:        kill,
+				BestEffort: true,
+			})
+		}
+	}
 
 	// (1a) Leaf rwx grants first.
 	for _, acl := range plan.acls {
@@ -258,10 +320,25 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	// resurrect the torn-down registration. When the home is being deleted the
 	// rm below covers it, so this only runs on keep.
 	if plan.homeDir != "" && !deleteHome {
-		steps = append(steps, localagent.AccountStep{
-			What: "remove the agent's jentic identity (keys, tokens) from " + plan.homeDir,
-			Cmd:  localagent.RemoveAgentIdentityCmd(localagent.AgentIdentityDirs(plan.homeDir)),
-		})
+		paths, _ := filterResetRemovalPaths(plan.homeDir, localagent.AgentIdentityDirs(plan.homeDir))
+		rootCmd := localagent.RemoveAgentIdentityCmd(paths)
+		if rootCmd != nil {
+			cmd := localagent.RemoveAsAgentCmd(plan.user, paths)
+			fallback := rootCmd
+			if !plan.accountExists {
+				cmd = rootCmd
+				fallback = nil
+			}
+			if cmd != nil {
+				steps = append(steps, localagent.AccountStep{
+					What:           "remove the agent's jentic identity (keys, tokens) from " + plan.homeDir,
+					Cmd:            cmd,
+					FallbackCmd:    fallback,
+					NoSymlinkHome:  plan.homeDir,
+					NoSymlinkPaths: paths,
+				})
+			}
+		}
 	}
 
 	// (1d) When the home is KEPT (re-owned to the operator), clear the agent/
@@ -273,12 +350,25 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	// intent, and provenance (seeded vs agent-created) isn't tracked. When the home
 	// is being deleted the rm below covers all of this, so this only runs on keep.
 	if plan.homeDir != "" && !deleteHome {
-		if scrub := localagent.ScrubSeededConfigCmd(localagent.SeededConfigDirs(plan.homeDir)); scrub != nil {
-			steps = append(steps, localagent.AccountStep{
-				What:       "remove seeded agent/provider config from the kept home",
-				Cmd:        scrub,
-				BestEffort: true,
-			})
+		paths, _ := filterResetRemovalPaths(plan.homeDir, localagent.SeededConfigDirs(plan.homeDir))
+		rootCmd := localagent.ScrubSeededConfigCmd(paths)
+		if rootCmd != nil {
+			cmd := localagent.RemoveAsAgentCmd(plan.user, paths)
+			fallback := rootCmd
+			if !plan.accountExists {
+				cmd = rootCmd
+				fallback = nil
+			}
+			if cmd != nil {
+				steps = append(steps, localagent.AccountStep{
+					What:           "remove seeded agent/provider config from the kept home",
+					Cmd:            cmd,
+					BestEffort:     true,
+					FallbackCmd:    fallback,
+					NoSymlinkHome:  plan.homeDir,
+					NoSymlinkPaths: paths,
+				})
+			}
 		}
 	}
 
@@ -287,9 +377,11 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	if plan.homeDir != "" {
 		if deleteHome {
 			steps = append(steps, localagent.AccountStep{
-				What:       "delete the agent's home " + plan.homeDir,
-				Cmd:        localagent.DeleteHomeCmd(plan.homeDir),
-				BestEffort: true,
+				What:           "delete the agent's home " + plan.homeDir,
+				Cmd:            localagent.DeleteHomeCmd(plan.homeDir),
+				BestEffort:     true,
+				NoSymlinkHome:  filepath.Dir(plan.homeDir),
+				NoSymlinkPaths: []string{plan.homeDir},
 			})
 		} else {
 			steps = append(steps, localagent.AccountStep{
@@ -325,6 +417,10 @@ func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Error.Render("⚠  DANGER ZONE — jentic reset will PERMANENTLY remove the following for the "+
 		"agent account (user "+plan.user+"). This cannot be undone."))
+	if plan.accountExists {
+		fmt.Fprintln(a.Out, theme.Warn.Render("  Process termination: sudo pkill -KILL -u "+plan.user+
+			" runs before any filesystem step and ends all live agent sessions."))
+	}
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Directory ACLs to remove (agent access granted to the account):"))
@@ -356,8 +452,17 @@ func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - sudoers drop-in        /etc/sudoers.d/jentic-agent (if present)"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - agent account record   ~/.config/jentic/agent-account.yaml (and any legacy copy)"))
 	if plan.homeDir != "" {
+		skipped := make(map[string]bool, len(plan.skipped))
+		for _, skip := range plan.skipped {
+			skipped[skip.path] = true
+		}
 		for _, dir := range localagent.AgentIdentityDirs(plan.homeDir) {
-			fmt.Fprintln(a.Out, theme.Dim.Render("    - agent identity         "+dir+" (its registration, tokens, key)"))
+			if !skipped[dir] {
+				fmt.Fprintln(a.Out, theme.Dim.Render("    - agent identity         "+dir+" (its registration, tokens, key)"))
+			}
+		}
+		for _, skip := range plan.skipped {
+			fmt.Fprintln(a.Out, theme.Dim.Render("    - skipped: "+skip.reason+"  "+skip.path))
 		}
 	}
 

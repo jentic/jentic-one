@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -112,8 +113,148 @@ func TestSurveyResetDefaultsUser(t *testing.T) {
 	}
 }
 
-// TestBuildResetStepsOrderAndHome asserts the load-bearing ordering (leaf ACLs →
-// traverse ACLs → identity → home → sudoers → account) and that the home step
+// TestResetIdentityScrubDoesNotFollowAgentSymlink replays the reset removal
+// commands without elevation and pins that an agent-home symlink cannot redirect
+// deletion into the operator's config tree.
+func TestResetIdentityScrubDoesNotFollowAgentSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "agent-home")
+	operatorConfig := filepath.Join(root, "operator", ".config")
+	for _, dir := range []string{
+		home,
+		filepath.Join(operatorConfig, "jentic"),
+		filepath.Join(operatorConfig, "gcloud"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(operatorConfig, filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := resetPlan{
+		user:     "alice-local-agent",
+		homeDir:  home,
+		operator: "alice",
+	}
+	for _, step := range buildResetSteps(plan, false) {
+		if !strings.Contains(step.What, "jentic identity") &&
+			!strings.Contains(step.What, "seeded agent/provider config") {
+			continue
+		}
+		args := step.Cmd.Args
+		if len(args) == 0 || args[0] != "sudo" {
+			t.Fatalf("removal command is not sudo-fronted: %v", args)
+		}
+		args = args[1:]
+		cmd := exec.Command(args[0], args[1:]...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("replay %v: %v\n%s", args, err, output)
+		}
+	}
+
+	for _, dir := range []string{
+		filepath.Join(operatorConfig, "jentic"),
+		filepath.Join(operatorConfig, "gcloud"),
+	} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("operator config %s must survive reset removal replay: %v", dir, err)
+		}
+	}
+}
+
+// TestBuildResetStepsKillsAgentFirst pins process termination ahead of every
+// privileged filesystem operation while the legacy account still exists.
+func TestBuildResetStepsKillsAgentFirst(t *testing.T) {
+	steps := buildResetSteps(resetPlan{user: "alice-local-agent", accountExists: true}, false)
+	if len(steps) == 0 {
+		t.Fatal("expected reset steps")
+	}
+	first := steps[0]
+	want := "sudo pkill -KILL -u alice-local-agent"
+	if got := strings.Join(first.Cmd.Args, " "); got != want {
+		t.Errorf("first reset command = %q, want %q", got, want)
+	}
+	if !first.BestEffort {
+		t.Error("process termination must tolerate an account with no running processes")
+	}
+}
+
+// TestBuildResetStepsRunsScrubAsAgentWhenAccountExists keeps deletion within
+// the agent's own OS permissions and retains a checked elevated fallback.
+func TestBuildResetStepsRunsScrubAsAgentWhenAccountExists(t *testing.T) {
+	steps := buildResetSteps(resetPlan{
+		user:          "alice-local-agent",
+		homeDir:       "/Users/Shared/alice-local-agent",
+		operator:      "alice",
+		accountExists: true,
+	}, false)
+	var checked int
+	for _, step := range steps {
+		if !strings.Contains(step.What, "jentic identity") &&
+			!strings.Contains(step.What, "seeded agent/provider config") {
+			continue
+		}
+		checked++
+		got := strings.Join(step.Cmd.Args, " ")
+		if !strings.HasPrefix(got, "sudo -u alice-local-agent -- /bin/rm -rf -- ") {
+			t.Errorf("removal must run as the agent: %s", got)
+		}
+		if step.FallbackCmd == nil || !strings.HasPrefix(strings.Join(step.FallbackCmd.Args, " "), "sudo rm -rf -- ") {
+			t.Errorf("removal must retain an elevated fallback: %v", step.FallbackCmd)
+		}
+	}
+	if checked != 2 {
+		t.Fatalf("checked %d removal steps, want identity and seeded-config steps", checked)
+	}
+}
+
+// TestResetSkipsSymlinkedIdentityDir checks both the displayed skip and the
+// removal argv for a symlinked intermediate component.
+func TestResetSkipsSymlinkedIdentityDir(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "agent-home")
+	operatorConfig := filepath.Join(root, "operator", ".config")
+	for _, dir := range []string{home, filepath.Join(operatorConfig, "jentic"), filepath.Join(operatorConfig, "gcloud")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(operatorConfig, filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := surveyReset(context.Background(), "alice", "", config.AgentAccount{
+		User:    "alice-local-agent",
+		HomeDir: home,
+	})
+	out := &bytes.Buffer{}
+	a := &app{App: &cmdcore.App{Out: out}}
+	a.printResetPlan(plan)
+	if got := out.String(); !strings.Contains(got, "skipped: symlinked path component") {
+		t.Errorf("reset plan must name the symlink skip, got:\n%s", got)
+	}
+
+	for _, step := range buildResetSteps(plan, false) {
+		if !strings.Contains(step.What, "jentic identity") &&
+			!strings.Contains(step.What, "seeded agent/provider config") {
+			continue
+		}
+		args := strings.Join(step.Cmd.Args, " ")
+		for _, skipped := range []string{
+			filepath.Join(home, ".config", "jentic"),
+			filepath.Join(home, ".config", "gcloud"),
+		} {
+			if strings.Contains(args, skipped) {
+				t.Errorf("removal argv contains refused path %s: %s", skipped, args)
+			}
+		}
+	}
+}
+
+// TestBuildResetStepsOrderAndHome asserts the load-bearing ordering (processes →
+// leaf ACLs → traverse ACLs → identity → home → sudoers → account) and that the home step
 // honours the delete flag. Only present ACLs become steps.
 func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	plan := resetPlan{
@@ -141,11 +282,12 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 		t.Errorf("drifted-off-disk ACL should be skipped, got steps:\n%s", joined)
 	}
 
-	// Ordering: leaf-revoke → traverse-revoke → identity dirs → home → sudoers → account.
+	// Ordering: terminate processes → leaf-revoke → traverse-revoke → identity dirs → home → sudoers → account.
 	// The agent's own identity dirs (exported XDG store + legacy ~/.jentic) are
 	// torn down before the home is settled and always (when the home is kept) so
 	// credential material never outlives the account and a re-setup can't
 	// resurrect a torn-down agent.
+	idxKill := indexOfContains(whats, "terminate all processes")
 	idxLeaf := indexOfContains(whats, "read/write grant on /Users/alice/projects/api")
 	idxTraverse := indexOfContains(whats, "traverse grant on /Users/alice")
 	idxIdentity := indexOfContains(whats, "remove the agent's jentic identity")
@@ -168,19 +310,21 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 			}
 		}
 	}
-	if idxLeaf < 0 || idxLeaf >= idxTraverse || idxTraverse >= idxIdentity || idxIdentity >= idxHome || idxHome >= idxSudoers || idxSudoers >= idxAccount {
-		t.Fatalf("steps out of order: leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
-			idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
+	if idxKill != 0 || idxLeaf < 0 || idxLeaf >= idxTraverse || idxTraverse >= idxIdentity || idxIdentity >= idxHome || idxHome >= idxSudoers || idxSudoers >= idxAccount {
+		t.Fatalf("steps out of order: kill=%d leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
+			idxKill, idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
 	}
 
-	// Best-effort steps: the home step (a macOS home has SIP/TCC-protected files
+	// Best-effort steps: process termination (no processes is a successful
+	// outcome), the home step (a macOS home has SIP/TCC-protected files
 	// nobody can chown/remove), both ACL revokes (their macOS `chmod -a` exits
 	// non-zero on entries that don't carry the exact ACE — subtree entries for the
 	// recursive leaf revoke, a drifted/re-shaped ancestor for the traverse revoke),
 	// and the seeded-config scrub (a seeded dir may be absent). None must abort the
 	// teardown; nothing else is best-effort.
 	for _, s := range steps {
-		wantBestEffort := strings.Contains(s.What, "the agent's home") ||
+		wantBestEffort := strings.Contains(s.What, "terminate all processes") ||
+			strings.Contains(s.What, "the agent's home") ||
 			strings.Contains(s.What, "read/write grant on") ||
 			strings.Contains(s.What, "traverse grant on") ||
 			strings.Contains(s.What, "seeded agent/provider config")
