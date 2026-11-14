@@ -6,7 +6,7 @@ takes no identity at all passes every service-side check trivially, so the
 route is where an unscoped read or write shows up.
 
 Every route handler (any verb, any path shape) in the ``admin``, ``auth``,
-``control`` and ``registry`` routers that takes the caller's identity from
+``broker``, ``control`` and ``registry`` routers that takes the caller's identity from
 ``get_current_identity`` — as a parameter default or inside
 ``Annotated[Identity, get_current_identity(...)]`` — must pass that identity
 into a call on a **service object**. Passing it to a local helper (a rate
@@ -38,6 +38,8 @@ import ast
 from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
+from string import Formatter
+from typing import NamedTuple
 
 import pytest
 
@@ -46,14 +48,31 @@ from .conftest import SRC_ROOT, python_files_in
 SCOPED_WEB_DIRS = [
     SRC_ROOT / "admin" / "web",
     SRC_ROOT / "auth" / "web",
+    SRC_ROOT / "broker" / "web",
     SRC_ROOT / "control" / "web",
     SRC_ROOT / "registry" / "web",
 ]
 
 _ROUTE_VERBS = {"get", "post", "put", "patch", "delete"}
 _IDENTITY_DEP = "get_current_identity"
+_IDENTITY_PARAM_TYPES = {"RequireJobAccess"}
+_SERVICE_PARAM_TYPES = {"BrokerJobServiceDep"}
 
 _Func = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+class _ByIdCall(NamedTuple):
+    route: str
+    path: Path
+    line: int
+    method: str
+    parameters: frozenset[str]
+    post_authorized: bool
+
+    @property
+    def key(self) -> str:
+        return f"{self.route} -> {self.method}"
+
 
 _REGISTRY_CATALOGUE = "org-wide API registry content, not caller-owned; gated by apis:read"
 _PUBLIC_CATALOG = "public upstream API catalog, no per-caller rows; gated by capabilities:read"
@@ -137,6 +156,14 @@ _ALLOWLIST: dict[str, str] = {
         "overlays are shared catalogue content with no owner scoping; writes pass identity"
     ),
     "registry/search.search_operations": _REGISTRY_CATALOGUE,
+}
+
+#: ``<surface>/<module>.<handler> -> <method>`` -> why an earlier scoped load is sufficient.
+_POST_AUTHORIZED: dict[str, str] = {
+    "control/credentials.list_agent_permissions -> scope_options": (
+        "get_binding_access first authorizes credential_id with identity; scope_options reads "
+        "only that credential's public OAuth scope catalogue"
+    ),
 }
 
 
@@ -236,18 +263,24 @@ def _is_identity_dep(node: ast.expr | None) -> bool:
 
 def _is_identity_annotation(annotation: ast.expr | None) -> bool:
     origin, _ = _annotated_parts(annotation)
-    return origin is not None and _name_of(origin) == "Identity"
+    name = _name_of(origin) if origin is not None else None
+    return name == "Identity" or name in _IDENTITY_PARAM_TYPES
 
 
 def _identity_param(func: _Func) -> str | None:
-    """Name of the parameter resolved by ``get_current_identity(...)``, if any.
+    """Name of the parameter resolved by a recognised identity dependency, if any.
 
-    Recognises both ``identity: Identity = get_current_identity(...)`` and
-    ``identity: Annotated[Identity, get_current_identity(...)]``.
+    Recognises direct ``get_current_identity(...)`` dependencies and the broker's
+    ``Annotated[Identity, ...]`` aliases.
     """
     for arg, default in _params(func):
-        _, metadata = _annotated_parts(arg.annotation)
-        if _is_identity_dep(default) or any(_is_identity_dep(m) for m in metadata):
+        origin, metadata = _annotated_parts(arg.annotation)
+        origin_name = _name_of(origin) if origin is not None else None
+        if (
+            _is_identity_dep(default)
+            or any(_is_identity_dep(m) for m in metadata)
+            or origin_name in _IDENTITY_PARAM_TYPES
+        ):
             return arg.arg
     return None
 
@@ -278,6 +311,7 @@ def _service_names(func: _Func) -> set[str]:
         origin_name = _name_of(origin) if origin is not None else None
         if (
             (origin_name is not None and origin_name.endswith("Service"))
+            or origin_name in _SERVICE_PARAM_TYPES
             or _is_service_dep(default)
             or any(_is_service_dep(m) for m in metadata)
         ):
@@ -311,6 +345,79 @@ def _passes_to_service(func: _Func, name: str) -> bool:
         if any(isinstance(v, ast.Name) and v.id == name for v in values):
             return True
     return False
+
+
+def _path_parameters(func: _Func) -> frozenset[str]:
+    """Path id parameter names declared by this handler's route decorators."""
+    names: set[str] = set()
+    for decorator in _route_decorators(func):
+        if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+            continue
+        path = decorator.args[0].value
+        if not isinstance(path, str):
+            continue
+        for _, field_name, _, _ in Formatter().parse(path):
+            if field_name and (field_name == "id" or field_name.endswith("_id")):
+                names.add(field_name)
+    return frozenset(names)
+
+
+def _call_argument_names(call: ast.Call) -> frozenset[str]:
+    values = list(call.args) + [kw.value for kw in call.keywords]
+    return frozenset(value.id for value in values if isinstance(value, ast.Name))
+
+
+def _by_id_service_calls(route: str, py_file: Path, func: _Func) -> list[_ByIdCall]:
+    """Service calls using a path id without identity in that same call."""
+    identity = _identity_param(func)
+    if identity is None:
+        return []
+    path_parameters = _path_parameters(func)
+    services = _service_names(func)
+    authorized: set[str] = set()
+    calls: list[_ByIdCall] = []
+    service_calls = sorted(
+        (
+            (node, node.func)
+            for node in ast.walk(func)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ),
+        key=lambda item: (item[0].lineno, item[0].col_offset),
+    )
+    for node, call_func in service_calls:
+        receiver = call_func.value
+        on_service = (isinstance(receiver, ast.Name) and receiver.id in services) or (
+            _is_service_ctor(receiver)
+        )
+        if not on_service:
+            continue
+        arguments = _call_argument_names(node)
+        used_path_parameters = arguments & path_parameters
+        if not used_path_parameters:
+            continue
+        if identity in arguments:
+            authorized.update(used_path_parameters)
+            continue
+        calls.append(
+            _ByIdCall(
+                route=route,
+                path=py_file,
+                line=node.lineno,
+                method=call_func.attr,
+                parameters=used_path_parameters,
+                post_authorized=used_path_parameters.issubset(authorized),
+            )
+        )
+    return calls
+
+
+def _unscoped_by_id_calls() -> list[_ByIdCall]:
+    return [
+        call
+        for key, py_file, func in _route_handlers()
+        if key not in _ALLOWLIST
+        for call in _by_id_service_calls(key, py_file, func)
+    ]
 
 
 # --- Walkers -------------------------------------------------------------------
@@ -357,6 +464,31 @@ def test_scoped_routes_pass_identity_to_their_service() -> None:
         if name not in _ALLOWLIST
     ]
     assert not violations, "Routes not passing identity to a service:\n" + "\n".join(violations)
+
+
+@pytest.mark.arch
+def test_by_id_service_calls_receive_identity() -> None:
+    """Every service call consuming a path id receives identity in that same call."""
+    violations = [
+        f"{call.path}:{call.line} — {call.key} uses path parameter(s) "
+        f"{sorted(call.parameters)} without identity; pass identity=identity to this call, "
+        "or document its earlier scoped load in _POST_AUTHORIZED"
+        for call in _unscoped_by_id_calls()
+        if call.key not in _POST_AUTHORIZED
+    ]
+    assert not violations, "By-id service calls without identity:\n" + "\n".join(violations)
+
+
+@pytest.mark.arch
+def test_post_authorized_allowlist_is_not_stale() -> None:
+    """A post-authorized call still needs an earlier identity-scoped call with the same id."""
+    calls = {call.key: call for call in _unscoped_by_id_calls()}
+    stale = [
+        key
+        for key in sorted(_POST_AUTHORIZED)
+        if key not in calls or not calls[key].post_authorized
+    ]
+    assert not stale, "Remove or re-authorize stale _POST_AUTHORIZED entries:\n" + "\n".join(stale)
 
 
 @pytest.mark.arch
@@ -429,6 +561,22 @@ def test_helper_call_does_not_count_as_passing_identity() -> None:
     )
     assert _identity_param(func) == "identity"
     assert not _passes_to_service(func, "identity")
+
+
+@pytest.mark.arch
+def test_side_call_identity_does_not_scope_by_id_read() -> None:
+    """Self-check: identity on an unrelated side call does not authorize a by-id read."""
+    func = _parse_func(
+        "@router.get('/things/{thing_id}')\n"
+        "async def r(svc: FooService = Depends(get_foo_service),"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.record_view(identity=identity)\n"
+        "    return await svc.get(thing_id)\n"
+    )
+    calls = _by_id_service_calls("self/r", Path("<self-check>"), func)
+    assert len(calls) == 1
+    assert calls[0].method == "get"
+    assert not calls[0].post_authorized
 
 
 @pytest.mark.arch
