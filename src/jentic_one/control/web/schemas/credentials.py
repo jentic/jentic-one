@@ -679,37 +679,6 @@ CredentialUpdateRequest = Annotated[
 # --- Response models ---
 
 
-class BearerTokenSecretResponse(BaseModel):
-    """Full bearer token secret (shown once on create)."""
-
-    token: str
-
-
-class ApiKeySecretResponse(BaseModel):
-    """Full API key secret (shown once on create)."""
-
-    key: str
-    location: str
-    field_name: str
-
-
-class BasicAuthSecretResponse(BaseModel):
-    """Full basic auth secret (shown once on create)."""
-
-    username: str
-    password: str
-
-
-class OAuth2SecretResponse(BaseModel):
-    """Full OAuth2 secret (shown once on create)."""
-
-    client_id: str
-    client_secret: str
-    token_url: str
-    grant_type: str
-    scopes: list[str] | None = None
-
-
 class CredentialRedactedResponse(BaseModel):
     """Redacted credential response (for read/list/patch)."""
 
