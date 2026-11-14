@@ -210,3 +210,24 @@ def test_filter_flow_and_scoped_delegation_are_scoping() -> None:
     assert methods["ExampleService.list_direct"][2] is True
     assert methods["ExampleService.list_delegated"][2] is True
     assert methods["ExampleService.list_inline"][2] is True
+
+
+@pytest.mark.arch
+def test_list_side_query_does_not_authorize_unfiltered_collection() -> None:
+    """Self-check: an unrelated scoped read cannot authorize an unfiltered list."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def list_side(self, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        await ThingRepository.get_by_id('other', filters=filters)\n"
+        "        return await ThingRepository.list_all()\n"
+        "    async def list_scoped(self, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.list_all(filters=filters)\n"
+    )
+    methods = _list_methods_in_tree(tree, Path("<self-check>"))
+    actual = {name: result[2] for name, result in methods.items()}
+    assert actual == {
+        "ExampleService.list_side": False,
+        "ExampleService.list_scoped": True,
+    }

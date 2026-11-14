@@ -36,6 +36,9 @@ _Func = ast.FunctionDef | ast.AsyncFunctionDef
 _BY_ID_REPO_READ = re.compile(
     r"^(get|get_by_id|get_by_identity|get_for_update|require|require_by_id|load|load_by_id)$"
 )
+_COLLECTION_REPO_READ = re.compile(
+    r"^(list_\w+|get_page|search\w*|count_\w+|stream\w*|export\w+|iter_\w+)$"
+)
 
 _ORG_OAUTH_CLIENT = (
     "org-wide OAuth client registry, no owner column; route gated by oauth-clients:write"
@@ -92,6 +95,10 @@ _ATTRIBUTION_ONLY_ALLOWLIST: dict[str, str] = {
     "CredentialService.create": (
         "create-only credentials:write operation; ownership is assigned from identity.sub"
     ),
+    "CredentialService.get_rule_set": (
+        "shared permission rule-set/rule policy contains no credential secrets and is visible "
+        "to every credentials reader; the binding count is restricted to caller-visible bindings"
+    ),
     "OAuthAppRegistrationService.create_authorization_code": _ORG_OAUTH_APP,
     "OAuthAppRegistrationService.create_device_authorization": _ORG_OAUTH_APP,
     "OAuthAppRegistrationService.update": _ORG_OAUTH_APP,
@@ -135,17 +142,55 @@ def _is_identity_filter(node: ast.AST) -> bool:
     )
 
 
-def _is_scope_builder(node: ast.AST) -> bool:
-    """Any ``build_access_filters(...)`` call, including a re-scoped refreshed identity.
-
-    Reassigning a filter variable to a fresh scope builder (e.g.
-    ``filters = build_access_filters(refreshed, Event)``) keeps it scoped; only
-    reassignment to a non-filter value kills taint.
-    """
-    return any(
-        isinstance(call, ast.Call) and _name_of(call.func) == "build_access_filters"
-        for call in ast.walk(node)
+def _refreshed_identity_aliases(method: _Func, call: ast.Call) -> set[str]:
+    """Names live at *call* that came from the caller's identity-refresh callback."""
+    refresh_parameters = {
+        arg.arg
+        for arg in method.args.posonlyargs + method.args.args + method.args.kwonlyargs
+        if arg.arg == "refresh_identity"
+    }
+    aliases: set[str] = set()
+    if not refresh_parameters:
+        return aliases
+    stop = (call.lineno, call.col_offset)
+    assignments = sorted(
+        (n for n in ast.walk(method) if isinstance(n, ast.Assign | ast.AnnAssign)),
+        key=lambda n: (n.lineno, n.col_offset),
     )
+    for node in assignments:
+        if (node.lineno, node.col_offset) >= stop:
+            break
+        value = node.value
+        if value is None:
+            continue
+        names = set(_assigned_names(node))
+        source = value.value if isinstance(value, ast.Await) else value
+        refreshed = (
+            isinstance(source, ast.Call)
+            and isinstance(source.func, ast.Name)
+            and source.func.id in refresh_parameters
+        )
+        if refreshed or (isinstance(value, ast.Name) and value.id in aliases):
+            aliases.update(names)
+        else:
+            aliases.difference_update(names)
+    return aliases
+
+
+def _is_scope_builder(method: _Func, node: ast.AST) -> bool:
+    """A filter builder consuming the caller or its validated refreshed identity."""
+    for call in ast.walk(node):
+        if not isinstance(call, ast.Call) or _name_of(call.func) != "build_access_filters":
+            continue
+        if _receives_whole_identity(call):
+            return True
+        refreshed = _refreshed_identity_aliases(method, call)
+        if any(
+            isinstance(value, ast.Name) and value.id in refreshed
+            for value in _argument_values(call)
+        ):
+            return True
+    return False
 
 
 def _is_repository_call(call: ast.Call) -> bool:
@@ -174,6 +219,31 @@ def _argument_values(call: ast.Call) -> list[ast.expr]:
     return list(call.args) + [kw.value for kw in call.keywords]
 
 
+def _call_argument_roots(call: ast.Call) -> set[str]:
+    """Variable roots appearing anywhere in the call's argument expressions."""
+    return {
+        node.id
+        for value in _argument_values(call)
+        for node in ast.walk(value)
+        if isinstance(node, ast.Name)
+    }
+
+
+def _call_attribute_roots(call: ast.Call) -> set[str]:
+    """Variable roots whose attributes are passed to the call."""
+    roots: set[str] = set()
+    for value in _argument_values(call):
+        for node in ast.walk(value):
+            if not isinstance(node, ast.Attribute):
+                continue
+            root: ast.expr = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                roots.add(root.id)
+    return roots
+
+
 def _assigned_names(node: ast.stmt) -> Iterator[str]:
     targets: list[ast.expr]
     if isinstance(node, ast.Assign):
@@ -185,6 +255,16 @@ def _assigned_names(node: ast.stmt) -> Iterator[str]:
     for target in targets:
         if isinstance(target, ast.Name):
             yield target.id
+
+
+def _assigned_call_names(method: _Func, call: ast.Call) -> set[str]:
+    """Names assigned by the statement containing *call*."""
+    for statement in ast.walk(method):
+        if not isinstance(statement, ast.Assign | ast.AnnAssign) or statement.value is None:
+            continue
+        if any(node is call for node in ast.walk(statement.value)):
+            return set(_assigned_names(statement))
+    return set()
 
 
 #: Helpers whose bodies implement owner/permission authorization without a query filter.
@@ -345,10 +425,10 @@ class _ServiceIndex:
             and isinstance(receiver.func, ast.Name)
             and receiver.func.id == "super"
         ):
-            for base in self._base_owners(owner):
-                resolved = self.resolve(base, call.func.attr)
-                if resolved is not None:
-                    return resolved
+            for class_name in self.mro(owner)[1:]:
+                candidate = self.methods.get(class_name, {}).get(call.func.attr)
+                if candidate is not None:
+                    return _ResolvedMethod(class_name, candidate, self.paths[class_name])
             return None
         if isinstance(receiver, ast.Name):
             service_type = self._local_service_types(method).get(receiver.id)
@@ -392,7 +472,9 @@ class _ServiceIndex:
             names = set(_assigned_names(node))
             if not names:
                 continue
-            if _is_scope_builder(value) or (isinstance(value, ast.Name) and value.id in live):
+            if _is_scope_builder(method, value) or (
+                isinstance(value, ast.Name) and value.id in live
+            ):
                 live.update(names)
             else:
                 live.difference_update(names)
@@ -420,10 +502,198 @@ class _ServiceIndex:
             target.owner, target.method, frozenset(forwarded), seen | {key}
         ):
             return True
-        # A resolved helper only proves scoping when it receives the whole identity.
-        return _receives_whole_identity(call) and self.is_authorized(
-            target.owner, target.method, seen | {key}
+        if not _receives_whole_identity(call):
+            return False
+        explicit_keys = {
+            f"{target.owner}.{target.method.name}",
+            f"{owner}.{target.method.name}",
+        }
+        if explicit_keys & _EXPLICIT_AUTHORIZATION_HELPERS.keys():
+            return True
+        return self.is_authorized(target.owner, target.method, seen | {key})
+
+    @staticmethod
+    def _resource_aliases(method: _Func, call: ast.Call, parameters: set[str]) -> dict[str, str]:
+        """Resource-parameter aliases live at *call*, mapped to their canonical keys."""
+        aliases = {name: name for name in parameters}
+        stop = (call.lineno, call.col_offset)
+        assignments = sorted(
+            (n for n in ast.walk(method) if isinstance(n, ast.Assign | ast.AnnAssign)),
+            key=lambda n: (n.lineno, n.col_offset),
         )
+        for node in assignments:
+            if (node.lineno, node.col_offset) >= stop:
+                break
+            value = node.value
+            if value is None:
+                continue
+            source = aliases.get(value.id) if isinstance(value, ast.Name) else None
+            for name in _assigned_names(node):
+                if source is None:
+                    aliases.pop(name, None)
+                else:
+                    aliases[name] = source
+        return aliases
+
+    @staticmethod
+    def _delegated_resource_keys(
+        call: ast.Call, target: _ResolvedMethod, aliases: dict[str, str]
+    ) -> set[str]:
+        """Caller resource keys passed into the delegated method's resource parameters."""
+
+        def roots(value: ast.expr) -> set[str]:
+            return {
+                aliases[node.id]
+                for node in ast.walk(value)
+                if isinstance(node, ast.Name) and node.id in aliases
+            }
+
+        parameters = target.method.args.posonlyargs + target.method.args.args
+        resource_parameters = {arg.arg for arg in parameters[1:]}
+        resource_parameters |= {
+            arg.arg for arg in target.method.args.kwonlyargs if arg.arg.endswith("_id")
+        }
+        keys: set[str] = set()
+        for parameter, value in zip(parameters[1:], call.args, strict=False):
+            if parameter.arg in resource_parameters:
+                keys |= roots(value)
+        for keyword in call.keywords:
+            if keyword.arg in resource_parameters:
+                keys |= roots(keyword.value)
+        return keys
+
+    @staticmethod
+    def _validates_loaded_resource(target: _ResolvedMethod) -> bool:
+        """Whether a delegated method returns or enforces a loaded resource."""
+        name = target.method.name
+        return name.startswith(("_load", "_require", "_ensure", "_get")) or (
+            name.startswith("get") and _COLLECTION_REPO_READ.match(name) is None
+        )
+
+    def _preserves_loaded_object(
+        self, owner: str, method: _Func, statement: ast.Assign | ast.AnnAssign, names: set[str]
+    ) -> set[str]:
+        """Names reassigned to the same object or a by-id reload of that object."""
+        value = statement.value
+        if isinstance(value, ast.Await):
+            value = value.value
+        if not isinstance(value, ast.Call):
+            return set()
+        target = self._resolve_call(owner, method, value)
+        if target is None:
+            return set()
+        parameters = target.method.args.posonlyargs + target.method.args.args
+        bound: set[str] = set()
+        for parameter, argument in zip(parameters[1:], value.args, strict=False):
+            if isinstance(argument, ast.Name) and argument.id in names:
+                bound.add(parameter.arg)
+        for keyword in value.keywords:
+            if (
+                keyword.arg is not None
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id in names
+            ):
+                bound.add(keyword.arg)
+        if not bound:
+            return set()
+
+        def is_reload(node: ast.AST) -> bool:
+            source = node.value if isinstance(node, ast.Await) else node
+            return (
+                isinstance(source, ast.Call)
+                and _is_repository_call(source)
+                and _name_of(source.func) is not None
+                and _BY_ID_REPO_READ.match(_name_of(source.func) or "") is not None
+                and bool(bound.intersection(_call_argument_roots(source)))
+            )
+
+        def returns_loaded_object(expression: ast.expr) -> bool:
+            if isinstance(expression, ast.IfExp):
+                return returns_loaded_object(expression.body) and returns_loaded_object(
+                    expression.orelse
+                )
+            if not isinstance(expression, ast.Name):
+                return False
+            if expression.id in bound:
+                return True
+            for assignment in ast.walk(target.method):
+                if not isinstance(assignment, ast.Assign | ast.AnnAssign):
+                    continue
+                if expression.id not in set(_assigned_names(assignment)):
+                    continue
+                if assignment.value is not None and is_reload(assignment.value):
+                    return True
+            return False
+
+        returns = [node for node in ast.walk(target.method) if isinstance(node, ast.Return)]
+        if not returns or any(
+            node.value is None or not returns_loaded_object(node.value) for node in returns
+        ):
+            return set()
+        return {
+            argument.id for argument in ast.walk(value) if isinstance(argument, ast.Name)
+        } & names
+
+    def _validated_loads(
+        self,
+        owner: str,
+        method: _Func,
+        calls: list[ast.Call],
+        filter_parameters: frozenset[str],
+        seen: frozenset[tuple[str, str]],
+    ) -> dict[ast.Call, ast.Call]:
+        """Map an enforcing validator to the exact assigned load it validates."""
+        enforcing = self._enforcing_identity_calls(method, None)
+        validators: dict[ast.Call, ast.Call] = {}
+        for load in calls:
+            name = _name_of(load.func)
+            if not _is_repository_call(load) or name is None or not _BY_ID_REPO_READ.match(name):
+                continue
+            loaded_names = _assigned_call_names(method, load)
+            if not loaded_names:
+                continue
+            for candidate in calls:
+                if (candidate.lineno, candidate.col_offset) <= (load.lineno, load.col_offset):
+                    continue
+                if not _receives_whole_identity(candidate):
+                    continue
+                if not loaded_names.intersection(_call_argument_roots(candidate)):
+                    continue
+                reassigned = False
+                for statement in ast.walk(method):
+                    if (
+                        not isinstance(statement, ast.Assign | ast.AnnAssign)
+                        or statement.value is None
+                    ):
+                        continue
+                    position = (statement.lineno, statement.col_offset)
+                    if (
+                        not (load.lineno, load.col_offset)
+                        < position
+                        < (
+                            candidate.lineno,
+                            candidate.col_offset,
+                        )
+                    ):
+                        continue
+                    if any(node is candidate for node in ast.walk(statement.value)):
+                        continue
+                    if loaded_names.intersection(_assigned_names(statement)):
+                        reassigned = True
+                        break
+                if reassigned:
+                    continue
+                if candidate in enforcing:
+                    validators[candidate] = load
+                    break
+                target = self._resolve_call(owner, method, candidate)
+                if target is None or not self._validates_loaded_resource(target):
+                    continue
+                live = self._filter_aliases(method, candidate, set(filter_parameters))
+                if self._delegation_scopes_call(owner, method, candidate, live, seen):
+                    validators[candidate] = load
+                    break
+        return validators
 
     def _filter_reaches_repository(
         self,
@@ -441,21 +711,87 @@ class _ServiceIndex:
         key = (owner, method.name)
         if key in seen:
             return False
-        # The resource identifiers this method was handed (``thing_id`` etc.); a
-        # filters-less repository call is only a by-id occurrence when it consumes one.
         positional = method.args.posonlyargs + method.args.args
         resource_params = {arg.arg for arg in positional[1:]} - {"self"}
-        resource_params |= {arg.arg for arg in method.args.kwonlyargs} - {"identity"}
+        resource_params |= {arg.arg for arg in method.args.kwonlyargs if arg.arg.endswith("_id")}
         calls = sorted(
             (n for n in ast.walk(method) if isinstance(n, ast.Call)),
             key=lambda n: (n.lineno, n.col_offset),
         )
+        returned_names = {
+            node.id
+            for statement in ast.walk(method)
+            if isinstance(statement, ast.Return) and statement.value is not None
+            for node in ast.walk(statement.value)
+            if isinstance(node, ast.Name)
+        }
+        returned_calls = {
+            call
+            for statement in ast.walk(method)
+            if isinstance(statement, ast.Return) and statement.value is not None
+            for call in ast.walk(statement.value)
+            if isinstance(call, ast.Call)
+        }
+        for statement in ast.walk(method):
+            if not isinstance(statement, ast.Assign | ast.AnnAssign):
+                continue
+            if (
+                not returned_names.intersection(_assigned_names(statement))
+                or statement.value is None
+            ):
+                continue
+            returned_calls.update(
+                call for call in ast.walk(statement.value) if isinstance(call, ast.Call)
+            )
+        validators = self._validated_loads(owner, method, calls, filter_parameters, seen)
+        validated_loads = set(validators.values())
+        assignments = sorted(
+            (n for n in ast.walk(method) if isinstance(n, ast.Assign | ast.AnnAssign)),
+            key=lambda n: (n.lineno, n.col_offset),
+        )
         found_sensitive = False
-        # Resource keys (method resource params) authorized by a scoped load so far.
         scoped_keys: set[str] = set()
+        scoped_values: set[str] = set()
+        pending_values: set[str] = set()
+        last_position = (0, 0)
         for call in calls:
+            call_position = (call.lineno, call.col_offset)
+            for statement in assignments:
+                position = (statement.lineno, statement.col_offset)
+                if position < last_position:
+                    continue
+                if position >= call_position:
+                    break
+                names = set(_assigned_names(statement))
+                candidates = names & scoped_values
+                preserved = (
+                    self._preserves_loaded_object(owner, method, statement, candidates)
+                    if candidates
+                    else set()
+                )
+                scoped_values.difference_update(names - preserved)
+                pending_values.difference_update(names)
+            last_position = call_position
             live = self._filter_aliases(method, call, set(filter_parameters))
+            aliases = self._resource_aliases(method, call, resource_params)
+            used = {aliases[name] for name in _call_argument_names(call) if name in aliases}
+            validated_load = validators.get(call)
+            if validated_load is not None:
+                load_aliases = self._resource_aliases(method, validated_load, resource_params)
+                scoped_keys |= {
+                    load_aliases[name]
+                    for name in _call_argument_names(validated_load)
+                    if name in load_aliases
+                }
+                scoped_values |= _assigned_call_names(method, validated_load)
+                found_sensitive = True
             if _is_repository_call(call):
+                name = _name_of(call.func)
+                if call in validated_loads:
+                    pending_values |= _assigned_call_names(method, call)
+                related_roots = _call_attribute_roots(call) - {"self", "identity"}
+                pending_related = related_roots.intersection(pending_values) - scoped_values
+                unscoped_related = related_roots - scoped_values - pending_values
                 filter_kws = [
                     kw for kw in call.keywords if kw.arg is not None and kw.arg.endswith("filters")
                 ]
@@ -466,75 +802,138 @@ class _ServiceIndex:
                         for kw in filter_kws
                     )
                     if not scoped:
-                        # A filters argument that is not a live identity filter (e.g.
-                        # after reassignment) is a hard violation; nothing rescues it.
                         return False
                     found_sensitive = True
-                    scoped_keys |= resource_params & _call_argument_names(call)
+                    scoped_keys |= used
+                    if name is not None and _BY_ID_REPO_READ.match(name):
+                        scoped_values |= _assigned_call_names(method, call)
                     continue
-                # A by-id read of a resource this method has NOT yet scoped is an
-                # unscoped occurrence: a scoped load on a different key does not
-                # authorize it. Reads of an already-scoped key (a re-read inside the
-                # authorized transaction) and auxiliary calls are fine.
-                name = _name_of(call.func)
-                if name is not None and _BY_ID_REPO_READ.match(name):
-                    used = resource_params & _call_argument_names(call)
-                    if used - scoped_keys:
-                        return False
+                if (
+                    name is not None
+                    and _BY_ID_REPO_READ.match(name)
+                    and call not in validated_loads
+                    and (
+                        used - scoped_keys
+                        or (not used and unscoped_related)
+                        or (call in returned_calls and pending_related)
+                    )
+                ):
+                    return False
+                if (
+                    name is not None
+                    and _COLLECTION_REPO_READ.match(name)
+                    and call in returned_calls
+                    and (
+                        used - scoped_keys or (not used and (unscoped_related or not related_roots))
+                    )
+                ):
+                    return False
+                returns_resource = name is not None and (
+                    _BY_ID_REPO_READ.match(name) is not None
+                    or not name.startswith(
+                        ("get", "list", "count", "search", "stream", "export", "iter")
+                    )
+                )
+                if used & scoped_keys and returns_resource:
+                    scoped_values |= _assigned_call_names(method, call)
                 continue
-            carries = any(
+            carries_filter = any(
                 _is_identity_filter(value) or (isinstance(value, ast.Name) and value.id in live)
                 for value in _argument_values(call)
             )
-            if carries and self._delegation_scopes_call(owner, method, call, live, seen):
+            if not (carries_filter or _receives_whole_identity(call)):
+                continue
+            if self._delegation_scopes_call(owner, method, call, live, seen):
                 found_sensitive = True
-                scoped_keys |= resource_params & _call_argument_names(call)
+                target = self._resolve_call(owner, method, call)
+                if target is not None and self._validates_loaded_resource(target):
+                    scoped_keys |= self._delegated_resource_keys(call, target, aliases)
+                    scoped_values |= _assigned_call_names(method, call)
         return found_sensitive
 
-    def _predicate_enforces(self, owner: str, method: _Func) -> bool:
-        """Whether a documented boolean predicate's result controls an enforcing branch.
+    def _enforcing_identity_calls(
+        self, method: _Func, predicate_names: set[str] | None
+    ) -> set[ast.Call]:
+        """Identity predicate calls whose false result reaches denying control flow."""
+        enforced: set[ast.Call] = set()
 
-        Matched by called method name so it holds whether or not the predicate body is
-        resolvable in the indexed sources (mixins are indexed separately). The predicate
-        names are unique to these authorizers.
-        """
+        def denies(statements: list[ast.stmt]) -> bool:
+            for statement in statements:
+                for node in ast.walk(statement):
+                    if isinstance(node, ast.Raise):
+                        return True
+                    if isinstance(node, ast.Return) and (
+                        node.value is None
+                        or (
+                            isinstance(node.value, ast.Constant)
+                            and node.value.value in {None, False}
+                        )
+                    ):
+                        return True
+            return False
+
+        def returns(statements: list[ast.stmt]) -> bool:
+            return any(
+                isinstance(node, ast.Return)
+                for statement in statements
+                for node in ast.walk(statement)
+            )
+
+        def predicate_polarities(
+            node: ast.expr, negated: bool = False
+        ) -> Iterator[tuple[ast.Call, bool]]:
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                yield from predicate_polarities(node.operand, not negated)
+                return
+            if isinstance(node, ast.Call):
+                name = _name_of(node.func)
+                is_predicate = (
+                    name is not None and name.startswith(("_can_", "_may_", "_is_", "_has_"))
+                    if predicate_names is None
+                    else name in predicate_names
+                )
+                if is_predicate and _receives_whole_identity(node):
+                    yield node, negated
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.expr):
+                    yield from predicate_polarities(child, negated)
+
+        def block(statements: list[ast.stmt]) -> None:
+            for index, statement in enumerate(statements):
+                if isinstance(statement, ast.If):
+                    for call, negated in predicate_polarities(statement.test):
+                        if negated and denies(statement.body):
+                            enforced.add(call)
+                        if not negated and denies(statement.orelse):
+                            enforced.add(call)
+                        if (
+                            not negated
+                            and returns(statement.body)
+                            and denies(statements[index + 1 :])
+                        ):
+                            enforced.add(call)
+                for field in ("body", "orelse", "finalbody"):
+                    nested = getattr(statement, field, [])
+                    if nested:
+                        block(nested)
+                for handler in getattr(statement, "handlers", []):
+                    block(handler.body)
+
+        block(method.body)
+        return enforced
+
+    def _predicate_enforces(self, owner: str, method: _Func) -> bool:
+        """Whether a false documented predicate reaches a denying control-flow branch."""
         predicate_names = {key.rsplit(".", 1)[1] for key in _BOOLEAN_AUTHORIZATION_PREDICATES}
-        for node in ast.walk(method):
-            if not isinstance(node, ast.If):
-                continue
-            for sub in ast.walk(node.test):
-                if not isinstance(sub, ast.Call) or not _receives_whole_identity(sub):
-                    continue
-                if _name_of(sub.func) in predicate_names:
-                    return True
-        return False
+        return bool(self._enforcing_identity_calls(method, predicate_names))
 
     def is_authorized(
         self, owner: str, method: _Func, seen: frozenset[tuple[str, str]] = frozenset()
     ) -> bool:
         """Accept repository-bound filters or delegation to a proven authorizer."""
-        key = (owner, method.name)
-        if key in seen:
-            return False
-        if self._filter_reaches_repository(owner, method):
-            return True
-        if self._predicate_enforces(owner, method):
-            return True
-        for call in ast.walk(method):
-            if not isinstance(call, ast.Call) or not _receives_whole_identity(call):
-                continue
-            target = self._resolve_call(owner, method, call)
-            if target is None:
-                continue
-            explicit_keys = {
-                f"{target.owner}.{target.method.name}",
-                f"{owner}.{target.method.name}",
-            }
-            if explicit_keys & _EXPLICIT_AUTHORIZATION_HELPERS.keys():
-                return True
-            if self.is_authorized(target.owner, target.method, seen | {key}):
-                return True
-        return False
+        return self._filter_reaches_repository(
+            owner, method, seen=seen
+        ) or self._predicate_enforces(owner, method)
 
 
 def _by_id_methods_in_tree(tree: ast.Module, py_file: Path) -> dict[str, tuple[Path, int, bool]]:
@@ -741,3 +1140,216 @@ def test_mixin_resolution_uses_c3_mro() -> None:
     methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
     # C3: DiamondService -> Left -> Right -> Root, so Right.get wins and is unscoped.
     assert methods["DiamondService.get"][2] is False
+
+
+@pytest.mark.arch
+def test_predicate_test_must_enforce_denial() -> None:
+    """Self-check: logging or passing on a false predicate does not deny access."""
+    tree = ast.parse(
+        "class CredentialService:\n"
+        "    async def mutate_log(self, rule_set_id: str, *, identity: Identity):\n"
+        "        if not self._may_mutate_rule_set(rule_set_id, identity):\n"
+        "            logger.info('denied')\n"
+        "        return await ThingRepository.get_by_id(rule_set_id)\n"
+        "    async def mutate_pass(self, rule_set_id: str, *, identity: Identity):\n"
+        "        if not self._may_mutate_rule_set(rule_set_id, identity):\n"
+        "            pass\n"
+        "        return await ThingRepository.get_by_id(rule_set_id)\n"
+        "    async def mutate_raise(self, rule_set_id: str, *, identity: Identity):\n"
+        "        if not self._may_mutate_rule_set(rule_set_id, identity):\n"
+        "            raise Denied(rule_set_id)\n"
+        "        return await ThingRepository.get_by_id(rule_set_id)\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    actual = {name: result[2] for name, result in methods.items()}
+    assert actual == {
+        "CredentialService.mutate_log": False,
+        "CredentialService.mutate_pass": False,
+        "CredentialService.mutate_raise": True,
+    }
+
+
+@pytest.mark.arch
+def test_filter_builder_requires_caller_identity_provenance() -> None:
+    """Self-check: only the caller or its validated refreshed identity scopes a filter."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def get_other(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(other_identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def get_without_identity(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def get_refreshed(\n"
+        "        self, thing_id: str, *, identity: Identity, refresh_identity: Refresh\n"
+        "    ):\n"
+        "        refreshed = await refresh_identity()\n"
+        "        filters = build_access_filters(refreshed, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    actual = {name: result[2] for name, result in methods.items()}
+    assert actual == {
+        "ExampleService.get_other": False,
+        "ExampleService.get_without_identity": False,
+        "ExampleService.get_refreshed": True,
+    }
+
+
+@pytest.mark.arch
+def test_unscoped_occurrences_and_resource_aliases_cannot_inherit_scoping() -> None:
+    """Self-check: side queries and other-resource delegation do not authorize reads."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def get_list_side(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        await ThingRepository.get_by_id('other', filters=filters)\n"
+        "        return await ThingRepository.list_all()\n"
+        "    async def get_alias(self, thing_id: str, *, identity: Identity):\n"
+        "        target = thing_id\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        await ThingRepository.get_by_id('other', filters=filters)\n"
+        "        return await ThingRepository.get_by_id(target)\n"
+        "    async def get_delegated_other(self, thing_id: str, *, identity: Identity):\n"
+        "        await self._load_thing('other', identity=identity)\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "    async def get_delegated(self, thing_id: str, *, identity: Identity):\n"
+        "        return await self._load_thing(thing_id, identity=identity)\n"
+        "    async def _load_thing(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    actual = {name: result[2] for name, result in methods.items()}
+    assert actual == {
+        "ExampleService.get_list_side": False,
+        "ExampleService.get_alias": False,
+        "ExampleService.get_delegated_other": False,
+        "ExampleService.get_delegated": True,
+    }
+
+
+@pytest.mark.arch
+def test_super_resolution_starts_after_concrete_owner_in_c3_mro() -> None:
+    """Self-check: super() dispatches to Right.get, not Root.get through Left."""
+    tree = ast.parse(
+        "class Root:\n"
+        "    async def get(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "class Left(Root):\n"
+        "    pass\n"
+        "class Right(Root):\n"
+        "    async def get(self, thing_id: str, *, identity: Identity):\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "class DiamondService(Left, Right):\n"
+        "    async def get(self, thing_id: str, *, identity: Identity):\n"
+        "        return await super().get(thing_id, identity=identity)\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    assert methods["DiamondService.get"][2] is False
+
+
+@pytest.mark.arch
+def test_shared_rule_set_exception_is_exactly_named() -> None:
+    """The shared policy exception does not authorize lookalikes or side-query reads."""
+    tree = ast.parse(
+        "class CredentialService:\n"
+        "    async def get_rule_set(self, rule_set_id: str, *, identity: Identity):\n"
+        "        rule_set = await PermissionRuleSetRepository.get_by_id(rule_set_id)\n"
+        "        rules = await PermissionRuleSetRepository.list_rules(rule_set_id)\n"
+        "        count = await self._visible_binding_count_for_rule_set(\n"
+        "            rule_set_id, identity=identity\n"
+        "        )\n"
+        "        return rule_set, rules, count\n"
+        "    async def get_other_rule_set(self, rule_set_id: str, *, identity: Identity):\n"
+        "        rule_set = await PermissionRuleSetRepository.get_by_id(rule_set_id)\n"
+        "        rules = await PermissionRuleSetRepository.list_rules(rule_set_id)\n"
+        "        count = await self._visible_binding_count_for_rule_set(\n"
+        "            rule_set_id, identity=identity\n"
+        "        )\n"
+        "        return rule_set, rules, count\n"
+        "    async def get_side(self, thing_id: str, *, identity: Identity):\n"
+        "        await self._visible_binding_count_for_rule_set(thing_id, identity=identity)\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "    async def _visible_binding_count_for_rule_set(\n"
+        "        self, rule_set_id: str, *, identity: Identity\n"
+        "    ):\n"
+        "        filters = build_access_filters(identity, Binding)\n"
+        "        return await BindingRepository.count_bindings(rule_set_id, filters=filters)\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    admitted = {
+        name: scoped or name in _ATTRIBUTION_ONLY_ALLOWLIST
+        for name, (_, _, scoped) in methods.items()
+    }
+    assert admitted == {
+        "CredentialService.get_rule_set": True,
+        "CredentialService.get_other_rule_set": False,
+        "CredentialService.get_side": False,
+    }
+    assert not any(scoped for _, _, scoped in methods.values())
+
+
+@pytest.mark.arch
+def test_deferred_validation_scopes_only_the_loaded_object() -> None:
+    """Validated loads authorize their resource; counts and reassignment do not."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def get_validated(self, thing_id: str, *, identity: Identity):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        thing = await self._require_thing(thing, identity=identity)\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def _require_thing(self, thing: Thing, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing.id, filters=filters)\n"
+        "    async def get_predicate_validated(self, thing_id: str, *, identity: Identity):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        if thing is None or not self._can_bind(identity, thing.created_by):\n"
+        "            raise Denied(thing_id)\n"
+        "        return await BindingRepository.get(thing_id)\n"
+        "    async def get_count_side(self, thing_id: str, *, identity: Identity):\n"
+        "        await self._count_visible(thing_id, identity=identity)\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "    async def _count_visible(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.count_visible(thing_id, filters=filters)\n"
+        "    async def get_reassigned(self, thing_id: str, *, identity: Identity):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        thing = other()\n"
+        "        thing = await self._require_thing(thing, identity=identity)\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def get_reassigned_after_validation(\n"
+        "        self, thing_id: str, *, identity: Identity\n"
+        "    ):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        thing = await self._require_thing(thing, identity=identity)\n"
+        "        thing = other()\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def get_transformed(self, thing_id: str, *, identity: Identity):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        thing = await self._require_thing(thing, identity=identity)\n"
+        "        thing = await self._reload(thing)\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def _reload(self, thing: Thing):\n"
+        "        current = await ThingRepository.get_by_id(thing.id)\n"
+        "        return current if current is not None else thing\n"
+        "    async def get_replaced(self, thing_id: str, *, identity: Identity):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        thing = await self._require_thing(thing, identity=identity)\n"
+        "        thing = await self._replace(thing)\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def _replace(self, thing: Thing):\n"
+        "        return other()\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    actual = {name: result[2] for name, result in methods.items()}
+    assert actual == {
+        "ExampleService.get_validated": True,
+        "ExampleService.get_predicate_validated": True,
+        "ExampleService.get_count_side": False,
+        "ExampleService.get_reassigned": False,
+        "ExampleService.get_reassigned_after_validation": False,
+        "ExampleService.get_transformed": True,
+        "ExampleService.get_replaced": False,
+    }
