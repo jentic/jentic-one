@@ -45,14 +45,30 @@ func AssertNoSymlinkComponents(home, path string) error {
 	return nil
 }
 
-// KillAgentProcessesCmd terminates every process owned by agentUser. Reset runs
-// this before privileged filesystem steps so the account cannot continue to
-// mutate its home during teardown. An invalid account name returns nil.
+// KillAgentProcessesCmd terminates every process owned by agentUser. The inner
+// shell maps pkill's documented no-match status to success; sudo failures remain
+// outside that mapping and therefore fail closed. An invalid account name returns nil.
 func KillAgentProcessesCmd(agentUser string) *exec.Cmd {
 	if err := ValidateAgentUser(agentUser); err != nil {
 		return nil
 	}
-	return exec.Command("sudo", "pkill", "-KILL", "-u", agentUser) //nolint:gosec // agentUser is validated by ValidateAgentUser.
+	script := "pkill -KILL -u " + shellQuote(agentUser) + `; status=$?; ` +
+		`if [ "$status" -eq 1 ]; then exit 0; fi; exit "$status"`
+	return withFixedUtilityPATH(exec.Command("sudo", "/bin/sh", "-c", script)) //nolint:gosec // agentUser is validated and shell-quoted.
+}
+
+// AssertNoAgentProcessesCmd succeeds only when pgrep reports the documented
+// no-process status. Surviving processes, probe failures, and sudo failures are
+// all non-zero results. An invalid account name returns nil.
+func AssertNoAgentProcessesCmd(agentUser string) *exec.Cmd {
+	if err := ValidateAgentUser(agentUser); err != nil {
+		return nil
+	}
+	script := "pgrep -u " + shellQuote(agentUser) + `; status=$?; ` +
+		`if [ "$status" -eq 1 ]; then exit 0; fi; ` +
+		`if [ "$status" -eq 0 ]; then printf '%s\n' 'agent processes are still running' >&2; exit 2; fi; ` +
+		`exit "$status"`
+	return withFixedUtilityPATH(exec.Command("sudo", "/bin/sh", "-c", script)) //nolint:gosec // agentUser is validated and shell-quoted.
 }
 
 // RemoveAsAgentCmd removes paths with agentUser's own OS permissions. The
@@ -63,5 +79,5 @@ func RemoveAsAgentCmd(agentUser string, paths []string) *exec.Cmd {
 		return nil
 	}
 	args := append([]string{"-u", agentUser, "--", "/bin/rm", "-rf", "--"}, paths...)
-	return exec.Command("sudo", args...) //nolint:gosec // agentUser is validated and paths are passed as direct argv.
+	return withFixedUtilityPATH(exec.Command("sudo", args...)) //nolint:gosec // agentUser is validated and paths are passed as direct argv.
 }

@@ -67,20 +67,11 @@ type AccountStep struct {
 	What string
 	// Cmd is the command to run; it is sudo-fronted where elevation is required.
 	Cmd *exec.Cmd
-	// BestEffort marks a step whose non-zero exit should be reported but not abort
-	// the run. Used by reset for re-owning/deleting the agent home: a macOS home
-	// materialised by createhomedir can contain SIP/TCC-protected template files (e.g.
-	// Library/Mail, Library/Containers) that NOBODY — not even root — can chown or
-	// remove, so the operation processes everything it can and then exits non-zero
-	// on those. That is expected and harmless (the agent's actual work is re-owned),
-	// so it must not stop the teardown before the account is deleted.
+	// BestEffort marks a per-entry ACL revocation whose non-zero exit should be
+	// reported but not abort the run. Credential, process, and home steps fail closed.
 	BestEffort bool
-	// FallbackCmd runs when Cmd cannot complete a removal with the agent's own
-	// privileges. Callers re-check NoSymlinkPaths before either command.
-	FallbackCmd *exec.Cmd
 	// NoSymlinkHome and NoSymlinkPaths identify the removal paths whose existing
-	// components must pass AssertNoSymlinkComponents immediately before Cmd and
-	// FallbackCmd run.
+	// components must pass AssertNoSymlinkComponents immediately before Cmd runs.
 	NoSymlinkHome  string
 	NoSymlinkPaths []string
 }
@@ -104,9 +95,13 @@ func recursiveChownCmd(owner, dir string, force bool) *exec.Cmd {
 	if force {
 		flags = "-fh"
 	}
-	args := append([]string{"find", dir}, chownWalkFilter...)
-	args = append(args, "-execdir", "chown", flags, owner, "{}", "+")
-	return exec.Command("sudo", args...) //nolint:gosec // owner is a config account name; dir is a resolved path.
+	chownPath := "/bin/chown"
+	if runtime.GOOS == "darwin" {
+		chownPath = "/usr/sbin/chown"
+	}
+	args := append([]string{"/usr/bin/find", dir}, chownWalkFilter...)
+	args = append(args, "-execdir", chownPath, flags, owner, "{}", "+")
+	return withFixedUtilityPATH(exec.Command("sudo", args...)) //nolint:gosec // owner is a config account name; dir is a resolved path.
 }
 
 // AncestorChain returns the directories an older release stamped with an
@@ -204,10 +199,9 @@ func aclUserNeedle(agentUser string) string {
 // ReownHomeCmd changes ownership of the agent's home tree to the operator, so
 // after the agent account is deleted the operator can still read the agent's
 // work. It is the default `jentic reset` disposition for the home (preserve, not
-// delete). The `-f` suppresses per-file errors on the SIP/TCC-protected template
-// files a macOS home carries (Library/Mail, Library/Containers, …) that nobody
-// can chown; the command still re-owns everything it can, and reset treats it as
-// best-effort so those unavoidable entries don't abort the teardown. The `-h`
+// delete). The `-f` suppresses per-file diagnostics on SIP/TCC-protected template
+// files a macOS home carries (Library/Mail, Library/Containers, …); a resulting
+// non-zero status aborts reset with its account record intact. The `-h`
 // (no-dereference) is a security boundary, not a nicety: the tree is agent-owned,
 // so the agent could plant a symlink to a file OUTSIDE it (e.g. /etc/passwd) and a
 // dereferencing recursive chown would re-own that target to the operator. With
@@ -218,20 +212,26 @@ func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 	return recursiveChownCmd(operator, homeDir, true)
 }
 
-// DeleteHomeCmd permanently removes the agent's home tree. `jentic reset` runs it
-// ONLY when the operator has separately and explicitly accepted home deletion
-// (the second runtime confirmation, or --delete-home paired with --force) — never
-// by default. Runs as root.
+// DeleteHomeCmd permanently removes a local account's home tree. Runs as root.
 func DeleteHomeCmd(homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", homeDir) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
 }
 
+// DeleteAgentHomeCmd permanently removes a legacy agent's home tree. `jentic reset`
+// runs it ONLY when the operator has separately and explicitly accepted home deletion
+// (the second runtime confirmation, or --delete-home paired with --force) — never
+// by default. Absolute rm and physical traversal keep deletion within the validated
+// managed home without following encountered symlinks. Runs as root.
+func DeleteAgentHomeCmd(homeDir string) *exec.Cmd {
+	return withFixedUtilityPATH(exec.Command("sudo", "/bin/rm", "-rf", "--", homeDir)) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
+}
+
 // RemoveAgentIdentityCmd permanently removes the agent's own jentic identity
 // dirs (see AgentIdentityDirs: the exported XDG config/state trees plus the
-// legacy ~/.jentic — registration, tokens, and signing key). `jentic reset`
-// runs it even when the agent's home is KEPT, so no credential material
-// outlives the account in the re-owned home. This elevated builder serves an
-// orphaned home and the checked fallback when run-as-agent removal is denied.
+// legacy ~/.jentic — registration, tokens, and signing key). Reset performs this
+// cleanup even when the agent's home is KEPT, using RemoveAsAgentCmd rather than
+// this elevated builder, so no credential material outlives the account in the
+// re-owned home.
 // `rm -f` makes absent dirs a no-op. Returns nil when there is nothing to
 // remove. `--` ends option parsing so a path can never be mistaken for an rm
 // flag.
@@ -378,11 +378,10 @@ func SeededConfigDirs(agentHome string) []string {
 	return out
 }
 
-// ScrubSeededConfigCmd removes component-checked seeded-config paths from an
-// orphaned kept home or from the checked elevated fallback. Recursive (`rm -rf`)
-// handles directories, and every path is pre-constrained to the agent's home by
-// SeededConfigDirs. Returns nil when there is nothing to scrub so the caller can
-// skip the step cleanly.
+// ScrubSeededConfigCmd removes component-checked seeded-config paths. Recursive
+// (`rm -rf`) handles directories, and every path is pre-constrained to the agent's
+// home by SeededConfigDirs. Reset uses RemoveAsAgentCmd rather than this elevated
+// builder. Returns nil when there is nothing to scrub.
 func ScrubSeededConfigCmd(paths []string) *exec.Cmd {
 	if len(paths) == 0 {
 		return nil
@@ -412,6 +411,21 @@ func expandTilde(p, home string) string {
 // through whatever PATH the invoking environment carried (sudo keeps the
 // caller's PATH when sudoers sets no secure_path, as on macOS).
 const agentSystemPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// withFixedUtilityPATH removes inherited PATH entries and appends the fixed
+// absolute-only utility path used by privileged teardown commands.
+func withFixedUtilityPATH(cmd *exec.Cmd) *exec.Cmd {
+	env := os.Environ()
+	filtered := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "PATH=") {
+			filtered = append(filtered, entry)
+		}
+	}
+	filtered = append(filtered, "PATH="+agentSystemPATH)
+	cmd.Env = filtered
+	return cmd
+}
 
 // fixedPATHPrefix pins PATH to agentSystemPATH at the top of a shell script.
 const fixedPATHPrefix = "PATH=" + agentSystemPATH + "; export PATH; "

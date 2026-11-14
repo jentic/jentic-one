@@ -12,6 +12,7 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 )
 
 // TestSurveyResetPlan checks the plan is built from the account record and includes
@@ -134,13 +135,26 @@ func TestResetIdentityScrubDoesNotFollowAgentSymlink(t *testing.T) {
 	}
 
 	plan := resetPlan{
-		user:     "alice-local-agent",
-		homeDir:  home,
-		operator: "alice",
+		user:          "alice-local-agent",
+		homeDir:       home,
+		operator:      "alice",
+		accountExists: true,
 	}
+	refused := 0
 	for _, step := range buildResetSteps(plan, false) {
 		if !strings.Contains(step.What, "jentic identity") &&
 			!strings.Contains(step.What, "seeded agent/provider config") {
+			continue
+		}
+		unsafe := false
+		for _, path := range step.NoSymlinkPaths {
+			if err := localagent.AssertNoSymlinkComponents(step.NoSymlinkHome, path); err != nil {
+				refused++
+				unsafe = true
+				break
+			}
+		}
+		if unsafe {
 			continue
 		}
 		args := step.Cmd.Args
@@ -148,10 +162,16 @@ func TestResetIdentityScrubDoesNotFollowAgentSymlink(t *testing.T) {
 			t.Fatalf("removal command is not sudo-fronted: %v", args)
 		}
 		args = args[1:]
+		if args[0] == "-u" {
+			args = args[3:]
+		}
 		cmd := exec.Command(args[0], args[1:]...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("replay %v: %v\n%s", args, err, output)
 		}
+	}
+	if refused == 0 {
+		t.Fatal("adversarial replay did not exercise a refused symlinked path")
 	}
 
 	for _, dir := range []string{
@@ -164,25 +184,28 @@ func TestResetIdentityScrubDoesNotFollowAgentSymlink(t *testing.T) {
 	}
 }
 
-// TestBuildResetStepsKillsAgentFirst pins process termination ahead of every
-// privileged filesystem operation while the legacy account still exists.
+// TestBuildResetStepsKillsAgentFirst pins fail-closed process termination and
+// quiescence verification ahead of every privileged filesystem operation.
 func TestBuildResetStepsKillsAgentFirst(t *testing.T) {
 	steps := buildResetSteps(resetPlan{user: "alice-local-agent", accountExists: true}, false)
-	if len(steps) == 0 {
-		t.Fatal("expected reset steps")
+	if len(steps) < 2 {
+		t.Fatalf("expected termination and quiescence steps, got %v", steps)
 	}
-	first := steps[0]
-	want := "sudo pkill -KILL -u alice-local-agent"
-	if got := strings.Join(first.Cmd.Args, " "); got != want {
-		t.Errorf("first reset command = %q, want %q", got, want)
+	if got := strings.Join(steps[0].Cmd.Args, " "); !strings.Contains(got, "pkill -KILL -u 'alice-local-agent'") {
+		t.Errorf("first reset command = %q, want validated pkill", got)
 	}
-	if !first.BestEffort {
-		t.Error("process termination must tolerate an account with no running processes")
+	if got := strings.Join(steps[1].Cmd.Args, " "); !strings.Contains(got, "pgrep -u 'alice-local-agent'") {
+		t.Errorf("second reset command = %q, want quiescence pgrep", got)
+	}
+	for _, step := range steps[:2] {
+		if step.BestEffort {
+			t.Errorf("process safety step %q must not be best-effort", step.What)
+		}
 	}
 }
 
 // TestBuildResetStepsRunsScrubAsAgentWhenAccountExists keeps deletion within
-// the agent's own OS permissions and retains a checked elevated fallback.
+// the agent's own OS permissions without an elevated subpath fallback.
 func TestBuildResetStepsRunsScrubAsAgentWhenAccountExists(t *testing.T) {
 	steps := buildResetSteps(resetPlan{
 		user:          "alice-local-agent",
@@ -201,8 +224,8 @@ func TestBuildResetStepsRunsScrubAsAgentWhenAccountExists(t *testing.T) {
 		if !strings.HasPrefix(got, "sudo -u alice-local-agent -- /bin/rm -rf -- ") {
 			t.Errorf("removal must run as the agent: %s", got)
 		}
-		if step.FallbackCmd == nil || !strings.HasPrefix(strings.Join(step.FallbackCmd.Args, " "), "sudo rm -rf -- ") {
-			t.Errorf("removal must retain an elevated fallback: %v", step.FallbackCmd)
+		if step.BestEffort {
+			t.Errorf("credential removal %q must fail closed", step.What)
 		}
 	}
 	if checked != 2 {
@@ -210,9 +233,10 @@ func TestBuildResetStepsRunsScrubAsAgentWhenAccountExists(t *testing.T) {
 	}
 }
 
-// TestResetSkipsSymlinkedIdentityDir checks both the displayed skip and the
-// removal argv for a symlinked intermediate component.
-func TestResetSkipsSymlinkedIdentityDir(t *testing.T) {
+// TestResetRefusesSymlinkedIdentityDir checks that a refused component is a
+// fatal safety gate, preserves the account record, and leaves operator config intact.
+func TestResetRefusesSymlinkedIdentityDir(t *testing.T) {
+	withXDG(t)
 	root := t.TempDir()
 	home := filepath.Join(root, "agent-home")
 	operatorConfig := filepath.Join(root, "operator", ".config")
@@ -230,25 +254,32 @@ func TestResetSkipsSymlinkedIdentityDir(t *testing.T) {
 		HomeDir: home,
 	})
 	out := &bytes.Buffer{}
-	a := &app{App: &cmdcore.App{Out: out}}
+	a := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
+	if err := errSeedAgentState(a.Paths, config.AgentAccount{User: plan.user, HomeDir: home}); err != nil {
+		t.Fatal(err)
+	}
 	a.printResetPlan(plan)
-	if got := out.String(); !strings.Contains(got, "skipped: symlinked path component") {
-		t.Errorf("reset plan must name the symlink skip, got:\n%s", got)
+	if got := out.String(); !strings.Contains(got, "refused: symlinked path component") {
+		t.Errorf("reset plan must name the refused path, got:\n%s", got)
 	}
 
-	for _, step := range buildResetSteps(plan, false) {
-		if !strings.Contains(step.What, "jentic identity") &&
-			!strings.Contains(step.What, "seeded agent/provider config") {
-			continue
-		}
-		args := strings.Join(step.Cmd.Args, " ")
-		for _, skipped := range []string{
-			filepath.Join(home, ".config", "jentic"),
-			filepath.Join(home, ".config", "gcloud"),
-		} {
-			if strings.Contains(args, skipped) {
-				t.Errorf("removal argv contains refused path %s: %s", skipped, args)
-			}
+	err := a.execAccountReset(a.Paths, plan, false)
+	if err == nil || !strings.Contains(err.Error(), "refused removal path") {
+		t.Fatalf("reset must abort on the refused component, got %v", err)
+	}
+	if got := out.String(); strings.Contains(got, "Reset complete") || strings.Contains(got, "were cleared") {
+		t.Errorf("incomplete reset emitted credential-clearing success output:\n%s", got)
+	}
+	st, loadErr := config.LoadAgentState(a.Paths)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if _, ok := st.AgentAccount(); !ok {
+		t.Error("refused reset must preserve the account record for repair and retry")
+	}
+	for _, dir := range []string{filepath.Join(operatorConfig, "jentic"), filepath.Join(operatorConfig, "gcloud")} {
+		if _, statErr := os.Stat(dir); statErr != nil {
+			t.Errorf("operator config %s must survive refused reset: %v", dir, statErr)
 		}
 	}
 }
@@ -288,6 +319,7 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	// credential material never outlives the account and a re-setup can't
 	// resurrect a torn-down agent.
 	idxKill := indexOfContains(whats, "terminate all processes")
+	idxQuiesce := indexOfContains(whats, "verify no processes remain")
 	idxLeaf := indexOfContains(whats, "read/write grant on /Users/alice/projects/api")
 	idxTraverse := indexOfContains(whats, "traverse grant on /Users/alice")
 	idxIdentity := indexOfContains(whats, "remove the agent's jentic identity")
@@ -310,24 +342,19 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 			}
 		}
 	}
-	if idxKill != 0 || idxLeaf < 0 || idxLeaf >= idxTraverse || idxTraverse >= idxIdentity || idxIdentity >= idxHome || idxHome >= idxSudoers || idxSudoers >= idxAccount {
-		t.Fatalf("steps out of order: kill=%d leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
-			idxKill, idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
+	if idxKill != 0 || idxQuiesce != 1 || idxLeaf < 0 || idxLeaf >= idxTraverse || idxTraverse >= idxIdentity || idxIdentity >= idxHome || idxHome >= idxSudoers || idxSudoers >= idxAccount {
+		t.Fatalf("steps out of order: kill=%d quiesce=%d leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
+			idxKill, idxQuiesce, idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
+	}
+	if idxHome > 0 && !strings.Contains(steps[idxHome-1].What, "verify no processes remain") {
+		t.Errorf("quiescence must be rechecked immediately before re-owning: %v", whats)
 	}
 
-	// Best-effort steps: process termination (no processes is a successful
-	// outcome), the home step (a macOS home has SIP/TCC-protected files
-	// nobody can chown/remove), both ACL revokes (their macOS `chmod -a` exits
-	// non-zero on entries that don't carry the exact ACE — subtree entries for the
-	// recursive leaf revoke, a drifted/re-shaped ancestor for the traverse revoke),
-	// and the seeded-config scrub (a seeded dir may be absent). None must abort the
-	// teardown; nothing else is best-effort.
+	// Only per-entry ACL revocation failures are benign. Process safety,
+	// credential cleanup, and home disposition all abort on failure.
 	for _, s := range steps {
-		wantBestEffort := strings.Contains(s.What, "terminate all processes") ||
-			strings.Contains(s.What, "the agent's home") ||
-			strings.Contains(s.What, "read/write grant on") ||
-			strings.Contains(s.What, "traverse grant on") ||
-			strings.Contains(s.What, "seeded agent/provider config")
+		wantBestEffort := strings.Contains(s.What, "read/write grant on") ||
+			strings.Contains(s.What, "traverse grant on")
 		if s.BestEffort != wantBestEffort {
 			t.Errorf("step %q BestEffort=%v, want %v", s.What, s.BestEffort, wantBestEffort)
 		}
@@ -379,6 +406,166 @@ func TestBuildResetStepsSkipsMissingAccount(t *testing.T) {
 		if strings.Contains(s.What, "delete the Unix account") {
 			t.Errorf("must not delete a non-existent account: %q", s.What)
 		}
+	}
+}
+
+// TestBuildResetStepsOrphanKeepHomeHasNoMutations refuses an orphaned kept
+// home because no run-as identity or process-quiescence proof is available.
+func TestBuildResetStepsOrphanKeepHomeHasNoMutations(t *testing.T) {
+	steps := buildResetSteps(resetPlan{
+		user:     "alice-local-agent",
+		homeDir:  "/Users/Shared/alice-local-agent",
+		operator: "alice",
+	}, false)
+	if len(steps) != 0 {
+		t.Errorf("orphaned keep-home reset must not schedule mutations: %v", steps)
+	}
+}
+
+// TestBuildResetStepsOrphanDeleteHomeUsesOnlyWholeHomeRM permits only physical
+// whole-home deletion for an orphaned home, never root subpath removal or re-owning.
+func TestBuildResetStepsOrphanDeleteHomeUsesOnlyWholeHomeRM(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	steps := buildResetSteps(resetPlan{user: "alice-local-agent", homeDir: home, operator: "alice"}, true)
+	var homeSteps int
+	for _, step := range steps {
+		what := step.What
+		if strings.Contains(what, "jentic identity") || strings.Contains(what, "seeded agent/provider") ||
+			strings.Contains(what, "re-own") || strings.Contains(what, "processes") {
+			t.Errorf("orphan delete-home scheduled forbidden step %q", what)
+		}
+		if !strings.Contains(what, "delete the agent's home") {
+			continue
+		}
+		homeSteps++
+		want := []string{"sudo", "/bin/rm", "-rf", "--", home}
+		if strings.Join(step.Cmd.Args, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("orphan home deletion = %v, want %v", step.Cmd.Args, want)
+		}
+		if step.BestEffort {
+			t.Error("whole-home deletion must fail closed")
+		}
+	}
+	if homeSteps != 1 {
+		t.Errorf("whole-home deletion steps = %d, want 1", homeSteps)
+	}
+}
+
+func TestExecAccountResetOrphanKeepHomeRefusesBeforeMutation(t *testing.T) {
+	withXDG(t)
+	out := &bytes.Buffer{}
+	a := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
+	acct := config.AgentAccount{User: "alice-local-agent", HomeDir: "/Users/Shared/alice-local-agent"}
+	if err := errSeedAgentState(a.Paths, acct); err != nil {
+		t.Fatal(err)
+	}
+	plan := resetPlan{user: acct.User, homeDir: acct.HomeDir, operator: "alice", accountExists: false}
+	err := a.execAccountReset(a.Paths, plan, false)
+	if err == nil || !strings.Contains(err.Error(), "orphaned agent home") {
+		t.Fatalf("orphaned keep-home reset error = %v", err)
+	}
+	if strings.Contains(out.String(), "•") || strings.Contains(out.String(), "Reset complete") {
+		t.Errorf("orphaned keep-home reset mutated or reported success:\n%s", out.String())
+	}
+	st, loadErr := config.LoadAgentState(a.Paths)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if _, ok := st.AgentAccount(); !ok {
+		t.Error("orphaned keep-home refusal must preserve the account record")
+	}
+}
+
+func TestExecResetStepsImmediateSafetyCheckFailureIsAlwaysFatal(t *testing.T) {
+	withXDG(t)
+	home := filepath.Join(t.TempDir(), "home")
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "command-ran")
+	out := &bytes.Buffer{}
+	a := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
+	if err := errSeedAgentState(a.Paths, config.AgentAccount{User: "alice-local-agent", HomeDir: home}); err != nil {
+		t.Fatal(err)
+	}
+	steps := []localagent.AccountStep{{
+		What:           "remove seeded agent/provider config from the kept home",
+		Cmd:            exec.Command("sh", "-c", `printf ran > "$1"`, "sh", marker),
+		BestEffort:     true,
+		NoSymlinkHome:  home,
+		NoSymlinkPaths: []string{filepath.Join(home, ".config", "gcloud")},
+	}}
+	err := a.execResetSteps(a.Paths, resetPlan{user: "alice-local-agent", homeDir: home}, false, steps)
+	if err == nil || !strings.Contains(err.Error(), "safety check") {
+		t.Fatalf("immediate component-check error = %v, want fatal safety-check error", err)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Errorf("command ran despite failed pre-command safety check: %v", statErr)
+	}
+	if strings.Contains(out.String(), "Reset complete") || strings.Contains(out.String(), "were cleared") {
+		t.Errorf("failed safety check emitted success output:\n%s", out.String())
+	}
+	st, loadErr := config.LoadAgentState(a.Paths)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if _, ok := st.AgentAccount(); !ok {
+		t.Error("failed safety check must preserve the account record")
+	}
+}
+
+func TestExecResetStepsFailureStopsAccountDeletionAndPreservesRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		what       string
+		deleteHome bool
+	}{
+		{name: "process termination", what: "terminate all processes for agent account"},
+		{name: "quiescence verification", what: "verify no processes remain for agent account"},
+		{name: "identity removal", what: "remove the agent's jentic identity"},
+		{name: "seeded config scrub", what: "remove seeded agent/provider config"},
+		{name: "home re-own", what: "re-own the agent's home"},
+		{name: "home deletion", what: "delete the agent's home", deleteHome: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withXDG(t)
+			out := &bytes.Buffer{}
+			a := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
+			home := "/Users/Shared/alice-local-agent"
+			if err := errSeedAgentState(a.Paths, config.AgentAccount{User: "alice-local-agent", HomeDir: home}); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(t.TempDir(), "account-deleted")
+			steps := []localagent.AccountStep{
+				{What: tc.what, Cmd: exec.Command("sh", "-c", "exit 24")},
+				{What: "delete the Unix account alice-local-agent", Cmd: exec.Command("sh", "-c", `printf deleted > "$1"`, "sh", marker)},
+			}
+			plan := resetPlan{user: "alice-local-agent", homeDir: home, operator: "alice", accountExists: true}
+			err := a.execResetSteps(a.Paths, plan, tc.deleteHome, steps)
+			if err == nil || !strings.Contains(err.Error(), tc.what) {
+				t.Fatalf("failed step error = %v, want context for %q", err, tc.what)
+			}
+			if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+				t.Errorf("account deletion ran after %s failed: %v", tc.name, statErr)
+			}
+			if strings.Contains(out.String(), "Reset complete") || strings.Contains(out.String(), "were cleared") {
+				t.Errorf("incomplete cleanup emitted success output:\n%s", out.String())
+			}
+			st, loadErr := config.LoadAgentState(a.Paths)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if _, ok := st.AgentAccount(); !ok {
+				t.Errorf("%s failure cleared the account record", tc.name)
+			}
+		})
 	}
 }
 

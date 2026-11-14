@@ -3,6 +3,7 @@ package localagent
 import (
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,7 @@ func TestTeardownCmdShape(t *testing.T) {
 		{"leaf-revoke", LeafRevokeCmd("alice-local-agent", dir).Args, dir, true},
 		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
 		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
-		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
+		{"delete-home", DeleteAgentHomeCmd(homeDir).Args, homeDir, false},
 		{"remove-identity", RemoveAgentIdentityCmd(AgentIdentityDirs(homeDir)).Args, homeDir + "/.jentic", false},
 		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
 		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
@@ -47,10 +48,20 @@ func TestTeardownCmdShape(t *testing.T) {
 	// parent directory: -f suppresses per-file errors on SIP/TCC-protected
 	// macOS template files, -h acts on links themselves, and -execdir avoids
 	// resolving an entry through its full path a second time.
-	reown := strings.Join(ReownHomeCmd("alice", homeDir).Args, " ")
-	if !strings.Contains(reown, "find "+homeDir) || !strings.Contains(reown, "-execdir chown -fh alice ") {
-		t.Errorf("re-own must walk with find and execdir `chown -fh` (force, no-dereference): %s", reown)
+	chownPath := "/bin/chown"
+	if runtime.GOOS == "darwin" {
+		chownPath = "/usr/sbin/chown"
 	}
+	reownCmd := ReownHomeCmd("alice", homeDir)
+	reown := strings.Join(reownCmd.Args, " ")
+	if !strings.Contains(reown, "/usr/bin/find "+homeDir) || !strings.Contains(reown, "-execdir "+chownPath+" -fh alice ") {
+		t.Errorf("re-own must use absolute find/chown with execdir and no-dereference: %s", reown)
+	}
+	assertFixedUtilityPATH(t, reownCmd)
+	if got, want := DeleteAgentHomeCmd(homeDir).Args, []string{"sudo", "/bin/rm", "-rf", "--", homeDir}; !slices.Equal(got, want) {
+		t.Errorf("delete-home = %v, want %v", got, want)
+	}
+	assertFixedUtilityPATH(t, DeleteAgentHomeCmd(homeDir))
 
 	// DeleteAccountCmd must keep the home (it is settled separately): macOS
 	// deletes the DirectoryService record with `dscl . -delete` (no filesystem
