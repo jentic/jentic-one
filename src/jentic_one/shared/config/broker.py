@@ -523,6 +523,24 @@ class BrokerConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _warn_dev_jwt_secret_in_production(self) -> BrokerConfig:
+        """Log a structured startup warning when the dev HS256 verifier is used in production."""
+        if (
+            os.environ.get("JENTIC_ENV", "development") == "production"
+            and self.jwt_secret is not None
+            and not self.jwt_verification.trusted_issuers
+        ):
+            _logger.warning(
+                "broker_dev_jwt_secret_in_production",
+                field_path="broker.jwt_secret",
+                detail=(
+                    "broker.jwt_secret is a development verifier; configure "
+                    "broker.jwt_verification.trusted_issuers in production"
+                ),
+            )
+        return self
+
 
 _retired_direct_bindings_flag_warned = threading.Event()
 
