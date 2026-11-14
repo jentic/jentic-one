@@ -17,6 +17,7 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
+from jentic_one.admin.services._support.oauth_sweep import sweep_user_oauth_credentials
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
     ensure_can_manage,
@@ -409,6 +410,7 @@ class UserService:
             ):
                 return owned_agent_ids
             await UserRepository.revoke_login_sessions(session, user_id)
+            await sweep_user_oauth_credentials(session, user_id)
             await ExternalIdentityRepository.delete_for_user(session, user_id)
             # An outstanding invite would otherwise still set a password on
             # the tombstoned row; redeem refuses a deleted user as well.
@@ -446,6 +448,7 @@ class UserService:
             # Ends every login JWT issued so far for good: re-enabling the
             # user restores the account, not the sessions it had (#1139).
             await UserRepository.revoke_login_sessions(session, user_id)
+            await sweep_user_oauth_credentials(session, user_id)
             # Cancel outstanding invite tokens so a pre-disable invite is no
             # longer active and stays invalidated if the user is re-enabled.
             for token in await InviteTokenRepository.get_active_for_user(session, user_id):

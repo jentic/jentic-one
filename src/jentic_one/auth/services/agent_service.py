@@ -1238,7 +1238,9 @@ class AgentService:
 
         The agent must be active (not pending, disabled, or archived). The JWKS
         is validated to ensure it contains at least one Ed25519 public key and
-        no private key material.
+        no private key material. Replacing the key set revokes the agent's
+        key-channel OAuth token families (``oauth_grant_id IS NULL``) and evicts
+        warm in-process broker caches so clients authenticate with the new key.
         """
         validate_jwks(jwks)
         async with self._ctx.admin_db.transaction() as session:
@@ -1250,6 +1252,12 @@ class AgentService:
             before_jwks = agent.jwks
             agent.jwks = jwks
             await session.flush()
+            revoked_access = await AccessTokenRepository.revoke_key_channel_for_agent(
+                session, agent_id
+            )
+            revoked_refresh = await RefreshTokenRepository.revoke_key_channel_for_agent(
+                session, agent_id
+            )
             await record_audit(
                 session,
                 action=AuditAction.UPDATE,
@@ -1258,10 +1266,16 @@ class AgentService:
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
                 before={"jwks": "[redacted]" if before_jwks else None},
-                after={"jwks": "[redacted]"},
+                after={
+                    "jwks": "[redacted]",
+                    "revoked_key_channel_access_tokens": revoked_access,
+                    "revoked_key_channel_refresh_tokens": revoked_refresh,
+                },
                 origin=identity.origin.value,
             )
-            return await self._view(session, agent)
+            view = await self._view(session, agent)
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
+        return view
 
     @staticmethod
     async def _view(session: AsyncSession, agent: Agent) -> AgentView:

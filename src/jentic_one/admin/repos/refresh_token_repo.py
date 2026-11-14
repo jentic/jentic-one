@@ -89,6 +89,26 @@ class RefreshTokenRepository:
         return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
+    async def revoke_key_channel_for_agent(session: AsyncSession, agent_id: str) -> int:
+        """Revoke every live key-channel refresh token held by ``agent_id``.
+
+        Key-channel tokens have ``oauth_grant_id IS NULL`` (minted via JWT-bearer
+        assertion exchange). Grant-channel tokens came from user consent and stay
+        untouched on key rotation.
+        """
+        stmt = (
+            update(RefreshToken)
+            .where(RefreshToken.actor_id == agent_id)
+            .where(RefreshToken.actor_type == "agent")
+            .where(RefreshToken.oauth_grant_id.is_(None))
+            .where(RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
     async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
         """Revoke every live refresh token minted under one consent grant."""
         stmt = (

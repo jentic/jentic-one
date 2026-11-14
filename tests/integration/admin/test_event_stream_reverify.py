@@ -26,7 +26,16 @@ from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import text
 
 from jentic_one.__main__ import _build_app
+from jentic_one.admin.repos import (
+    UserPermissionGrantRepository,
+    UserRepository,
+    UserSecretRepository,
+)
+from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services.auth_service import AuthService
+from jentic_one.admin.services.schemas.auth import ChangePasswordPayload
 from jentic_one.auth.services.token_service import TokenService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from tests.harness.event_stream import StreamProbe
@@ -174,3 +183,62 @@ async def test_revoking_the_access_token_closes_the_open_stream(
     headers = {"Authorization": f"Bearer {access}"}
     resp = await _stream_until_closed(ctx, headers, fast_stream, _revoke)
     assert _closed_reason(resp) == "refused"
+
+
+async def test_stream_closes_after_oauth_sweep(
+    integration_context: Context, agent_key: str, fast_stream: StreamProbe
+) -> None:
+    """An SSE stream opened with a user ``at_`` closes within one recheck
+    after ``change_own_password``."""
+    ctx = integration_context
+    old_password = "streamrv-password-initial"  # pragma: allowlist secret
+    new_password = "streamrv-password-rotated"  # pragma: allowlist secret
+
+    async with ctx.admin_db.transaction() as session:
+        await UserRepository.update(session, _OWNER, active=True, must_change_password=False)
+        await UserSecretRepository.set_password_hash(
+            session,
+            _OWNER,
+            password_hash=hash_password(old_password),
+            created_by="system:test",
+        )
+        await UserPermissionGrantRepository.set_permissions(
+            session,
+            _OWNER,
+            permissions={"events:read"},
+            granted_by=None,
+            created_by="system:test",
+        )
+
+    try:
+        access, _refresh = await TokenService(ctx).issue_pair(
+            _OWNER, ActorType.USER, ["events:read"]
+        )
+        owner_identity = Identity(
+            sub=_OWNER,
+            email="streamrv-owner@test.local",
+            actor_type=ActorType.USER,
+            permissions=["events:read"],
+        )
+
+        async def _change_password() -> None:
+            await AuthService(ctx).change_own_password(
+                ChangePasswordPayload(
+                    current_password=old_password,
+                    new_password=new_password,
+                ),
+                identity=owner_identity,
+            )
+
+        headers = {"Authorization": f"Bearer {access}"}
+        resp = await _stream_until_closed(ctx, headers, fast_stream, _change_password)
+        assert _closed_reason(resp) == "refused"
+    finally:
+        async with ctx.admin_db.transaction() as session:
+            for stmt in (
+                "DELETE FROM user_permission_grants WHERE user_id = :owner",
+                "DELETE FROM user_secrets WHERE user_id = :owner",
+                "DELETE FROM access_tokens WHERE actor_id = :owner",
+                "DELETE FROM refresh_tokens WHERE actor_id = :owner",
+            ):
+                await session.execute(text(stmt), {"owner": _OWNER})

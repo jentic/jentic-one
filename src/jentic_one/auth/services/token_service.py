@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -382,6 +383,17 @@ class TokenService:
                 # Reset locks the user before its token sweep. Take the same
                 # order here, then refresh the token row under its own lock.
                 await UserRepository.get_by_id_for_update(session, candidate.actor_id)
+            elif (
+                candidate is not None
+                and candidate.actor_type == ActorType.AGENT
+                and candidate.oauth_grant_id is None
+            ):
+                # update_jwks locks the agent row before sweeping key-channel
+                # tokens. Take the same order here so a racing rotation either
+                # commits first (and is swept) or waits.
+                lock_call = AgentRepository.get_by_id_for_update(session, candidate.actor_id)
+                if inspect.isawaitable(lock_call):
+                    await lock_call
             rt = await RefreshTokenRepository.get_by_hash(session, token_hash, for_update=True)
 
             if rt is None or rt.revoked_at is not None:
