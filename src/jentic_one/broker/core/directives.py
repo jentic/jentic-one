@@ -593,3 +593,15 @@ def credential_server_variable_mismatch_directive(
         },
         human_readable_instruction=instruction,
     )
+
+
+def request_override_not_allowed_directive(*, header: str) -> AgentDirective:
+    """Directive for a ``request_override_not_allowed`` 400 — send the real method and path."""
+    return AgentDirective(
+        strategy="modify_headers",
+        parameters={"header": header},
+        human_readable_instruction=(
+            f"Remove '{header}' and resend the request using the target HTTP method "
+            "and URL path directly."
+        ),
+    )

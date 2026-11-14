@@ -82,6 +82,12 @@ class UpstreamUrlNotAllowedError(BrokerError):
     """SSRF boundary: private-IP / metadata host / unformable upstream URL (400)."""
 
 
+class RequestOverrideNotAllowedError(BrokerError):
+    """A request-method or request-target override header or query parameter was sent (400)."""
+
+    default_type = "request_override_not_allowed"
+
+
 class UpgradeNotSupportedError(BrokerError):
     """A protocol-upgrade attempt (WebSocket / h2c) the buffered proxy can't carry (426)."""
 
