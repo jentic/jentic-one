@@ -151,10 +151,11 @@ release:
 
 ```bash
 # 1. verify the checksum file's cosign signature (keyless / Sigstore).
+# Replace vX.Y.Z with the release tag being verified.
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature   checksums.txt.sig \
-  --certificate-identity-regexp '^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-identity 'https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/vX.Y.Z' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
 
@@ -165,8 +166,9 @@ sha256sum --check --ignore-missing checksums.txt
 The **certificate identity** is the workflow that produced the signature:
 `https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/vX.Y.Z`,
 issued by GitHub Actions OIDC (`https://token.actions.githubusercontent.com`).
-Always pin both `--certificate-identity(-regexp)` and `--certificate-oidc-issuer`
-— verifying without them accepts any Sigstore certificate and defeats the point.
+Always pin both the exact `--certificate-identity` (matching the target release tag)
+and `--certificate-oidc-issuer` so a signature from a different release tag or
+workflow is not accepted.
 
 Each archive also ships a syft SBOM (`*.sbom.json`) listing its contents.
 

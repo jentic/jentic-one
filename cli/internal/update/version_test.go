@@ -1,6 +1,12 @@
 package update
 
 import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -133,5 +139,55 @@ func TestHighestReleaseTagNoReleases(t *testing.T) {
 	}
 	if _, ok := highestReleaseTag(""); ok {
 		t.Errorf("highestReleaseTag(\"\") matched, want no match")
+	}
+}
+
+func TestLatestReleaseTag_TokenNotInArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub test targets unix")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "git.args")
+	envFile := filepath.Join(dir, "git.env")
+	gitStub := filepath.Join(dir, "git")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nenv > %q\nprintf 'aaaaaaa refs/tags/v0.31.0\\n'\n", argsFile, envFile)
+	if err := os.WriteFile(gitStub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const token = "ghp_test_token_value_123"
+	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+
+	tag, err := LatestReleaseTag(context.Background(), "jentic/jentic-one", token)
+	if err != nil {
+		t.Fatalf("LatestReleaseTag: %v", err)
+	}
+	if tag != "v0.31.0" {
+		t.Errorf("tag = %q, want v0.31.0", tag)
+	}
+
+	gotArgsBytes, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	gotArgs := string(gotArgsBytes)
+	if strings.Contains(gotArgs, token) || strings.Contains(gotArgs, basic) || strings.Contains(gotArgs, "http.extraheader") {
+		t.Fatalf("git argv exposed token or auth header:\n%s", gotArgs)
+	}
+
+	gotEnvBytes, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read recorded env: %v", err)
+	}
+	gotEnv := string(gotEnvBytes)
+	for _, want := range []string{
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=http.https://github.com/.extraheader",
+		"GIT_CONFIG_VALUE_0=Authorization: Basic " + basic,
+	} {
+		if !strings.Contains(gotEnv, want) {
+			t.Errorf("git env missing %q", want)
+		}
 	}
 }

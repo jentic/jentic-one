@@ -133,3 +133,116 @@ func repoFromURL(base string) string {
 	releaseBaseURL = base
 	return "o/n"
 }
+
+func writeCosignStub(t *testing.T, scriptBody string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := dir + string(os.PathSeparator) + "cosign"
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+scriptBody+"\n"), 0o755); err != nil {
+		t.Fatalf("write cosign stub: %v", err)
+	}
+	return dir
+}
+
+func TestDownloadAndVerify_CosignPresentSigMissingFailsClosed(t *testing.T) {
+	cosignDir := writeCosignStub(t, "exit 1")
+	t.Setenv("PATH", cosignDir)
+
+	asset := AssetName("jentic", "v0.31.0", "linux", "amd64")
+	archive := makeTarGz(t, "jentic", "BINARY-CONTENT")
+	srv := fakeReleaseServer(t, asset, archive, "")
+	defer srv.Close()
+
+	_, err := DownloadAndVerify(context.Background(), DownloadRequest{
+		Repo:     repoFromURL(srv.URL),
+		Tag:      "v0.31.0",
+		Binary:   "jentic",
+		GOOS:     "linux",
+		GOARCH:   "amd64",
+		StageDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("expected error when cosign is on PATH and signature/cert return 404, got nil")
+	}
+	if !IsVerificationError(err) {
+		t.Fatalf("expected verification error when signature/cert missing, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "--allow-unsigned") {
+		t.Errorf("error should mention --allow-unsigned opt-out, got %v", err)
+	}
+}
+
+func TestDownloadAndVerify_AllowUnsignedOptOut(t *testing.T) {
+	cosignDir := writeCosignStub(t, "exit 1")
+	t.Setenv("PATH", cosignDir)
+
+	asset := AssetName("jentic", "v0.31.0", "linux", "amd64")
+	archive := makeTarGz(t, "jentic", "BINARY-CONTENT")
+	srv := fakeReleaseServer(t, asset, archive, "")
+	defer srv.Close()
+
+	res, err := DownloadAndVerify(context.Background(), DownloadRequest{
+		Repo:          repoFromURL(srv.URL),
+		Tag:           "v0.31.0",
+		Binary:        "jentic",
+		GOOS:          "linux",
+		GOARCH:        "amd64",
+		StageDir:      t.TempDir(),
+		AllowUnsigned: true,
+	})
+	if err != nil {
+		t.Fatalf("DownloadAndVerify with AllowUnsigned=true: %v", err)
+	}
+	if res.Warning == "" {
+		t.Error("expected warning when AllowUnsigned=true")
+	}
+}
+
+func TestVerifyCosign_PinsExactTagIdentity(t *testing.T) {
+	stage := t.TempDir()
+	argLog := stage + string(os.PathSeparator) + "cosign.args"
+	cosignDir := writeCosignStub(t, fmt.Sprintf("printf '%%s\\n' \"$@\" > %q\nexit 0", argLog))
+	t.Setenv("PATH", cosignDir)
+
+	warn, err := verifyCosign(context.Background(), "v1.2.3", []byte("checksums"), []byte("sig"), []byte("cert"), stage)
+	if err != nil {
+		t.Fatalf("verifyCosign: %v", err)
+	}
+	if warn != "" {
+		t.Errorf("unexpected warning: %q", warn)
+	}
+	recorded, err := os.ReadFile(argLog)
+	if err != nil {
+		t.Fatalf("read cosign args: %v", err)
+	}
+	args := string(recorded)
+	wantIdentity := "https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/v1.2.3"
+	if !strings.Contains(args, "--certificate-identity\n"+wantIdentity) {
+		t.Fatalf("cosign argv did not pin exact tag identity %q; got:\n%s", wantIdentity, args)
+	}
+}
+
+func TestDownloadAndVerify_RequireSignatureWithoutCosignFails(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("JENTIC_REQUIRE_SIGNATURE", "1")
+
+	asset := AssetName("jentic", "v0.31.0", "linux", "amd64")
+	archive := makeTarGz(t, "jentic", "BINARY-CONTENT")
+	srv := fakeReleaseServer(t, asset, archive, "")
+	defer srv.Close()
+
+	_, err := DownloadAndVerify(context.Background(), DownloadRequest{
+		Repo:     repoFromURL(srv.URL),
+		Tag:      "v0.31.0",
+		Binary:   "jentic",
+		GOOS:     "linux",
+		GOARCH:   "amd64",
+		StageDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("expected error when JENTIC_REQUIRE_SIGNATURE=1 and cosign is absent, got nil")
+	}
+	if !IsVerificationError(err) {
+		t.Fatalf("expected verification error when JENTIC_REQUIRE_SIGNATURE=1 and cosign is absent, got %v", err)
+	}
+}

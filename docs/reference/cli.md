@@ -2525,9 +2525,11 @@ A Homebrew-installed CLI is never swapped in place: the CLI half runs
 
 | Flag | Shorthand | Type | Default | Description |
 |---|---|---|---|---|
+| `--allow-unsigned` |  | `bool` | `false` | allow installing a release when its cosign signature or certificate cannot be verified |
 | `--base-url` |  | `string` |  | Jentic control-plane base URL (for the server probe) |
 | `--check` |  | `bool` | `false` | only report status; don't apply any update |
 | `--cli-only` |  | `bool` | `false` | update only the CLI binary |
+| `--from-source` |  | `bool` | `false` | build the CLI binaries from source via tools/install.sh instead of downloading prebuilt release archives |
 | `--ref` |  | `string` |  | git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag) |
 | `--stack-only` |  | `bool` | `false` | update only the stack (not the CLI binary) |
 | `--yes` | `-y` | `bool` | `false` | skip the confirmation prompt |
