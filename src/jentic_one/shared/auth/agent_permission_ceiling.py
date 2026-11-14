@@ -18,7 +18,7 @@ The rule, for a permission in the permission catalogue:
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_WRITE,
@@ -41,3 +41,21 @@ def is_agent_permission_grantable(permission: str, caller_effective: Collection[
     if permission in ADMIN_ONLY_AGENT_PERMISSIONS:
         return False
     return permission in caller_effective or permission in DEFAULT_AGENT_PERMISSIONS
+
+
+def cap_agent_permissions(
+    agent_grants: Iterable[str], owner_effective: Collection[str] | None
+) -> list[str]:
+    """Cap ``agent_grants`` by the agent owner's live ``owner_effective`` permissions.
+
+    Returns ``agent_grants & (owner_effective | DEFAULT_AGENT_PERMISSIONS)`` in
+    grant order (deduplicated). When the agent is ownerless
+    (``owner_effective is None``) or the owner holds ``org:admin``, the grants
+    are returned unchanged. ``ADMIN_ONLY_AGENT_PERMISSIONS`` survive only when
+    the owner holds ``org:admin`` (or the agent is ownerless).
+    ``owner_effective`` must already be implication-expanded.
+    """
+    grants = list(dict.fromkeys(agent_grants))
+    if owner_effective is None or ORG_ADMIN in owner_effective:
+        return grants
+    return [p for p in grants if is_agent_permission_grantable(p, owner_effective)]

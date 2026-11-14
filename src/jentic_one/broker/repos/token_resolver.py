@@ -8,10 +8,12 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, text
 
+from jentic_one.shared.auth.agent_permission_ceiling import cap_agent_permissions
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.permission_catalog import (
     USER_OAUTH_PASSTHROUGH_SCOPES,
+    compute_effective,
     effective_user_oauth_scopes,
 )
 from jentic_one.shared.auth.verify import scopes_to_permissions
@@ -132,13 +134,36 @@ class InProcessTokenResolver:
             if not row.is_ephemeral and row.actor_type == ActorType.AGENT.value:
                 grants = await session.execute(
                     text(
-                        "SELECT permission FROM actor_permission_grants"
-                        " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-                        " ORDER BY permission"
+                        "SELECT g.permission, og.permission AS owner_permission"
+                        " FROM actor_permission_grants g"
+                        " LEFT JOIN user_permission_grants og ON og.user_id = :owner_id"
+                        " WHERE g.actor_id = :actor_id AND g.actor_type = :actor_type"
+                        " ORDER BY g.permission"
                     ),
-                    {"actor_id": row.actor_id, "actor_type": row.actor_type},
+                    {
+                        "actor_id": row.actor_id,
+                        "actor_type": row.actor_type,
+                        "owner_id": row.actor_owner_id,
+                    },
                 )
-                permissions = [str(g.permission) for g in grants.all()]
+                grant_rows = grants.all()
+                raw_permissions = [
+                    str(g.permission) for g in grant_rows if g.permission is not None
+                ]
+                owner_effective = (
+                    compute_effective(
+                        {
+                            str(g.owner_permission)
+                            for g in grant_rows
+                            if g.owner_permission is not None
+                        }
+                    )
+                    if row.actor_owner_id is not None
+                    else None
+                )
+                permissions = scopes_to_permissions(
+                    cap_agent_permissions(raw_permissions, owner_effective)
+                )
             elif row.actor_type == ActorType.USER.value:
                 user_grants = await session.execute(
                     text("SELECT permission FROM user_permission_grants WHERE user_id = :user_id"),

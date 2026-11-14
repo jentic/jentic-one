@@ -47,6 +47,7 @@ from sqlalchemy import Boolean, Integer, String, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.auth.actor_status import read_user_status
+from jentic_one.shared.auth.agent_permission_ceiling import cap_agent_permissions
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.auth.verify import scopes_to_permissions
@@ -75,9 +76,12 @@ _AGENT_AUTHORITY = text(
     f"SELECT {_AGENT_STATUS_SQL} AS status, a.owner_id,"
     " EXISTS (SELECT 1 FROM actor_permission_grants g"
     "  WHERE g.actor_id = a.id AND g.actor_type = 'agent' AND g.permission = :permission)"
-    " AS granted"
-    " FROM agents a WHERE a.id = :actor_id"
-).columns(status=String, owner_id=String, granted=Boolean)
+    " AS granted,"
+    " og.permission AS owner_permission"
+    " FROM agents a"
+    " LEFT JOIN user_permission_grants og ON og.user_id = a.owner_id"
+    " WHERE a.id = :actor_id"
+).columns(status=String, owner_id=String, granted=Boolean, owner_permission=String)
 # Liveness matches ``read_user_status(...).accepts_credentials`` plus the
 # ``must_change_password`` execution fence (#1297): a deleted or rotation-gated
 # row cannot execute queued broker work.
@@ -176,17 +180,28 @@ class ActorStatusResolver:
         )
         if actor_type == ActorType.AGENT.value:
             async with self._admin_db.read_session() as session:
-                row = (
+                rows = (
                     await session.execute(
                         _AGENT_AUTHORITY, {"actor_id": actor_id, "permission": permission}
                     )
-                ).first()
-                if row is None:
+                ).all()
+                if not rows:
                     return _NONE
+                row = rows[0]
                 if row.status == _OWNER_INACTIVE:
                     log_agent_owner_inactive(actor_id, row.owner_id)
+                owner_effective = (
+                    compute_effective(
+                        {r.owner_permission for r in rows if r.owner_permission is not None}
+                    )
+                    if row.owner_id is not None
+                    else None
+                )
+                holds_permission = bool(
+                    row.granted and cap_agent_permissions([permission], owner_effective)
+                )
                 base = ActorAuthority(
-                    active=row.status == "active", holds_permission=bool(row.granted)
+                    active=row.status == "active", holds_permission=holds_permission
                 )
                 if not base.active or not has_channel_lineage:
                     return base

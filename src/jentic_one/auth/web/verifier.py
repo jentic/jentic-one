@@ -80,21 +80,14 @@ def _make_auth_verifier(ctx: Context) -> Any:
                     type="unauthorized",
                 )
 
-            permissions, parent_permissions = await resolve_permissions_for_actor(
-                ctx, resolved.actor_type, resolved.sub, resolved.parent_actor_id
-            )
             if resolved.actor_type == ActorType.AGENT:
-                # The access-token row carries the scopes minted from the agent's
-                # live actor_permission_grants (TokenService.issue_pair via the
-                # jwt-bearer exchange). Trust those as the agent's permissions:
-                # the AGENT branch of resolve_permissions_for_actor is an
-                # unimplemented stub that returns [], which silently drops every
-                # granted scope — an approved capabilities:read then 403s and
-                # a token re-mint can never take effect. This mirrors the
-                # broker's InProcessTokenResolver, which already reads row.scopes.
-                # parent_permissions (owner inheritance) is still resolved above.
+                # The access-token row resolves live actor_permission_grants
+                # capped by the owner's live permissions via TokenService.
                 permissions = list(resolved.permissions)
             else:
+                permissions = await resolve_permissions_for_actor(
+                    ctx, resolved.actor_type, resolved.sub, resolved.parent_actor_id
+                )
                 # First-party SPA OIDC-only sessions carry only passthrough identity
                 # scopes on the token row and derive control-plane permissions from
                 # live user grants. Client-bound, ephemeral, or explicitly
@@ -121,7 +114,6 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 sub=resolved.sub,
                 email="",
                 permissions=permissions,
-                parent_permissions=parent_permissions,
                 actor_type=resolved.actor_type,
                 parent_actor_id=resolved.parent_actor_id,
                 oauth_client_id=resolved.oauth_client_id,

@@ -85,34 +85,21 @@ async def resolve_permissions_for_actor(
     ctx: Context,
     actor_type: ActorType,
     actor_id: str,
-    parent_actor_id: str | None,
-) -> tuple[list[str], list[str]]:
-    """Resolve native and inherited permissions for an actor by type.
-
-    Returns:
-        tuple[list[str], list[str]]: (permissions, parent_permissions)
-    """
+    parent_actor_id: str | None = None,
+) -> list[str]:
+    """Resolve native permissions for an actor by type."""
     # NOTE: Moving this to module-level would cause a circular dependency (shared -> admin).
     # A test-arch exception will handle this lazy import until permission
     # resolution is extracted out of the admin surface.
     from jentic_one.admin.services.permission_service import PermissionService
 
-    svc = PermissionService(ctx)
-    permissions: list[str] = []
-    parent_permissions: list[str] = []
-
+    _ = parent_actor_id
     if actor_type == ActorType.USER:
+        svc = PermissionService(ctx)
         view = await svc.get_effective_for_user(actor_id)
-        permissions = view.effective
-    elif actor_type == ActorType.AGENT:
-        # TODO: fetch the agent's direct permissions via svc.get_effective_for_agent
-        if parent_actor_id:
-            view = await svc.get_effective_for_user(parent_actor_id)
-            parent_permissions = view.effective
-        else:
-            logger.warning("Agent token missing parent_actor_id")
+        return view.effective
 
-    return permissions, parent_permissions
+    return []
 
 
 async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
@@ -176,11 +163,8 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     embedded_permissions = claims.get("permissions")
     if embedded_permissions is not None and isinstance(embedded_permissions, list):
         permissions = [str(p) for p in embedded_permissions]
-        parent_permissions: list[str] = []
     else:
-        permissions, parent_permissions = await resolve_permissions_for_actor(
-            ctx, actor_type, sub, parent_actor_id
-        )
+        permissions = await resolve_permissions_for_actor(ctx, actor_type, sub, parent_actor_id)
 
     # A token minted by this deployment's own authorization server carries its
     # grant as OAuth2 scopes; fold them into the permission set the rest of the
@@ -194,7 +178,6 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
         sub=sub,
         email=claims.get("email", ""),
         permissions=permissions,
-        parent_permissions=parent_permissions,
         must_change_password=claims.get("must_change_password", False),
         actor_type=actor_type,
         parent_actor_id=parent_actor_id,
