@@ -509,7 +509,7 @@ func (s *mcpServer) fetchHostedSkill(ctx context.Context, path string) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	hc.CheckRedirect = clictx.NoFollowRedirects
 	budget := s.hostedFetchTimeout
 	if budget <= 0 {
 		budget = hostedSkillFetchTimeout
