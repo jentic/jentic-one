@@ -175,6 +175,15 @@ _POST_AUTHORIZED: dict[str, str] = {
     ),
 }
 
+#: The only call that post-authorizes each exempted ``scope_options`` occurrence:
+#: ``key -> (authorizer method, required path parameter)``.
+_POST_AUTHORIZED_AUTHORIZERS: dict[str, tuple[str, str]] = {
+    "control/credentials.list_agent_permissions -> scope_options": (
+        "get_binding_access",
+        "credential_id",
+    ),
+}
+
 #: ``<surface>/<module>.<handler> -> <method>`` -> why this org-wide call needs no identity.
 _BY_ID_CALL_ALLOWLIST: dict[str, str] = {
     "registry/apis.update_api -> get_by_identity": (
@@ -436,7 +445,14 @@ def _by_id_service_calls(
         return []
     path_parameters = _path_parameters(func)
     services = _service_names(func)
-    authorized: set[str] = set()
+    # Each exempted occurrence is authorized only by its documented authorizer,
+    # not by any earlier identity-bearing call. key -> (method, path parameter).
+    authorizers = {
+        key: spec
+        for key, spec in _POST_AUTHORIZED_AUTHORIZERS.items()
+        if key.startswith(f"{route} ")
+    }
+    authorized: dict[str, set[str]] = {key: set() for key in authorizers}
     calls: list[_ByIdCall] = []
     service_calls = sorted(
         (
@@ -458,9 +474,18 @@ def _by_id_service_calls(
         if not used_path_parameters:
             continue
         values = list(node.args) + [kw.value for kw in node.keywords]
-        if any(isinstance(value, ast.Name) and value.id == identity for value in values):
-            authorized.update(used_path_parameters)
+        has_identity = any(isinstance(value, ast.Name) and value.id == identity for value in values)
+        # Only the documented authorizer, carrying identity and its path parameter,
+        # marks the matching exempted occurrence as post-authorized.
+        for key, (method, parameter) in authorizers.items():
+            if call_func.attr == method and has_identity and parameter in used_path_parameters:
+                authorized[key].add(parameter)
+        if has_identity:
             continue
+        key = f"{route} -> {call_func.attr}"
+        post_authorized = bool(
+            authorized.get(key) and used_path_parameters.issubset(authorized[key])
+        )
         calls.append(
             _ByIdCall(
                 route=route,
@@ -468,7 +493,7 @@ def _by_id_service_calls(
                 line=node.lineno,
                 method=call_func.attr,
                 parameters=used_path_parameters,
-                post_authorized=used_path_parameters.issubset(authorized),
+                post_authorized=post_authorized,
             )
         )
     return calls
@@ -770,12 +795,12 @@ def test_resource_path_keys_and_expressions_are_collected() -> None:
 def test_early_post_authorized_call_cannot_hide() -> None:
     """Self-check: a later authorized call cannot retroactively exempt an earlier one."""
     func = _parse_func(
-        "@router.get('/things/{thing_id}')\n"
-        "async def r(svc: FooService, thing_id: str,"
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
         " identity: Identity = get_current_identity()):\n"
-        "    await svc.scope_options(thing_id)\n"
-        "    await svc.get_binding_access(thing_id, identity=identity)\n"
-        "    return await svc.scope_options(thing_id)\n"
+        "    await svc.scope_options(credential_id)\n"
+        "    await svc.get_binding_access(credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
     )
     calls = _by_id_service_calls(
         "control/credentials.list_agent_permissions", Path("<self-check>"), func
@@ -786,3 +811,38 @@ def test_early_post_authorized_call_cannot_hide() -> None:
     assert [call.post_authorized for call in calls] == [False, True]
     assert len(exemptions) == 1
     assert "duplicate call occurrences" in _post_authorized_staleness(calls)[0]
+
+
+@pytest.mark.arch
+def test_post_authorized_requires_documented_authorizer() -> None:
+    """Self-check: only the documented get_binding_access authorizer post-authorizes.
+
+    ``record_view`` or any other identity-bearing call cannot authorize
+    ``scope_options``; only ``get_binding_access`` carrying identity and the same
+    path parameter does.
+    """
+    wrong_authorizer = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.record_view(credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    wrong_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), wrong_authorizer
+    )
+    assert len(wrong_calls) == 1
+    assert not wrong_calls[0].post_authorized, "record_view must not post-authorize scope_options"
+
+    right_authorizer = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.get_binding_access(credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    right_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), right_authorizer
+    )
+    assert len(right_calls) == 1
+    assert right_calls[0].post_authorized, "get_binding_access must post-authorize scope_options"
