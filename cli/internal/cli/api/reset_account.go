@@ -1,17 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"os/exec"
 	"os/user"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -47,6 +48,9 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	if err := localagent.ValidateAgentUser(plan.user); err != nil {
 		return fmt.Errorf("refusing to reset: recorded agent user is invalid: %w", err)
 	}
+	if err := validateResetCredentialLocations(plan); err != nil {
+		return err
+	}
 	if !deleteHome && len(plan.skipped) > 0 {
 		refused := plan.skipped[0]
 		return fmt.Errorf("refusing to reset: refused removal path %s: %s; repair the path and retry",
@@ -61,6 +65,9 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	if plan.homeDir != "" {
 		if err := localagent.ValidateHomeDir(plan.homeDir); err != nil {
 			return fmt.Errorf("refusing to reset: %w", err)
+		}
+		if err := localagent.AssertManagedHomeComponents(plan.homeDir); err != nil {
+			return fmt.Errorf("refusing to reset: managed home failed its safety check: %w", err)
 		}
 		// If the Unix account still exists, its LIVE home must match the recorded
 		// home before we reown/delete it — a hand-edited config whose home_dir has
@@ -83,14 +90,33 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	return a.execResetSteps(paths, plan, deleteHome, buildResetSteps(plan, deleteHome))
 }
 
+// validateResetCredentialLocations refuses to discard the only recorded pointer
+// to legacy credentials when no validated managed home can contain them.
+func validateResetCredentialLocations(plan resetPlan) error {
+	if plan.homeDir == "" && plan.configDir != "" {
+		return fmt.Errorf("refusing to reset: unresolved legacy config directory %s has no managed home; "+
+			"repair the account record's home_dir and retry", plan.configDir)
+	}
+	return nil
+}
+
 // execResetSteps runs a validated reset sequence and clears its record only
-// after every fatal step succeeds. Component-check failures always abort,
-// independently of a step's per-entry ACL failure policy.
+// after every fatal step succeeds. Component-check failures always abort.
+// ACL failures continue only for supported exit statuses and exclusively
+// recognized per-entry absent-ACE diagnostics.
 func (a *app) execResetSteps(paths config.Paths, plan resetPlan, deleteHome bool, steps []localagent.AccountStep) error {
+	if err := validateResetCredentialLocations(plan); err != nil {
+		return err
+	}
 	for _, step := range steps {
 		fmt.Fprintln(a.Out, theme.Infof("• %s", step.What))
 		if step.Cmd == nil {
 			return fmt.Errorf("%s: reset command is unavailable", step.What)
+		}
+		if step.ManagedHome != "" {
+			if err := localagent.AssertManagedHomeComponents(step.ManagedHome); err != nil {
+				return fmt.Errorf("%s: managed home failed its safety check: %w", step.What, err)
+			}
 		}
 		if step.NoSymlinkHome != "" {
 			for _, path := range step.NoSymlinkPaths {
@@ -101,17 +127,20 @@ func (a *app) execResetSteps(paths config.Paths, plan resetPlan, deleteHome bool
 		}
 
 		step.Cmd.Stdout = a.Out
-		// Per-entry ACL revokes can report an already-absent ACE on individual
-		// entries; their diagnostics are summarised below.
+		var aclStderr bytes.Buffer
 		if step.BestEffort {
-			step.Cmd.Stderr = io.Discard
+			step.Cmd.Stderr = &aclStderr
 		} else {
 			step.Cmd.Stderr = a.Err
 		}
-		if err := step.Cmd.Run(); err != nil {
-			if step.BestEffort {
+		err := step.Cmd.Run()
+		if step.BestEffort && aclStderr.Len() > 0 {
+			_, _ = a.Err.Write(ux.RedactBytes(aclStderr.Bytes()))
+		}
+		if err != nil {
+			if step.BestEffort && benignACLFailure(err, aclStderr.String()) {
 				fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
-					"  (%s: some ACL entries couldn't be changed; continuing)", step.What)))
+					"  (%s: some ACL entries were already absent; continuing)", step.What)))
 				continue
 			}
 			return fmt.Errorf("%s: %w", step.What, err)
@@ -136,6 +165,30 @@ func (a *app) execResetSteps(paths config.Paths, plan resetPlan, deleteHome bool
 	return nil
 }
 
+// benignACLFailure accepts only an ordinary utility failure whose diagnostics
+// contain nothing but exact per-entry absent-ACE results. Startup errors,
+// signals, status 127 and other exit statuses remain fatal even with benign text.
+func benignACLFailure(err error, diagnostics string) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || diagnostics == "" {
+		return false
+	}
+	lines := strings.Split(strings.TrimSuffix(diagnostics, "\n"), "\n")
+	for _, line := range lines {
+		if !absentACEDiagnostic(line) {
+			return false
+		}
+	}
+	return true
+}
+
+func absentACEDiagnostic(line string) bool {
+	if !strings.HasPrefix(line, "chmod: ") {
+		return false
+	}
+	return strings.HasSuffix(line, ": Entry not found") || strings.HasSuffix(line, ": No ACL present")
+}
+
 // aclRemoval is one ACL entry the reset will drop, tagged by layer and whether it
 // is actually present on disk right now (so the plan is truthful and we never ask
 // macOS to remove an ACE that isn't there).
@@ -158,6 +211,7 @@ type resetSkippedPath struct {
 type resetPlan struct {
 	user          string
 	homeDir       string
+	configDir     string
 	operator      string
 	acls          []aclRemoval
 	accountExists bool
@@ -217,6 +271,7 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 	plan := resetPlan{
 		user:          agentUser,
 		homeDir:       acct.HomeDir,
+		configDir:     acct.ConfigDir,
 		operator:      operator,
 		acls:          acls,
 		accountExists: localagent.UserExists(ctx, agentUser),
@@ -239,8 +294,12 @@ func resetRemovalPaths(home string) []string {
 // cross an intermediate symlink. Missing paths remain in the removal list so rm
 // can treat them as a no-op.
 func filterResetRemovalPaths(home string, paths []string) (accepted []string, skipped []resetSkippedPath) {
+	homeErr := localagent.AssertManagedHomeComponents(home)
 	for _, path := range paths {
-		err := localagent.AssertNoSymlinkComponents(home, path)
+		err := homeErr
+		if err == nil {
+			err = localagent.AssertNoSymlinkComponents(home, path)
+		}
 		if err == nil {
 			accepted = append(accepted, path)
 			continue
@@ -259,8 +318,8 @@ func filterResetRemovalPaths(home string, paths []string) (accepted []string, sk
 // before removing the account, so a failure part-way never leaves a live account
 // with dangling grants; settle the home next; then the sudoers drop-in; then the
 // account. ACL entries no longer present on disk are skipped (the plan already
-// flagged them) so macOS `chmod -a` never errors on a missing ACE. The account
-// delete deliberately keeps the home — the home was already settled by the step
+// flagged them), and only exact absent-ACE results may continue after a revoke.
+// The account delete deliberately keeps the home — the home was settled by the step
 // before it. The config-record removal is NOT a step here: execAccountReset does
 // it last in Go, after every step below has succeeded.
 func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
@@ -293,13 +352,9 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		steps = append(steps, localagent.AccountStep{
 			What: "remove read/write grant on " + acl.dir,
 			Cmd:  localagent.LeafRevokeCmd(plan.user, acl.dir),
-			// Best-effort: the leaf revoke recurses (find ! -type l -exec chmod
-			// -a) over the whole granted subtree, and macOS `chmod -a` exits
-			// non-zero per entry that doesn't carry the exact ACE — "Entry not
-			// found" on inherited-only children, "No ACL present" on files with no
-			// ACL. Those are benign (the ACE is already absent there); the net
-			// effect is the entry removed everywhere it existed, so a residual
-			// non-zero exit must not abort the teardown before the account is gone.
+			// BestEffort permits continuation only when status and stderr together
+			// prove that every reported failure is an already-absent ACE. Recursive
+			// walk errors, sudo failures, and all unrecognized results remain fatal.
 			BestEffort: true,
 		})
 	}
@@ -311,11 +366,8 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		steps = append(steps, localagent.AccountStep{
 			What: "remove traverse grant on " + acl.dir,
 			Cmd:  localagent.TraverseRevokeCmd(plan.user, acl.dir),
-			// Best-effort, for the same reason the leaf revoke is: the ancestor may
-			// no longer carry the exact execute-only ACE (drifted off disk, or a
-			// deeper grant re-shaped it), and macOS `chmod -a` exits non-zero on a
-			// missing entry. That residual is benign — the ACE is already absent —
-			// and must not abort the teardown before the account is gone.
+			// BestEffort applies the same exclusively absent-ACE classification as
+			// the leaf revoke; it never treats an arbitrary non-zero exit as success.
 			BestEffort: true,
 		})
 	}
@@ -335,6 +387,7 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 			steps = append(steps, localagent.AccountStep{
 				What:           "remove the agent's jentic identity (keys, tokens) from " + plan.homeDir,
 				Cmd:            cmd,
+				ManagedHome:    plan.homeDir,
 				NoSymlinkHome:  plan.homeDir,
 				NoSymlinkPaths: paths,
 			})
@@ -355,6 +408,7 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 			steps = append(steps, localagent.AccountStep{
 				What:           "remove seeded agent/provider config from the kept home",
 				Cmd:            cmd,
+				ManagedHome:    plan.homeDir,
 				NoSymlinkHome:  plan.homeDir,
 				NoSymlinkPaths: paths,
 			})
@@ -366,10 +420,9 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	if plan.homeDir != "" {
 		if deleteHome {
 			steps = append(steps, localagent.AccountStep{
-				What:           "delete the agent's home " + plan.homeDir,
-				Cmd:            localagent.DeleteAgentHomeCmd(plan.homeDir),
-				NoSymlinkHome:  filepath.Dir(plan.homeDir),
-				NoSymlinkPaths: []string{plan.homeDir},
+				What:        "delete the agent's home " + plan.homeDir,
+				Cmd:         localagent.DeleteAgentHomeCmd(plan.homeDir),
+				ManagedHome: plan.homeDir,
 			})
 		} else {
 			if plan.accountExists {
@@ -381,8 +434,9 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 				}
 			}
 			steps = append(steps, localagent.AccountStep{
-				What: "re-own the agent's home to " + plan.operator,
-				Cmd:  localagent.ReownHomeCmd(plan.operator, plan.homeDir),
+				What:        "re-own the agent's home to " + plan.operator,
+				Cmd:         localagent.ReownHomeCmd(plan.operator, plan.homeDir),
+				ManagedHome: plan.homeDir,
 			})
 		}
 	}
@@ -390,14 +444,14 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	// (3) Passwordless-launch sudoers drop-in (no-op if absent).
 	steps = append(steps, localagent.AccountStep{
 		What: "remove the passwordless-launch sudoers drop-in",
-		Cmd:  localagent.RemoveSudoersCmd(plan.user),
+		Cmd:  localagent.RemoveAgentSudoersCmd(plan.user),
 	})
 
 	// (4) The Unix account itself, keeping the (already-settled) home.
 	if plan.accountExists {
 		steps = append(steps, localagent.AccountStep{
 			What: "delete the Unix account " + plan.user,
-			Cmd:  localagent.DeleteAccountCmd(plan.user),
+			Cmd:  localagent.DeleteAgentAccountCmd(plan.user),
 		})
 	}
 
@@ -446,6 +500,9 @@ func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Files & config to remove:"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - sudoers drop-in        /etc/sudoers.d/jentic-agent (if present)"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - agent account record   ~/.config/jentic/agent-account.yaml (and any legacy copy)"))
+	if plan.homeDir == "" && plan.configDir != "" {
+		fmt.Fprintln(a.Out, theme.Error.Render("    - refused: unresolved legacy config directory has no managed home  "+plan.configDir))
+	}
 	if plan.homeDir != "" {
 		skipped := make(map[string]bool, len(plan.skipped))
 		for _, skip := range plan.skipped {

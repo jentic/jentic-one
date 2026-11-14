@@ -59,7 +59,7 @@ func TestRecursiveChownCmdShape(t *testing.T) {
 		chownPath = "/usr/sbin/chown"
 	}
 	cmd := recursiveChownCmd("alice", "/Users/alice", true)
-	want := append(append([]string{"sudo", "/usr/bin/find", "/Users/alice"}, chownWalkFilter...), "-execdir", chownPath, "-fh", "alice", "{}", "+")
+	want := append(append([]string{"/usr/bin/sudo", "/usr/bin/find", "/Users/alice"}, chownWalkFilter...), "-execdir", chownPath, "-fh", "alice", "{}", "+")
 	if !slices.Equal(cmd.Args, want) {
 		t.Errorf("recursiveChownCmd = %v, want %v", cmd.Args, want)
 	}
@@ -158,7 +158,7 @@ func TestRemoveAsAgentCmdShape(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected a removal command")
 	}
-	want := append([]string{"sudo", "-u", "alice-local-agent", "--", "/bin/rm", "-rf", "--"}, paths...)
+	want := append([]string{"/usr/bin/sudo", "-u", "alice-local-agent", "--", "/bin/rm", "-rf", "--"}, paths...)
 	if !slices.Equal(got.Args, want) {
 		t.Errorf("RemoveAsAgentCmd = %v, want %v", got.Args, want)
 	}

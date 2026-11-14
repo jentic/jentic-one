@@ -15,12 +15,12 @@ func TestKillAgentProcessesCmdShape(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected a process-termination command")
 	}
-	wantPrefix := []string{"sudo", "/bin/sh", "-c"}
+	wantPrefix := []string{"/usr/bin/sudo", "/bin/sh", "-c"}
 	if !slices.Equal(got.Args[:3], wantPrefix) {
 		t.Errorf("KillAgentProcessesCmd prefix = %v, want %v", got.Args, wantPrefix)
 	}
 	script := got.Args[3]
-	for _, want := range []string{"pkill -KILL -u 'alice-local-agent'", `"$status" -eq 1`, `exit "$status"`} {
+	for _, want := range []string{"/usr/bin/pkill -KILL -u 'alice-local-agent'", `"$status" -eq 1`, `exit "$status"`} {
 		if !strings.Contains(script, want) {
 			t.Errorf("termination script missing %q: %s", want, script)
 		}
@@ -56,12 +56,12 @@ func TestAssertNoAgentProcessesCmdShape(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected a process-quiescence command")
 	}
-	wantPrefix := []string{"sudo", "/bin/sh", "-c"}
+	wantPrefix := []string{"/usr/bin/sudo", "/bin/sh", "-c"}
 	if !slices.Equal(got.Args[:3], wantPrefix) {
 		t.Errorf("AssertNoAgentProcessesCmd prefix = %v, want %v", got.Args, wantPrefix)
 	}
 	script := got.Args[3]
-	for _, want := range []string{"pgrep -u 'alice-local-agent'", `"$status" -eq 1`, `"$status" -eq 0`, `exit "$status"`} {
+	for _, want := range []string{"/usr/bin/pgrep -u 'alice-local-agent'", `"$status" -eq 1`, `"$status" -eq 0`, `exit "$status"`} {
 		if !strings.Contains(script, want) {
 			t.Errorf("quiescence script missing %q: %s", want, script)
 		}
@@ -108,6 +108,10 @@ func TestProcessSafetySudoDenialIsFailure(t *testing.T) {
 			}
 			t.Setenv("PATH", bin)
 			cmd := builder.cmd("alice-local-agent")
+			// Replay the denial through the fake after construction; running the
+			// trusted absolute sudo here would cross the test host's privilege boundary.
+			cmd.Path = sudo
+			cmd.Args[0] = sudo
 			cmd.Env = []string{"PATH=" + bin}
 			if err := cmd.Run(); err == nil {
 				t.Fatal("sudo denial must remain a non-zero process-safety result")
@@ -119,13 +123,20 @@ func TestProcessSafetySudoDenialIsFailure(t *testing.T) {
 func replayProcessUtility(t *testing.T, cmd *exec.Cmd, utility string, status int) error {
 	t.Helper()
 	bin := t.TempDir()
+	utilityPath := filepath.Join(bin, utility)
 	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", status)
-	if err := os.WriteFile(filepath.Join(bin, utility), []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(utilityPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin)
-	args := cmd.Args[1:]
-	probe := exec.Command(args[0], args[1:]...)
-	probe.Env = []string{"PATH=" + bin}
+	if len(cmd.Args) != 4 || cmd.Args[0] != trustedSudoPath || cmd.Args[1] != "/bin/sh" || cmd.Args[2] != "-c" {
+		t.Fatalf("unexpected process command shape: %v", cmd.Args)
+	}
+	absoluteUtility := "/usr/bin/" + utility
+	if !strings.Contains(cmd.Args[3], absoluteUtility) {
+		t.Fatalf("process script lacks absolute utility %q: %s", absoluteUtility, cmd.Args[3])
+	}
+	replayed := strings.ReplaceAll(cmd.Args[3], absoluteUtility, shellQuote(utilityPath))
+	probe := exec.Command("/bin/sh", "-c", replayed)
+	probe.Env = cmd.Env
 	return probe.Run()
 }

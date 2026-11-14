@@ -45,6 +45,37 @@ func AssertNoSymlinkComponents(home, path string) error {
 	return nil
 }
 
+// AssertManagedHomeComponents checks every existing component of an absolute
+// managed home from the filesystem root through the home itself. This includes
+// AgentHomeRoot, nested parents, and a symlink at the recorded home. Missing
+// components end the check because their descendants cannot exist.
+func AssertManagedHomeComponents(home string) error {
+	clean := filepath.Clean(home)
+	if !filepath.IsAbs(clean) || clean != home {
+		return fmt.Errorf("managed agent home %q must be an absolute clean path", home)
+	}
+	separator := string(filepath.Separator)
+	current := filepath.VolumeName(clean) + separator
+	rest := strings.TrimPrefix(clean, current)
+	for _, part := range strings.Split(rest, separator) {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect managed-home component %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: managed-home component %s", ErrSymlinkedPath, current)
+		}
+	}
+	return nil
+}
+
 // KillAgentProcessesCmd terminates every process owned by agentUser. The inner
 // shell maps pkill's documented no-match status to success; sudo failures remain
 // outside that mapping and therefore fail closed. An invalid account name returns nil.
@@ -52,9 +83,9 @@ func KillAgentProcessesCmd(agentUser string) *exec.Cmd {
 	if err := ValidateAgentUser(agentUser); err != nil {
 		return nil
 	}
-	script := "pkill -KILL -u " + shellQuote(agentUser) + `; status=$?; ` +
+	script := fixedPATHPrefix + "/usr/bin/pkill -KILL -u " + shellQuote(agentUser) + `; status=$?; ` +
 		`if [ "$status" -eq 1 ]; then exit 0; fi; exit "$status"`
-	return withFixedUtilityPATH(exec.Command("sudo", "/bin/sh", "-c", script)) //nolint:gosec // agentUser is validated and shell-quoted.
+	return resetSudoCmd("/bin/sh", "-c", script)
 }
 
 // AssertNoAgentProcessesCmd succeeds only when pgrep reports the documented
@@ -64,11 +95,11 @@ func AssertNoAgentProcessesCmd(agentUser string) *exec.Cmd {
 	if err := ValidateAgentUser(agentUser); err != nil {
 		return nil
 	}
-	script := "pgrep -u " + shellQuote(agentUser) + `; status=$?; ` +
+	script := fixedPATHPrefix + "/usr/bin/pgrep -u " + shellQuote(agentUser) + `; status=$?; ` +
 		`if [ "$status" -eq 1 ]; then exit 0; fi; ` +
 		`if [ "$status" -eq 0 ]; then printf '%s\n' 'agent processes are still running' >&2; exit 2; fi; ` +
 		`exit "$status"`
-	return withFixedUtilityPATH(exec.Command("sudo", "/bin/sh", "-c", script)) //nolint:gosec // agentUser is validated and shell-quoted.
+	return resetSudoCmd("/bin/sh", "-c", script)
 }
 
 // RemoveAsAgentCmd removes paths with agentUser's own OS permissions. The
@@ -79,5 +110,5 @@ func RemoveAsAgentCmd(agentUser string, paths []string) *exec.Cmd {
 		return nil
 	}
 	args := append([]string{"-u", agentUser, "--", "/bin/rm", "-rf", "--"}, paths...)
-	return withFixedUtilityPATH(exec.Command("sudo", args...)) //nolint:gosec // agentUser is validated and paths are passed as direct argv.
+	return resetSudoCmd(args...)
 }

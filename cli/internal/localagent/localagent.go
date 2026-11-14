@@ -61,15 +61,18 @@ func AgentIdentityDirs(homeDir string) []string {
 
 // AccountStep is one privileged account-teardown step, paired with a human
 // description for progress output and error wrapping. Callers run the steps in order and stop on the
-// first failure unless the step is BestEffort.
+// first failure unless a BestEffort step returns exclusively benign ACL results.
 type AccountStep struct {
 	// What describes the step for progress/error messages ("delete the account").
 	What string
 	// Cmd is the command to run; it is sudo-fronted where elevation is required.
 	Cmd *exec.Cmd
-	// BestEffort marks a per-entry ACL revocation whose non-zero exit should be
-	// reported but not abort the run. Credential, process, and home steps fail closed.
+	// BestEffort marks a per-entry ACL revocation that may continue only for
+	// recognized absent-ACE diagnostics. Credential, process, and home steps fail closed.
 	BestEffort bool
+	// ManagedHome identifies a managed agent home whose complete physical path,
+	// including every ancestor and the home itself, must be checked before Cmd runs.
+	ManagedHome string
 	// NoSymlinkHome and NoSymlinkPaths identify the removal paths whose existing
 	// components must pass AssertNoSymlinkComponents immediately before Cmd runs.
 	NoSymlinkHome  string
@@ -101,7 +104,7 @@ func recursiveChownCmd(owner, dir string, force bool) *exec.Cmd {
 	}
 	args := append([]string{"/usr/bin/find", dir}, chownWalkFilter...)
 	args = append(args, "-execdir", chownPath, flags, owner, "{}", "+")
-	return withFixedUtilityPATH(exec.Command("sudo", args...)) //nolint:gosec // owner is a config account name; dir is a resolved path.
+	return resetSudoCmd(args...)
 }
 
 // AncestorChain returns the directories an older release stamped with an
@@ -142,24 +145,24 @@ const macLeafACE = "list,add_file,add_subdirectory,search,delete,delete_child," 
 // default (inherited) named-user entries.
 func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "find", dir, "!", "-type", "l", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
-			"-exec", "chmod", "-a", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
+		return resetSudoCmd("/usr/bin/find", dir, "!", "-type", "l",
+			"-exec", "/usr/bin/chmod", "-a", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
 	}
-	script := "setfacl -R -x u:" + shellQuote(agentUser) + " " + shellQuote(dir) +
-		" && setfacl -R -d -x u:" + shellQuote(agentUser) + " " + shellQuote(dir)
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+	script := fixedPATHPrefix + "/usr/bin/setfacl -R -x u:" + shellQuote(agentUser) + " " + shellQuote(dir) +
+		" && /usr/bin/setfacl -R -d -x u:" + shellQuote(agentUser) + " " + shellQuote(dir)
+	return resetSudoCmd("/bin/sh", "-c", script)
 }
 
 // TraverseRevokeCmd removes the agent's execute-only traverse ACL from a single
 // directory (non-recursive). reset runs it for every ancestor in AncestorChain.
 func TraverseRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "-a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+		return resetSudoCmd("/usr/bin/chmod", "-a",
 			"user:"+agentUser+" allow execute", dir)
 	}
 	// -x removes the named-user entry entirely; an ancestor only ever carried the
 	// execute-only traverse ACE, so nothing else is lost.
-	return exec.Command("sudo", "setfacl", "-x", "u:"+agentUser, dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+	return resetSudoCmd("/usr/bin/setfacl", "-x", "u:"+agentUser, dir)
 }
 
 // AgentACLPresent reports whether dir currently carries any ACL entry for the
@@ -223,7 +226,7 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 // by default. Absolute rm and physical traversal keep deletion within the validated
 // managed home without following encountered symlinks. Runs as root.
 func DeleteAgentHomeCmd(homeDir string) *exec.Cmd {
-	return withFixedUtilityPATH(exec.Command("sudo", "/bin/rm", "-rf", "--", homeDir)) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
+	return resetSudoCmd("/bin/rm", "-rf", "--", homeDir)
 }
 
 // RemoveAgentIdentityCmd permanently removes the agent's own jentic identity
@@ -273,6 +276,20 @@ func RemoveSudoersCmd(agentUser string) *exec.Cmd {
 	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is shell-quoted; the script edits a fixed sudoers path.
 }
 
+// RemoveAgentSudoersCmd removes the agent's sudoers lines with the same
+// runas-anchored, visudo-validated edit as RemoveSudoersCmd. Legacy-agent reset
+// uses trusted absolute executables and a fixed environment for every utility.
+func RemoveAgentSudoersCmd(agentUser string) *exec.Cmd {
+	q := shellQuote("(" + agentUser + ")")
+	script := fixedPATHPrefix + `f=` + shellQuote(sudoersPath) + `; [ -f "$f" ] || exit 0; ` +
+		`tmp="$(/usr/bin/mktemp)"; /usr/bin/grep -vF ` + q + ` "$f" > "$tmp" || true; ` +
+		`if [ -s "$tmp" ]; then ` +
+		`  if /usr/sbin/visudo -cf "$tmp" >/dev/null 2>&1; then /usr/bin/install -m 0440 "$tmp" "$f"; fi; ` +
+		`else /bin/rm -f "$f"; fi; ` +
+		`/bin/rm -f "$tmp"`
+	return resetSudoCmd("/bin/sh", "-c", script)
+}
+
 // DeleteAccountCmd deletes the agent's Unix account WITHOUT removing its home —
 // the home is settled separately (re-owned or deleted) before this runs, so the
 // account-delete must not touch it. On macOS we delete the DirectoryService
@@ -288,6 +305,15 @@ func DeleteAccountCmd(agentUser string) *exec.Cmd {
 		return exec.Command("sudo", "dscl", ".", "-delete", "/Users/"+agentUser) //nolint:gosec // agentUser is a config account name.
 	}
 	return exec.Command("sudo", "userdel", agentUser) //nolint:gosec // agentUser is a config account name.
+}
+
+// DeleteAgentAccountCmd deletes a legacy agent account without removing its
+// already-settled home. Reset uses absolute account utilities and trusted sudo.
+func DeleteAgentAccountCmd(agentUser string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return resetSudoCmd("/usr/bin/dscl", ".", "-delete", "/Users/"+agentUser)
+	}
+	return resetSudoCmd("/usr/sbin/userdel", agentUser)
 }
 
 // IsUnderHome reports whether dir is the operator's home or a descendant of it.
@@ -411,6 +437,17 @@ func expandTilde(p, home string) string {
 // through whatever PATH the invoking environment carried (sudo keeps the
 // caller's PATH when sudoers sets no secure_path, as on macOS).
 const agentSystemPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// trustedSudoPath prevents Go's initial executable lookup from consulting the
+// caller's PATH before the fixed child environment can be applied.
+const trustedSudoPath = "/usr/bin/sudo"
+
+// resetSudoCmd builds a privileged reset command with absolute initial sudo and
+// a fixed child environment. Callers supply absolute privileged utilities.
+func resetSudoCmd(args ...string) *exec.Cmd {
+	cmd := exec.Command(trustedSudoPath, args...) //nolint:gosec // reset builders validate and constrain every argument.
+	return withFixedUtilityPATH(cmd)
+}
 
 // withFixedUtilityPATH removes inherited PATH entries and appends the fixed
 // absolute-only utility path used by privileged teardown commands.
