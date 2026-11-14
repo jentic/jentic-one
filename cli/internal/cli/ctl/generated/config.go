@@ -2317,7 +2317,8 @@ type OAuthRateLimitConfig struct {
 	RegistrationBurst int `json:"registration_burst" yaml:"registration_burst" mapstructure:"registration_burst"`
 
 	// Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64)
-	// on anonymous dynamic client registration (``POST /oauth-clients``).
+	// on anonymous dynamic client registration (``POST /oauth-clients``) and agent
+	// self-registration (``POST /register``), in its own bucket.
 	RegistrationRpm int `json:"registration_rpm" yaml:"registration_rpm" mapstructure:"registration_rpm"`
 
 	// Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the

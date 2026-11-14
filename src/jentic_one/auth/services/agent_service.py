@@ -55,6 +55,7 @@ from jentic_one.auth.services.schemas.agents import (
     CredentialBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import ADMIN_ONLY_AGENT_PERMISSIONS
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
@@ -284,6 +285,34 @@ class AgentService:
             existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
+            dropped_self_admin = [
+                g.permission
+                for g in existing_grants
+                if g.granted_by is None and g.permission in ADMIN_ONLY_AGENT_PERMISSIONS
+            ]
+            if dropped_self_admin:
+                before_permissions = [g.permission for g in existing_grants]
+                for permission in dropped_self_admin:
+                    await ActorPermissionGrantRepository.revoke(
+                        session, actor_id=agent_id, permission=permission
+                    )
+                existing_grants = [
+                    g
+                    for g in existing_grants
+                    if not (g.granted_by is None and g.permission in ADMIN_ONLY_AGENT_PERMISSIONS)
+                ]
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"permissions": before_permissions},
+                    after={"permissions": [g.permission for g in existing_grants]},
+                    reason="self_requested_admin_permission_dropped",
+                    origin=identity.origin.value,
+                )
             # Permissions a self-registration requested become live on approval, so
             # the approver's ceiling applies to them. Requested strings outside
             # the catalogue grant nothing and are left as-is (not a 422: the

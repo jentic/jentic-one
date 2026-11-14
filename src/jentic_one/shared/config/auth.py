@@ -268,7 +268,8 @@ class OAuthRateLimitConfig(BaseModel):
         description=(
             "Sustained requests/minute allowed per client network (IPv4 "
             "address or IPv6 /64) on anonymous dynamic client registration "
-            "(``POST /oauth-clients``)."
+            "(``POST /oauth-clients``) and agent self-registration "
+            "(``POST /register``), in its own bucket."
         ),
     )
     registration_burst: int = Field(

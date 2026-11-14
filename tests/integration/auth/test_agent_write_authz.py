@@ -509,7 +509,7 @@ async def test_claimant_can_approve_claimed_agent(
     assert agent.approved_by == OTHER
 
 
-@pytest.mark.parametrize("requested", ["org:admin", "agents:write", "users:write"])
+@pytest.mark.parametrize("requested", ["users:write", "credentials:write"])
 async def test_non_admin_owner_cannot_activate_requested_permission_above_ceiling(
     integration_context: Context,
     self_register: Callable[[str], Awaitable[str]],
@@ -537,13 +537,13 @@ async def test_non_admin_owner_cannot_activate_requested_permission_above_ceilin
 async def test_non_admin_owner_can_activate_requested_default_permissions(
     integration_context: Context, self_register: Callable[[str], Awaitable[str]]
 ) -> None:
-    # Unknown requested strings grant nothing and do not block the decision.
+    # Unknown requested strings are dropped during registration and do not block the decision.
     agent_id = await self_register("capabilities:execute agents:read not-a:scope")
     await _claim_as(integration_context, agent_id, OTHER)
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text
-    expected = ["agents:read", "capabilities:execute", "not-a:scope"]
+    expected = ["agents:read", "capabilities:execute"]
     assert await _permissions(integration_context, agent_id) == set(expected)
     approve_permissions = await _audit_permissions(
         integration_context, agent_id, AuditAction.APPROVE
