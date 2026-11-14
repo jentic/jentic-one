@@ -172,6 +172,20 @@
           "title": "Rat Ttl Seconds",
           "type": "integer"
         },
+        "refresh_family_max_age_seconds": {
+          "anyOf": [
+            {
+              "minimum": 60,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 7776000,
+          "description": "Maximum absolute lifetime (seconds, default 90 days) of an OAuth refresh-token family from initial mint, across rotations. Set to null to disable the family cap.",
+          "title": "Refresh Family Max Age Seconds"
+        },
         "refresh_ttl_seconds": {
           "default": 604800,
           "description": "Lifetime (seconds, default 7 days) of an OAuth refresh token; each refresh rotates it and the new token gets a fresh lifetime.",

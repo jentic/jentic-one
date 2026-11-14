@@ -400,6 +400,15 @@ class AuthConfig(BaseModel):
             "refresh rotates it and the new token gets a fresh lifetime."
         ),
     )
+    refresh_family_max_age_seconds: int | None = Field(
+        default=7776000,
+        ge=60,
+        description=(
+            "Maximum absolute lifetime (seconds, default 90 days) of an OAuth "
+            "refresh-token family from initial mint, across rotations. Set to "
+            "null to disable the family cap."
+        ),
+    )
     rat_ttl_seconds: int = Field(
         default=900,
         description=(
