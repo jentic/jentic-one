@@ -36,7 +36,12 @@ from jentic_one.control.services.credentials.schemas.provision import (
     ProvisionResult,
     RefreshResult,
 )
-from jentic_one.control.services.credentials.state import encode_state, generate_nonce
+from jentic_one.control.services.credentials.state import (
+    encode_state,
+    generate_nonce,
+    pkce_challenge_s256,
+    pkce_verifier_for,
+)
 from jentic_one.shared.config import (
     DirectOAuth2ProviderConfig,
     EgressConfig,
@@ -186,14 +191,18 @@ class DirectOAuth2Provider(OAuth2Provider):
             redirect_uri=redirect_uri,
             browser_binding_hash=request.browser_binding_hash,
             browser_host=request.browser_host,
+            pkce=True,
         )
         signed_state = encode_state(state_secret, connect_state, ttl)
+        code_challenge = pkce_challenge_s256(pkce_verifier_for(state_secret, nonce))
 
         params: dict[str, str] = {
             "response_type": "code",
             "client_id": client_id_value,
             "redirect_uri": redirect_uri,
             "state": signed_state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
         if scope_str:
             params["scope"] = scope_str
@@ -234,6 +243,11 @@ class DirectOAuth2Provider(OAuth2Provider):
         if not redirect_uri:
             raise ProviderError("Connect state is missing the redirect_uri")
 
+        code_verifier: str | None = None
+        if state.pkce:
+            state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+            code_verifier = pkce_verifier_for(state_secret, state.nonce)
+
         token_data = await self._exchange_code(
             token_url=token_url,
             egress=resolved_control_egress(ctx.config),
@@ -241,6 +255,7 @@ class DirectOAuth2Provider(OAuth2Provider):
             client_id=client_id,
             client_secret=client_secret,
             redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
         )
 
         access_token = token_data.get("access_token")
@@ -351,6 +366,7 @@ class DirectOAuth2Provider(OAuth2Provider):
         client_id: str,
         client_secret: str,
         redirect_uri: str,
+        code_verifier: str | None = None,
     ) -> dict[str, Any]:
         payload = {
             "grant_type": "authorization_code",
@@ -359,6 +375,8 @@ class DirectOAuth2Provider(OAuth2Provider):
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
         }
+        if code_verifier is not None:
+            payload["code_verifier"] = code_verifier
         return await self._post_token_checked(token_url, payload, egress=egress)
 
     async def _refresh_token(

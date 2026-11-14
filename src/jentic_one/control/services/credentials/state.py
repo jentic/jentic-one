@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Final
 
 import jwt as pyjwt
 
@@ -126,6 +128,21 @@ def browser_binding_matches(state: ConnectState, cookie_value: str | None) -> bo
     return hmac.compare_digest(hash_browser_binding(cookie_value), state.browser_binding_hash)
 
 
+_PKCE_INFO: Final = b"jentic-connect-pkce:v1:"
+
+
+def pkce_verifier_for(state_secret: str, nonce: str) -> str:
+    """Derive a deterministic 43-char RFC 7636 PKCE verifier from secret + nonce."""
+    mac = hmac.new(state_secret.encode(), _PKCE_INFO + nonce.encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(mac).rstrip(b"=").decode("ascii")
+
+
+def pkce_challenge_s256(verifier: str) -> str:
+    """Derive the S256 code_challenge from a PKCE verifier (RFC 7636 §4.2)."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
 def generate_nonce() -> str:
     """Generate a cryptographically random nonce for state binding."""
     return secrets.token_urlsafe(24)
@@ -157,6 +174,8 @@ def encode_state(secret: str, state: ConnectState, ttl_seconds: int) -> str:
         claims["bnd"] = state.browser_binding_hash
     if state.browser_host is not None:
         claims["bho"] = state.browser_host
+    if state.pkce:
+        claims["pkc"] = 1
     return issue_jwt(claims, secret, ttl_seconds)
 
 
@@ -180,6 +199,7 @@ def decode_state(secret: str, raw: str) -> ConnectState:
         redirect_uri=claims.get("ruri"),
         browser_binding_hash=claims.get("bnd"),
         browser_host=claims.get("bho"),
+        pkce=claims.get("pkc") == 1,
     )
 
 

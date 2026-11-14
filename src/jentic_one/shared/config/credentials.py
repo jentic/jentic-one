@@ -71,6 +71,15 @@ class DirectOAuth2ProviderConfig(BaseModel):
         # exact-matches it against the registered redirect URI.
         return validate_redirect_uri(value) if value else value
 
+    @field_validator("authorize_extra_params")
+    @classmethod
+    def _validate_authorize_extra_params(cls, value: dict[str, str]) -> dict[str, str]:
+        forbidden = {"code_challenge", "code_challenge_method"} & value.keys()
+        if forbidden:
+            names = ", ".join(sorted(forbidden))
+            raise ValueError(f"authorize_extra_params cannot override PKCE parameters ({names})")
+        return value
+
 
 class PipedreamProviderConfig(BaseModel):
     """Configuration for a Pipedream-hosted OAuth provider."""
