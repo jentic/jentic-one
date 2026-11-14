@@ -178,6 +178,30 @@ Changes on `main` since 0.44.0; they ship in the next release.
   Connect-session review and confirmation read bound-agent metadata from the
   `agent_credential_bindings` join snapshot and batch candidate OAuth token
   lookups; an agent deleted before review is no longer listed with `name=None`.
+- **Agent self-registration scope filtering and rate limiting.**
+  Anonymous agent self-registration (`POST /register`) now filters requested
+  `scope` values to non-admin catalogue permissions, ignoring unknown, retired,
+  and admin-only (`org:admin`, `agents:write`) permissions. Approving a pending
+  agent also removes any pre-staged self-requested `org:admin` or `agents:write`
+  grants; administrators can still grant those permissions explicitly via
+  `PUT /agents/{id}/permissions` after approval. Additionally, `POST /register`
+  is rate-limited per client network in its own `agent-registration` bucket using
+  `auth.oauth_rate_limit.registration_rpm` (default `10` rpm) and
+  `auth.oauth_rate_limit.registration_burst` (default `5`). Deployments behind a
+  reverse proxy or high-concurrency NAT should configure
+  `auth.oauth_rate_limit.trusted_proxies` or raise the registration rate-limit
+  thresholds.
+- **OAuth credential reconnect grant replacement.**
+  Reconnecting an OAuth credential now replaces the stored grant rather than
+  merging into the prior grant's refresh token and scope. On the standalone
+  credential connect path (which has no identity echo), or on a connect-session
+  reconnect where the OAuth app registration or confirmed vendor account differs
+  from the stored credential, an omitted `refresh_token` in the provider's token
+  response clears the prior refresh token and logs
+  `oauth_reconnect_dropped_prior_refresh_token`. For providers that omit
+  `refresh_token` on re-consent unless prompted (such as Google OAuth), configure
+  `prompt=consent` / `access_type=offline` in `authorize_extra_params` if
+  standalone reconnects require offline refresh continuity.
 
 ## 0.44.0
 
