@@ -202,6 +202,21 @@ Changes on `main` since 0.44.0; they ship in the next release.
   `refresh_token` on re-consent unless prompted (such as Google OAuth), configure
   `prompt=consent` / `access_type=offline` in `authorize_extra_params` if
   standalone reconnects require offline refresh continuity.
+- **Agent permission ceiling enforced at resolution time and on ownership transfer.**
+  Owned agents now have their effective permissions capped at resolution time
+  (across API keys, access tokens, token introspection/refresh, and queued/held
+  broker execution checks) by the owning user's current effective permissions
+  plus default agent permissions (`capabilities:read`, `capabilities:execute`,
+  `owner:resources:read`, `owner:credentials:read`, `owner:agents:read`). Agents
+  owned by an `org:admin` user or ownerless agents keep all granted permissions.
+  If an owned agent holds non-default permissions (such as `config:write`,
+  `users:write`, `credentials:write`, `apis:write`, or `oauth-clients:write`)
+  that its owner does not currently hold, grant those permissions to the owner to
+  retain them on the agent. In addition, transferring an agent to a new owner via
+  `PATCH /agents/{agent_id}` revokes any stored agent permission grants that
+  exceed the new owner's permission ceiling and records a `REVOKE` audit entry;
+  grant the required permissions to the new owner before transferring ownership
+  if the agent should keep them. `Identity.parent_permissions` has been removed.
 
 ## 0.44.0
 
