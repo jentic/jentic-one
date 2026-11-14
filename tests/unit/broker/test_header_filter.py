@@ -242,3 +242,26 @@ def test_passthrough_cache_control_is_private_no_store(
 
 def test_passthrough_cache_control_matches_control_plane_directive() -> None:
     assert PASSTHROUGH_CACHE_CONTROL == PRIVATE_NO_STORE
+
+
+@pytest.mark.parametrize(
+    "header_name",
+    [
+        "X-HTTP-Method-Override",
+        "x-http-method-override",
+        "X-HTTP-Method",
+        "x-http-method",
+        "X-Method-Override",
+        "x-method-override",
+        "X-Original-URL",
+        "x-original-url",
+        "X-Rewrite-URL",
+        "x-rewrite-url",
+        "X-Original-URI",
+        "x-original-uri",
+    ],
+)
+def test_override_headers_never_forwarded(header_name: str) -> None:
+    out = forward_headers({header_name: "DELETE", "X-Keep": "1"}, {})
+    assert header_name.lower() not in {k.lower() for k in out}
+    assert out["X-Keep"] == "1"

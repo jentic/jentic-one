@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jentic/jentic-one/cli/internal/gitauth"
 )
 
 // releaseTag matches a canonical release tag: a `v`-prefixed three-part semver
@@ -132,13 +134,13 @@ func LatestReleaseTag(ctx context.Context, repo, token string) (string, error) {
 	}
 
 	url := "https://github.com/" + repo + ".git"
-	args := append([]string{"-c", "credential.helper="}, authArgs(token)...)
-	args = append(args, "ls-remote", "--tags", url, "v*")
+	args := []string{"-c", "credential.helper=", "ls-remote", "--tags", url, "v*"}
 
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // args are CLI-internal; repo comes from the manifest/flags.
 	// Never fall back to an interactive prompt: a missing/invalid token must
 	// fail fast rather than block waiting for a username on the terminal.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "GCM_INTERACTIVE=never")
+	cmd.Env = append(cmd.Env, gitauth.Env(token)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote --tags failed (for a private repo, set GITHUB_TOKEN): %w", err)

@@ -165,21 +165,17 @@ func PurgeMaterial(ref IdentityRef) error {
 	}
 	keyPath, kerr := KeyPathForImport(ref)
 	tokPath, terr := getTokenPath(ref)
-	akPath, aerr := apiKeyPath(ref)
-	akOriginPath, oerr := apiKeyOriginPath(ref)
-	for _, e := range []error{kerr, terr, aerr, oerr} {
+	for _, e := range []error{kerr, terr} {
 		if e != nil {
 			return e
 		}
 	}
 
 	var firstErr error
-	for _, path := range []string{keyPath, tokPath, akPath, akOriginPath} {
-		if path == akOriginPath {
-			if _, err := os.Stat(akPath); err == nil || !os.IsNotExist(err) {
-				continue
-			}
-		}
+	if err := InvalidateAPIKey(ref); err != nil {
+		firstErr = err
+	}
+	for _, path := range []string{keyPath, tokPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) && firstErr == nil {
 			firstErr = fmt.Errorf("removing identity material %s: %w", path, err)
 		}

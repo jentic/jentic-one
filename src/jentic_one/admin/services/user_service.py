@@ -515,8 +515,8 @@ class UserService:
         async with self._ctx.admin_db.session() as session:
             user = await self._load_manageable(session, user_id, identity)
         ensure_not_deleted(user, "reissue an invite for")
-        if user.invite_state == InviteState.REDEEMED:
-            raise ConflictError("Cannot reissue invite for a user who has already redeemed")
+        if user.invite_state in (InviteState.REDEEMED, InviteState.ACCEPTED):
+            raise ConflictError("Cannot reissue an invite for a user who has already signed in")
 
         invite_service = InviteService(self._ctx)
         issued = await invite_service.reissue(user_id, identity=identity)

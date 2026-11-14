@@ -244,7 +244,7 @@ async def enable_user(
     "/users/{user_id}:reissue-invite",
     summary="Reissue a user's invite",
     responses=with_responses(
-        not_found(), conflict("The user has already redeemed an invite, or has been deleted")
+        not_found(), conflict("The user has already signed in, or has been deleted")
     ),
 )
 async def reissue_invite(
@@ -254,6 +254,6 @@ async def reissue_invite(
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> InviteIssuedResponse:
-    """Reissue an invite token for a user."""
+    """Reissue an invite token for a pending user."""
     issued = await user_svc.reissue_invite(user_id, identity=identity)
     return InviteIssuedResponse(token=issued.token, expires_at=issued.expires_at)

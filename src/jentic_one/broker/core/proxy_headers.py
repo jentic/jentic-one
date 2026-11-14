@@ -22,6 +22,10 @@ from jentic_one.broker.core.headers import (
     extract_header_items,
     scrub_sensitive_header_items,
 )
+from jentic_one.broker.core.request_overrides import (
+    METHOD_OVERRIDE_HEADERS,
+    TARGET_OVERRIDE_HEADERS,
+)
 from jentic_one.shared.http.injection import (
     ReflectionGuard,
     filter_inbound_cookie,
@@ -217,6 +221,8 @@ def forward_headers(
             or lowered in nominated
             or lowered in BROKER_CONSUMED_HEADERS
             or lowered in SPOOFABLE_HEADERS
+            or lowered in METHOD_OVERRIDE_HEADERS
+            or lowered in TARGET_OVERRIDE_HEADERS
             or lowered in _INBOUND_FRAMING_HEADERS
             or lowered in injected_lower
         ):

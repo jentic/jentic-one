@@ -493,3 +493,17 @@ async def test_pipedream_error_body_not_buffered_past_cap() -> None:
     ):
         await provider.begin_connect(ctx, api=api, request=request)
     assert not isinstance(exc_info.value, PipedreamAPIError)
+
+
+def test_pipedream_api_error_body_is_redacted() -> None:
+    secret_token = "pd-live-secret-token-999"  # pragma: allowlist secret
+    header_secret = "pd-header-secret-888"  # pragma: allowlist secret
+    raw_body = f'{{"access_token":"{secret_token}"}} Authorization: Token {header_secret} ' + (
+        "x" * 10_000
+    )
+    err = PipedreamAPIError(502, raw_body)
+    assert secret_token not in err.body
+    assert header_secret not in err.body
+    assert "***REDACTED***" in err.body
+    assert len(err.body) <= 8192 + len("***REDACTED***") * 2
+    assert PipedreamAPIError(502, "").body == ""

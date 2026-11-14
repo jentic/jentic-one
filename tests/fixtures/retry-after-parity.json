@@ -245,6 +245,36 @@
 			"name": "internal whitespace rejected",
 			"header": "1 2",
 			"seconds": null
+		},
+		{
+			"name": "EST named timezone rejected",
+			"header": "Fri, 01 Jan 2021 00:00:30 EST",
+			"seconds": null
+		},
+		{
+			"name": "PST named timezone rejected",
+			"header": "Fri, 01 Jan 2021 00:00:30 PST",
+			"seconds": null
+		},
+		{
+			"name": "Z timezone suffix rejected",
+			"header": "Fri, 01 Jan 2021 00:00:30 Z",
+			"seconds": null
+		},
+		{
+			"name": "fractional seconds in HTTP-date rejected",
+			"header": "Fri, 01 Jan 2021 00:00:30.5 GMT",
+			"seconds": null
+		},
+		{
+			"name": "missing space after weekday comma rejected",
+			"header": "Fri,01 Jan 2021 00:00:30 GMT",
+			"seconds": null
+		},
+		{
+			"name": "out-of-range +2400 timezone offset rejected",
+			"header": "Fri, 01 Jan 2021 00:00:30 +2400",
+			"seconds": null
 		}
 	],
 	"http_date_now_epoch": 1609459200.0,
@@ -282,6 +312,16 @@
 		{
 			"name": "colon-separated numeric timezone",
 			"header": "Fri, 01 Jan 2021 00:00:45 +00:00",
+			"seconds": 45
+		},
+		{
+			"name": "colon-separated positive numeric timezone +01:00",
+			"header": "Fri, 01 Jan 2021 01:00:30 +01:00",
+			"seconds": 30
+		},
+		{
+			"name": "colon-separated non-zero numeric timezone +02:30",
+			"header": "Fri, 01 Jan 2021 02:30:45 +02:30",
 			"seconds": 45
 		},
 		{

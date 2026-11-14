@@ -83,7 +83,7 @@ class TokenVerifier(Protocol):
     the dispatcher is agnostic to which is wired.
     """
 
-    def verify(self, token: str) -> dict[str, object]: ...
+    async def verify(self, token: str) -> dict[str, object]: ...
 
 
 class Claim(StrEnum):
@@ -112,7 +112,7 @@ class JwtVerifier:
 
     secret: str
 
-    def verify(self, token: str) -> dict[str, object]:
+    async def verify(self, token: str) -> dict[str, object]:
         """Verify signature + expiry; raise ``TokenValidationError`` on failure."""
         # Pin the alg allowlist explicitly so an attacker can't downgrade to
         # ``alg:none``; PyJWT enforces ``exp`` when present by default. Decode
@@ -172,7 +172,7 @@ class JwtTokenValidator:
 
     async def validate(self, token: str) -> Identity:
         try:
-            claims = self.verifier.verify(token)
+            claims = await self.verifier.verify(token)
         except TokenValidationError as exc:
             # The verifier already carries the specific reason; funnel it through
             # the same event/shape so both verifiers behind the protocol emit a

@@ -177,6 +177,16 @@ class RefreshInvalidGrantError(RefreshError):
         )
 
 
+class RefreshUndecryptableError(RefreshError):
+    """The stored refresh token ciphertext cannot be decrypted with configured keys."""
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            credential_id,
+            f"OAuth2 credential '{credential_id}' refresh token cannot be decrypted",
+        )
+
+
 class RefreshTransientError(RefreshError):
     """The IdP returned a transient error (5xx/timeout) during refresh.
 

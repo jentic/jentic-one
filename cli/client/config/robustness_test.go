@@ -91,3 +91,82 @@ func TestLoadStateRejectsCorruptConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestMutateConfig_PlantedTmpSymlinkNotFollowed(t *testing.T) {
+	withEnvDirs(t)
+	cfgDir, err := ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir: %v", err)
+	}
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	if err := os.WriteFile(outside, []byte("preserve: true\n"), 0o600); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	tmpLink := filepath.Join(cfgDir, "config.yaml.tmp")
+	if err := os.Symlink(outside, tmpLink); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := MutateConfig(func(c *Config) error {
+		c.Environments["prod"] = Env{BaseURL: "https://api.example.com"}
+		return nil
+	}); err != nil {
+		t.Fatalf("MutateConfig: %v", err)
+	}
+
+	outsideBytes, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatalf("read outside: %v", err)
+	}
+	if string(outsideBytes) != "preserve: true\n" {
+		t.Errorf("outside file was modified: got %q, want %q", string(outsideBytes), "preserve: true\n")
+	}
+
+	cfgFile := filepath.Join(cfgDir, "config.yaml")
+	info, err := os.Lstat(cfgFile)
+	if err != nil {
+		t.Fatalf("lstat config.yaml: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Errorf("config.yaml mode = %v, want regular file", info.Mode())
+	}
+}
+
+func TestMutateConfig_ModeIs0600EvenIfTmpExisted(t *testing.T) {
+	withEnvDirs(t)
+	cfgDir, err := ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir: %v", err)
+	}
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	tmpFile := filepath.Join(cfgDir, "config.yaml.tmp")
+	if err := os.WriteFile(tmpFile, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write tmp: %v", err)
+	}
+	if err := os.Chmod(tmpFile, 0o644); err != nil {
+		t.Fatalf("chmod tmp: %v", err)
+	}
+
+	if err := MutateConfig(func(c *Config) error {
+		c.Environments["prod"] = Env{BaseURL: "https://api.example.com"}
+		return nil
+	}); err != nil {
+		t.Fatalf("MutateConfig: %v", err)
+	}
+
+	cfgFile := filepath.Join(cfgDir, "config.yaml")
+	info, err := os.Stat(cfgFile)
+	if err != nil {
+		t.Fatalf("stat config.yaml: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("config.yaml perm = %#o, want 0600", got)
+	}
+}

@@ -73,6 +73,67 @@ Changes on `main` since 0.44.0; they ship in the next release.
   `install_on_app` or the control surface's `install_connect_limiters`. The
   shipped app factories are unaffected; a custom assembly must call those
   install functions.
+- **External IdP email linking clears invite credentials and blocks invite reissue.**
+  When a user signs in through an external Identity Provider with a verified
+  email matching an existing local account, linking the identity cancels active
+  invite tokens, clears any password set via invite redemption, revokes existing
+  login sessions for that user, transitions `invite_state` to `accepted`, and
+  writes a `USER` `update` audit entry. `POST /users/{user_id}:reissue-invite`
+  now returns `409 Conflict` for accounts in `accepted` state in addition to
+  `redeemed` state.
+- **Broker trusted-issuer JWKS key cache lifespan and non-blocking fetches.**
+  `TrustedIssuerVerifier` disables indefinite per-key LRU caching in favor of
+  the time-bounded JWK-set cache (`lifespan=300s`), bounds JWKS HTTP fetches to
+  5 seconds, offloads cold/refresh JWKS fetches to worker threads coalesced per
+  issuer, and refuses JWT headers missing a non-empty string `kid`
+  (`jwt_kid_missing`) before any JWKS lookup. Signing keys removed from an
+  issuer's JWKS stop verifying within at most one JWK-set cache lifespan
+  (5 minutes). Custom implementations of the internal `TokenVerifier` protocol
+  must define `async def verify(self, token: str) -> dict[str, object]`.
+- **Broker request-target and method-override rejection (`request_override_not_allowed`).**
+  The broker returns `400 Bad Request` (`type: "request_override_not_allowed"`)
+  when a proxied request includes target-override headers (`X-Original-URL`,
+  `X-Rewrite-URL`, `X-Original-URI`), method-override headers
+  (`X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`), or a
+  `_method` query parameter whose value differs from the HTTP request method.
+  Method-override headers matching the request's HTTP method are accepted and
+  stripped before forwarding upstream.
+- **Broker OAuth refresh coalescing and undecryptable refresh-token classification.**
+  Concurrent in-process refreshes for the same credential coalesce into a single
+  vendor call before acquiring a database connection, and cross-process refresh
+  contention uses non-blocking `pg_try_advisory_xact_lock` polling bounded by the
+  IdP deadline (`502 refresh_transient_error` on timeout). Stored refresh tokens
+  that cannot be decrypted with the configured encryption keys now return
+  `424 Failed Dependency` (`type: "credential_undecryptable"`) instead of
+  `credential_needs_reconnect`.
+- **Standalone OAuth2 connect flows include PKCE (`S256`).**
+  `DirectOAuth2Provider` appends `code_challenge` and `code_challenge_method=S256`
+  to authorization URLs and sends the corresponding `code_verifier` during token
+  exchange. In-flight connect states issued before the upgrade continue to
+  complete without a verifier until their TTL expires.
+  `credentials.providers.<id>.authorize_extra_params` rejects `code_challenge`
+  and `code_challenge_method` overrides at startup validation.
+- **`jenticctl update` release signature verification and git token environment scoping.**
+  When `cosign` is on `PATH`, `jenticctl update` and `tools/install.sh` (binary
+  download mode) require verifying `checksums.txt.sig` and `checksums.txt.pem`
+  against the exact release tag identity (`...@refs/tags/vX.Y.Z`), failing closed
+  if signature assets are missing. Pass `--allow-unsigned` (or
+  `JENTIC_ALLOW_UNSIGNED=1` for `tools/install.sh`) to opt out when a proxy
+  blocks signature assets, or set `JENTIC_REQUIRE_SIGNATURE=1` (or
+  `"require_signature": true` in `~/.jentic/install.json`) to require `cosign`
+  on `PATH`. Updating to a release tag (`vX.Y.Z`) no longer falls back
+  automatically to building from source unless `--from-source` is passed. When
+  `GITHUB_TOKEN` is set, `jenticctl install` and `jenticctl update` pass git
+  credentials via URL-scoped `GIT_CONFIG_COUNT` environment variables and
+  require `git >= 2.31`.
+- **CLI human-mode control sequence escaping, path validation, and redaction parity.**
+  Human-rendered CLI output (`jentic` field values, list views, status lines,
+  error messages, recovery/approval notices, non-JSON pretty `execute` bodies,
+  and `jentic execute --raw` when stdout is a terminal) escapes C0/DEL/C1
+  control characters as `\uXXXX` and replaces invalid UTF-8 bytes with `U+FFFD`.
+  `jentic execute` and the MCP `execute` / `execute_read` tools reject exact dot
+  segments (`.` or `..`) as path parameter values. Python and Go `Retry-After`
+  HTTP-date parsers now enforce identical RFC 9110 §5.6.7 rules.
 
 ## 0.44.0
 

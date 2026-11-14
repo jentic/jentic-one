@@ -49,6 +49,7 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialServerVariableMismatchError,
     RefreshInvalidGrantError,
     RefreshTransientError,
+    RefreshUndecryptableError,
 )
 from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
@@ -168,7 +169,7 @@ class CredentialService:
                     )
 
                 result = inject_auth(resolved, ctx=self._ctx, access_token=access_token)
-            except DecryptionError as exc:
+            except (DecryptionError, RefreshUndecryptableError) as exc:
                 # A blob resolved by id/name but its ciphertext will not
                 # decrypt: the encryption key that produced it is gone (a
                 # reinstall regenerated it under the same key id, a hand

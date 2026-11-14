@@ -24970,7 +24970,7 @@ paths:
   /users/{user_id}:reissue-invite:
     description: '`POST`: Reissue a user''s invite.'
     post:
-      description: Reissue an invite token for a user.
+      description: Reissue an invite token for a pending user.
       operationId: reissueInvite
       parameters:
       - $ref: '#/components/parameters/PathUserId'
@@ -24996,7 +24996,7 @@ paths:
               example: *id265
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The user has already redeemed an invite, or has been deleted
+          description: The user has already signed in, or has been deleted
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':

@@ -88,6 +88,12 @@ class ConnectState(BaseModel):
     # ``localhost`` / ``127.0.0.1`` aliases to the host holding the cookie.
     browser_binding_hash: str | None = None
     browser_host: str | None = None
+    # True when ``begin_connect`` emitted a PKCE ``code_challenge`` derived from
+    # ``nonce`` (``pkc == 1`` in the signed state). At callback time,
+    # ``complete_connect`` sends the matching ``code_verifier`` only when this
+    # flag is set, so legacy states minted before deploy still complete within
+    # their TTL.
+    pkce: bool = False
 
 
 class ConnectCallback(BaseModel):

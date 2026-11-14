@@ -1999,3 +1999,111 @@ func TestExecuteCmdUpstream5xxStillExits0(t *testing.T) {
 		})
 	}
 }
+
+func TestExecutePrettyOutput_NonJSONBodyEscapesNeutralized(t *testing.T) {
+	payload := "text body \x1b]52;c;SGVsbG8=\x07 and \x1b[2J\x1b[H\rforged\nsecond line	with tab"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Jentic-Execution-Id", "exec-\u009b2J")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+
+	out, err := runExecuteAgainst(t, srv, "GET:/v1/pets", "--mode", "human")
+	if err != nil {
+		t.Fatalf("execute pretty non-JSON: %v", err)
+	}
+	got := out.String()
+	if strings.ContainsAny(got, "\x1b\x07\r\u009b") {
+		t.Errorf("pretty output left raw terminal escapes in stdout:\n%q", got)
+	}
+	for _, want := range []string{
+		`\u001b]52;c;SGVsbG8=\u0007`,
+		`\u001b[2J\u001b[H\u000dforged`,
+		"second line	with tab",
+		`exec-\u009b2J`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("pretty output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestExecuteRaw_PipePreservesBytes(t *testing.T) {
+	rawPayload := []byte("raw \x1b[32mok\x1b[0m\r\n\x00\xffend")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(rawPayload)
+	}))
+	defer srv.Close()
+
+	// Pipe (*os.File from os.Pipe, non-TTY): exact bytes must be preserved.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	app.Out = w
+	app.Err = new(bytes.Buffer)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(w)
+	root.SetErr(app.Err)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--raw",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+	execErr := root.Execute()
+	_ = w.Close()
+	var piped bytes.Buffer
+	_, _ = io.Copy(&piped, r)
+	_ = r.Close()
+	if execErr != nil {
+		t.Fatalf("execute --raw on pipe: %v", execErr)
+	}
+	if !bytes.Equal(piped.Bytes(), rawPayload) {
+		t.Errorf("execute --raw on pipe altered bytes:\ngot  %x\nwant %x", piped.Bytes(), rawPayload)
+	}
+
+	// Terminal writer (isTerminal reports true for the output fd): control sequences must be neutralized.
+	rTTY, wTTY, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origIsTerminal := isTerminal
+	ttyFD := wTTY.Fd()
+	isTerminal = func(fd uintptr) bool { return fd == ttyFD }
+	t.Cleanup(func() { isTerminal = origIsTerminal })
+
+	appTTY := testApp(t)
+	seedRegistered(t, appTTY, "default", srv.URL)
+	appTTY.Out = wTTY
+	appTTY.Err = new(bytes.Buffer)
+	rootTTY := newAPIRootCmd(appTTY.App)
+	rootTTY.SetOut(wTTY)
+	rootTTY.SetErr(appTTY.Err)
+	rootTTY.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--raw",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+	ttyExecErr := rootTTY.Execute()
+	_ = wTTY.Close()
+	var ttyOut bytes.Buffer
+	_, _ = io.Copy(&ttyOut, rTTY)
+	_ = rTTY.Close()
+	if ttyExecErr != nil {
+		t.Fatalf("execute --raw on TTY: %v", ttyExecErr)
+	}
+	if strings.ContainsAny(ttyOut.String(), "\x1b\r\x00") {
+		t.Errorf("execute --raw on TTY left control bytes intact: %q", ttyOut.String())
+	}
+	if !strings.Contains(ttyOut.String(), `\u001b[32mok\u001b[0m\u000d`) {
+		t.Errorf("execute --raw on TTY missing escaped sequence: %q", ttyOut.String())
+	}
+}

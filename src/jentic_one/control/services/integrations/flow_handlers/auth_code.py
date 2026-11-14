@@ -21,8 +21,6 @@ Refresh path stays on ``DirectOAuth2Provider``.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import secrets
 from datetime import UTC, datetime
 from typing import Any, ClassVar
@@ -47,6 +45,7 @@ from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
     encode_state,
     generate_nonce,
+    pkce_challenge_s256,
 )
 from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
 from jentic_one.control.services.integrations.flow_handlers.base import (
@@ -129,12 +128,6 @@ def _parse_expires_in(raw: object) -> int:
     return seconds
 
 
-def _pkce_challenge_from_verifier(verifier: str) -> str:
-    """Derive the S256 code_challenge from a PKCE verifier (RFC 7636 §4.2)."""
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-
-
 class AuthCodeFlowHandler:
     """OAuth 2.0 authorization-code flow handler."""
 
@@ -205,7 +198,7 @@ class AuthCodeFlowHandler:
         # exchange time (see ``complete_from_callback``), preserving legacy
         # behaviour for anything created before PKCE landed.
         code_verifier = secrets.token_urlsafe(64)[:96]
-        code_challenge = _pkce_challenge_from_verifier(code_verifier)
+        code_challenge = pkce_challenge_s256(code_verifier)
         async with self._ctx.control_db.transaction() as session:
             await ConnectSessionRepository.update_fields(
                 session, row.id, pkce_code_verifier=code_verifier

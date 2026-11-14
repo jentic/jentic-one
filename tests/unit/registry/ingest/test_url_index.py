@@ -15,11 +15,13 @@ from jentic_one.registry.core.url_index import (
     build_path_regex,
     build_server_index_entries,
     count_segments,
+    expand_path_template,
     expand_server_variables,
     extract_param_names,
     normalise_host,
     normalize_path,
     normalize_path_template,
+    path_param_group_names,
     resolve_server_variable_groups,
     server_variable_specs,
     structural_regex,
@@ -535,3 +537,36 @@ def test_server_variable_specs_accepts_list_of_objects() -> None:
         [SimpleNamespace(name="region", default_value="us", enum=["us", "eu", {"x": 1}])]
     )
     assert specs == [ServerVariableSpec(name="region", default="us", enum=("us", "eu"))]
+
+
+def test_build_server_index_entries_digit_leading_param() -> None:
+    expansion = build_server_index_entries("https://api.example.com", None, "/items/{1id}")
+    assert len(expansion.entries) == 1
+    entry = expansion.entries[0]
+    match = entry.path_regex.fullmatch("/items/abc")
+    assert match is not None
+    assert match.groupdict() == {"p_1id": "abc"}
+    assert expand_path_template("/items/{1id}", {"p_1id": "abc"}) == "/items/abc"
+
+
+def test_build_server_index_entries_empty_catch_all_token() -> None:
+    expansion = build_server_index_entries("https://api.example.com", None, "/a/{+}")
+    assert len(expansion.entries) == 1
+    entry = expansion.entries[0]
+    match = entry.path_regex.fullmatch("/a/b/c")
+    assert match is not None
+    assert match.groupdict() == {"p_": "b/c"}
+    assert expand_path_template("/a/{+}", {"p_": "b/c"}) == "/a/b/c"
+
+
+def test_group_collision_after_prefix() -> None:
+    assert path_param_group_names("/x/{1a}/{p_1a}") == {"1a": "p_1a", "p_1a": "p_1a__2"}
+    expansion = build_server_index_entries("https://api.example.com", None, "/x/{1a}/{p_1a}")
+    assert len(expansion.entries) == 1
+    match = expansion.entries[0].path_regex.fullmatch("/x/first/second")
+    assert match is not None
+    assert match.groupdict() == {"p_1a": "first", "p_1a__2": "second"}
+    assert (
+        expand_path_template("/x/{1a}/{p_1a}", {"p_1a": "first", "p_1a__2": "second"})
+        == "/x/first/second"
+    )

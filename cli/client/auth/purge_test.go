@@ -64,6 +64,39 @@ func TestPurgeMaterial_InvalidStemErrors(t *testing.T) {
 	}
 }
 
+func TestPurgeMaterial_RemovesPendingAPIKey(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "agent", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
+
+	if err := SaveAPIKey(ref, APIKeyPrefix+"oldkey123456"); err != nil {
+		t.Fatalf("SaveAPIKey: %v", err)
+	}
+	akPath, err := apiKeyPath(ref)
+	if err != nil {
+		t.Fatalf("apiKeyPath: %v", err)
+	}
+	pendingPath := apiKeyPendingPath(akPath)
+	pendingJSON := `{"api_key":"` + APIKeyPrefix + `pendingoldkey","origin":"https://origin-a.example.com"}`
+	if err := os.WriteFile(pendingPath, []byte(pendingJSON), 0o600); err != nil {
+		t.Fatalf("write pending: %v", err)
+	}
+
+	if err := PurgeMaterial(ref); err != nil {
+		t.Fatalf("PurgeMaterial: %v", err)
+	}
+
+	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
+		t.Errorf("expected pending file %s to be removed, stat err = %v", pendingPath, err)
+	}
+	if _, err := GetOrGenerateKey(ref); err != nil {
+		t.Fatalf("GetOrGenerateKey: %v", err)
+	}
+	if got, err := ReadAPIKey(ref); !os.IsNotExist(err) {
+		t.Errorf("ReadAPIKey after PurgeMaterial = (%q, %v), want os.ErrNotExist", got, err)
+	}
+}
+
 func TestPurgeEnvironmentCredentials_RemovesAtomicTempFiles(t *testing.T) {
 	withConfigDir(t)
 	ref := IdentityRef{Identity: "agent", Environment: "prod"}

@@ -38,6 +38,7 @@ from jentic_one.broker.adapters.runners.base import (
 from jentic_one.broker.core.directives import (
     approval_pending_limit_directive,
     held_execution_directive,
+    request_override_not_allowed_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.errors import (
@@ -48,6 +49,7 @@ from jentic_one.broker.core.errors import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
     PayloadTooLargeError,
+    RequestOverrideNotAllowedError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
 )
@@ -68,6 +70,7 @@ from jentic_one.broker.core.proxy_headers import (
     reconstruct_upstream_url,
     replay_headers,
 )
+from jentic_one.broker.core.request_overrides import find_request_override
 from jentic_one.broker.core.revisions import parse_revisions
 from jentic_one.broker.core.schemas import (
     AsyncQueuedResponse,
@@ -611,6 +614,20 @@ async def _handle(
         )
 
     raw_url = reconstruct_upstream_url(request.scope)
+    override = find_request_override(method, request.headers, raw_url)
+    if override is not None:
+        raise RequestOverrideNotAllowedError(
+            detail=(
+                f"Request override '{override}' is not allowed; send the target HTTP "
+                "method and URL directly."
+            ),
+            type="request_override_not_allowed",
+            extra={"header": override},
+            directive=request_override_not_allowed_directive(header=override),
+            instance=request.url.path,
+            pre_send=True,
+        )
+
     upstream_url = await _check_egress(raw_url, ctx)
 
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver

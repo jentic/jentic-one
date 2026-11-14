@@ -15,6 +15,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/update"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 	"github.com/spf13/cobra"
 )
@@ -1662,5 +1663,160 @@ func TestUpdatePreservesDigestPinnedDockerStackBehavior(t *testing.T) {
 				t.Errorf("manifest changed on refused digest-pinned update:\n%s", manifestBytes(t, a))
 			}
 		})
+	}
+}
+
+func TestAcquireCLIBinaries_ReleaseTagDownloadFailureDoesNotRunInstaller(t *testing.T) {
+	a := testApp(t)
+	origDownload, origFetch := downloadRelease, fetchInstaller
+	t.Cleanup(func() {
+		downloadRelease = origDownload
+		fetchInstaller = origFetch
+	})
+
+	downloadRelease = func(context.Context, update.DownloadRequest) (*update.DownloadResult, error) {
+		return nil, errors.New("asset 404 not found")
+	}
+	installerCalled := false
+	fetchInstaller = func(context.Context, string, string, string) ([]byte, error) {
+		installerCalled = true
+		return nil, errors.New("installer must not be called")
+	}
+
+	_, cleanup, _, err := a.acquireCLIBinaries(context.Background(), "jentic/jentic-one", "v0.31.0")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err == nil {
+		t.Fatal("expected acquireCLIBinaries to fail when release download fails")
+	}
+	if installerCalled {
+		t.Fatal("fetchInstaller seam must not be called when release-tag download fails")
+	}
+	if out := a.Out.(*bytes.Buffer).String(); strings.Contains(out, "building from source") {
+		t.Fatalf("release-tag download failure must not fall back to building from source; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "pass --from-source to build v0.31.0 from git") {
+		t.Fatalf("error should instruct operator to pass --from-source, got: %v", err)
+	}
+}
+
+func TestAcquireCLIBinaries_FromSourceFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script test targets unix")
+	}
+	a := testApp(t)
+	cmd := newUpdateCmd(a)
+	if f := cmd.Flags().Lookup("from-source"); f == nil {
+		t.Fatal("expected --from-source flag on update command")
+	}
+	if f := cmd.Flags().Lookup("allow-unsigned"); f == nil {
+		t.Fatal("expected --allow-unsigned flag on update command")
+	}
+
+	origDownload, origFetch := downloadRelease, fetchInstaller
+	t.Cleanup(func() {
+		downloadRelease = origDownload
+		fetchInstaller = origFetch
+	})
+
+	downloadCalled := false
+	downloadRelease = func(context.Context, update.DownloadRequest) (*update.DownloadResult, error) {
+		downloadCalled = true
+		return nil, errors.New("downloadRelease must not be called when --from-source is set")
+	}
+
+	envLog := filepath.Join(t.TempDir(), "installer.env")
+	fetchInstaller = func(context.Context, string, string, string) ([]byte, error) {
+		script := fmt.Sprintf(
+			"#!/usr/bin/env bash\nset -e\nenv > %q\nmkdir -p \"$JENTIC_INSTALL_DIR\"\nprintf '#!/bin/sh\\necho v0.31.0\\n' > \"$JENTIC_INSTALL_DIR/jenticctl\"\nprintf '#!/bin/sh\\necho v0.31.0\\n' > \"$JENTIC_INSTALL_DIR/jentic\"\nchmod 0755 \"$JENTIC_INSTALL_DIR/jenticctl\" \"$JENTIC_INSTALL_DIR/jentic\"\n",
+			envLog,
+		)
+		return []byte(script), nil
+	}
+
+	t.Setenv("GITHUB_TOKEN", "ghp_kept_for_installer")
+	t.Setenv("JENTIC_BEARER_TOKEN", "bearer_must_be_scrubbed")
+	t.Setenv("JENTIC_MCP_BEARER", "mcp_must_be_scrubbed")
+	t.Setenv("JENTIC_SESSION_ID", "session_must_be_scrubbed")
+	t.Setenv("OTHER_SECRET", "other_secret_must_be_scrubbed")
+
+	ctx := withUpdateOptions(context.Background(), updateOptions{fromSource: true})
+	staged, cleanup, fromDownload, err := a.acquireCLIBinaries(ctx, "jentic/jentic-one", "v0.31.0")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		t.Fatalf("acquireCLIBinaries(--from-source): %v", err)
+	}
+	if downloadCalled {
+		t.Error("downloadRelease was called despite --from-source")
+	}
+	if fromDownload {
+		t.Error("fromDownload = true, want false when --from-source is set")
+	}
+	if staged[ctlBinaryName] == "" || staged[apiBinaryName] == "" {
+		t.Errorf("staged binaries missing: %v", staged)
+	}
+
+	gotEnvBytes, err := os.ReadFile(envLog)
+	if err != nil {
+		t.Fatalf("read installer env: %v", err)
+	}
+	gotEnv := string(gotEnvBytes)
+	if !strings.Contains(gotEnv, "GITHUB_TOKEN=ghp_kept_for_installer") {
+		t.Error("stageCLIBuild should keep GITHUB_TOKEN for installer")
+	}
+	for _, scrubbed := range []string{
+		"JENTIC_BEARER_TOKEN=",
+		"JENTIC_MCP_BEARER=",
+		"JENTIC_SESSION_ID=",
+		"OTHER_SECRET=",
+		"bearer_must_be_scrubbed",
+		"mcp_must_be_scrubbed",
+	} {
+		if strings.Contains(gotEnv, scrubbed) {
+			t.Errorf("stageCLIBuild leaked %q to installer env", scrubbed)
+		}
+	}
+}
+
+func TestDownloadCLIBinaries_ManifestRequireSignatureAndAllowUnsigned(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ManifestPath(), []byte(`{"require_signature": true}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	origDownload := downloadRelease
+	t.Cleanup(func() { downloadRelease = origDownload })
+
+	var captured []update.DownloadRequest
+	downloadRelease = func(_ context.Context, req update.DownloadRequest) (*update.DownloadResult, error) {
+		captured = append(captured, req)
+		p := filepath.Join(req.StageDir, req.Binary)
+		if err := os.WriteFile(p, []byte("bin"), 0o755); err != nil {
+			return nil, err
+		}
+		return &update.DownloadResult{BinaryPath: p}, nil
+	}
+
+	ctx := withUpdateOptions(context.Background(), updateOptions{allowUnsigned: true})
+	_, cleanup, err := a.downloadCLIBinaries(ctx, "jentic/jentic-one", "v0.31.0")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		t.Fatalf("downloadCLIBinaries: %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("captured %d DownloadRequests, want 2", len(captured))
+	}
+	for _, req := range captured {
+		if !req.AllowUnsigned {
+			t.Errorf("DownloadRequest(%s).AllowUnsigned = false, want true", req.Binary)
+		}
+		if !req.RequireSignature {
+			t.Errorf("DownloadRequest(%s).RequireSignature = false, want true from manifest", req.Binary)
+		}
 	}
 }

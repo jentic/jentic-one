@@ -26,10 +26,12 @@ from jentic_one.admin.repos import (
     AgentRepository,
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
+    InviteTokenRepository,
     OAuthClientGrantRepository,
     OAuthClientRepository,
     UserPermissionGrantRepository,
     UserRepository,
+    UserSecretRepository,
 )
 from jentic_one.auth.core.id_token import issue_id_token
 from jentic_one.auth.core.idp import (
@@ -1038,6 +1040,10 @@ class AuthorizeService:
         or silently creating a duplicate — emails are unique, so a duplicate is
         impossible and a takeover via unverified email must not be allowed.
 
+        Linking an existing account cancels its active invite tokens, clears any
+        invite-set local password, revokes its login sessions, transitions
+        ``invite_state`` to ``accepted``, and records an update audit entry.
+
         Handles the race condition where concurrent callbacks for the same
         external_subject both pass the initial lookup — the UniqueConstraint
         on (issuer, external_subject) rejects the second insert, which is
@@ -1090,6 +1096,18 @@ class AuthorizeService:
                             "Email is not verified by the identity provider and is "
                             "already associated with an existing account"
                         )
+                    for token in await InviteTokenRepository.get_active_for_user(
+                        session, existing_user.id
+                    ):
+                        await InviteTokenRepository.redeem(session, token.id)
+                    if existing_user.invite_state == InviteState.REDEEMED:
+                        await UserSecretRepository.clear_password_hash(session, existing_user.id)
+                    await UserRepository.revoke_login_sessions(session, existing_user.id)
+                    await UserRepository.update(
+                        session,
+                        existing_user.id,
+                        invite_state=InviteState.ACCEPTED,
+                    )
                     await ExternalIdentityRepository.create(
                         session,
                         provider=provider,
@@ -1101,12 +1119,12 @@ class AuthorizeService:
                     )
                     await record_audit(
                         session,
-                        action=AuditAction.CREATE,
+                        action=AuditAction.UPDATE,
                         target_type=AuditTargetType.USER,
                         target_id=existing_user.id,
                         actor_type=ActorType.USER,
                         actor_id=existing_user.id,
-                        reason=f"linked external identity ({provider})",
+                        reason="linked external identity; local password and invites cleared",
                         origin=None,
                     )
                     return existing_user.id

@@ -177,9 +177,10 @@ JENTIC_INSTALL_METHOD="${JENTIC_INSTALL_METHOD:-auto}"
 JENTIC_INSTALL_BINARIES="${JENTIC_INSTALL_BINARIES:-both}"
 
 # cosign keyless-signing identity, mirrored from docs/development/releasing.md and the Go
-# updater (cli/internal/update/download.go): pinned to the release workflow on a
-# version tag, with the repo still parameterised for forks. Used to verify
-# checksums.txt.sig.
+# updater (cli/internal/update/download.go): pinned to the release workflow on the
+# exact release tag when JENTIC_REF is a canonical vX.Y.Z release tag, with a
+# prefix regexp fallback for non-release refs. Used to verify checksums.txt.sig.
+COSIGN_CERT_IDENTITY_PREFIX="https://github.com/${JENTIC_REPO}/.github/workflows/release.yml@refs/tags/"
 COSIGN_CERT_IDENTITY_REGEXP="^https://github\\.com/${JENTIC_REPO}/\\.github/workflows/release\\.yml@refs/tags/v"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
@@ -522,14 +523,16 @@ fetch_source() {
   export GIT_ASKPASS=true
   local -a git_base=(-c "credential.helper=")
 
-  # Pass the token via an in-memory http.extraheader so it never lands in the
-  # remote URL, git config on disk, or process listings of the clone URL.
+  # Pass the token via URL-scoped git config environment variables (git >= 2.31)
+  # so it never lands in the remote URL, git config on disk, or process argv.
   local -a git_auth=()
   if [ -n "$GITHUB_TOKEN" ]; then
     # base64-encode "x-access-token:<token>" for HTTP Basic auth.
     local basic
     basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-    git_auth=(-c "http.extraheader=Authorization: Basic ${basic}")
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+    export GIT_CONFIG_VALUE_0="Authorization: Basic ${basic}"
   fi
 
   # Default the build ref to the latest release tag (unless the user pinned one).
@@ -643,19 +646,24 @@ verify_checksum() {
 }
 
 # verify_cosign <checksums> <sig> <cert> verifies the release signature over
-# checksums.txt when cosign is on PATH. cosign absent → loud warning but the
-# sha256 gate above already held. cosign present but verification fails → hard
-# error (fail-closed). Mirrors docs/development/releasing.md and the Go updater.
+# checksums.txt when cosign is on PATH. cosign absent -> loud warning (unless
+# JENTIC_REQUIRE_SIGNATURE=1). cosign present -> verifies with the exact tag
+# identity when JENTIC_REF is a canonical vX.Y.Z release tag, failing closed on
+# any verification error. Mirrors docs/development/releasing.md and the Go updater.
 verify_cosign() {
   local sums="$1" sig="$2" cert="$3"
   if ! command -v cosign >/dev/null 2>&1; then
     warn "cosign not found — signature NOT verified (sha256 verified). Install cosign to verify the release signature."
     return 0
   fi
+  local -a id_args=(--certificate-identity-regexp "$COSIGN_CERT_IDENTITY_REGEXP")
+  if [[ "$JENTIC_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    id_args=(--certificate-identity "${COSIGN_CERT_IDENTITY_PREFIX}${JENTIC_REF}")
+  fi
   if ! cosign verify-blob \
         --certificate "$cert" \
         --signature "$sig" \
-        --certificate-identity-regexp "$COSIGN_CERT_IDENTITY_REGEXP" \
+        "${id_args[@]}" \
         --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
         "$sums" >/dev/null 2>&1; then
     die "cosign signature verification failed for checksums.txt — aborting"
@@ -692,13 +700,21 @@ download_binaries() {
   if ! spin "Fetching checksums.txt" curl_asset "$(release_asset_url checksums.txt)" "$sums"; then
     die "failed to download checksums.txt for ${JENTIC_REF} — is it a published release?"
   fi
-  # Signature/cert are best-effort to fetch; verify_cosign decides enforcement.
+  # Signature/cert enforcement mirrors cli/internal/update/download.go: when
+  # cosign is present, missing .sig/.pem fails closed unless JENTIC_ALLOW_UNSIGNED=1.
   curl_asset "$(release_asset_url checksums.txt.sig)" "$sig" 2>/dev/null || true
   curl_asset "$(release_asset_url checksums.txt.pem)" "$cert" 2>/dev/null || true
-  if [ -s "$sig" ] && [ -s "$cert" ]; then
+  if [ "${JENTIC_ALLOW_UNSIGNED:-0}" = "1" ]; then
+    warn "signature verification skipped (JENTIC_ALLOW_UNSIGNED=1) — verified sha256 only"
+  elif command -v cosign >/dev/null 2>&1; then
+    if [ ! -s "$sig" ] || [ ! -s "$cert" ]; then
+      die "cosign is installed but checksums.txt.sig/.pem could not be fetched for ${JENTIC_REF} — aborting"
+    fi
     verify_cosign "$sums" "$sig" "$cert"
+  elif [ "${JENTIC_REQUIRE_SIGNATURE:-0}" = "1" ]; then
+    die "cosign is required (JENTIC_REQUIRE_SIGNATURE=1) but was not found on PATH — aborting"
   else
-    warn "release signature/cert not available — verified sha256 only"
+    warn "cosign not found — signature NOT verified (sha256 verified). Install cosign to verify the release signature."
   fi
 
   local name asset archive
@@ -1093,7 +1109,9 @@ resolve_ref_for_download() {
   if [ -n "$GITHUB_TOKEN" ]; then
     local basic
     basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-    git_auth=(-c "http.extraheader=Authorization: Basic ${basic}")
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+    export GIT_CONFIG_VALUE_0="Authorization: Basic ${basic}"
   fi
   local ls_out tag
   if ls_out="$(git -c "credential.helper=" ${git_auth[@]+"${git_auth[@]}"} \

@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
@@ -33,7 +33,11 @@ from jentic_one.control.services.credentials.schemas.provision import (
     APIReference,
     OAuthTokenView,
 )
-from jentic_one.control.services.credentials.state import decode_state
+from jentic_one.control.services.credentials.state import (
+    decode_state,
+    pkce_challenge_s256,
+    pkce_verifier_for,
+)
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
@@ -597,7 +601,15 @@ async def test_begin_connect_with_empty_extra_params_emits_only_required_params(
     params = _parse_authorize_url_params(challenge.authorize_url)
     assert "prompt" not in params
     assert "access_type" not in params
-    assert set(params.keys()) == {"response_type", "client_id", "redirect_uri", "state", "scope"}
+    assert set(params.keys()) == {
+        "response_type",
+        "client_id",
+        "redirect_uri",
+        "state",
+        "scope",
+        "code_challenge",
+        "code_challenge_method",
+    }
 
 
 @pytest.mark.asyncio()
@@ -910,3 +922,119 @@ async def test_refresh_rejects_missing_access_token_and_maps_transport_error() -
 
         with pytest.raises(TokenExchangeError):
             await provider.refresh(ctx, token=token_view)
+
+
+@pytest.mark.asyncio()
+async def test_begin_connect_sends_s256_challenge_bound_to_state_nonce() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=_legacy_credential(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeOCCForBegin(),
+        ),
+    ):
+        challenge = await provider.begin_connect(
+            ctx, api=_begin_connect_api_ref(), request=_begin_connect_request()
+        )
+
+    params = _parse_authorize_url_params(challenge.authorize_url)
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    decoded = decode_state(state_secret, params["state"][0])
+    assert decoded.pkce is True
+    expected_verifier = pkce_verifier_for(state_secret, decoded.nonce)
+    assert params["code_challenge"] == [pkce_challenge_s256(expected_verifier)]
+    assert params["code_challenge_method"] == ["S256"]
+
+
+@pytest.mark.asyncio()
+async def test_complete_connect_sends_derived_code_verifier() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce="pkce-test-nonce",
+        pkce=True,
+    )
+    callback = ConnectCallback(code="auth-code-xyz")
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        ) as mock_client,
+    ):
+        await provider.complete_connect(ctx, state=state, callback=callback)
+
+    sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    assert sent_data["code_verifier"] == pkce_verifier_for(state_secret, "pkce-test-nonce")
+
+
+@pytest.mark.asyncio()
+async def test_complete_connect_legacy_state_sends_no_verifier() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce="legacy-nonce",
+    )
+    callback = ConnectCallback(code="auth-code-xyz")
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        ) as mock_client,
+    ):
+        await provider.complete_connect(ctx, state=state, callback=callback)
+
+    sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
+    assert "code_verifier" not in sent_data
+
+
+@pytest.mark.parametrize("pkce_key", ["code_challenge", "code_challenge_method"])
+def test_extra_params_cannot_override_pkce_keys(pkce_key: str) -> None:
+    with pytest.raises(ValidationError, match=pkce_key):
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback",
+            authorize_extra_params={pkce_key: "override"},
+        )

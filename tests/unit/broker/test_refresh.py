@@ -18,10 +18,14 @@ import httpx
 import pytest
 import structlog
 
-from jentic_one.broker.core.errors import CredentialNeedsReconnectError
+from jentic_one.broker.core.errors import (
+    CredentialNeedsReconnectError,
+    CredentialUndecryptableError,
+)
 from jentic_one.broker.services.credentials.errors import (
     RefreshInvalidGrantError,
     RefreshTransientError,
+    RefreshUndecryptableError,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.refresh import (
@@ -417,8 +421,6 @@ async def test_missing_grant_under_lock_needs_reconnect(
         (None, "   ", False),
         ("", None, True),
         ("   ", None, True),
-        (None, "not-valid-ciphertext", True),
-        (None, _encryption_service(_OTHER_KEY_B64, key_id="unknown_key").encrypt("rt"), True),
     ],
     ids=[
         "null-refresh-token",
@@ -426,8 +428,6 @@ async def test_missing_grant_under_lock_needs_reconnect(
         "whitespace-ciphertext",
         "decrypts-to-empty",
         "decrypts-to-whitespace",
-        "corrupted-ciphertext",
-        "unknown-key-ciphertext",
     ],
 )
 async def test_missing_or_undecryptable_refresh_token_maps_to_reconnect(
@@ -436,8 +436,8 @@ async def test_missing_or_undecryptable_refresh_token_maps_to_reconnect(
     raw_encrypted_refresh_token: str | None,
     expect_provider_called: bool,
 ) -> None:
-    """An expired access token with a NULL, empty, or undecryptable refresh token
-    raises RefreshInvalidGrantError (and CredentialNeedsReconnectError via
+    """An expired access token with a NULL or empty refresh token raises
+    RefreshInvalidGrantError (and CredentialNeedsReconnectError via
     CredentialService) without leaking secret material."""
     resolved = await _seed_credential_and_token(
         sqlite_ctx,
@@ -454,11 +454,9 @@ async def test_missing_or_undecryptable_refresh_token_maps_to_reconnect(
     provider_mock = sqlite_ctx.providers.get.return_value
     provider_mock.refresh = AsyncMock(side_effect=_decrypting_refresh)
 
-    with pytest.raises(RefreshInvalidGrantError) as refresh_exc:
+    with pytest.raises(RefreshInvalidGrantError):
         await TokenRefresher(sqlite_ctx).ensure_fresh(resolved=resolved, caller="test")
 
-    assert "not-valid-ciphertext" not in str(refresh_exc.value)
-    assert "unknown_key" not in str(refresh_exc.value)
     if not expect_provider_called:
         provider_mock.refresh.assert_not_called()
     else:
@@ -477,6 +475,61 @@ async def test_missing_or_undecryptable_refresh_token_maps_to_reconnect(
             preresolved=resolved,
         )
     assert orch_exc.value.type == "credential_needs_reconnect"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_encrypted_refresh_token",
+    [
+        "not-valid-ciphertext",
+        _encryption_service(_OTHER_KEY_B64, key_id="unknown_key").encrypt("rt"),
+    ],
+    ids=[
+        "corrupted-ciphertext",
+        "unknown-key-ciphertext",
+    ],
+)
+async def test_undecryptable_refresh_token_is_undecryptable_not_invalid_grant(
+    sqlite_ctx: MagicMock,
+    raw_encrypted_refresh_token: str,
+) -> None:
+    """An undecryptable stored refresh token raises RefreshUndecryptableError
+    and maps to 424 credential_undecryptable with prompt_human in the orchestrator."""
+    resolved = await _seed_credential_and_token(
+        sqlite_ctx,
+        access_token="expired-access",
+        refresh_token=None,
+        raw_encrypted_refresh_token=raw_encrypted_refresh_token,
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    async def _decrypting_refresh(ctx: Context, *, token: OAuthTokenView) -> RefreshResult:
+        await token.decrypt()
+        raise AssertionError("token.decrypt() should have raised RefreshUndecryptableError")
+
+    provider_mock = sqlite_ctx.providers.get.return_value
+    provider_mock.refresh = AsyncMock(side_effect=_decrypting_refresh)
+
+    with pytest.raises(RefreshUndecryptableError) as refresh_exc:
+        await TokenRefresher(sqlite_ctx).ensure_fresh(resolved=resolved, caller="test")
+
+    assert "not-valid-ciphertext" not in str(refresh_exc.value)
+    assert "unknown_key" not in str(refresh_exc.value)
+    assert provider_mock.refresh.await_count == 1
+
+    service = CredentialService(sqlite_ctx)
+    identity = Identity(sub="agent_1", actor_type=ActorType.AGENT)
+    with pytest.raises(CredentialUndecryptableError) as orch_exc:
+        await service.inject(
+            api_vendor="acme",
+            api_name="widgets",
+            api_version="v1",
+            identity=identity,
+            preresolved=resolved,
+        )
+    assert orch_exc.value.type == "credential_undecryptable"
+    assert orch_exc.value.directive is not None
+    assert orch_exc.value.directive.strategy == "prompt_human"
 
 
 @pytest.mark.asyncio
@@ -636,6 +689,131 @@ async def test_concurrent_waiters_share_single_refresh_on_sqlite(
 
     assert results == ["fresh-1", "fresh-1", "fresh-1", "fresh-1"]
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_refreshes_share_one_vendor_call_and_one_connection(
+    sqlite_ctx: MagicMock,
+) -> None:
+    resolved = await _seed_credential_and_token(
+        sqlite_ctx,
+        access_token="stale",
+        refresh_token="rt-0",
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    real_factory = sqlite_ctx.control_db.session_factory
+    opened_sessions: list[Any] = []
+
+    def _tracking_factory() -> Any:
+        sess = real_factory()
+        opened_sessions.append(sess)
+        return sess
+
+    sqlite_ctx.control_db._session_factory = _tracking_factory
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def _gated_refresh(ctx: Context, *, token: OAuthTokenView) -> RefreshResult:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return RefreshResult(
+            access_token=f"fresh-{calls}",
+            refresh_token=f"rt-{calls}",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+
+    sqlite_ctx.providers.get.return_value.refresh = AsyncMock(side_effect=_gated_refresh)
+
+    tasks = [
+        asyncio.create_task(TokenRefresher(sqlite_ctx).ensure_fresh(resolved=resolved, caller="c"))
+        for _ in range(25)
+    ]
+    await entered.wait()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert results == ["fresh-1"] * 25
+    assert calls == 1
+    assert len(opened_sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_rotation_still_persists_rotated_refresh_token(
+    sqlite_ctx: MagicMock,
+) -> None:
+    resolved = await _seed_credential_and_token(
+        sqlite_ctx,
+        access_token="at-1",
+        refresh_token="rt-1",
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    in_call = asyncio.Event()
+    release = asyncio.Event()
+    live_refresh_token = "rt-1"
+    presented_refresh_tokens: list[str] = []
+    generation = 1
+
+    async def _rotating_refresh(ctx: Context, *, token: OAuthTokenView) -> RefreshResult:
+        nonlocal live_refresh_token, generation
+        sent = await token.decrypt()
+        presented_refresh_tokens.append(sent)
+        if sent != live_refresh_token:
+            raise InvalidGrantError("refresh token reused")
+        generation += 1
+        live_refresh_token = f"rt-{generation}"
+        if generation == 2:
+            in_call.set()
+            await release.wait()
+        return RefreshResult(
+            access_token=f"at-{generation}",
+            refresh_token=live_refresh_token,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+
+    sqlite_ctx.providers.get.return_value.refresh = AsyncMock(side_effect=_rotating_refresh)
+
+    task = asyncio.create_task(
+        TokenRefresher(sqlite_ctx).ensure_fresh(resolved=resolved, caller="test")
+    )
+    await in_call.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    row = await _get_token_row(sqlite_ctx)
+    assert row is not None
+    assert row.encrypted_refresh_token is not None
+    assert sqlite_ctx.encryption.decrypt(row.encrypted_refresh_token) == "rt-2"
+
+    expired_again = datetime.now(UTC) - timedelta(minutes=1)
+    async with sqlite_ctx.control_db.transaction() as session:
+        stored = await OAuthTokenRepository.get_by_credential(session, _CRED_ID)
+        assert stored is not None
+        stored.expires_at = expired_again
+        await session.flush()
+
+    next_snapshot = resolved.model_copy(
+        update={
+            "encrypted_access_token": row.encrypted_access_token,
+            "encrypted_refresh_token": row.encrypted_refresh_token,
+            "token_expires_at": expired_again,
+        }
+    )
+    follow_up_token = await TokenRefresher(sqlite_ctx).ensure_fresh(
+        resolved=next_snapshot, caller="test"
+    )
+    assert follow_up_token == "at-3"
+    assert presented_refresh_tokens == ["rt-1", "rt-2"]
 
 
 @pytest.mark.asyncio

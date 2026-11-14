@@ -37,6 +37,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.http.idp_client import IdpResponse, IdpTransportError, idp_request
 from jentic_one.shared.models.credentials import CredentialType
+from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.url import is_loopback_url
 from jentic_one.shared.url_validation import validate_upstream_url_async
 
@@ -48,7 +49,7 @@ class PipedreamAPIError(ProviderError):
 
     def __init__(self, status: int, body: str) -> None:
         self.status = status
-        self.body = body
+        self.body = redact_value(body[:8192]) if body else ""
         super().__init__(f"Pipedream API error: HTTP {status}")
 
 

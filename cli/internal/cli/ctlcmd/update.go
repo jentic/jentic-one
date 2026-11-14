@@ -2,6 +2,7 @@ package ctlcmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/gitauth"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -24,12 +26,27 @@ import (
 )
 
 type updateOptions struct {
-	ref       string
-	baseURL   string
-	check     bool
-	cliOnly   bool
-	stackOnly bool
-	yes       bool
+	ref           string
+	baseURL       string
+	check         bool
+	cliOnly       bool
+	stackOnly     bool
+	yes           bool
+	allowUnsigned bool
+	fromSource    bool
+}
+
+type updateOptsContextKey struct{}
+
+func withUpdateOptions(ctx context.Context, opts updateOptions) context.Context {
+	return context.WithValue(ctx, updateOptsContextKey{}, opts)
+}
+
+func updateOptionsFromContext(ctx context.Context) updateOptions {
+	if opts, ok := ctx.Value(updateOptsContextKey{}).(updateOptions); ok {
+		return opts
+	}
+	return updateOptions{}
 }
 
 func newUpdateCmd(app *app) *cobra.Command {
@@ -59,10 +76,13 @@ func newUpdateCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL (for the server probe)")
+	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "allow installing a release when its cosign signature or certificate cannot be verified")
+	cmd.Flags().BoolVar(&opts.fromSource, "from-source", false, "build the CLI binaries from source via tools/install.sh instead of downloading prebuilt release archives")
 	return cmd
 }
 
 func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
+	ctx = withUpdateOptions(ctx, *opts)
 	manifest, found, err := config.LoadManifest(a.Paths)
 	if err != nil {
 		return err
@@ -296,6 +316,8 @@ var (
 	ensureUv             = install.EnsureUv
 	buildLocalStack      = install.BuildPlan.Execute
 	runLocalMigrations   = install.RunMigrations
+	fetchInstaller       = update.FetchInstaller
+	downloadRelease      = update.DownloadAndVerify
 )
 
 // preflightDockerStack checks what the Docker stack rebuild needs before any
@@ -683,27 +705,25 @@ func commitFromVersionLine(line string) string {
 	return m[1]
 }
 
-// acquireCLIBinaries stages the two CLI binaries for `ref`, preferring a
-// verified release download and falling back to a from-source build. It returns
-// the staged paths, a cleanup func, and whether the download path was taken.
+// acquireCLIBinaries stages the two CLI binaries for `ref`. For a release tag
+// (unless --from-source is set), it downloads and verifies the published
+// release archives and refuses to fall back to an unverified source build on
+// failure. Non-release refs (or explicit --from-source) build from source.
 func (a *app) acquireCLIBinaries(ctx context.Context, repo, ref string) (map[string]string, func(), bool, error) {
-	if tag := resolvedReleaseTag(ref); tag != "" {
-		staged, cleanup, err := a.downloadCLIBinaries(ctx, repo, tag)
-		if err == nil {
-			return staged, cleanup, true, nil
-		}
-		// A download failure that is a fail-closed VERIFICATION error must NOT
-		// silently fall back to building unverified — surface it. Any other
-		// failure (asset missing for this platform, transport) drops to source.
-		if isVerificationError(err) {
+	opts := updateOptionsFromContext(ctx)
+	if !opts.fromSource {
+		if tag := resolvedReleaseTag(ref); tag != "" {
+			staged, cleanup, err := a.downloadCLIBinaries(ctx, repo, tag)
+			if err == nil {
+				return staged, cleanup, true, nil
+			}
 			if cleanup != nil {
 				cleanup()
 			}
-			return nil, nil, false, err
-		}
-		fmt.Fprintln(a.Out, theme.Dimf("  no usable release download (%v); building from source", err))
-		if cleanup != nil {
-			cleanup()
+			if isVerificationError(err) {
+				return nil, nil, false, err
+			}
+			return nil, nil, false, fmt.Errorf("release download failed for %s: %w (pass --from-source to build %s from git)", tag, err, tag)
 		}
 	}
 	staged, cleanup, err := a.stageCLIBuild(ctx, repo, ref)
@@ -712,8 +732,7 @@ func (a *app) acquireCLIBinaries(ctx context.Context, repo, ref string) (map[str
 
 // downloadCLIBinaries downloads + verifies both binaries for tag into a staging
 // dir, returning their paths and a cleanup func. Any verification failure is
-// returned as a verificationError so the caller refuses to fall back to an
-// unverified source build.
+// returned as a verificationError so the caller surfaces it directly.
 func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[string]string, func(), error) {
 	stage, err := os.MkdirTemp("", "jentic-cli-download-*")
 	if err != nil {
@@ -721,16 +740,20 @@ func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[st
 	}
 	cleanup := func() { _ = os.RemoveAll(stage) }
 	token := os.Getenv("GITHUB_TOKEN")
+	opts := updateOptionsFromContext(ctx)
+	reqSig := manifestRequiresSignature(a.Paths.ManifestPath())
 	staged := map[string]string{}
 	for _, name := range []string{ctlBinaryName, apiBinaryName} {
-		res, derr := update.DownloadAndVerify(ctx, update.DownloadRequest{
-			Repo:     repo,
-			Tag:      tag,
-			Binary:   name,
-			GOOS:     runtime.GOOS,
-			GOARCH:   runtime.GOARCH,
-			Token:    token,
-			StageDir: stage,
+		res, derr := downloadRelease(ctx, update.DownloadRequest{
+			Repo:             repo,
+			Tag:              tag,
+			Binary:           name,
+			GOOS:             runtime.GOOS,
+			GOARCH:           runtime.GOARCH,
+			Token:            token,
+			StageDir:         stage,
+			AllowUnsigned:    opts.allowUnsigned,
+			RequireSignature: reqSig,
 		})
 		if derr != nil {
 			cleanup()
@@ -745,6 +768,20 @@ func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[st
 		staged[name] = res.BinaryPath
 	}
 	return staged, cleanup, nil
+}
+
+func manifestRequiresSignature(path string) bool {
+	data, err := os.ReadFile(path) //nolint:gosec // path derived from the CLI's own JENTIC_HOME, not user input.
+	if err != nil {
+		return false
+	}
+	var m struct {
+		RequireSignature bool `json:"require_signature"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	return m.RequireSignature
 }
 
 // verificationError marks a fail-closed download failure (bad checksum/sig) so
@@ -782,7 +819,7 @@ const (
 func (a *app) stageCLIBuild(ctx context.Context, repo, ref string) (map[string]string, func(), error) {
 	token := os.Getenv("GITHUB_TOKEN")
 
-	script, err := update.FetchInstaller(ctx, repo, ref, token)
+	script, err := fetchInstaller(ctx, repo, ref, token)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -806,8 +843,9 @@ func (a *app) stageCLIBuild(ctx context.Context, repo, ref string) (map[string]s
 	cmd := exec.CommandContext(ctx, "bash", scriptPath) //nolint:gosec // scriptPath is the installer we just fetched and wrote to a temp dir; running it is the point of `jenticctl update`.
 	// Install into the stage; putting stageBin on PATH makes install.sh treat its
 	// install dir as already-on-PATH, so it won't symlink the temp path into
-	// /usr/local/bin (which we're about to delete).
-	cmd.Env = append(os.Environ(),
+	// /usr/local/bin (which we're about to delete). Scrub secret env vars other
+	// than GITHUB_TOKEN before invoking the fetched script.
+	cmd.Env = append(gitauth.ScrubbedEnv("GITHUB_TOKEN"),
 		"JENTIC_INSTALL_DIR="+stageBin,
 		"JENTIC_REPO="+repo,
 		"JENTIC_REF="+ref,

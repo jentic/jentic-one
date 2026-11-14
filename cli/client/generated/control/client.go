@@ -15178,7 +15178,7 @@ type ClientInterface interface {
 
 	// ReissueInvite Reissue a user's invite
 	//
-	// Reissue an invite token for a user.
+	// Reissue an invite token for a pending user.
 	//
 	// Corresponds with POST /users/{user_id}:reissue-invite (the `ReissueInvite` operationId).
 	ReissueInvite(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -20390,7 +20390,7 @@ func (c *Client) EnableUser(ctx context.Context, userId PathUserId, reqEditors .
 
 // ReissueInvite Reissue a user's invite
 //
-// Reissue an invite token for a user.
+// Reissue an invite token for a pending user.
 //
 // Corresponds with POST /users/{user_id}:reissue-invite (the `ReissueInvite` operationId).
 func (c *Client) ReissueInvite(ctx context.Context, userId PathUserId, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -32659,7 +32659,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReissueInviteWithResponse Reissue a user's invite
 	//
-	// Reissue an invite token for a user.
+	// Reissue an invite token for a pending user.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -53063,7 +53063,7 @@ func (c *ClientWithResponses) EnableUserWithResponse(ctx context.Context, userId
 
 // ReissueInviteWithResponse Reissue a user's invite
 //
-// Reissue an invite token for a user.
+// Reissue an invite token for a pending user.
 //
 // Returns a wrapper object for the known response body format(s).
 //
