@@ -29,7 +29,12 @@ from jentic_one.broker.core.proxy_headers import (
     passthrough_response_headers,
 )
 from jentic_one.shared.broker.execution import ErrorOrigin
-from jentic_one.shared.http.injection import clear_upstream_cookie_scopes
+from jentic_one.shared.http.injection import (
+    apply_injection,
+    clear_upstream_cookie_scopes,
+    record_upstream_set_cookie,
+)
+from jentic_one.shared.jobs.protocols import InjectedAuth
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
@@ -522,5 +527,86 @@ async def test_runner_isolates_upstream_cookies_across_unrelated_origins() -> No
                 )
             )
             assert seen_cookies["b.example.com"] is None
+    finally:
+        clear_upstream_cookie_scopes()
+
+
+@pytest.mark.asyncio
+async def test_injected_cookie_credential_reaches_upstream() -> None:
+    clear_upstream_cookie_scopes()
+    url = "https://api.example.com/items"
+    seen_cookie: str | None = None
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        nonlocal seen_cookie
+        seen_cookie = req.headers.get("cookie")
+        return httpx.Response(200, content=b"ok")
+
+    _, headers = apply_injection(
+        {},
+        url,
+        InjectedAuth(headers={}, query_params={}, cookies={"sid": "S"}),
+    )
+    assert headers == {"Cookie": "sid=S"}
+
+    try:
+        async with _mock_client(httpx.MockTransport(handle)) as client:
+            await HttpRunner(client).run(RunnerRequest("GET", url, headers=headers))
+
+        assert seen_cookie == "sid=S"
+    finally:
+        clear_upstream_cookie_scopes()
+
+
+@pytest.mark.asyncio
+async def test_caller_untracked_cookie_dropped_but_credential_kept() -> None:
+    clear_upstream_cookie_scopes()
+    url = "https://api.example.com/items"
+    seen_cookie: str | None = None
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        nonlocal seen_cookie
+        seen_cookie = req.headers.get("cookie")
+        return httpx.Response(200, content=b"ok")
+
+    _, headers = apply_injection(
+        {"Cookie": "jentic_session=abc"},
+        url,
+        InjectedAuth(headers={}, query_params={}, cookies={"sid": "S"}),
+    )
+    assert headers == {"Cookie": "sid=S"}
+
+    try:
+        async with _mock_client(httpx.MockTransport(handle)) as client:
+            await HttpRunner(client).run(RunnerRequest("GET", url, headers=headers))
+
+        assert seen_cookie == "sid=S"
+    finally:
+        clear_upstream_cookie_scopes()
+
+
+@pytest.mark.asyncio
+async def test_tracked_foreign_cookie_still_dropped_with_credential() -> None:
+    clear_upstream_cookie_scopes()
+    record_upstream_set_cookie("https://a.example.com/login", "session=foreign; Path=/")
+    record_upstream_set_cookie("https://b.example.com/login", "sid=S; Path=/")
+    seen_cookie: str | None = None
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        nonlocal seen_cookie
+        seen_cookie = req.headers.get("cookie")
+        return httpx.Response(200, content=b"ok")
+
+    try:
+        async with _mock_client(httpx.MockTransport(handle)) as client:
+            await HttpRunner(client).run(
+                RunnerRequest(
+                    "GET",
+                    "https://b.example.com/items",
+                    headers={"Cookie": "session=foreign; sid=S"},
+                )
+            )
+
+        assert seen_cookie == "sid=S"
     finally:
         clear_upstream_cookie_scopes()
