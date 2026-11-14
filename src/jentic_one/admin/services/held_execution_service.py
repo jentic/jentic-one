@@ -214,7 +214,7 @@ class HeldExecutionService:
             )
         approve = body.decision == ApprovalDecision.APPROVE
         new_state = HeldExecutionState.APPROVED if approve else HeldExecutionState.DENIED
-        filters = build_access_filters(identity, HeldExecution)
+        filters = build_access_filters(identity, HeldExecution, for_write=True)
         async with self._ctx.admin_db.transaction() as session:
             now = await HeldExecutionRepository.now(session)
             visible = await HeldExecutionRepository.get_by_id(session, approval_id, filters=filters)

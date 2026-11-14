@@ -35,6 +35,7 @@ from jentic_one.control.core.schema.device_authorization_credentials import (
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
+from jentic_one.shared.http.idp_client import IDP_DEADLINE_SECONDS
 
 if TYPE_CHECKING:
     from jentic_one.shared.catalog import CatalogAutoImportProtocol
@@ -45,14 +46,15 @@ _logger = structlog.get_logger(__name__)
 _POLL_INTERVAL_SECONDS = 2.0
 _CANDIDATE_LIMIT = 100
 # Per-tick concurrency cap on vendor advancement. Without a cap a slow
-# vendor at the head of the batch stalls every credential behind it —
-# each ``advance`` fires a 15s-timeout HTTP call, so serial iteration
-# meant a 100-candidate tick could take ~25 minutes in the worst case
-# even though 99 of them were healthy. Bounded ``asyncio.gather`` lets
-# healthy vendors advance while a single slow one occupies exactly one
-# concurrency slot. Cap is deliberately conservative so a scanner tick
-# never dominates the shared upstream HTTP pool.
+# vendor at the head of the batch stalls every credential behind it. Bounded
+# ``asyncio.gather`` lets healthy vendors advance while a single slow one
+# occupies exactly one concurrency slot. Cap is deliberately conservative so a
+# scanner tick never dominates the shared upstream HTTP pool.
 _ADVANCE_CONCURRENCY = 20
+# Wall clock for one ``advance``: it resolves endpoints, polls the vendor and
+# finalises, so it may make up to two bounded vendor exchanges plus local work.
+# A hung advance is abandoned at this deadline so it cannot pin the tick.
+_ADVANCE_DEADLINE_SECONDS = 2 * IDP_DEADLINE_SECONDS + 10
 
 
 class ConnectPollScanner:
@@ -131,7 +133,13 @@ class ConnectPollScanner:
         async def _guarded_advance(credential_id: str) -> None:
             async with semaphore:
                 try:
-                    await service.advance_polling_target(credential_id)
+                    async with asyncio.timeout(_ADVANCE_DEADLINE_SECONDS):
+                        await service.advance_polling_target(credential_id)
+                except TimeoutError:
+                    _logger.warning(
+                        "connect_poll_scanner_advance_timeout",
+                        credential_id=credential_id,
+                    )
                 except Exception:
                     _logger.exception(
                         "connect_poll_scanner_advance_failed",

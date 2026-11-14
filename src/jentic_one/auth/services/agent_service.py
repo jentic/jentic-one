@@ -240,8 +240,10 @@ class AgentService:
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
-        access_filters = build_access_filters(identity, Agent)
+    async def get_agent(
+        self, agent_id: str, *, identity: Identity, for_write: bool = False
+    ) -> AgentView:
+        access_filters = build_access_filters(identity, Agent, for_write=for_write)
         async with self._ctx.admin_db.session() as session:
             agent = await AgentRepository.get_by_id(session, agent_id, filters=access_filters)
             if agent is None:
@@ -801,7 +803,7 @@ class AgentService:
         or foreign agent raises ``ActorNotFoundError``.
         """
         if agent_id == identity.sub:
-            return await self.get_agent(agent_id, identity=identity)
+            return await self.get_agent(agent_id, identity=identity, for_write=True)
         async with self._ctx.admin_db.session() as session:
             agent = await self._load_owned_agent(session, agent_id, identity=identity)
             return await self._view(session, agent)

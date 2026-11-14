@@ -91,7 +91,11 @@ func TestRecursiveChownCannotExecuteAgentPlantedChown(t *testing.T) {
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = root
 	cmd.Env = []string{"PATH=."}
-	if output, err := cmd.CombinedOutput(); err != nil {
+	// GNU find refuses -execdir outright when PATH holds a relative entry, which
+	// also keeps the planted utility from running; BSD find runs the command and
+	// relies on the absolute utility path asserted in TestRecursiveChownCmdShape.
+	if output, err := cmd.CombinedOutput(); err != nil &&
+		!strings.Contains(string(output), "insecure in combination with the -execdir") {
 		t.Fatalf("replay %v: %v\n%s", args, err, output)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {

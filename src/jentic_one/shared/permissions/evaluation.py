@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 import structlog
 
-from jentic_one.shared.permissions.matching import PathMatcher
+from jentic_one.shared.permissions.matching import MAX_MATCH_PATH_LENGTH, PathMatcher
 from jentic_one.shared.url_path import normalize_path
 
 _logger = structlog.get_logger(__name__)
@@ -153,6 +153,20 @@ def rule_matches(
     return True
 
 
+def _path_is_unmatchable(rule: PermissionRule, path: str) -> bool:
+    """True when the rule's path matcher cannot decide this request.
+
+    That is a stored pattern that failed validation (``never``), or a request
+    path too long for a regex matcher to examine.
+    """
+    matcher = rule.path
+    if matcher is None:
+        return False
+    if matcher.never:
+        return True
+    return matcher.mode == "regex" and len(path) > MAX_MATCH_PATH_LENGTH
+
+
 def first_matching_rule(
     rules: Sequence[PermissionRule],
     *,
@@ -196,6 +210,15 @@ def first_matching_rule(
             ambiguous_operation_ids=ambiguous_operation_ids,
         ):
             return idx
+        # Fail-closed on an unmatchable path: a ``deny`` rule whose path cannot
+        # be evaluated still denies, and a ``require-approval`` rule halts as
+        # default-deny, instead of falling through to a broader ``allow``.
+        if (
+            effect in ("deny", "require-approval")
+            and (rule.methods is None or method.upper() in rule.methods)
+            and _path_is_unmatchable(rule, path)
+        ):
+            return idx if effect == "deny" else None
         # Fail-closed ambiguity handling: when methods/path match and a rule's
         # ``operations`` list names an ambiguous ``operationId``, a ``deny`` rule
         # still denies immediately and a ``require-approval`` rule halts as

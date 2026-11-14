@@ -436,3 +436,39 @@ async def test_connect_site_applies_allowlist_off_the_event_loop(
     assert len(sent) == 1
     assert len(lookup_threads) == 1
     assert loop_thread not in lookup_threads
+
+
+def _echo_probe() -> VendorIdentityProbeConfig:
+    return VendorIdentityProbeConfig(
+        endpoint="https://idp.example.com/user",
+        identity_field="login",
+        display_template="@{login}",
+    )
+
+
+@pytest.mark.asyncio()
+async def test_echo_identity_transport_error_is_typed() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    with (
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(respond),
+        ),
+        pytest.raises(IdentityEchoError, match="identity probe transport"),
+    ):
+        await echo_identity(probe=_echo_probe(), access_token="tok", egress=None)
+
+
+@pytest.mark.asyncio()
+async def test_echo_identity_oversized_body_fails_closed() -> None:
+    huge = httpx.Response(200, json={"login": "octocat", "pad": "x" * (512 * 1024)})
+    with (
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(lambda request: huge),
+        ),
+        pytest.raises(IdentityEchoError, match="too_large"),
+    ):
+        await echo_identity(probe=_echo_probe(), access_token="tok", egress=None)

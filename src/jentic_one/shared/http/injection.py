@@ -13,7 +13,7 @@ from collections.abc import Set as AbstractSet
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, unquote_plus, urlencode, urlparse, urlunparse
+from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlencode, urlparse, urlunparse
 
 from jentic_one.shared.url import apply_server_variables
 
@@ -23,8 +23,31 @@ if TYPE_CHECKING:
     from jentic_one.shared.jobs.protocols import InjectedAuth
 
 _MAX_TRACKED_COOKIES = 4096
+_MIN_REFLECTION_SECRET_LEN = 8
 _current_upstream_url: ContextVar[str | None] = ContextVar(
     "broker_current_upstream_url", default=None
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectionGuard:
+    """Credential material used to sanitize upstream response headers."""
+
+    query_param_names: frozenset[str]
+    secrets: tuple[str, ...]
+    credential_cookies: tuple[tuple[str, str], ...]
+
+    def __repr__(self) -> str:
+        """Describe the guard without exposing credential values."""
+        cookie_names = tuple(name for name, _ in self.credential_cookies)
+        return (
+            f"ReflectionGuard(query_param_names={self.query_param_names!r}, "
+            f"secret_count={len(self.secrets)}, credential_cookie_names={cookie_names!r})"
+        )
+
+
+_current_reflection_guard: ContextVar[ReflectionGuard | None] = ContextVar(
+    "broker_current_reflection_guard", default=None
 )
 
 
@@ -48,6 +71,16 @@ def set_current_upstream_url(url: str | None) -> None:
 def get_current_upstream_url() -> str | None:
     """Return the active upstream target URL for the current execution task, if any."""
     return _current_upstream_url.get()
+
+
+def set_current_reflection_guard(guard: ReflectionGuard | None) -> None:
+    """Record response-reflection metadata for the current execution task."""
+    _current_reflection_guard.set(guard)
+
+
+def get_current_reflection_guard() -> ReflectionGuard | None:
+    """Return response-reflection metadata for the current execution task, if any."""
+    return _current_reflection_guard.get()
 
 
 def clear_upstream_cookie_scopes() -> None:
@@ -157,11 +190,19 @@ def is_cookie_allowed_for_upstream(
     if parsed_target is None:
         return False
     scheme, host_port, req_path = parsed_target
-    return any(
+    if any(
         scope.host_port == host_port
         and (not scope.secure or scheme == "https")
         and _cookie_path_matches(req_path, scope.path)
         for scope in scopes
+    ):
+        return True
+    guard = get_current_reflection_guard()
+    return bool(
+        allow_untracked
+        and guard is not None
+        and (cookie_name, cookie_value) in guard.credential_cookies
+        and get_current_upstream_url() == target_url
     )
 
 
@@ -234,6 +275,24 @@ def _connection_nominated_from_mapping(headers: Mapping[str, str]) -> frozenset[
     return frozenset(nominated)
 
 
+def _reflection_secrets(injection: InjectedAuth) -> tuple[str, ...]:
+    """Return raw and URL-encoded credential values suitable for header redaction."""
+    sources = [*injection.query_params.values(), *injection.cookies.values()]
+    for value in injection.headers.values():
+        sources.append(value)
+        for scheme in ("Bearer ", "Basic ", "SSWS ", "Token "):
+            if value.startswith(scheme):
+                sources.append(value[len(scheme) :])
+                break
+    variants = {
+        variant
+        for value in sources
+        if len(value) >= _MIN_REFLECTION_SECRET_LEN
+        for variant in (value, quote(value, safe=""), quote_plus(value))
+    }
+    return tuple(sorted(variants, key=lambda value: (-len(value), value)))
+
+
 def apply_injection(
     headers: Mapping[str, str],
     url: str,
@@ -257,10 +316,15 @@ def apply_injection(
       appends the cookie credentials. Any ``Cookie`` already in ``headers`` is
       consolidated so the header is never sent twice.
     """
+    set_current_reflection_guard(
+        ReflectionGuard(
+            query_param_names=frozenset(injection.query_params),
+            secrets=_reflection_secrets(injection),
+            credential_cookies=tuple(injection.cookies.items()),
+        )
+    )
     if injection.server_variables or server_variable_defaults:
         url = apply_server_variables(url, injection.server_variables, server_variable_defaults)
-
-    set_current_upstream_url(url)
 
     if injection.query_params:
         parsed = urlparse(url)
@@ -270,6 +334,7 @@ def apply_injection(
             )
         )
 
+    set_current_upstream_url(url)
     nominated = _connection_nominated_from_mapping(headers)
     if "cookie" in nominated:
         effective_inbound: str | None = None

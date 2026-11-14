@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import base64
 import os
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -38,6 +39,38 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
@@ -128,18 +161,12 @@ async def test_begin_connect_creates_connect_token_and_returns_link() -> None:
     )
     api = APIReference(vendor="slack", name="slack-api", version="v2")
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            side_effect=[
-                httpx.Response(200, json=app_token_response),
-                httpx.Response(200, json=connect_token_response),
-            ]
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=[
+            httpx.Response(200, json=app_token_response),
+            httpx.Response(200, json=connect_token_response),
+        ]
+    ):
         challenge = await provider.begin_connect(ctx, api=api, request=request)
 
     assert challenge.authorize_url == "https://pipedream.com/connect/ct_abc"
@@ -167,13 +194,7 @@ async def test_begin_connect_raises_on_app_token_failure() -> None:
     )
     api = APIReference(vendor="slack", name="", version="")
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(401, text="Unauthorized"))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(post=httpx.Response(401, text="Unauthorized")):
         with pytest.raises(PipedreamAPIError) as exc_info:
             await provider.begin_connect(ctx, api=api, request=request)
         assert exc_info.value.status == 401
@@ -193,21 +214,13 @@ async def test_complete_connect_maps_account_id() -> None:
     )
     callback = ConnectCallback(account_id="acct_pd_456")
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
-        )
-        mock_client.get = AsyncMock(
-            return_value=httpx.Response(
-                200,
-                json={"id": "acct_pd_456", "external_id": "cred_123"},
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json={"access_token": "pd-app-token"}),
+        get=httpx.Response(
+            200,
+            json={"id": "acct_pd_456", "external_id": "cred_123"},
+        ),
+    ):
         result = await provider.complete_connect(ctx, state=state, callback=callback)
 
     assert result.provider_account_ref == "acct_pd_456"
@@ -230,23 +243,17 @@ async def test_complete_connect_rejects_substituted_account_external_id() -> Non
     )
     callback = ConnectCallback(account_id="acct_other_user")
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
-        )
-        mock_client.get = AsyncMock(
-            return_value=httpx.Response(
+    with (
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "pd-app-token"}),
+            get=httpx.Response(
                 200,
                 json={"id": "acct_other_user", "external_id": "cred_someone_else"},
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(ProviderError, match="external_id"):
-            await provider.complete_connect(ctx, state=state, callback=callback)
+            ),
+        ),
+        pytest.raises(ProviderError, match="external_id"),
+    ):
+        await provider.complete_connect(ctx, state=state, callback=callback)
 
 
 @pytest.mark.asyncio()
@@ -287,18 +294,14 @@ async def test_refresh_rejects_malformed_token_payload(
         decrypt=fake_decrypt,
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
-        )
-        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=bad_token_payload))
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(ProviderError):
-            await provider.refresh(ctx, token=token_view)
+    with (
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "pd-app-token"}),
+            get=httpx.Response(200, json=bad_token_payload),
+        ),
+        pytest.raises(ProviderError),
+    ):
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -317,18 +320,14 @@ async def test_refresh_maps_transport_error_to_provider_error() -> None:
         decrypt=fake_decrypt,
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "pd-app-token"})
-        )
-        mock_client.get = AsyncMock(side_effect=httpx.ReadError("socket closed"))
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(ProviderError, match="ReadError"):
-            await provider.refresh(ctx, token=token_view)
+    with (
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "pd-app-token"}),
+            get=httpx.ReadError("socket closed"),
+        ),
+        pytest.raises(ProviderError, match="ReadError"),
+    ):
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -389,14 +388,10 @@ async def test_refresh_fetches_access_token_for_account() -> None:
         decrypt=fake_decrypt,
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=app_token_response))
-        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=account_token_response))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json=app_token_response),
+        get=httpx.Response(200, json=account_token_response),
+    ):
         result = await provider.refresh(ctx, token=token_view)
 
     assert result.access_token == "vendor-at-live"
@@ -445,14 +440,10 @@ async def test_refresh_raises_on_api_failure() -> None:
         decrypt=fake_decrypt,
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=app_token_response))
-        mock_client.get = AsyncMock(return_value=httpx.Response(500, text="Internal Server Error"))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json=app_token_response),
+        get=httpx.Response(500, text="Internal Server Error"),
+    ):
         with pytest.raises(PipedreamAPIError) as exc_info:
             await provider.refresh(ctx, token=token_view)
         assert exc_info.value.status == 500
@@ -475,21 +466,30 @@ async def test_app_token_cached_across_calls() -> None:
     )
     api = APIReference(vendor="v", name="", version="")
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            side_effect=[
-                httpx.Response(200, json=app_token_response),
-                httpx.Response(200, json=connect_token_response),
-                httpx.Response(200, json=connect_token_response),
-            ]
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=[
+            httpx.Response(200, json=app_token_response),
+            httpx.Response(200, json=connect_token_response),
+            httpx.Response(200, json=connect_token_response),
+        ]
+    ) as mock_client:
         await provider.begin_connect(ctx, api=api, request=request)
         await provider.begin_connect(ctx, api=api, request=request)
 
         # App token fetched once (first post), connect token twice (second+third posts)
-        assert mock_client.post.call_count == 3
+        assert len(mock_client) == 3
+
+
+@pytest.mark.asyncio()
+async def test_pipedream_error_body_not_buffered_past_cap() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    request = ConnectRequest(scopes=[], extra={"credential_id": "cred_123", "actor_id": ""})
+    api = APIReference(vendor="slack", name="", version="")
+
+    with (
+        idp_transport(post=httpx.Response(500, content=b"x" * (1024 * 1024))),
+        pytest.raises(ProviderError, match="too_large") as exc_info,
+    ):
+        await provider.begin_connect(ctx, api=api, request=request)
+    assert not isinstance(exc_info.value, PipedreamAPIError)

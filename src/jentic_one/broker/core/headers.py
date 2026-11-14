@@ -100,6 +100,11 @@ SENSITIVE_RESPONSE_HEADERS: frozenset[str] = frozenset(
 )
 
 
+BROKER_OWNED_RESPONSE_HEADER_PREFIXES = ("jentic-", "x-jentic-")
+BROKER_OWNED_RESPONSE_HEADERS = frozenset({"idempotent-replayed", "tracestate"})
+URL_BEARING_RESPONSE_HEADERS = frozenset({"location", "content-location", "link", "refresh"})
+
+
 # Hop-by-hop headers (RFC 7230 §6.1) — a conformant proxy must not forward these,
 # in either direction. ``host`` is included so the broker never forwards its own
 # Host; httpx sets the correct upstream Host automatically.

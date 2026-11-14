@@ -75,15 +75,17 @@ func ReadTokens(ref IdentityRef) (*TokenSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tokens.Origin != "" {
-		envOrigin, err := configuredEnvOrigin(ref.Environment)
-		if err != nil {
-			return nil, err
-		}
-		if envOrigin != "" && tokens.Origin != envOrigin {
-			return nil, fmt.Errorf("%w: cached token for %s/%s belongs to %s, not %s",
-				ErrOriginMismatch, ref.Identity, ref.Environment, tokens.Origin, envOrigin)
-		}
+	envOrigin, err := configuredEnvOrigin(ref.Environment)
+	if err != nil {
+		return nil, err
+	}
+	if envOrigin != "" && tokens.Origin == "" {
+		return nil, fmt.Errorf("%w: cached token for %s/%s has no origin binding",
+			ErrOriginMismatch, ref.Identity, ref.Environment)
+	}
+	if envOrigin != "" && tokens.Origin != envOrigin {
+		return nil, fmt.Errorf("%w: cached token for %s/%s belongs to %s, not %s",
+			ErrOriginMismatch, ref.Identity, ref.Environment, tokens.Origin, envOrigin)
 	}
 	return tokens, nil
 }

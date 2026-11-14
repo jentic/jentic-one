@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable
+import json
+from collections.abc import AsyncGenerator, Awaitable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
+from urllib.parse import parse_qsl
 
 import httpx
 import pytest
@@ -62,6 +65,40 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.web import deps as shared_deps
 from jentic_one.shared.web import get_ctx
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        if callable(step):
+            step = step(request)
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 pytestmark = pytest.mark.integration
 
@@ -219,13 +256,7 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         "scope": "read write",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(post=httpx.Response(200, json=token_response)):
         result_id = await svc.complete(
             challenge.state, ConnectCallback(code="auth-code-xyz"), browser_binding=_BINDING.value
         )
@@ -286,21 +317,15 @@ async def test_direct_oauth2_derived_redirect_uri_round_trips(
     # The non-default port made it into the authorize URL.
     assert "8020" in challenge.authorize_url
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+    ) as mock_client:
         await svc.complete(
             challenge.state, ConnectCallback(code="auth-code-xyz"), browser_binding=_BINDING.value
         )
 
         # The token exchange replays the derived redirect_uri byte-identically.
-        sent_data = mock_client.post.await_args.kwargs["data"]
+        sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
         assert sent_data["redirect_uri"] == derived
 
 
@@ -331,13 +356,7 @@ async def test_direct_oauth2_replay_rejected(
         "expires_in": 3600,
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(post=httpx.Response(200, json=token_response)):
         await svc.complete(
             challenge.state, ConnectCallback(code="code-1"), browser_binding=_BINDING.value
         )
@@ -462,24 +481,16 @@ async def test_pipedream_connect_and_callback_stores_account_ref(
         "connect_link_url": "https://pipedream.com/connect/ct_test",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            side_effect=[
-                httpx.Response(200, json=app_token_resp),
-                httpx.Response(200, json=connect_token_resp),
-            ]
-        )
-        mock_client.get = AsyncMock(
-            return_value=httpx.Response(
-                200,
-                json={"id": "acct_pd_789", "external_id": credential_id},
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=[
+            httpx.Response(200, json=app_token_resp),
+            httpx.Response(200, json=connect_token_resp),
+        ],
+        get=httpx.Response(
+            200,
+            json={"id": "acct_pd_789", "external_id": credential_id},
+        ),
+    ):
         challenge = await svc.begin(
             credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
         )
@@ -540,14 +551,10 @@ async def test_pipedream_refresh_populates_access_token(
         decrypt=fake_decrypt,
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=app_token_resp))
-        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=account_token_resp))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json=app_token_resp),
+        get=httpx.Response(200, json=account_token_resp),
+    ):
         result = await provider.refresh(ctx, token=token_view)
 
     assert result.access_token == "vendor-live-at"
@@ -577,24 +584,16 @@ async def test_pipedream_replay_rejected(
         "connect_link_url": "https://pipedream.com/connect/ct_test",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            side_effect=[
-                httpx.Response(200, json=app_token_resp),
-                httpx.Response(200, json=connect_token_resp),
-            ]
-        )
-        mock_client.get = AsyncMock(
-            return_value=httpx.Response(
-                200,
-                json={"id": "acct_1", "external_id": credential_id},
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=[
+            httpx.Response(200, json=app_token_resp),
+            httpx.Response(200, json=connect_token_resp),
+        ],
+        get=httpx.Response(
+            200,
+            json={"id": "acct_1", "external_id": credential_id},
+        ),
+    ):
         challenge = await svc.begin(
             credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
         )
@@ -646,44 +645,38 @@ async def test_pipedream_standalone_http_router_flow_end_to_end(
     posted_token_payloads: list[dict[str, str]] = []
     router_client_cls = httpx.AsyncClient
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+    def _post(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/oauth/token"):
+            return httpx.Response(200, json={"access_token": "pd-app-token"})
+        if url.endswith("/connect/tokens"):
+            body = json.loads(request.content)
+            if isinstance(body, dict):
+                posted_token_payloads.append(body)
+            return httpx.Response(
+                200,
+                json={
+                    "token": "ct_live",
+                    "connect_link_url": "https://pipedream.com/connect/ct_live",
+                },
+            )
+        return httpx.Response(404)
 
-        async def _post(url: str, **kwargs: object) -> httpx.Response:
-            if url.endswith("/oauth/token"):
-                return httpx.Response(200, json={"access_token": "pd-app-token"})
-            if url.endswith("/connect/tokens"):
-                body = kwargs.get("json")
-                if isinstance(body, dict):
-                    posted_token_payloads.append(body)
-                return httpx.Response(
-                    200,
-                    json={
-                        "token": "ct_live",
-                        "connect_link_url": "https://pipedream.com/connect/ct_live",
-                    },
-                )
-            return httpx.Response(404)
+    def _get(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/connect/accounts/acct_wrong_owner"):
+            return httpx.Response(
+                200,
+                json={"id": "acct_wrong_owner", "external_id": other_credential_id},
+            )
+        if url.endswith("/connect/accounts/acct_intended"):
+            return httpx.Response(
+                200,
+                json={"id": "acct_intended", "external_id": credential_id},
+            )
+        return httpx.Response(404)
 
-        async def _get(url: str, **_kwargs: object) -> httpx.Response:
-            if url.endswith("/connect/accounts/acct_wrong_owner"):
-                return httpx.Response(
-                    200,
-                    json={"id": "acct_wrong_owner", "external_id": other_credential_id},
-                )
-            if url.endswith("/connect/accounts/acct_intended"):
-                return httpx.Response(
-                    200,
-                    json={"id": "acct_intended", "external_id": credential_id},
-                )
-            return httpx.Response(404)
-
-        mock_client.post = AsyncMock(side_effect=_post)
-        mock_client.get = AsyncMock(side_effect=_get)
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(post=_post, get=_get):
         # 1. Missing account_id fails and does not connect the credential.
         async with router_client_cls(
             transport=httpx.ASGITransport(app=app),
@@ -1081,12 +1074,12 @@ async def test_state_without_browser_binding_is_refused_and_not_consumed(
     secret = ctx.config.credentials.connect.state_secret.get_secret_value()
     assert decode_state(secret, challenge.state).browser_binding_hash is None
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
+    with idp_transport() as mock_client:
         with pytest.raises(ConnectFlowError, match="starting browser"):
             await svc.complete(
                 challenge.state, ConnectCallback(code="c"), browser_binding=_BINDING.value
             )
-        mock_client_cls.assert_not_called()
+        assert not mock_client
 
     async with ctx.control_db.session() as session:
         assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None

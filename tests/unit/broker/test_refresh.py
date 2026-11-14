@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -58,9 +61,42 @@ from jentic_one.shared.config import AppConfig, DatabaseConfig, EncryptionConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import EncryptionService
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.http.idp_client import idp_request
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.redaction import REDACTED, redact_event, redact_value
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 _KEY_B64 = base64.b64encode(b"\x11" * 32).decode()
 _OTHER_KEY_B64 = base64.b64encode(b"\x22" * 32).decode()
@@ -717,23 +753,17 @@ async def test_post_token_error_classification_and_precedence(
 
     with (
         patch(
-            "jentic_one.control.services.credentials.providers.oauth2.validate_upstream_url_async",
+            "jentic_one.shared.http.idp_client.validate_upstream_url_async",
             new=AsyncMock(return_value="https://idp.example.com/oauth/token"),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=response),
+        pytest.raises(expected_exc_type) as exc_info,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=response)
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(expected_exc_type) as exc_info:
-            await provider._post_token(
-                "https://idp.example.com/oauth/token",
-                {"grant_type": "refresh_token", "refresh_token": "rt"},
-                egress=None,
-            )
+        await provider._post_token(
+            "https://idp.example.com/oauth/token",
+            {"grant_type": "refresh_token", "refresh_token": "rt"},
+            egress=None,
+        )
 
     if type(exc_info.value) is TokenExchangeError:
         assert exc_info.value.status == status_code
@@ -760,23 +790,17 @@ async def test_post_token_normalizes_httpx_transport_errors(
     provider = _DummyOAuth2Provider()
     with (
         patch(
-            "jentic_one.control.services.credentials.providers.oauth2.validate_upstream_url_async",
+            "jentic_one.shared.http.idp_client.validate_upstream_url_async",
             new=AsyncMock(return_value="https://idp.example.com/oauth/token"),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=transport_exc),
+        pytest.raises(TokenExchangeError) as exc_info,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(side_effect=transport_exc)
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(TokenExchangeError) as exc_info:
-            await provider._post_token(
-                "https://idp.example.com/oauth/token",
-                {"grant_type": "refresh_token", "refresh_token": "rt"},
-                egress=None,
-            )
+        await provider._post_token(
+            "https://idp.example.com/oauth/token",
+            {"grant_type": "refresh_token", "refresh_token": "rt"},
+            egress=None,
+        )
 
     assert exc_info.value.status == 0
     assert exc_info.value.body == type(transport_exc).__name__
@@ -899,25 +923,18 @@ async def test_poll_device_authorization_rejects_zero_or_malformed_expires_in() 
         )
         with (
             patch(
-                "jentic_one.control.services.integrations.device_authorization."
-                "validate_upstream_url_async",
+                "jentic_one.shared.http.idp_client.validate_upstream_url_async",
                 new=AsyncMock(return_value="https://idp.example.com/device/token"),
             ),
-            patch("httpx.AsyncClient") as mock_client_cls,
+            idp_transport(post=response),
+            pytest.raises(df.DeviceAuthorizationUpstreamError, match="invalid expires_in"),
         ):
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.post = AsyncMock(return_value=response)
-            mock_client_cls.return_value = mock_client
-
-            with pytest.raises(df.DeviceAuthorizationUpstreamError, match="invalid expires_in"):
-                await df.poll_device_authorization(
-                    token_endpoint="https://idp.example.com/device/token",
-                    client_id="client_1",
-                    device_code="dev_1",
-                    egress=None,
-                )
+            await df.poll_device_authorization(
+                token_endpoint="https://idp.example.com/device/token",
+                client_id="client_1",
+                device_code="dev_1",
+                egress=None,
+            )
 
 
 def test_extract_and_classify_oauth_error_helpers() -> None:
@@ -930,3 +947,46 @@ def test_extract_and_classify_oauth_error_helpers() -> None:
     assert extract_oauth_error_code('{"error": "not a slug!!"}', "application/json") is None
     err = classify_oauth_token_error(503, '{"error": "invalid_grant"}', "application/json")
     assert isinstance(err, TokenExchangeError)
+
+
+class _DripStream(httpx.AsyncByteStream):
+    """A body that never finishes: one byte every 50 ms, forever."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while True:
+            await asyncio.sleep(0.05)
+            yield b" "
+
+
+def _drip_transport() -> httpx.MockTransport:
+    return httpx.MockTransport(lambda request: httpx.Response(200, stream=_DripStream()))
+
+
+@pytest.mark.asyncio()
+async def test_post_token_drip_feed_is_transient_not_hang() -> None:
+    """A token endpoint that trickles bytes forever hits the total deadline."""
+    provider = _DummyOAuth2Provider()
+    with (
+        patch(
+            "jentic_one.control.services.credentials.providers.oauth2.idp_request",
+            partial(idp_request, deadline_s=0.5),
+        ),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=_drip_transport(),
+        ),
+        patch(
+            "jentic_one.shared.http.idp_client.validate_upstream_url_async",
+            new=AsyncMock(return_value="https://idp.example.com/oauth/token"),
+        ),
+    ):
+        start = time.monotonic()
+        with pytest.raises(TokenExchangeError) as exc_info:
+            await provider._post_token(
+                "https://idp.example.com/oauth/token",
+                {"grant_type": "refresh_token", "refresh_token": "rt"},
+                egress=None,
+            )
+    assert time.monotonic() - start < 3.0
+    assert exc_info.value.status == 0
+    assert exc_info.value.body == "timeout"

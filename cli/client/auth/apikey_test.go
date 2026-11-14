@@ -18,6 +18,7 @@ func withStateDir(t *testing.T) {
 
 func TestSaveReadAPIKey_RoundTrip(t *testing.T) {
 	withStateDir(t)
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
 	ref := IdentityRef{Identity: "ci", Environment: "prod"}
 	if err := SaveAPIKey(ref, "jak_abc123"); err != nil {
 		t.Fatalf("SaveAPIKey: %v", err)

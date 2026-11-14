@@ -73,19 +73,11 @@ def _state_of(authorize_url: str) -> str:
     return parse_qs(urlsplit(authorize_url).query)["state"][0]
 
 
-class _TokenEndpoint:
-    """httpx.AsyncClient stand-in: every code exchanges for ``read write``."""
-
-    async def __aenter__(self) -> _TokenEndpoint:
-        return self
-
-    async def __aexit__(self, *a: object) -> bool:
-        return False
-
-    async def post(self, *args: object, **kwargs: object) -> httpx.Response:
-        return httpx.Response(
-            200, json={"access_token": "wider-access", "expires_in": 3600, "scope": "read write"}
-        )
+def _token_endpoint(request: httpx.Request) -> httpx.Response:
+    """Vendor token endpoint: every code exchanges for ``read write``."""
+    return httpx.Response(
+        200, json={"access_token": "wider-access", "expires_in": 3600, "scope": "read write"}
+    )
 
 
 async def _granted(ctx: Context, credential_id: str) -> str | None:
@@ -122,7 +114,10 @@ async def test_a_narrow_credential_is_used_in_one_step_and_lands_with_the_grant(
     )
     assert status.status == "pending"
 
-    with patch("httpx.AsyncClient", return_value=_TokenEndpoint()):
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_token_endpoint),
+    ):
         landed = await svc(env).complete_from_callback(
             raw_state=_state_of(result.authorize_url),
             code="vendor-code",

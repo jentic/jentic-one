@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from jentic_one.registry.core import url_index
 from jentic_one.registry.core.url_index import (
     MAX_SERVER_VARIABLE_EXPANSIONS,
     URL_INDEX_FORMAT_MARKER,
@@ -43,9 +44,121 @@ def test_build_index_entry_relative_path_server() -> None:
 
 def test_build_index_entry_variable_host_server() -> None:
     entry = build_index_entry("{tenant}.api.example.com", "/data", "https")
-    assert entry.host_regex.match("acme.api.example.com")
-    assert entry.host_regex.match("foo.api.example.com")
-    assert not entry.host_regex.match("api.example.com")
+    assert entry.host_regex.fullmatch("{tenant}.api.example.com")
+    assert not entry.host_regex.fullmatch("acme.api.example.com")
+    assert not entry.host_regex.fullmatch("foo.api.example.com")
+    assert not entry.host_regex.fullmatch("api.example.com")
+
+
+@pytest.mark.parametrize(
+    ("server_url", "attacker_host", "template_host", "request_path"),
+    [
+        ("https://{tenant}/api", "attacker.example", "{tenant}", "/api/users"),
+        (
+            "https://api.vendor.{tld}/v1",
+            "api.vendor.com.attacker.example",
+            "api.vendor.{tld}",
+            "/v1/users",
+        ),
+        (
+            "https://{tenant}.example.com",
+            "acme.example.com",
+            "{tenant}.example.com",
+            "/users",
+        ),
+    ],
+)
+def test_undeclared_host_placeholder_is_template_only(
+    server_url: str, attacker_host: str, template_host: str, request_path: str
+) -> None:
+    expansion = build_server_index_entries(server_url, {}, "/users")
+
+    assert not [entry for entry in expansion.entries if _match(entry, attacker_host, request_path)]
+    assert any(_match(entry, template_host, request_path) for entry in expansion.entries)
+
+
+def test_declared_scheme_relative_host_variable_is_template_only() -> None:
+    expansion = build_server_index_entries("//{tenant}.example.com/api", {"tenant": {}}, "/users")
+
+    assert expansion.entries
+    for entry in expansion.entries:
+        assert "[^/]+" not in entry.host_regex.pattern
+        assert "[^:/]+" not in entry.host_regex.pattern
+        assert "tenant" not in entry.param_names
+    assert not [
+        entry for entry in expansion.entries if _match(entry, "attacker.example.com", "/api/users")
+    ]
+    assert any(_match(entry, "{tenant}.example.com", "/api/users") for entry in expansion.entries)
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected_hosts"),
+    [
+        ({"tenant": {"default": "demo"}}, {"demo.example.com": "demo"}),
+        (
+            {"tenant": {"default": "us", "enum": ["us", "eu"]}},
+            {"us.example.com": "us", "eu.example.com": "eu"},
+        ),
+    ],
+)
+def test_scheme_relative_declared_host_values_resolve_directly(
+    variables: dict[str, dict[str, object]], expected_hosts: dict[str, str]
+) -> None:
+    expansion = build_server_index_entries("//{tenant}.example.com/api", variables, "/users")
+
+    for host, value in expected_hosts.items():
+        matches = [
+            match
+            for entry in expansion.entries
+            if (match := _match(entry, host, "/api/users")) is not None
+        ]
+        assert any(match.values == {"tenant": value} for match in matches)
+
+
+def test_port_variable_fallback_never_frees_host() -> None:
+    variables = {"host": {}, "port": {"default": "8443"}}
+    expansion = build_server_index_entries("https://{host}:{port}/api", variables, "/users")
+
+    assert not [
+        entry for entry in expansion.entries if _match(entry, "attacker.example:8443", "/api/users")
+    ]
+    assert any(_match(entry, "{host}:8443", "/api/users") for entry in expansion.entries)
+
+
+def test_no_index_entry_contains_free_host_class() -> None:
+    server_shapes = [
+        ("https://api.example.com/v1", {}),
+        (
+            "https://{region}.example.com",
+            {"region": {"default": "us", "enum": ["us", "eu"]}},
+        ),
+        ("https://{tenant}.example.com", {"tenant": {"default": "demo"}}),
+        ("https://{tenant}/api", {}),
+        ("https://api.vendor.{tld}/v1", {}),
+        (
+            "https://{host}:{port}/api",
+            {"host": {}, "port": {"default": "8443"}},
+        ),
+        (
+            "https://{region}.example.com:{port}",
+            {"region": {"default": "us", "enum": ["us", "eu"]}, "port": {"default": "8443"}},
+        ),
+        ("//{tenant}.example.com/api", {}),
+        ("https://api.example.com/{version}", {"version": {"default": "v1"}}),
+        (
+            "https://{a}-{b}-{c}-{d}.example.com",
+            {name: {"default": "one", "enum": ["one", "two"]} for name in ("a", "b", "c", "d")},
+        ),
+    ]
+
+    for server_url, variables in server_shapes:
+        expansion = build_server_index_entries(server_url, variables, "/users/{id}")
+        assert expansion.entries
+        for entry in expansion.entries:
+            assert not url_index.is_free_host_regex(entry.host_regex.pattern), (
+                server_url,
+                entry.host_regex.pattern,
+            )
 
 
 def test_structural_regex_different_param_names_same_structure() -> None:

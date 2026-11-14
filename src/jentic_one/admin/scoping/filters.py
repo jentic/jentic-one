@@ -63,20 +63,26 @@ _OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset(
 )
 
 
-def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:
+def build_access_filters(
+    identity: Identity, model: type[Any], *, for_write: bool = False
+) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
 
     Rules (evaluated in order):
     1. org:admin -> no restriction (empty list).
     2. Agent with delegation scope + parent_actor_id -> OR filter (owner or delegator).
     3. Otherwise -> owner == self OR id == self (self-access for agents).
-    4. Models in ``_OWNED_AGENT_ACTOR_MODELS`` (``Job``, ``ExecutionRecord``, ``Event``,
-       ``AuditEntry``, ``OAuthClientGrant``) additionally admit rows whose subject is an
-       agent the caller owns (``Agent.owner_id == sub``).
+    4. Models in ``_OWNED_AGENT_ACTOR_MODELS`` additionally admit rows whose subject is
+       an agent the caller owns (``Agent.owner_id == sub``).
     5. Columns in ``_EXTRA_OWNER_COLUMNS`` are matched like the owner column (self, and
        owned agents for models in ``_OWNED_AGENT_ACTOR_MODELS``). Rows with no matching
        subject (system events or audit entries with a NULL actor) are visible only to
        org:admin.
+
+    ``for_write=True`` omits owner delegation and owned-agent read widening.
+    ``HeldExecution`` writes retain the owned-agent axis so a human can decide an agent's
+    hold, but omit the direct ``agent_id == sub`` clause. Agent self-writes retain
+    ``Agent.id == sub``.
 
     Raises ValueError for an unknown model or empty sub.
     """
@@ -92,18 +98,23 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
         delegation_permission = _DELEGATION_PERMISSIONS.get(model)
 
         subject_cols = (col, *_EXTRA_OWNER_COLUMNS.get(model, ()))
-        conditions = [c == identity.sub for c in subject_cols]
+        conditions = (
+            []
+            if for_write and model is HeldExecution
+            else [c == identity.sub for c in subject_cols]
+        )
         if id_col is not None:
             conditions.append(id_col == identity.sub)
 
         if (
-            delegation_permission is not None
+            not for_write
+            and delegation_permission is not None
             and delegation_permission in identity.permissions
             and identity.parent_actor_id is not None
         ):
             conditions.append(col == identity.parent_actor_id)
 
-        if model in _OWNED_AGENT_ACTOR_MODELS:
+        if model in _OWNED_AGENT_ACTOR_MODELS and (not for_write or model is HeldExecution):
             owned_agent_ids = select(Agent.id).where(Agent.owner_id == identity.sub)
             conditions.extend(c.in_(owned_agent_ids) for c in subject_cols)
 

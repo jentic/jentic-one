@@ -24,6 +24,9 @@ type deleteSpec struct {
 	references func(cfg *sdkconfig.Config, name string) []string
 	// remove deletes name from the appropriate map.
 	remove func(cfg *sdkconfig.Config, name string)
+	// beforeRemove, if non-nil, prepares deletion after confirmation and before the
+	// config mutation. An error aborts deletion without changing config.
+	beforeRemove func(cfg *sdkconfig.Config, name string) error
 	// materialRefs, if non-nil, returns the on-disk secret refs (key/token/apikey
 	// stems) that become orphaned once name is removed, so the delete flow can
 	// purge them (F8-34). For an identity that is every <identity, env> pair it
@@ -76,6 +79,12 @@ func newResourceDeleteCmd(spec deleteSpec) *cobra.Command {
 			var toPurge []auth.IdentityRef
 			if spec.materialRefs != nil {
 				toPurge = spec.materialRefs(cfg, name)
+			}
+
+			if spec.beforeRemove != nil {
+				if err := spec.beforeRemove(cfg, name); err != nil {
+					return reportCoded(aud, err)
+				}
 			}
 
 			if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {

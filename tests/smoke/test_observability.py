@@ -169,14 +169,8 @@ def obs_enabled() -> None:
 
 
 @pytest.fixture(scope="module")
-def traffic_generated(obs_enabled: None) -> None:
-    """Send a small burst of traffic before assertions so telemetry exists.
-
-    Reads BASE_URL directly rather than depending on the function-scoped
-    `base_url` fixture so this fixture itself can be module-scoped (we only
-    need to generate traffic once for all three obs tests).
-    """
-    base_url = os.environ.get("BASE_URL", "http://localhost:8000")
+def traffic_generated(obs_enabled: None, base_url: str) -> None:
+    """Send a small burst of traffic before assertions so telemetry exists."""
     _generate_traffic(base_url)
     # Give the app's PeriodicExportingMetricReader at least one export
     # interval to flush; logs/traces are near-realtime so this also covers

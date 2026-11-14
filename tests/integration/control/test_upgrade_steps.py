@@ -15,12 +15,20 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete, text
 
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.permission_rule_sets import PermissionRuleSet
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
+from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
+from jentic_one.control.services.unsafe_permission_rule_report import (
+    find_unsafe_permission_rules,
+)
 from jentic_one.control.services.upgrade_steps import (
     CREDENTIAL_IDENTITY_REPAIR,
     RULE_SETS_MARK_CURATED,
     STEPS,
+    UNSAFE_PERMISSION_RULES_REPORT,
     UpgradeStepOutcome,
     UpgradeStepService,
     UpgradeStepSpec,
@@ -65,8 +73,12 @@ def _counting_step(
 
 
 def test_registered_steps() -> None:
-    assert step_names() == (RULE_SETS_MARK_CURATED, CREDENTIAL_IDENTITY_REPAIR)
-    assert [step.repeatable for step in STEPS] == [True, True]
+    assert step_names() == (
+        RULE_SETS_MARK_CURATED,
+        CREDENTIAL_IDENTITY_REPAIR,
+        UNSAFE_PERMISSION_RULES_REPORT,
+    )
+    assert [step.repeatable for step in STEPS] == [True, True, True]
 
 
 async def test_empty_registry_is_a_no_op(
@@ -170,3 +182,86 @@ async def test_concurrent_runs_converge(
         # overlapping run harmless (a registered step must be idempotent).
         assert set(actions) <= {"already_done", "performed"}
     assert await _ledger(control_db) == [_STEP]
+
+
+async def test_unsafe_permission_rules_report_lists_failing_rows_with_effect(
+    integration_context: Context, control_db: DatabaseSession, clean_ledger: None
+) -> None:
+    """The report names stored rules failing validation, with their effect, and changes nothing."""
+    cred_id = "cred_unsafe_report"
+    async with control_db.session() as session:
+        await session.execute(
+            delete(AgentPermissionRule).where(AgentPermissionRule.credential_id == cred_id)
+        )
+        await session.execute(delete(Credential).where(Credential.id == cred_id))
+        await session.execute(
+            delete(PermissionRuleSet).where(PermissionRuleSet.name == "unsafe-report-set")
+        )
+        session.add(
+            Credential(
+                id=cred_id,
+                type="token_value",
+                name="unsafe-report",
+                api_vendor="unsafe-report.example",
+                api_name="main",
+                api_version="1",
+                active=True,
+            )
+        )
+        await session.flush()
+        for sequence, (effect, path) in enumerate(
+            [("deny", "/a/((x+))+"), ("allow", "/ok/[^/]+"), ("require-approval", "/b/(y|y)*")]
+        ):
+            session.add(
+                AgentPermissionRule(
+                    agent_id="agnt_unsafe_report",
+                    credential_id=cred_id,
+                    effect=effect,
+                    methods=None,
+                    path=path,
+                    match_mode="regex",
+                    operations=None,
+                    is_system=False,
+                    comment=None,
+                    sequence=sequence,
+                    created_by="test",
+                )
+            )
+        rule_set = await PermissionRuleSetRepository.create(
+            session, name="unsafe-report-set", description=None, created_by="test"
+        )
+        await PermissionRuleSetRepository.replace_user_rules(
+            session,
+            rule_set.id,
+            [{"effect": "deny", "path": "(a+)+", "match_mode": "regex"}],
+            created_by="test",
+        )
+        await session.commit()
+
+    try:
+        report = await find_unsafe_permission_rules(integration_context)
+        mine = {
+            (r.source, r.effect, r.code)
+            for r in report.rules
+            if r.owner_key.endswith(cred_id) or r.owner_key == rule_set.id
+        }
+        assert mine == {
+            ("binding", "deny", "unsafe_regex"),
+            ("binding", "require-approval", "unsafe_regex"),
+            ("rule_set", "deny", "unsafe_regex"),
+        }
+        step = next(s for s in STEPS if s.name == UNSAFE_PERMISSION_RULES_REPORT)
+        outcome = await step.run(integration_context)
+        assert outcome.action == "performed" and not outcome.failed
+        assert outcome.summary["unsafe_rules"] >= 3
+        assert outcome.warnings
+    finally:
+        async with control_db.session() as session:
+            await session.execute(
+                delete(PermissionRuleSet).where(PermissionRuleSet.id == rule_set.id)
+            )
+            await session.execute(
+                delete(AgentPermissionRule).where(AgentPermissionRule.credential_id == cred_id)
+            )
+            await session.execute(delete(Credential).where(Credential.id == cred_id))
+            await session.commit()

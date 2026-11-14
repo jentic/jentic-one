@@ -38,8 +38,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/jentic/jentic-one/cli/internal/agentops"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 )
 
 const (
@@ -101,9 +105,9 @@ func heldKey() []byte {
 }
 
 // heldEnvelope returns the broker's held envelope from a relayed 202 body, or
-// nil for any other response.
-func heldEnvelope(status int, body any) map[string]any {
-	if status != 202 {
+// nil for an upstream response or any other result.
+func heldEnvelope(res *agentops.ExecuteResult, body any) map[string]any {
+	if !agentops.IsBrokerHeld(res) {
 		return nil
 	}
 	m, ok := body.(map[string]any)
@@ -172,8 +176,48 @@ func openHeldState(token, agent string) (*heldState, error) {
 }
 
 func heldReviewMessage(method, path string) string {
+	method = stripHeldControls(method)
+	path = stripHeldControls(path)
+	if runes := []rune(path); len(runes) > 200 {
+		path = string(runes[:200])
+	}
 	return fmt.Sprintf("This agent wants to %s %s, which needs human approval. "+
 		"Open the review page to approve or deny it (you sign in there).", method, path)
+}
+
+func stripHeldControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+const mcpUntrustedReviewDirective = "Tell the operator that the review_url did not come from the configured Jentic instance. " +
+	"Do not use it or present it as a trusted approval link. Poll with get_execution_result and do not re-send the call."
+
+// mcpTrustedReviewURL validates a review link against the control plane and
+// the broker origin this MCP session would actually dial.
+func mcpTrustedReviewURL(ctx context.Context, reviewURL string) bool {
+	st := clictx.ActiveContext(ctx)
+	if st == nil {
+		return false
+	}
+	brokerURL := st.BrokerURL
+	if scheme, host, err := resolveMCPBrokerTarget(st); err == nil {
+		brokerURL = scheme + "://" + host
+	}
+	return agentops.TrustedReviewURL(reviewURL, st.BaseURL, brokerURL)
+}
+
+func markUntrustedReview(payload map[string]any) {
+	details, _ := payload["details"].(map[string]any)
+	if details == nil {
+		details = map[string]any{}
+		payload["details"] = details
+	}
+	details["review_url_trusted"] = false
 }
 
 // answerHeld shapes a held execute: URL elicitation for clients declaring
@@ -183,10 +227,19 @@ func (s *mcpServer) answerHeld(
 	envelope, payload map[string]any, method, path string,
 ) (*mcp.CallToolResult, error) {
 	heldExecutionID, _ := envelope["held_execution_id"].(string)
+	reviewURL, _ := envelope["review_url"].(string)
+	if !mcpTrustedReviewURL(ctx, reviewURL) {
+		s.logHeldFrontDoor(req, frontDoorHeldResult, heldExecutionID)
+		markUntrustedReview(payload)
+		if body, _ := payload["body"].(map[string]any); body != nil {
+			body["agent_directive"] = mcpUntrustedReviewDirective
+		}
+		payload["actionable_step"] = mcpUntrustedReviewDirective
+		return s.result(ctx, payload), nil
+	}
 	door := heldFrontDoor(req.ClientCapabilities())
 	s.logHeldFrontDoor(req, door, heldExecutionID)
 	if door == frontDoorURLElicitation {
-		reviewURL, _ := envelope["review_url"].(string)
 		expiresAt, _ := envelope["expires_at"].(string)
 		links, _ := envelope["_links"].(map[string]any)
 		token, err := sealHeldState(heldState{

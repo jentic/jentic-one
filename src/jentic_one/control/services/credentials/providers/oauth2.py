@@ -28,8 +28,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 from urllib.parse import parse_qs
 
-import httpx
-
 from jentic_one.control.services.credentials.providers.base import ProviderError
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
@@ -45,10 +43,9 @@ from jentic_one.control.services.credentials.schemas.provision import (
 )
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_always_pinned_transport
+from jentic_one.shared.http.idp_client import IdpTransportError, idp_request
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.redaction import redact_value
-from jentic_one.shared.url_validation import validate_upstream_url_async
 
 MAX_OAUTH_EXPIRES_IN_SECONDS: Final[int] = 100 * 365 * 86400
 _MAX_OAUTH_ERROR_BODY_CHARS: Final[int] = 8192
@@ -298,34 +295,25 @@ class OAuth2Provider(ABC):
         """
         # Defense-in-depth SSRF guard: ``token_url`` comes from the DB
         # (``oauth_client_credentials`` row created at credential-create time,
-        # user-supplied). A tampered / misconfigured row must not be able to
-        # aim this call at a private / metadata target unless the operator
-        # allowlisted it.
+        # user-supplied). ``idp_request`` re-validates it, pins the connection,
+        # and bounds the exchange by a total deadline and a body cap.
         try:
-            safe_url = await validate_upstream_url_async(token_url, egress)
-        except ValueError as exc:
-            raise TokenExchangeError(0, f"unsafe upstream URL: {redact_value(str(exc))}") from exc
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.post(
-                    safe_url,
-                    data=payload,
-                    headers={"Accept": "application/json"},
-                )
-        except ValueError as exc:
-            # Raised by the pinning transport: the host re-resolved to a blocked
-            # address or did not resolve at all.
-            raise TokenExchangeError(0, f"unsafe upstream URL: {redact_value(str(exc))}") from exc
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
-            raise TokenExchangeError(0, type(exc).__name__) from None
+            response = await idp_request(
+                "POST",
+                token_url,
+                egress=egress,
+                data=payload,
+                headers={"Accept": "application/json"},
+            )
+        except IdpTransportError as exc:
+            if exc.kind == "unsafe_url":
+                raise TokenExchangeError(0, f"unsafe upstream URL: {exc.detail}") from None
+            raise TokenExchangeError(0, exc.detail or exc.kind) from None
 
         if response.status_code != 200:
             raise classify_oauth_token_error(
                 response.status_code,
-                response.text,
+                response.text(),
                 response.headers.get("content-type", ""),
             )
 

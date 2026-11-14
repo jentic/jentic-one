@@ -282,6 +282,45 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
     assert req.headers["Cookie"] == "session=csecret"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record_write_fails", [False, True])
+async def test_queued_3xx_body_not_persisted_with_query_credential(
+    record_write_fails: bool,
+) -> None:
+    secret = "SECRET-123"  # pragma: allowlist secret
+    upstream = UpstreamExecResult(
+        status_code=307,
+        body=f'<a href="https://api.example.com/next?api_key={secret}">{secret}</a>'.encode(),
+        content_type="text/html",
+        duration_ms=1,
+    )
+    executor: _RecordingExecutor | _RaisingExecutor
+    if record_write_fails:
+        executor = _RaisingExecutor(ExecutionRecordNotPersistedError(upstream))
+    else:
+        executor = _RecordingExecutor(upstream)
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(
+            InjectedAuth(headers={}, query_params={"api_key": secret}, cookies={})
+        ),
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+    )
+
+    result = await handler.execute(
+        "job-redirect",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert result.body["http_status"] == 307
+    assert "body_b64" not in result.body
+    assert result.content_type is None
+
+
 _COOKIE_ENCRYPTION = EncryptionService(
     EncryptionConfig.model_validate(
         {

@@ -28,7 +28,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def base_url(request: pytest.FixtureRequest) -> str:
     cli_val = request.config.getoption("--base-url")
     if cli_val:
@@ -148,9 +148,12 @@ def _admin_login(base_url: str, email: str, password: str) -> tuple[dict[str, An
     return None, status
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def admin_token(base_url: str) -> str:
     """Authenticate as the org:admin user and return a usable access token.
+
+    One token is shared across the smoke session so repeated test setup does
+    not consume the per-client-network login rate limit.
 
     The platform boots with no credentials (no seeded admin@local). The first
     admin is created at runtime via ``POST /users:create-admin``, which self-closes

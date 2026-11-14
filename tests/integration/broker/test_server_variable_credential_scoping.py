@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select, update
 
 from jentic_one.broker.core.errors import (
     CredentialNotProvisionedError,
@@ -22,10 +22,22 @@ from jentic_one.broker.services.credentials.orchestrator import CredentialServic
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.registry.core import url_index
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
+from jentic_one.registry.core.schema.operations import Operation
+from jentic_one.registry.core.schema.servers import Server, ServerVariable
+from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.ingest.ingestor import Ingestor
+from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
+from jentic_one.registry.services.inspect.registry_service import RegistryService
+from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models import ActorType, StoredCredentialType
+from jentic_one.shared.models import ActorType, ApiRevisionSourceType, StoredCredentialType
+from jentic_one.shared.url import apply_server_variables
 
 pytestmark = pytest.mark.integration
 
@@ -39,6 +51,7 @@ _IDENTITY = Identity(
     permissions=["execute"],
     active=True,
 )
+_REGISTRY_IDENTITY = Identity(sub="usr_registry_writer", email="registry@example.com")
 
 
 @pytest.fixture()
@@ -53,6 +66,43 @@ async def clean_credentials(control_db: DatabaseSession) -> AsyncGenerator[None,
     await _truncate()
     yield
     await _truncate()
+
+
+@pytest.fixture()
+async def clean_scoped_host_registry(
+    registry_db: DatabaseSession,
+) -> AsyncGenerator[None, None]:
+    async def _clean() -> None:
+        async with registry_db.session() as session:
+            revision_ids = (
+                select(ApiRevision.id)
+                .join(Api, Api.id == ApiRevision.api_id)
+                .where(Api.vendor == _VENDOR)
+            )
+            server_ids = select(Server.id).where(Server.revision_id.in_(revision_ids))
+            await session.execute(
+                delete(OperationURLIndex).where(OperationURLIndex.revision_id.in_(revision_ids))
+            )
+            await session.execute(
+                delete(ServerVariable).where(ServerVariable.server_id.in_(server_ids))
+            )
+            await session.execute(delete(Server).where(Server.revision_id.in_(revision_ids)))
+            await session.execute(delete(Operation).where(Operation.revision_id.in_(revision_ids)))
+            await session.execute(delete(SpecFile).where(SpecFile.revision_id.in_(revision_ids)))
+            await session.execute(
+                update(Api).where(Api.vendor == _VENDOR).values(current_revision_id=None)
+            )
+            await session.execute(
+                delete(ApiRevision).where(
+                    ApiRevision.api_id.in_(select(Api.id).where(Api.vendor == _VENDOR))
+                )
+            )
+            await session.execute(delete(Api).where(Api.vendor == _VENDOR))
+            await session.commit()
+
+    await _clean()
+    yield
+    await _clean()
 
 
 async def _seed_api_key(
@@ -371,3 +421,94 @@ async def test_reported_candidates_stay_within_the_injection_boundary(
     assert reported == ["cred_mine"]
     body = f"{exc.value.detail} {exc.value.extra} {exc.value.directive}"
     assert "ap" not in body
+
+
+@pytest.mark.asyncio
+async def test_host_scoped_credential_not_sent_to_unresolved_host(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    clean_credentials: None,
+    clean_scoped_host_registry: None,
+) -> None:
+    content = {
+        "openapi": "3.1.0",
+        "info": {"title": "Widgets", "version": _API_VERSION},
+        "servers": [
+            {
+                "url": "https://{host}:{port}/api",
+                "variables": {"host": {}, "port": {"default": "8443"}},
+            }
+        ],
+        "paths": {
+            "/users": {
+                "get": {
+                    "operationId": "listUsers",
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    specification = IngestSpecification(
+        spec_type=SpecType.OPENAPI,
+        api_identifier=ApiIdentifier(vendor=_VENDOR, name=_API_NAME, version=_API_VERSION),
+        sha="sha-host-scoped-credential",
+        content=content,
+        source_type=ApiRevisionSourceType.INLINE,
+        source_filename="openapi.json",
+        submitted_by=_REGISTRY_IDENTITY.sub,
+    )
+    ingested = await Ingestor(integration_context).ingest(
+        specification, created_by=_REGISTRY_IDENTITY.sub
+    )
+    await RevisionService(integration_context).promote(
+        _VENDOR,
+        _API_NAME,
+        _API_VERSION,
+        str(ingested.revision_id),
+        identity=_REGISTRY_IDENTITY,
+    )
+    async with registry_db.session() as session:
+        index_row = (
+            await session.execute(
+                select(OperationURLIndex).where(
+                    OperationURLIndex.revision_id == ingested.revision_id
+                )
+            )
+        ).scalar_one()
+    assert index_row.host_regex is not None
+    assert not url_index.is_free_host_regex(index_row.host_regex)
+
+    credential_scope = {"host": "grafana.corp.example"}
+    await _seed_api_key(
+        integration_context,
+        cred_id="cred_host",
+        secret="host-secret",  # pragma: allowlist secret
+        server_variables=credential_scope,
+    )
+
+    async with registry_db.session() as session:
+        unresolved = await RegistryService(session).resolve_operation(
+            method="GET", url="https://attacker.example:8443/api/users"
+        )
+    assert unresolved is None
+
+    templated_url = "https://{host}:8443/api/users"
+    async with registry_db.session() as session:
+        resolved = await RegistryService(session).resolve_operation(method="GET", url=templated_url)
+    assert resolved is not None
+    assert resolved.server_variables == {"port": "8443"}
+    assert (
+        await _inject(
+            integration_context,
+            resolved.server_variables,
+            allowed_credential_ids=["cred_host"],
+        )
+        == "host-secret"
+    )
+    assert (
+        apply_server_variables(
+            templated_url,
+            {**credential_scope, **resolved.server_variables},
+        )
+        == "https://grafana.corp.example:8443/api/users"
+    )

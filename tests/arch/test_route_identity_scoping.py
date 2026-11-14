@@ -6,7 +6,7 @@ takes no identity at all passes every service-side check trivially, so the
 route is where an unscoped read or write shows up.
 
 Every route handler (any verb, any path shape) in the ``admin``, ``auth``,
-``control`` and ``registry`` routers that takes the caller's identity from
+``broker``, ``control`` and ``registry`` routers that takes the caller's identity from
 ``get_current_identity`` — as a parameter default or inside
 ``Annotated[Identity, get_current_identity(...)]`` — must pass that identity
 into a call on a **service object**. Passing it to a local helper (a rate
@@ -38,6 +38,8 @@ import ast
 from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
+from string import Formatter
+from typing import NamedTuple
 
 import pytest
 
@@ -46,14 +48,36 @@ from .conftest import SRC_ROOT, python_files_in
 SCOPED_WEB_DIRS = [
     SRC_ROOT / "admin" / "web",
     SRC_ROOT / "auth" / "web",
+    SRC_ROOT / "broker" / "web",
     SRC_ROOT / "control" / "web",
     SRC_ROOT / "registry" / "web",
 ]
 
-_ROUTE_VERBS = {"get", "post", "put", "patch", "delete"}
+_ROUTE_VERBS = {"get", "post", "put", "patch", "delete", "api_route"}
 _IDENTITY_DEP = "get_current_identity"
+_IDENTITY_PARAM_TYPES = {
+    "CurrentIdentity",
+    "RequireBrokerIdentity",
+    "RequireExecuteAccess",
+    "RequireJobAccess",
+}
+_SERVICE_PARAM_TYPES = {"BrokerJobServiceDep"}
 
 _Func = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+class _ByIdCall(NamedTuple):
+    route: str
+    path: Path
+    line: int
+    method: str
+    parameters: frozenset[str]
+    post_authorized: bool
+
+    @property
+    def key(self) -> str:
+        return f"{self.route} -> {self.method}"
+
 
 _REGISTRY_CATALOGUE = "org-wide API registry content, not caller-owned; gated by apis:read"
 _PUBLIC_CATALOG = "public upstream API catalog, no per-caller rows; gated by capabilities:read"
@@ -94,6 +118,10 @@ _ALLOWLIST: dict[str, str] = {
     ),
     "auth/registration.update_registration_endpoint": "always 403: client update unsupported",
     "auth/registration.delete_registration_endpoint": "always 403: client deletion unsupported",
+    # --- broker ---
+    "broker/execute.proxy": (
+        "_handle forwards the same identity into execution authorization and credential resolution"
+    ),
     # --- control ---
     "control/credentials.list_providers": "static credential-provider metadata, no rows",
     "control/integrations.integrations_connect_options": (
@@ -139,6 +167,31 @@ _ALLOWLIST: dict[str, str] = {
     "registry/search.search_operations": _REGISTRY_CATALOGUE,
 }
 
+#: ``<surface>/<module>.<handler> -> <method>`` -> why an earlier scoped load is sufficient.
+_POST_AUTHORIZED: dict[str, str] = {
+    "control/credentials.list_agent_permissions -> scope_options": (
+        "get_binding_access first authorizes credential_id with identity; scope_options reads "
+        "only that credential's public OAuth scope catalogue"
+    ),
+}
+
+#: The only call that post-authorizes each exempted ``scope_options`` occurrence:
+#: ``key -> (authorizer method, required path parameter)``.
+_POST_AUTHORIZED_AUTHORIZERS: dict[str, tuple[str, str]] = {
+    "control/credentials.list_agent_permissions -> scope_options": (
+        "get_binding_access",
+        "credential_id",
+    ),
+}
+
+#: ``<surface>/<module>.<handler> -> <method>`` -> why this org-wide call needs no identity.
+_BY_ID_CALL_ALLOWLIST: dict[str, str] = {
+    "registry/apis.update_api -> get_by_identity": (
+        "an empty PATCH reads org-wide API registry content with no caller-owned rows; "
+        "the route still requires apis:write"
+    ),
+}
+
 
 # --- AST helpers ---------------------------------------------------------------
 
@@ -167,12 +220,12 @@ def _is_route(func: _Func) -> bool:
     return bool(_route_decorators(func))
 
 
-def _declares_identity_dependency(call: ast.Call) -> bool:
+def _declares_identity_dependency(call: ast.Call, tree: ast.Module | None = None) -> bool:
     """Whether *call* has ``dependencies=[..., get_current_identity(...), ...]``."""
     return any(
         kw.arg == "dependencies"
         and isinstance(kw.value, ast.List | ast.Tuple)
-        and any(_is_identity_dep(elt) for elt in kw.value.elts)
+        and any(_is_identity_dep(elt, tree) for elt in kw.value.elts)
         for kw in call.keywords
     )
 
@@ -185,23 +238,25 @@ def _identity_gated_routers(tree: ast.Module) -> set[str]:
             isinstance(node, ast.Assign)
             and isinstance(node.value, ast.Call)
             and _name_of(node.value.func) == "APIRouter"
-            and _declares_identity_dependency(node.value)
+            and _declares_identity_dependency(node.value, tree)
         ):
             names.update(t.id for t in node.targets if isinstance(t, ast.Name))
     return names
 
 
-def _identity_dependency_without_param(func: _Func, gated_routers: set[str]) -> bool:
+def _identity_dependency_without_param(
+    func: _Func, gated_routers: set[str], tree: ast.Module | None = None
+) -> bool:
     """Whether *func* resolves identity through ``dependencies=`` but binds no parameter.
 
     Such a route authenticates the caller but has no name to hand the service,
     and ``_identity_param`` returns ``None`` for it, so it would drop out of the
     scoping check.
     """
-    if _identity_param(func) is not None:
+    if _identity_param(func, tree) is not None:
         return False
     return any(
-        _declares_identity_dependency(dec)
+        _declares_identity_dependency(dec, tree)
         or (isinstance(dec.func, ast.Attribute) and _name_of(dec.func.value) in gated_routers)
         for dec in _route_decorators(func)
     )
@@ -230,24 +285,65 @@ def _annotated_parts(annotation: ast.expr | None) -> tuple[ast.expr | None, list
     return annotation, []
 
 
-def _is_identity_dep(node: ast.expr | None) -> bool:
-    return isinstance(node, ast.Call) and _name_of(node.func) == _IDENTITY_DEP
+def _import_aliases(tree: ast.Module | None, imported_names: set[str]) -> set[str]:
+    if tree is None:
+        return set()
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            aliases.update(
+                alias.asname or alias.name for alias in node.names if alias.name in imported_names
+            )
+        elif (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in imported_names
+        ):
+            aliases.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    return aliases
 
 
-def _is_identity_annotation(annotation: ast.expr | None) -> bool:
+def _dependency_aliases(tree: ast.Module | None) -> set[str]:
+    return {_IDENTITY_DEP} | _import_aliases(tree, {_IDENTITY_DEP})
+
+
+def _identity_param_types(tree: ast.Module | None) -> set[str]:
+    names = _IDENTITY_PARAM_TYPES | _import_aliases(tree, _IDENTITY_PARAM_TYPES)
+    if tree is not None:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            origin, _ = _annotated_parts(node.value)
+            if isinstance(origin, ast.Name) and origin.id == "Identity":
+                names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    return names
+
+
+def _is_identity_dep(node: ast.expr | None, tree: ast.Module | None = None) -> bool:
+    return isinstance(node, ast.Call) and _name_of(node.func) in _dependency_aliases(tree)
+
+
+def _is_identity_annotation(annotation: ast.expr | None, tree: ast.Module | None = None) -> bool:
     origin, _ = _annotated_parts(annotation)
-    return origin is not None and _name_of(origin) == "Identity"
+    name = _name_of(origin) if origin is not None else None
+    return name == "Identity" or name in _identity_param_types(tree)
 
 
-def _identity_param(func: _Func) -> str | None:
-    """Name of the parameter resolved by ``get_current_identity(...)``, if any.
+def _identity_param(func: _Func, tree: ast.Module | None = None) -> str | None:
+    """Name of the parameter resolved by a recognised identity dependency, if any.
 
-    Recognises both ``identity: Identity = get_current_identity(...)`` and
-    ``identity: Annotated[Identity, get_current_identity(...)]``.
+    Recognises direct dependencies, their import aliases, and aliases whose
+    ``Annotated`` origin is ``Identity``.
     """
+    identity_types = _identity_param_types(tree)
     for arg, default in _params(func):
-        _, metadata = _annotated_parts(arg.annotation)
-        if _is_identity_dep(default) or any(_is_identity_dep(m) for m in metadata):
+        origin, metadata = _annotated_parts(arg.annotation)
+        origin_name = _name_of(origin) if origin is not None else None
+        if (
+            _is_identity_dep(default, tree)
+            or any(_is_identity_dep(m, tree) for m in metadata)
+            or origin_name in identity_types
+        ):
             return arg.arg
     return None
 
@@ -278,6 +374,7 @@ def _service_names(func: _Func) -> set[str]:
         origin_name = _name_of(origin) if origin is not None else None
         if (
             (origin_name is not None and origin_name.endswith("Service"))
+            or origin_name in _SERVICE_PARAM_TYPES
             or _is_service_dep(default)
             or any(_is_service_dep(m) for m in metadata)
         ):
@@ -313,6 +410,142 @@ def _passes_to_service(func: _Func, name: str) -> bool:
     return False
 
 
+def _path_parameters(func: _Func) -> frozenset[str]:
+    """Path id parameter names declared by this handler's route decorators."""
+    names: set[str] = set()
+    for decorator in _route_decorators(func):
+        if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+            continue
+        path = decorator.args[0].value
+        if not isinstance(path, str):
+            continue
+        for _, field_name, _, _ in Formatter().parse(path):
+            if field_name:
+                names.add(field_name)
+    return frozenset(names)
+
+
+def _call_argument_names(call: ast.Call) -> frozenset[str]:
+    names: set[str] = set()
+    for value in list(call.args) + [kw.value for kw in call.keywords]:
+        for node in ast.walk(value):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+    return frozenset(names)
+
+
+def _binds_parameter(call: ast.Call, parameter: str, position: int = 0) -> bool:
+    """Whether *parameter* is passed by its documented position or matching keyword."""
+    if len(call.args) > position:
+        value = call.args[position]
+        if isinstance(value, ast.Name) and value.id == parameter:
+            return True
+    return any(
+        kw.arg == parameter and isinstance(kw.value, ast.Name) and kw.value.id == parameter
+        for kw in call.keywords
+    )
+
+
+def _by_id_service_calls(
+    route: str, py_file: Path, func: _Func, tree: ast.Module | None = None
+) -> list[_ByIdCall]:
+    """Service calls using a path resource key without identity in that same call."""
+    identity = _identity_param(func, tree)
+    if identity is None:
+        return []
+    path_parameters = _path_parameters(func)
+    services = _service_names(func)
+    # Each exempted occurrence is authorized only by its documented authorizer,
+    # not by any earlier identity-bearing call. key -> (method, path parameter).
+    authorizers = {
+        key: spec
+        for key, spec in _POST_AUTHORIZED_AUTHORIZERS.items()
+        if key.startswith(f"{route} ")
+    }
+    authorized: dict[str, set[str]] = {key: set() for key in authorizers}
+    calls: list[_ByIdCall] = []
+    service_calls = sorted(
+        (
+            (node, node.func)
+            for node in ast.walk(func)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ),
+        key=lambda item: (item[0].lineno, item[0].col_offset),
+    )
+    for node, call_func in service_calls:
+        receiver = call_func.value
+        on_service = (isinstance(receiver, ast.Name) and receiver.id in services) or (
+            _is_service_ctor(receiver)
+        )
+        if not on_service:
+            continue
+        arguments = _call_argument_names(node)
+        used_path_parameters = arguments & path_parameters
+        if not used_path_parameters:
+            continue
+        values = list(node.args) + [kw.value for kw in node.keywords]
+        has_identity = any(isinstance(value, ast.Name) and value.id == identity for value in values)
+        # Only the documented authorizer, carrying identity and its path parameter,
+        # marks the matching exempted occurrence as post-authorized.
+        for key, (method, parameter) in authorizers.items():
+            if call_func.attr == method and has_identity and _binds_parameter(node, parameter):
+                authorized[key].add(parameter)
+        if has_identity:
+            continue
+        key = f"{route} -> {call_func.attr}"
+        post_authorized = bool(
+            authorized.get(key) and used_path_parameters.issubset(authorized[key])
+        )
+        calls.append(
+            _ByIdCall(
+                route=route,
+                path=py_file,
+                line=node.lineno,
+                method=call_func.attr,
+                parameters=used_path_parameters,
+                post_authorized=post_authorized,
+            )
+        )
+    return calls
+
+
+def _unscoped_by_id_calls() -> list[_ByIdCall]:
+    return [
+        call
+        for key, py_file, func in _route_handlers()
+        if key not in _ALLOWLIST
+        for call in _by_id_service_calls(key, py_file, func, _parse(py_file))
+    ]
+
+
+def _post_authorized_exemptions(calls: list[_ByIdCall]) -> list[_ByIdCall]:
+    """The individually authorized occurrences named by the exemption map."""
+    return [call for call in calls if call.key in _POST_AUTHORIZED and call.post_authorized]
+
+
+def _post_authorized_violations(
+    calls: list[_ByIdCall], exemptions: list[_ByIdCall]
+) -> list[_ByIdCall]:
+    exempted = {id(call) for call in exemptions}
+    return [call for call in calls if id(call) not in exempted]
+
+
+def _post_authorized_staleness(calls: list[_ByIdCall]) -> list[str]:
+    """Missing, unauthorized, and duplicate occurrences all invalidate an exemption."""
+    stale: list[str] = []
+    for key in sorted(_POST_AUTHORIZED):
+        occurrences = [call for call in calls if call.key == key]
+        if not occurrences:
+            stale.append(f"{key}: no matching call")
+        elif len(occurrences) != 1:
+            stale.append(f"{key}: duplicate call occurrences at {[c.line for c in occurrences]}")
+        elif not occurrences[0].post_authorized:
+            stale.append(f"{key}: call at line {occurrences[0].line} lacks earlier authorization")
+    return stale
+
+
 # --- Walkers -------------------------------------------------------------------
 
 
@@ -335,7 +568,7 @@ def _unscoped_routes() -> dict[str, tuple[Path, int]]:
     """``key -> (file, line)`` for every authenticated route not passing identity to a service."""
     found: dict[str, tuple[Path, int]] = {}
     for key, py_file, func in _route_handlers():
-        identity = _identity_param(func)
+        identity = _identity_param(func, _parse(py_file))
         if identity is None or _passes_to_service(func, identity):
             continue
         found[key] = (py_file, func.lineno)
@@ -360,6 +593,39 @@ def test_scoped_routes_pass_identity_to_their_service() -> None:
 
 
 @pytest.mark.arch
+def test_by_id_service_calls_receive_identity() -> None:
+    """Every service call consuming a path id receives identity in that same call."""
+    calls = _unscoped_by_id_calls()
+    violations = [
+        f"{call.path}:{call.line} — {call.key} uses path parameter(s) "
+        f"{sorted(call.parameters)} without identity; pass identity=identity to this call, "
+        "or document its earlier scoped load in _POST_AUTHORIZED"
+        for call in _post_authorized_violations(calls, _post_authorized_exemptions(calls))
+        if call.key not in _BY_ID_CALL_ALLOWLIST
+    ]
+    assert not violations, "By-id service calls without identity:\n" + "\n".join(violations)
+
+
+@pytest.mark.arch
+def test_post_authorized_allowlist_is_not_stale() -> None:
+    """A post-authorized call still needs an earlier identity-scoped call with the same id."""
+    stale = _post_authorized_staleness(_unscoped_by_id_calls())
+    assert not stale, "Remove or re-authorize stale _POST_AUTHORIZED entries:\n" + "\n".join(stale)
+
+
+@pytest.mark.arch
+def test_by_id_call_allowlist_is_not_stale() -> None:
+    """Org-wide call exemptions identify one existing identity-less occurrence."""
+    calls = _unscoped_by_id_calls()
+    stale = []
+    for key in _BY_ID_CALL_ALLOWLIST:
+        occurrences = [call for call in calls if call.key == key]
+        if len(occurrences) != 1:
+            stale.append(f"{key}: expected one call, found {len(occurrences)}")
+    assert not stale, "Remove stale org-wide by-id call exemptions:\n" + "\n".join(stale)
+
+
+@pytest.mark.arch
 def test_route_identity_allowlist_is_not_stale() -> None:
     """Allowlist entries must name a route that still does not pass identity to a service."""
     unscoped = _unscoped_routes()
@@ -381,8 +647,8 @@ def test_every_identity_parameter_is_recognised() -> None:
         f"{_IDENTITY_DEP}(...) (as a default or in Annotated[Identity, ...]); use it directly "
         "or teach this test the new dependency"
         for key, py_file, func in _route_handlers()
-        if any(_is_identity_annotation(arg.annotation) for arg, _ in _params(func))
-        and _identity_param(func) is None
+        if any(_is_identity_annotation(arg.annotation, _parse(py_file)) for arg, _ in _params(func))
+        and _identity_param(func, _parse(py_file)) is None
     ]
     assert not unrecognised, "Unrecognised identity parameters:\n" + "\n".join(unrecognised)
 
@@ -400,7 +666,9 @@ def test_identity_dependency_binds_a_parameter() -> None:
         "`dependencies=` but takes no identity parameter; declare "
         f"`identity: Identity = {_IDENTITY_DEP}(...)` and pass it to the service"
         for key, py_file, func in _route_handlers()
-        if _identity_dependency_without_param(func, _identity_gated_routers(_parse(py_file)))
+        if _identity_dependency_without_param(
+            func, _identity_gated_routers(_parse(py_file)), _parse(py_file)
+        )
     ]
     assert not unbound, "Identity resolved without a parameter:\n" + "\n".join(unbound)
 
@@ -408,7 +676,11 @@ def test_identity_dependency_binds_a_parameter() -> None:
 @pytest.mark.arch
 def test_route_identity_check_finds_routes() -> None:
     """Guard against the walker silently matching nothing (e.g. a decorator rename)."""
-    total = sum(1 for _, _, func in _route_handlers() if _identity_param(func) is not None)
+    total = sum(
+        1
+        for _, py_file, func in _route_handlers()
+        if _identity_param(func, _parse(py_file)) is not None
+    )
     assert total > 50, f"Only {total} authenticated routes found; the route walker is broken"
 
 
@@ -429,6 +701,22 @@ def test_helper_call_does_not_count_as_passing_identity() -> None:
     )
     assert _identity_param(func) == "identity"
     assert not _passes_to_service(func, "identity")
+
+
+@pytest.mark.arch
+def test_side_call_identity_does_not_scope_by_id_read() -> None:
+    """Self-check: identity on an unrelated side call does not authorize a by-id read."""
+    func = _parse_func(
+        "@router.get('/things/{thing_id}')\n"
+        "async def r(svc: FooService = Depends(get_foo_service),"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.record_view(identity=identity)\n"
+        "    return await svc.get(thing_id)\n"
+    )
+    calls = _by_id_service_calls("self/r", Path("<self-check>"), func)
+    assert len(calls) == 1
+    assert calls[0].method == "get"
+    assert not calls[0].post_authorized
 
 
 @pytest.mark.arch
@@ -480,3 +768,123 @@ def test_identity_dependency_shapes_are_detected() -> None:
         and _identity_dependency_without_param(node, gated)
     }
     assert flagged == {"on_route", "on_router"}
+
+
+@pytest.mark.arch
+def test_broker_api_route_and_identity_alias_are_collected() -> None:
+    """Self-check: the broker proxy's decorator and dependency alias stay in scope."""
+    handlers = {key: func for key, _, func in _route_handlers()}
+    assert "broker/execute.proxy" in handlers
+    assert _identity_param(handlers["broker/execute.proxy"]) == "identity"
+
+
+@pytest.mark.arch
+def test_current_identity_alias_is_resolved() -> None:
+    """Self-check: an imported ``CurrentIdentity`` alias resolves to its dependency."""
+    func = _parse_func(
+        "@router.get('/things')\n"
+        "async def r(svc: FooService, identity: CurrentIdentity):\n"
+        "    return await svc.list(identity=identity)\n"
+    )
+    assert _identity_param(func) == "identity"
+
+
+@pytest.mark.arch
+def test_resource_path_keys_and_expressions_are_collected() -> None:
+    """Self-check: resource keys and attribute arguments receive the same by-id guard."""
+    func = _parse_func(
+        "@router.post('/things/{slug}/actions/{action}')\n"
+        "async def r(svc: FooService, slug: str, action: str, request: Request,"
+        " identity: Identity = get_current_identity()):\n"
+        "    return await svc.act(slug, request.action, request.body)\n"
+    )
+    calls = _by_id_service_calls("self/r", Path("<self-check>"), func)
+    assert len(calls) == 1
+    assert calls[0].parameters == {"slug", "action"}
+
+
+@pytest.mark.arch
+def test_early_post_authorized_call_cannot_hide() -> None:
+    """Self-check: a later authorized call cannot retroactively exempt an earlier one."""
+    func = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.scope_options(credential_id)\n"
+        "    await svc.get_binding_access(credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), func
+    )
+    exemptions = _post_authorized_exemptions(calls)
+    violations = _post_authorized_violations(calls, exemptions)
+    assert [call.line for call in violations] == [3]
+    assert [call.post_authorized for call in calls] == [False, True]
+    assert len(exemptions) == 1
+    assert "duplicate call occurrences" in _post_authorized_staleness(calls)[0]
+
+
+@pytest.mark.arch
+def test_post_authorized_requires_documented_authorizer() -> None:
+    """Self-check: only the documented get_binding_access authorizer post-authorizes.
+
+    ``record_view`` or any other identity-bearing call cannot authorize
+    ``scope_options``; only ``get_binding_access`` carrying identity and the same
+    path parameter does.
+    """
+    wrong_authorizer = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.record_view(credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    wrong_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), wrong_authorizer
+    )
+    assert len(wrong_calls) == 1
+    assert not wrong_calls[0].post_authorized, "record_view must not post-authorize scope_options"
+
+    right_authorizer = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.get_binding_access(credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    right_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), right_authorizer
+    )
+    assert len(right_calls) == 1
+    assert right_calls[0].post_authorized, "get_binding_access must post-authorize scope_options"
+
+
+@pytest.mark.arch
+def test_post_authorizer_binds_credential_to_its_documented_argument() -> None:
+    """Self-check: credential_id in another argument does not post-authorize the read."""
+    wrong_position = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.get_binding_access('other', credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    wrong_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), wrong_position
+    )
+    by_keyword = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.get_binding_access(\n"
+        "        agent_id='agent', credential_id=credential_id, identity=identity\n"
+        "    )\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    keyword_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), by_keyword
+    )
+    assert len(wrong_calls) == 1
+    assert len(keyword_calls) == 1
+    assert [wrong_calls[0].post_authorized, keyword_calls[0].post_authorized] == [False, True]

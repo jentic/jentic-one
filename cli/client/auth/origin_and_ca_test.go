@@ -248,6 +248,294 @@ func TestSaveTokens_NilReturnsError(t *testing.T) {
 	}
 }
 
+func writeOriginlessAPIKey(t *testing.T, ref IdentityRef, key string) {
+	t.Helper()
+	path, err := apiKeyPath(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBearerToken_OriginlessTokenIsReExchangedNotServed(t *testing.T) {
+	const jwtBearerGrant = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	for _, tc := range []struct {
+		name      string
+		expiresIn time.Duration
+	}{
+		{name: "fresh access token", expiresIn: time.Hour},
+		{name: "expired access token with refresh token", expiresIn: -time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withConfigDir(t)
+			grants := make(chan string, 4)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/oauth/token" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				var body struct {
+					GrantType string `json:"grant_type"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				grants <- body.GrantType
+				w.Header().Set("Content-Type", "application/json")
+				if body.GrantType != jwtBearerGrant {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"expired"}`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"access_token":  "tok_reexchanged",
+					"refresh_token": "rt_reexchanged",
+					"expires_in":    3600,
+				})
+			}))
+			defer srv.Close()
+
+			seedEnvironmentBaseURL(t, "prod", srv.URL)
+			if err := config.MutateConfig(func(c *config.Config) error {
+				c.Identities["agent1"] = config.Identity{
+					Type: "agent",
+					Environments: map[string]config.EnvRegState{
+						"prod": {ClientID: "cid_prod", Status: "approved"},
+					},
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ref := IdentityRef{Identity: "agent1", Environment: "prod"}
+			raw, err := json.Marshal(&TokenSet{
+				AccessToken:  "tok_originless",
+				RefreshToken: "rt_originless",
+				ExpiresAt:    time.Now().Add(tc.expiresIn),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokenPath, err := getTokenPath(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(tokenPath, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := ReadTokens(ref); !errors.Is(err, ErrOriginMismatch) {
+				t.Errorf("ReadTokens with an origin-less cache and configured target = %v, want ErrOriginMismatch", err)
+			}
+			got, err := BearerToken(Credentials{
+				BaseURL:         srv.URL,
+				IdentityName:    ref.Identity,
+				EnvironmentName: ref.Environment,
+			})
+			if err != nil {
+				t.Fatalf("BearerToken: %v", err)
+			}
+			if got != "tok_reexchanged" {
+				t.Error("BearerToken served the origin-less access token instead of re-exchanging")
+			}
+			if len(grants) == 0 {
+				t.Fatal("origin-less token did not reach the target token endpoint")
+			}
+			for len(grants) > 0 {
+				if grant := <-grants; grant != jwtBearerGrant {
+					t.Errorf("token endpoint received grant %q, want only a fresh JWT-bearer exchange", grant)
+				}
+			}
+			stored, err := readTokensRaw(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Origin != NormalizeOrigin(srv.URL) {
+				t.Fatalf("re-exchanged token origin = %q, want the target origin", stored.Origin)
+			}
+		})
+	}
+}
+
+func TestBearerToken_OriginlessAPIKeyBindsToConfiguredOriginOnFirstUse(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "ci", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com/v1")
+	const key = "jak_originless_tofu_test" // pragma: allowlist secret
+	writeOriginlessAPIKey(t, ref, key)
+
+	got, err := BearerToken(Credentials{
+		BaseURL:         "https://origin-a.example.com:443/other",
+		IdentityName:    ref.Identity,
+		EnvironmentName: ref.Environment,
+	})
+	if err != nil {
+		t.Fatalf("BearerToken first use: %v", err)
+	}
+	if got != key {
+		t.Fatal("BearerToken did not return the origin-bound API key")
+	}
+	rec, err := readAPIKeyRecord(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Origin != "https://origin-a.example.com" {
+		t.Errorf("persisted API-key origin = %q, want the configured environment origin", rec.Origin)
+	}
+
+	seedEnvironmentBaseURL(t, "prod", "https://origin-b.example.com")
+	if _, err := BearerToken(Credentials{
+		BaseURL:         "https://origin-b.example.com",
+		IdentityName:    ref.Identity,
+		EnvironmentName: ref.Environment,
+	}); !errors.Is(err, ErrOriginMismatch) {
+		t.Fatalf("BearerToken after TOFU binding and repoint = %v, want ErrOriginMismatch", err)
+	}
+}
+
+func TestBearerToken_OriginlessAPIKeyMismatchedTargetRefused(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "ci", Environment: "prod"}
+	seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
+	writeOriginlessAPIKey(t, ref, "jak_originless_mismatch_test") // pragma: allowlist secret
+
+	if _, err := BearerToken(Credentials{
+		BaseURL:         "https://origin-b.example.com",
+		IdentityName:    ref.Identity,
+		EnvironmentName: ref.Environment,
+	}); !errors.Is(err, ErrOriginMismatch) {
+		t.Fatalf("BearerToken with mismatched configured and target origins = %v, want ErrOriginMismatch", err)
+	}
+	rec, err := readAPIKeyRecord(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Origin != "" {
+		t.Fatalf("mismatched first use persisted origin %q", rec.Origin)
+	}
+}
+
+func TestAPIKey_JSONEnvelopeHonorsOriginSidecar(t *testing.T) {
+	t.Run("origin-less envelope binds once and rejects a repoint", func(t *testing.T) {
+		withConfigDir(t)
+		ref := IdentityRef{Identity: "ci", Environment: "prod"}
+		seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com/v1")
+		const key = "jak_json_envelope_tofu" // pragma: allowlist secret
+		keyPath, err := apiKeyPath(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(keyPath, []byte(`{"api_key":"`+key+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := BearerToken(Credentials{
+			BaseURL:         "https://origin-a.example.com:443/other",
+			IdentityName:    ref.Identity,
+			EnvironmentName: ref.Environment,
+		})
+		if err != nil || got != key {
+			t.Fatalf("BearerToken same-origin TOFU = %q, %v; want the envelope key", got, err)
+		}
+		originPath, err := apiKeyOriginPath(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originData, err := os.ReadFile(originPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(originData); got != "https://origin-a.example.com" {
+			t.Fatalf("TOFU sidecar = %q, want origin A", got)
+		}
+		if got, err := ReadAPIKey(ref); err != nil || got != key {
+			t.Fatalf("ReadAPIKey same origin = %q, %v; want the envelope key", got, err)
+		}
+
+		seedEnvironmentBaseURL(t, "prod", "https://origin-b.example.com")
+		if _, err := ReadAPIKey(ref); !errors.Is(err, ErrOriginMismatch) {
+			t.Errorf("ReadAPIKey after TOFU and repoint = %v, want ErrOriginMismatch", err)
+		}
+		if _, err := BearerToken(Credentials{
+			BaseURL:         "https://origin-b.example.com",
+			IdentityName:    ref.Identity,
+			EnvironmentName: ref.Environment,
+		}); !errors.Is(err, ErrOriginMismatch) {
+			t.Errorf("BearerToken after TOFU and repoint = %v, want ErrOriginMismatch", err)
+		}
+		originData, err = os.ReadFile(originPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(originData); got != "https://origin-a.example.com" {
+			t.Errorf("sidecar after refused repoint = %q, want origin A unchanged", got)
+		}
+	})
+
+	t.Run("explicit envelope origin is authoritative", func(t *testing.T) {
+		withConfigDir(t)
+		ref := IdentityRef{Identity: "ci", Environment: "prod"}
+		seedEnvironmentBaseURL(t, "prod", "https://origin-a.example.com")
+		const key = "jak_json_envelope_explicit" // pragma: allowlist secret
+		keyPath, err := apiKeyPath(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelope := `{"api_key":"` + key + `","origin":"https://origin-a.example.com/v1"}`
+		if err := os.WriteFile(keyPath, []byte(envelope), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		originPath, err := apiKeyOriginPath(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(originPath, []byte("https://sidecar-ignored.example.com"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if got, err := ReadAPIKey(ref); err != nil || got != key {
+			t.Fatalf("ReadAPIKey with explicit envelope origin = %q, %v", got, err)
+		}
+		if got, err := BearerToken(Credentials{
+			BaseURL:         "https://origin-a.example.com:443/other",
+			IdentityName:    ref.Identity,
+			EnvironmentName: ref.Environment,
+		}); err != nil || got != key {
+			t.Fatalf("BearerToken with explicit envelope origin = %q, %v", got, err)
+		}
+
+		seedEnvironmentBaseURL(t, "prod", "https://origin-b.example.com")
+		if _, err := ReadAPIKey(ref); !errors.Is(err, ErrOriginMismatch) {
+			t.Errorf("ReadAPIKey explicit origin after repoint = %v, want ErrOriginMismatch", err)
+		}
+		if _, err := BearerToken(Credentials{
+			BaseURL:         "https://origin-b.example.com",
+			IdentityName:    ref.Identity,
+			EnvironmentName: ref.Environment,
+		}); !errors.Is(err, ErrOriginMismatch) {
+			t.Errorf("BearerToken explicit origin after repoint = %v, want ErrOriginMismatch", err)
+		}
+	})
+}
+
+func TestSaveAPIKey_NoResolvableOriginFails(t *testing.T) {
+	withConfigDir(t)
+	ref := IdentityRef{Identity: "ci", Environment: "prod"}
+	if err := SaveAPIKey(ref, "jak_no_origin_test"); err == nil || !strings.Contains(err.Error(), `environment "prod" has no base_url`) {
+		t.Fatalf("SaveAPIKey without a resolvable origin = %v, want an origin-binding error", err)
+	}
+	path, err := apiKeyPath(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("origin-less save wrote an API-key file: %v", err)
+	}
+}
+
 func TestRegisterAndRevokeWithClient_HonorsCustomCAAndFailsClosedWithoutIt(t *testing.T) {
 	var sawRegisterUA, sawRevokeUA, sawRevokeBearer, sawRevokeToken string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

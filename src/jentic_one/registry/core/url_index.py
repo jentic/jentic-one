@@ -20,6 +20,8 @@ SCHEME_DEFAULT_PORTS: dict[str, int] = {
 }
 
 PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
+_LEGACY_FREE_HOST_CLASS = r"[^:/]+"
+_LEGACY_SCHEME_RELATIVE_FREE_HOST_CLASS = r"[^/]+"
 
 # RFC 6570 expression operators. These are single-character prefixes on the
 # expression (e.g. ``{+var}``, ``{#var}``), never part of the variable name, so
@@ -116,15 +118,23 @@ def host_contains_variables(host: str) -> bool:
     return bool(PATH_PARAM_RE.search(host))
 
 
+def is_free_host_regex(pattern: str) -> bool:
+    """Return whether a stored host pattern contains a legacy arbitrary-host class."""
+    return any(
+        host_class in pattern
+        for host_class in (_LEGACY_FREE_HOST_CLASS, _LEGACY_SCHEME_RELATIVE_FREE_HOST_CLASS)
+    )
+
+
 def build_host_regex(host: str) -> re.Pattern[str]:
-    """Build a regex pattern for matching a host with optional variables."""
+    """Build a host regex whose variable placeholders match only their literal templates."""
     parts = PATH_PARAM_RE.split(host)
     regex_parts: list[str] = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
             regex_parts.append(re.escape(part))
         else:
-            regex_parts.append(r"[^:/]+")
+            regex_parts.append(re.escape("{" + part + "}"))
     return re.compile("^" + "".join(regex_parts) + "$", re.IGNORECASE)
 
 
@@ -748,6 +758,8 @@ def resolve_server_variable_groups(
 
 
 def _raw_host(server_url: str) -> str:
+    if server_url.startswith("//"):
+        return server_url[2:].split("/", 1)[0]
     if "://" not in server_url:
         return ""
     return server_url.split("://", 1)[1].split("/", 1)[0]
@@ -838,11 +850,11 @@ def _render_server_template(
                 seen_groups.add(group)
                 regex.append(f"(?P<{group}>{matcher})")
             continue
-        # An undeclared placeholder: legacy handling (host → any label run,
-        # path → an operation path parameter).
+        # An undeclared host placeholder matches only its literal template; an
+        # undeclared path placeholder is an operation path parameter.
         display.append("{" + part + "}")
         if in_host:
-            regex.append(r"[^:/]+")
+            regex.append(re.escape("{" + part + "}"))
         else:
             regex.append(_path_param_group(part, param_groups, seen_groups, param_catch_all))
     return "".join(display), "".join(regex)
@@ -934,10 +946,11 @@ def build_server_index_entries(
     try:
         entries = [_entry_for_bindings(server_url, used, c, operation_path) for c in combos]
     except ValueError:
-        # A variable in an unparseable position (e.g. the port): fall back to
-        # the default-expanded URL, as before server variables were expanded.
-        # The row pins every expanded variable to its default, so the lookup
-        # still resolves (and scopes credentials on) those values.
+        # A variable in an unparseable position (e.g. the port) uses the
+        # default-expanded URL. The row pins every expanded variable to its
+        # default, so the lookup still resolves (and scopes credentials on)
+        # those values. A host variable without a default remains its literal
+        # ``{name}`` placeholder in ``expanded``.
         expanded = server_url
         fixed: list[str] = []
         for spec in used:
@@ -951,6 +964,9 @@ def build_server_index_entries(
             parsed.scheme,
             operation_path=operation_path,
         )
+        # Pin every placeholder left in the fallback host to its literal
+        # template rather than deriving another variable matcher for it.
+        entry.host_regex = re.compile("^" + re.escape(parsed.host) + "$", re.IGNORECASE)
         entry.path_regex = re.compile(
             entry.path_regex.pattern.replace("^", "^" + "".join(fixed), 1)
         )

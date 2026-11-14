@@ -4,7 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/jentic/jentic-one/cli/client/auth"
 )
 
 // Held is the broker's 202 answer to a call a require-approval rule held for
@@ -38,11 +41,39 @@ const (
 	HeldStatusCancelled = "cancelled"
 )
 
-// ParseHeld reports whether a broker result is a held call: a 202 whose body
-// is the held envelope (status "held", a held execution id and a review URL).
-// Any other 202 — a plain respond-async job — is not held.
+// IsBrokerHeld reports whether the broker itself emitted a 202. Mirrored
+// upstream responses carry Jentic-Upstream-Status; broker-held responses must
+// never carry that header, even when their body has the held-envelope shape.
+func IsBrokerHeld(r *ExecuteResult) bool {
+	return r != nil && r.Status == http.StatusAccepted &&
+		r.Headers.Get("Jentic-Upstream-Status") == "" && errorOrigin(r) != errorOriginUpstream
+}
+
+// TrustedReviewURL reports whether reviewURL uses an approved transport and
+// belongs to the configured control-plane or broker origin.
+func TrustedReviewURL(reviewURL, controlBaseURL, brokerURL string) bool {
+	u, err := url.Parse(reviewURL)
+	if err != nil || u.User != nil || auth.RequireSecureURL(reviewURL) != nil {
+		return false
+	}
+	origin := auth.NormalizeOrigin(reviewURL)
+	if origin == "" {
+		return false
+	}
+	for _, configured := range []string{controlBaseURL, brokerURL} {
+		if trusted := auth.NormalizeOrigin(configured); trusted != "" && origin == trusted {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseHeld reports whether a broker result is a held call: a broker-generated
+// 202 whose body is the held envelope (status "held", a held execution id and a
+// review URL). Any other 202 — a plain respond-async job or an upstream
+// response — is not held.
 func ParseHeld(r *ExecuteResult) (*Held, bool) {
-	if r == nil || r.Status != http.StatusAccepted {
+	if !IsBrokerHeld(r) {
 		return nil, false
 	}
 	var h Held
