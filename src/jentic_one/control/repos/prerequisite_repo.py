@@ -47,6 +47,7 @@ class CredentialBoundAgentRow(NamedTuple):
     # Why the binding is suspended (e.g. ``api_deleted``); None when active or
     # suspended by hand.
     suspended_reason: str | None = None
+    agent_owner_id: str | None = None
 
 
 class AgentVisibility(NamedTuple):
@@ -202,7 +203,7 @@ class PrerequisiteRepository:
 
         stmt = text(
             "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id, "
-            "b.suspended_reason "
+            "b.suspended_reason, a.owner_id "
             "FROM agent_credential_bindings b "
             "JOIN agents a ON a.id = b.agent_id "
             f"WHERE {' AND '.join(conditions)} "

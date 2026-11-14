@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -11,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 
 ExpiryEventKind = Literal["expiring_soon", "expired"]
+
+# Upper bound on IDs bound into one IN (...) clause, well under SQLite's and
+# Postgres's host-parameter limits.
+_ID_BATCH_SIZE = 500
 
 
 class OAuthTokenRepository:
@@ -88,6 +93,23 @@ class OAuthTokenRepository:
             select(OAuthToken).where(OAuthToken.credential_id == credential_id)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_credentials(
+        session: AsyncSession, ids: Sequence[str]
+    ) -> dict[str, OAuthToken]:
+        """Batch-resolve credential IDs to their ``OAuthToken`` rows (missing ids omitted)."""
+        if not ids:
+            return {}
+        tokens: dict[str, OAuthToken] = {}
+        for i in range(0, len(ids), _ID_BATCH_SIZE):
+            batch = list(ids[i : i + _ID_BATCH_SIZE])
+            result = await session.execute(
+                select(OAuthToken).where(OAuthToken.credential_id.in_(batch))
+            )
+            for row in result.scalars().all():
+                tokens[row.credential_id] = row
+        return tokens
 
     @staticmethod
     async def update_tokens(
