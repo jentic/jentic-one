@@ -436,6 +436,18 @@ def _call_argument_names(call: ast.Call) -> frozenset[str]:
     return frozenset(names)
 
 
+def _binds_parameter(call: ast.Call, parameter: str, position: int = 0) -> bool:
+    """Whether *parameter* is passed by its documented position or matching keyword."""
+    if len(call.args) > position:
+        value = call.args[position]
+        if isinstance(value, ast.Name) and value.id == parameter:
+            return True
+    return any(
+        kw.arg == parameter and isinstance(kw.value, ast.Name) and kw.value.id == parameter
+        for kw in call.keywords
+    )
+
+
 def _by_id_service_calls(
     route: str, py_file: Path, func: _Func, tree: ast.Module | None = None
 ) -> list[_ByIdCall]:
@@ -478,7 +490,7 @@ def _by_id_service_calls(
         # Only the documented authorizer, carrying identity and its path parameter,
         # marks the matching exempted occurrence as post-authorized.
         for key, (method, parameter) in authorizers.items():
-            if call_func.attr == method and has_identity and parameter in used_path_parameters:
+            if call_func.attr == method and has_identity and _binds_parameter(node, parameter):
                 authorized[key].add(parameter)
         if has_identity:
             continue
@@ -846,3 +858,33 @@ def test_post_authorized_requires_documented_authorizer() -> None:
     )
     assert len(right_calls) == 1
     assert right_calls[0].post_authorized, "get_binding_access must post-authorize scope_options"
+
+
+@pytest.mark.arch
+def test_post_authorizer_binds_credential_to_its_documented_argument() -> None:
+    """Self-check: credential_id in another argument does not post-authorize the read."""
+    wrong_position = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.get_binding_access('other', credential_id, identity=identity)\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    wrong_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), wrong_position
+    )
+    by_keyword = _parse_func(
+        "@router.get('/things/{credential_id}')\n"
+        "async def r(svc: FooService, credential_id: str,"
+        " identity: Identity = get_current_identity()):\n"
+        "    await svc.get_binding_access(\n"
+        "        agent_id='agent', credential_id=credential_id, identity=identity\n"
+        "    )\n"
+        "    return await svc.scope_options(credential_id)\n"
+    )
+    keyword_calls = _by_id_service_calls(
+        "control/credentials.list_agent_permissions", Path("<self-check>"), by_keyword
+    )
+    assert len(wrong_calls) == 1
+    assert len(keyword_calls) == 1
+    assert [wrong_calls[0].post_authorized, keyword_calls[0].post_authorized] == [False, True]
