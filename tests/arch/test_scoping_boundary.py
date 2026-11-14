@@ -15,10 +15,12 @@ from pathlib import Path
 import pytest
 
 from .conftest import SRC_ROOT, python_files_in
+from .test_scoped_by_id_services import _service_sources, _ServiceIndex
 
 _Func = ast.FunctionDef | ast.AsyncFunctionDef
 _WRITE_MUTATOR = re.compile(
-    r"^(update|delete|set_|replace|revoke|grant|bind|decide|withdraw|mark_)"
+    r"^(update|delete|set_|replace|patch|revoke|grant|bind|unbind|attach|detach|"
+    r"decide|withdraw|mark_|cancel|disable|enable|confirm|archive|purge|resume)"
 )
 _WRITE_SERVICE_DIRS = [
     SRC_ROOT / "admin" / "services",
@@ -34,6 +36,21 @@ _WRITE_FILTER_ALLOWLIST: dict[str, str] = {
     ),
     "UserService.update": (
         "User filters have no read widenings; ensure_can_manage authorizes the mutation"
+    ),
+    "JobService.cancel": (
+        "owner cancellation covers jobs created by their agents, so the read filter is required"
+    ),
+    "CredentialService.replace_agent_permissions": (
+        "_require_visible_binding(for_write=True) adds the credential owner/org:admin write gate"
+    ),
+    "CredentialService.patch_agent_permissions": (
+        "_require_visible_binding(for_write=True) adds the credential owner/org:admin write gate"
+    ),
+    "CredentialService.attach_binding_rule_set": (
+        "_require_visible_binding(for_write=True) adds the credential owner/org:admin write gate"
+    ),
+    "CredentialService.detach_binding_rule_set": (
+        "_require_visible_binding(for_write=True) adds the credential owner/org:admin write gate"
     ),
 }
 
@@ -73,52 +90,121 @@ def _has_repository_mutator(method: _Func) -> bool:
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         receiver = _name_of(node.func.value)
-        if (
-            receiver is not None
-            and receiver.endswith("Repository")
-            and _WRITE_MUTATOR.match(node.func.attr)
-        ):
+        is_repository = receiver is not None and (
+            receiver.endswith("Repository")
+            or receiver in {"repo", "repository", "_repo", "_repository"}
+            or receiver.endswith(("_repo", "_repository"))
+        )
+        if is_repository and _WRITE_MUTATOR.match(node.func.attr):
             return True
     return False
 
 
-def _uses_write_filter(call: ast.Call) -> bool:
+def _uses_write_filter(call: ast.Call, true_parameters: frozenset[str]) -> bool:
     return any(
-        kw.arg == "for_write" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+        kw.arg == "for_write"
+        and (
+            (isinstance(kw.value, ast.Constant) and kw.value.value is True)
+            or (isinstance(kw.value, ast.Name) and kw.value.id in true_parameters)
+        )
         for kw in call.keywords
     )
 
 
+def _true_parameters(call: ast.Call, target: _Func) -> frozenset[str]:
+    parameters = target.args.posonlyargs + target.args.args
+    names = {
+        parameter.arg
+        for parameter, value in zip(parameters[1:], call.args, strict=False)
+        if isinstance(value, ast.Constant) and value.value is True
+    }
+    names.update(
+        kw.arg
+        for kw in call.keywords
+        if kw.arg is not None and isinstance(kw.value, ast.Constant) and kw.value.value is True
+    )
+    return frozenset(names)
+
+
+class _WriteFilterIndex:
+    def __init__(self, index: _ServiceIndex) -> None:
+        self.index = index
+
+    def _has_mutation(
+        self, owner: str, method: _Func, seen: frozenset[tuple[str, str]] = frozenset()
+    ) -> bool:
+        key = (owner, method.name)
+        if key in seen:
+            return False
+        if _has_repository_mutator(method):
+            return True
+        for call in ast.walk(method):
+            if not isinstance(call, ast.Call):
+                continue
+            target = self.index._resolve_call(owner, method, call)
+            if target is not None and self._has_mutation(target.owner, target.method, seen | {key}):
+                return True
+        return False
+
+    def _filter_status(
+        self,
+        owner: str,
+        method: _Func,
+        true_parameters: frozenset[str] = frozenset(),
+        seen: frozenset[tuple[str, str]] = frozenset(),
+    ) -> tuple[bool, bool]:
+        key = (owner, method.name)
+        if key in seen:
+            return False, True
+        found = False
+        write_scoped = True
+        for call in ast.walk(method):
+            if not isinstance(call, ast.Call):
+                continue
+            if _name_of(call.func) == "build_access_filters":
+                found = True
+                write_scoped = write_scoped and _uses_write_filter(call, true_parameters)
+                continue
+            values = list(call.args) + [kw.value for kw in call.keywords]
+            if not any(isinstance(value, ast.Name) and value.id == "identity" for value in values):
+                continue
+            target = self.index._resolve_call(owner, method, call)
+            if target is None:
+                continue
+            is_authorization_helper = target.method.name.startswith(("_load_", "_require_")) or (
+                target.method.name == "get_agent"
+            )
+            if not is_authorization_helper and not self._has_mutation(target.owner, target.method):
+                continue
+            child_found, child_write_scoped = self._filter_status(
+                target.owner,
+                target.method,
+                _true_parameters(call, target.method),
+                seen | {key},
+            )
+            found = found or child_found
+            write_scoped = write_scoped and child_write_scoped
+        return found, write_scoped
+
+    def findings(self) -> dict[str, tuple[Path, int, bool]]:
+        found: dict[str, tuple[Path, int, bool]] = {}
+        for name, resolved in self.index.operations():
+            owner = name.split(".", 1)[0]
+            if not self._has_mutation(owner, resolved.method):
+                continue
+            has_filters, write_scoped = self._filter_status(owner, resolved.method)
+            if has_filters:
+                found[name] = (resolved.path, resolved.method.lineno, write_scoped)
+        return found
+
+
 def _write_filter_findings(tree: ast.Module, py_file: Path) -> dict[str, tuple[Path, int, bool]]:
     """Return mutating methods with scoped loads and whether every load uses a write filter."""
-    found: dict[str, tuple[Path, int, bool]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef) or not node.name.endswith("Service"):
-            continue
-        for method in node.body:
-            if not isinstance(method, _Func) or not _has_repository_mutator(method):
-                continue
-            builds = [
-                call
-                for call in ast.walk(method)
-                if isinstance(call, ast.Call) and _name_of(call.func) == "build_access_filters"
-            ]
-            if builds:
-                found[f"{node.name}.{method.name}"] = (
-                    py_file,
-                    method.lineno,
-                    all(_uses_write_filter(call) for call in builds),
-                )
-    return found
+    return _WriteFilterIndex(_ServiceIndex([(tree, py_file)])).findings()
 
 
 def _write_filter_findings_in_services() -> dict[str, tuple[Path, int, bool]]:
-    found: dict[str, tuple[Path, int, bool]] = {}
-    for services_dir in _WRITE_SERVICE_DIRS:
-        for py_file in python_files_in(services_dir):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-            found.update(_write_filter_findings(tree, py_file))
-    return found
+    return _WriteFilterIndex(_ServiceIndex(_service_sources())).findings()
 
 
 @pytest.mark.arch
@@ -146,6 +232,34 @@ def test_write_filter_allowlist_is_not_stale() -> None:
 
 
 @pytest.mark.arch
+def test_delegated_write_filter_coverage_is_exercised() -> None:
+    """Concrete wrappers and repository aliases contribute to the write-filter boundary."""
+    methods = _write_filter_findings_in_services()
+    assert methods["UserService.delete"][2] is True
+    assert methods["UserService.disable"][2] is True
+    assert methods["AgentService.bind_credential"][2] is True
+    assert methods["AgentService.unbind_credential"][2] is True
+
+
+@pytest.mark.arch
+def test_job_cancel_exception_matches_its_integration_contract() -> None:
+    """The cancellation exemption stays tied to its real filter and integration test."""
+    assert _write_filter_findings_in_services()["JobService.cancel"][2] is False
+    job_contract = (
+        SRC_ROOT.parent.parent
+        / "tests"
+        / "integration"
+        / "admin"
+        / "services"
+        / "test_job_scoping.py"
+    )
+    source = job_contract.read_text(encoding="utf-8")
+    assert "cancel" in source
+    assert "agent" in source
+    assert "owner" in source
+
+
+@pytest.mark.arch
 def test_write_filter_check_rejects_read_filter_in_write_method() -> None:
     """Self-check: a repository mutator makes a read-filtered load a violation."""
     tree = ast.parse(
@@ -156,6 +270,45 @@ def test_write_filter_check_rejects_read_filter_in_write_method() -> None:
     )
     methods = _write_filter_findings(tree, Path("<self-check>"))
     assert methods["ExampleService.update"][2] is False
+
+
+@pytest.mark.arch
+def test_write_filter_check_covers_wrappers_and_repository_aliases() -> None:
+    """Self-check: mutation aliases cannot hide a read-filtered delegated load."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def update(self, thing_id: str, *, identity: Identity):\n"
+        "        await self._load_manageable(thing_id, identity)\n"
+        "        await self._repo.update(thing_id)\n"
+        "    async def _load_manageable(self, thing_id: str, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def replace(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        await self._repo.replace(thing_id, filters=filters)\n"
+    )
+    methods = _write_filter_findings(tree, Path("<self-check>"))
+    assert methods["ExampleService.update"][2] is False
+    assert methods["ExampleService.replace"][2] is False
+
+
+@pytest.mark.arch
+def test_write_filter_check_resolves_delegated_loads() -> None:
+    """Self-check: helper delegation preserves the helper's filter requirements."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def replace(self, thing_id: str, *, identity: Identity):\n"
+        "        await self._load_binding_agent(thing_id, identity=identity)\n"
+        "        await ThingRepository.replace(thing_id)\n"
+        "    async def _load_binding_agent(self, thing_id: str, *, identity: Identity):\n"
+        "        return await self.get_agent(thing_id, identity=identity)\n"
+        "    async def get_agent(self, thing_id: str, *, identity: Identity):\n"
+        "        return await ThingRepository.get_by_id(\n"
+        "            thing_id, filters=build_access_filters(identity, Thing)\n"
+        "        )\n"
+    )
+    methods = _write_filter_findings(tree, Path("<self-check>"))
+    assert methods["ExampleService.replace"][2] is False
 
 
 @pytest.mark.arch
