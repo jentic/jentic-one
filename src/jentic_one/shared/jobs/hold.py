@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -26,6 +26,7 @@ from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.audit_repo import AuditRepository
+from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.events import emit_event_best_effort, summary_label, summary_text
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
@@ -385,12 +386,7 @@ async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
     row. SQLite transactions already take the write lock up front
     (``BEGIN IMMEDIATE``), so they never overlap.
     """
-    if session.get_bind().dialect.name != "postgresql":
-        return
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": _HOLD_LOCK_NAMESPACE + agent_id},
-    )
+    await advisory_xact_lock(session, hashtext_name=_HOLD_LOCK_NAMESPACE + agent_id)
 
 
 async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:

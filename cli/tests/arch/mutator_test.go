@@ -26,7 +26,6 @@ var configWriterAllowlist = map[string]bool{
 	// 0600 secret/state write, not an ad-hoc config clobber).
 	"internal/atomicfile/atomicfile.go":     true, // shared CLI atomic writer (temp+fsync+rename)
 	"internal/config/manifest.go":           true, // install manifest
-	"internal/agentkey/key.go":              true, // Ed25519 key material (0600)
 	"internal/update/update.go":             true, // self-update binary swap (atomic)
 	"internal/update/download.go":           true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
 	"internal/install/start.go":             true, // pid file

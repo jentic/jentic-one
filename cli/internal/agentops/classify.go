@@ -44,15 +44,6 @@ func IsBrokerDenial(r *ExecuteResult) bool {
 	}
 }
 
-// ParseAgentDirective extracts an agent_directive from a denial result's body.
-// It only treats recoverable broker-denial responses as directives so a normal
-// 4xx (including an upstream pass-through with an incidental
-// "agent_directive"-shaped body) can't trip the caller's exit code.
-func ParseAgentDirective(r *ExecuteResult) (ux.Directive, bool) {
-	directive, _, ok := parseAgentDirectiveRaw(r)
-	return directive, ok
-}
-
 // parseAgentDirectiveRaw extracts both the typed projection (what the CLI's
 // renderer branches on) and the verbatim agent_directive JSON sub-object (what
 // the MCP payload relays — unknown future broker fields must survive the

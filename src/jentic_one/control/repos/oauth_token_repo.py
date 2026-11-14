@@ -10,6 +10,7 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.shared.db.locks import advisory_xact_lock
 
 ExpiryEventKind = Literal["expiring_soon", "expired"]
 
@@ -32,12 +33,7 @@ class OAuthTokenRepository:
         which already serialises the refresh transaction against the dropping
         write across processes.
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:cid))"),
-                {"cid": credential_id},
-            )
+        await advisory_xact_lock(session, hashtext_name=credential_id)
 
     @staticmethod
     async def try_acquire_refresh_lock(session: AsyncSession, credential_id: str) -> bool:

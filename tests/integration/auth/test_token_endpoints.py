@@ -246,7 +246,7 @@ async def test_resolve_access_token(
     immediately. Seed the grant that a real ``issue_pair`` would have derived
     from.
     """
-    owner_id = await _seed_user(integration_context, "usr_resolve_owner")
+    owner_id = await _seed_user(integration_context, "usr_test", permissions={"execute"})
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
         await ActorPermissionGrantRepository.grant(
@@ -275,7 +275,7 @@ async def test_resolve_reflects_scope_grant_without_remint(
 ) -> None:
     """Regression for #531: adding a scope grant takes effect on the *existing*
     token pair — no re-mint required."""
-    owner_id = await _seed_user(integration_context, "usr_scope_owner")
+    owner_id = await _seed_user(integration_context, "usr_scope_owner", permissions={"apis:write"})
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
         await ActorPermissionGrantRepository.grant(

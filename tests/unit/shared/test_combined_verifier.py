@@ -99,10 +99,7 @@ async def test_oauth_token_intersects_consented_with_platform_scopes(
         patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
-        mock_rp.return_value = (
-            ["capabilities:read", "agents:read", "agents:write"],
-            [],
-        )
+        mock_rp.return_value = ["capabilities:read", "agents:read", "agents:write"]
 
         verify = _make_auth_verifier(ctx)
         identity = await verify("at_test_token", _fake_request())
@@ -134,7 +131,7 @@ async def test_oauth_token_passes_through_oidc_scopes(
         patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
-        mock_rp.return_value = (["capabilities:read", "agents:write"], [])
+        mock_rp.return_value = ["capabilities:read", "agents:write"]
 
         verify = _make_auth_verifier(ctx)
         identity = await verify("at_test_token", _fake_request())
@@ -168,13 +165,13 @@ async def test_agent_token_uses_row_scopes(
         patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
-        mock_rp.return_value = ([], ["org:admin"])
+        mock_rp.return_value = []
 
         verify = _make_auth_verifier(ctx)
         identity = await verify("at_test_token", _fake_request())
 
     assert identity.permissions == ["capabilities:read", "capabilities:execute"]
-    assert identity.parent_permissions == ["org:admin"]
+    mock_rp.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -199,10 +196,7 @@ async def test_first_party_token_uses_full_permissions(
         patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
-        mock_rp.return_value = (
-            ["capabilities:read", "agents:write", "org:admin"],
-            [],
-        )
+        mock_rp.return_value = ["capabilities:read", "agents:write", "org:admin"]
 
         verify = _make_auth_verifier(ctx)
         identity = await verify("at_test_token", _fake_request())
@@ -232,10 +226,7 @@ async def test_first_party_scoped_user_token_is_not_rebroadened(
         patch.object(verifier_mod, "ApiKeyResolver"),
     ):
         mock_ts_cls.return_value.resolve_access_token = AsyncMock(return_value=resolved)
-        mock_rp.return_value = (
-            ["capabilities:read", "agents:write", "org:admin"],
-            [],
-        )
+        mock_rp.return_value = ["capabilities:read", "agents:write", "org:admin"]
 
         verify = _make_auth_verifier(ctx)
         identity = await verify("at_test_token", _fake_request())

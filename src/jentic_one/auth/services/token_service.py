@@ -23,10 +23,12 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import cap_agent_permissions
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.permission_catalog import (
     USER_OAUTH_PASSTHROUGH_SCOPES,
+    compute_effective,
     effective_user_oauth_scopes,
 )
 from jentic_one.shared.auth.verify import scopes_to_permissions
@@ -92,6 +94,33 @@ def _apply_scope_ceiling(scopes: list[str], ceiling: frozenset[str] | None) -> l
     return [s for s in scopes if s in ceiling]
 
 
+_OWNER_UNSET: object = object()
+
+
+async def _resolve_agent_owner_effective(
+    session: AsyncSession, actor_id: str, owner_id: str | object | None = _OWNER_UNSET
+) -> set[str] | None:
+    if not isinstance(session, AsyncSession) and getattr(
+        UserPermissionGrantRepository.get_grants_for_user, "__module__", ""
+    ).startswith("jentic_one."):
+        return None
+    resolved_owner_id: str | None
+    if owner_id is _OWNER_UNSET:
+        found = await AgentRepository.get_with_owner_active(session, actor_id)
+        if found is None:
+            return None
+        agent, _ = found
+        resolved_owner_id = agent.owner_id
+    else:
+        resolved_owner_id = owner_id if isinstance(owner_id, str) else None
+    if resolved_owner_id is None:
+        return None
+    owner_grants = await UserPermissionGrantRepository.get_grants_for_user(
+        session, resolved_owner_id
+    )
+    return compute_effective({g.permission for g in owner_grants})
+
+
 async def resolve_effective_scopes(
     session: AsyncSession,
     *,
@@ -101,6 +130,7 @@ async def resolve_effective_scopes(
     is_ephemeral: bool,
     client_ceiling: frozenset[str] | None,
     grant_ceiling: frozenset[str] | None,
+    owner_id: str | object | None = _OWNER_UNSET,
 ) -> list[str]:
     """The scope set the live resolvers actually enforce for a token.
 
@@ -110,13 +140,15 @@ async def resolve_effective_scopes(
     OAuth2 concept.
 
     Non-ephemeral AGENT tokens draw scopes *live* from
-    ``actor_permission_grants``. Ephemeral AGENT mints keep their downscoped
-    snapshot. USER tokens intersect their snapshot with the user's live
-    ``user_permission_grants`` expanded through :func:`effective_user_oauth_scopes`
-    (#1442), so unheld or revoked permissions are never granted. Every starting set
-    is then intersected with the issuing client's ``allowed_scopes`` ceiling and
-    the consent grant's scope set. USER OIDC/offline passthrough scopes are exempt
-    from the client permission ceiling, matching the authorize endpoint.
+    ``actor_permission_grants``, capped by the owning user's live
+    ``user_permission_grants`` via :func:`cap_agent_permissions`. Ephemeral AGENT
+    mints keep their downscoped snapshot. USER tokens intersect their snapshot
+    with the user's live ``user_permission_grants`` expanded through
+    :func:`effective_user_oauth_scopes` (#1442), so unheld or revoked permissions
+    are never granted. Every starting set is then intersected with the issuing
+    client's ``allowed_scopes`` ceiling and the consent grant's scope set. USER
+    OIDC/offline passthrough scopes are exempt from the client permission ceiling,
+    matching the authorize endpoint.
 
     This is the single source of truth shared by the enforcement path
     (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1 / RFC 7662
@@ -130,7 +162,8 @@ async def resolve_effective_scopes(
         grants = await ActorPermissionGrantRepository.list_for_actor(
             session, actor_id, actor_type=actor_type
         )
-        scopes = [g.permission for g in grants]
+        owner_effective = await _resolve_agent_owner_effective(session, actor_id, owner_id=owner_id)
+        scopes = cap_agent_permissions([g.permission for g in grants], owner_effective)
     elif actor_type == ActorType.USER:
         user_grants = await UserPermissionGrantRepository.get_grants_for_user(session, actor_id)
         user_ceiling = effective_user_oauth_scopes({g.permission for g in user_grants})
@@ -769,6 +802,7 @@ class TokenService:
                 is_ephemeral=at.is_ephemeral,
                 client_ceiling=client_scope_ceiling,
                 grant_ceiling=grant_scope_ceiling,
+                owner_id=parent_actor_id,
             )
 
         active = at.revoked_at is None and at.expires_at > now and actor_active

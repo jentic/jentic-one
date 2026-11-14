@@ -1149,6 +1149,58 @@ async def test_actor_status_resolver_follows_the_owner(
         assert agent is not None and agent.status == "active"
 
 
+async def test_actor_status_resolver_caps_agent_authority_by_owner_permissions(
+    integration_context: Context, clean_tables: None, owner_id: str
+) -> None:
+    """An owned agent's non-default permission is capped by its owner's live
+    ``user_permission_grants`` in ``ActorStatusResolver.authority``; default
+    agent permissions remain held even when the owner has no grants."""
+    ctx = integration_context
+    agent_id, _ = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    async with ctx.admin_db.session() as session:
+        session.add(
+            ActorPermissionGrant(actor_id=agent_id, actor_type="agent", permission="config:write")
+        )
+        session.add(UserPermissionGrant(user_id=owner_id, permission="config:write"))
+        await session.commit()
+
+    resolver = ActorStatusResolver(ctx.admin_db)
+    try:
+        before = await resolver.authority(
+            actor_id=agent_id, actor_type="agent", permission="config:write"
+        )
+        assert before.active is True
+        assert before.holds_permission is True
+
+        # Strip config:write from the owner; the agent grant row still exists,
+        # but authority() caps it against the owner's live permissions.
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id == owner_id)
+            )
+            await session.commit()
+
+        after = await resolver.authority(
+            actor_id=agent_id, actor_type="agent", permission="config:write"
+        )
+        assert after.active is True
+        assert after.holds_permission is False
+
+        # Default agent permissions stay held even when the owner has no grants.
+        default_auth = await resolver.authority(
+            actor_id=agent_id, actor_type="agent", permission=BROKER_EXECUTE_PERMISSION
+        )
+        assert default_auth.active is True
+        assert default_auth.holds_permission is True
+    finally:
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id == owner_id)
+            )
+            await session.commit()
+
+
 async def test_queued_job_of_an_owned_agent_is_denied_while_the_owner_is_inactive(
     integration_context: Context, clean_tables: None, owner_id: str, clean_worker_jobs: None
 ) -> None:

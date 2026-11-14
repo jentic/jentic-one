@@ -26063,7 +26063,7 @@
         ]
       },
       "patch": {
-        "description": "Partially update an agent's `name`, `description` or `owner_id`.\n\nOnly the fields present in the body change; an empty body returns the\nagent unchanged. Allowed for the agent's owner or an `org:admin` (anyone\nelse gets 404). Changing `owner_id` transfers ownership, is\n`org:admin`-only, revokes every active OAuth client grant bound to the\nagent (so the new owner must re-consent any connected client), and\nsuspends active credential bindings to credentials outside the new\nowner's ownership. The agent's API key and permissions are unaffected. An\narchived agent cannot be updated (409). Returns the updated agent.",
+        "description": "Partially update an agent's `name`, `description` or `owner_id`.\n\nOnly the fields present in the body change; an empty body returns the\nagent unchanged. Allowed for the agent's owner or an `org:admin` (anyone\nelse gets 404). Changing `owner_id` transfers ownership, is\n`org:admin`-only, revokes every active OAuth client grant bound to the\nagent (so the new owner must re-consent any connected client), suspends\nactive credential bindings to credentials outside the new owner's\nownership, and revokes agent permission grants above the new owner's\npermission ceiling (grant those permissions to the new owner first to\nkeep them on the agent). The agent's API key is unaffected. An archived\nagent cannot be updated (409). Returns the updated agent.",
         "operationId": "updateAgent",
         "parameters": [
           {
