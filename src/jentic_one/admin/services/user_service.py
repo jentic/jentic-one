@@ -373,7 +373,7 @@ class UserService:
         then passes ``ensure_can_manage`` against the caller's stored grants.
         """
         user = await UserRepository.get_by_id(
-            session, user_id, filters=build_access_filters(identity, User)
+            session, user_id, filters=build_access_filters(identity, User, for_write=True)
         )
         if user is None:
             raise UserNotFoundError(user_id)

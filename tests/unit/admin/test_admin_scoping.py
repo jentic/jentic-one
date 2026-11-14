@@ -8,6 +8,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.users import User
@@ -257,3 +258,49 @@ def test_oauth_client_grant_never_delegates_to_parent_actor() -> None:
 
 def test_oauth_client_grant_admin_unrestricted() -> None:
     assert build_access_filters(_identity(permissions=["org:admin"]), OAuthClientGrant) == []
+
+
+def test_agent_write_filter_drops_delegated_owner() -> None:
+    """Owner delegation widens agent reads but never agent writes."""
+    identity = _identity(
+        sub="agent_1",
+        permissions=[OWNER_AGENTS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="user_owner",
+    )
+    read_sql = str(
+        build_access_filters(identity, Agent)[0].compile(compile_kwargs={"literal_binds": True})
+    )
+    write_sql = str(
+        build_access_filters(identity, Agent, for_write=True)[0].compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "agents.owner_id = 'user_owner'" in read_sql
+    assert "agents.owner_id = 'user_owner'" not in write_sql
+    assert "agents.id = 'agent_1'" in write_sql
+
+
+def test_job_write_filter_drops_owned_agent_axis() -> None:
+    """The owned-agent visibility axis is read-only for ordinary actor models."""
+    identity = _identity(sub="usr_jobs", permissions=["jobs:write"])
+    write_sql = str(
+        build_access_filters(identity, Job, for_write=True)[0].compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "jobs.created_by = 'usr_jobs'" in write_sql
+    assert "agents.owner_id" not in write_sql
+
+
+def test_held_execution_write_filter_keeps_owned_agent_axis() -> None:
+    """Approval owners retain their agents' holds without matching the agent column directly."""
+    identity = _identity(sub="usr_reviewer", permissions=["executions:write"])
+    write_sql = str(
+        build_access_filters(identity, HeldExecution, for_write=True)[0].compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "held_executions.agent_id = 'usr_reviewer'" not in write_sql
+    assert "held_executions.agent_id IN (SELECT agents.id" in write_sql
+    assert "agents.owner_id = 'usr_reviewer'" in write_sql
