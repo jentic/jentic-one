@@ -69,7 +69,7 @@ func pollTimeout(args map[string]any) time.Duration {
 // fetch or act deliberately instead of flooding its context. Normal-sized
 // responses are relayed byte-identically to the CLI envelope.
 func (s *mcpServer) executeResultPayload(res *agentops.ExecuteResult) map[string]any {
-	env := res.Envelope()
+	env, oversize := res.EnvelopeWithin(s.maxResultBytes)
 	headers, headersTruncated := capHeaders(env.Headers, s.headerBytesBudget())
 	payload := map[string]any{
 		"schema_version": env.SchemaVersion,
@@ -84,7 +84,7 @@ func (s *mcpServer) executeResultPayload(res *agentops.ExecuteResult) map[string
 	if env.ExecutionID != "" {
 		payload["execution_id"] = env.ExecutionID
 	}
-	if int64(len(res.Body)) > s.maxResultBytes {
+	if oversize {
 		payload["body"] = strings.ToValidUTF8(string(res.Body[:s.maxResultBytes]), "")
 		payload["truncated"] = true
 		payload["total_bytes"] = len(res.Body)

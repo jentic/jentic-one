@@ -36,8 +36,13 @@ from jentic_one.admin.repos import (
     RefreshTokenRepository,
     UserRepository,
 )
+from jentic_one.admin.services._support.oauth_sweep import (
+    OAuthSweepCounts,
+    sweep_user_oauth_credentials,
+)
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.permission_service import PermissionService
+from jentic_one.admin.services.schemas.auth import ChangePasswordPayload
 from jentic_one.auth.services.authorize_service import AuthorizeService, _hash_code
 from jentic_one.auth.services.errors import ConsentAgentNotEligibleError, InvalidGrantError
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
@@ -976,3 +981,89 @@ async def test_password_reset_sweeps_oauth_writes_blocked_inside_transaction(
             assert access_row.revoked_at is not None
             assert refresh_row is not None
             assert refresh_row.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_reset_and_change_own_password_share_user_oauth_sweep_helper(
+    local_login_ctx: Context,
+    clean_grants: None,
+    clean_user_secrets: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins that ``AuthService.reset_password`` and ``AuthService.change_own_password``
+    both route user OAuth credential revocation through ``sweep_user_oauth_credentials``."""
+    ctx = local_login_ctx
+    user_id, email = await seed_password_user(ctx, "usr_1297_sweep_helper")
+    await seed_permissions(ctx, user_id, [APIS_READ, BROKER_EXECUTE_PERMISSION])
+
+    recorded_calls: list[tuple[str, OAuthSweepCounts]] = []
+
+    async def _recording_sweep(session: Any, target_user_id: str) -> OAuthSweepCounts:
+        counts = await sweep_user_oauth_credentials(session, target_user_id)
+        recorded_calls.append((target_user_id, counts))
+        return counts
+
+    monkeypatch.setattr(
+        "jentic_one.admin.services.auth_service.sweep_user_oauth_credentials",
+        _recording_sweep,
+    )
+
+    token_svc = TokenService(ctx)
+    authorize_svc = AuthorizeService(ctx)
+    auth_svc = AuthService(ctx)
+
+    await token_svc.issue_pair(user_id, ActorType.USER, ["openid", APIS_READ])
+    await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        code_challenge=code_challenge(CODE_VERIFIER),
+        scopes=f"openid {APIS_READ}",
+    )
+
+    await auth_svc.reset_password(email=email, temporary_password=_TEMP_PASSWORD)
+    assert recorded_calls == [(user_id, OAuthSweepCounts(access=1, refresh=1, codes=1))]
+
+    # Clear the temporary-password rotation gate via change_own_password, then mint a fresh
+    # pair and rotate the password a second time to verify the self-service sweep counts.
+    caller_identity = Identity(
+        sub=user_id,
+        email=email,
+        actor_type=ActorType.USER,
+        permissions=[APIS_READ, BROKER_EXECUTE_PERMISSION],
+    )
+    await auth_svc.change_own_password(
+        ChangePasswordPayload(
+            current_password=_TEMP_PASSWORD,
+            new_password=_ROTATED_PASSWORD,
+        ),
+        identity=caller_identity,
+    )
+    assert recorded_calls[-1] == (user_id, OAuthSweepCounts(access=0, refresh=0, codes=0))
+
+    post_at, post_rt = await token_svc.issue_pair(user_id, ActorType.USER, ["openid", APIS_READ])
+    post_code = await authorize_svc.issue_authorization_code(
+        user_id=user_id,
+        client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+        redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+        code_challenge=code_challenge(CODE_VERIFIER),
+        scopes=f"openid {APIS_READ}",
+    )
+
+    await auth_svc.change_own_password(
+        ChangePasswordPayload(
+            current_password=_ROTATED_PASSWORD,
+            new_password="second-rotated-pass-1297",  # pragma: allowlist secret
+        ),
+        identity=caller_identity,
+    )
+    assert recorded_calls[-1] == (user_id, OAuthSweepCounts(access=1, refresh=1, codes=1))
+    assert (await token_svc.introspect(post_at))["active"] is False
+    assert (await token_svc.introspect(post_rt))["active"] is False
+    with pytest.raises(InvalidGrantError):
+        await authorize_svc.exchange_code(
+            code=post_code,
+            code_verifier=CODE_VERIFIER,
+            redirect_uri=LOCAL_LOGIN_PLATFORM_REDIRECT,
+            client_id=LOCAL_LOGIN_PLATFORM_CLIENT_ID,
+        )

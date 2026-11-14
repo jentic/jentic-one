@@ -134,6 +134,50 @@ Changes on `main` since 0.44.0; they ship in the next release.
   `jentic execute` and the MCP `execute` / `execute_read` tools reject exact dot
   segments (`.` or `..`) as path parameter values. Python and Go `Retry-After`
   HTTP-date parsers now enforce identical RFC 9110 §5.6.7 rules.
+- **Direct credential connect (`POST /credentials/{id}/connect`) requires write ownership and forbids scope widening.**
+  Initiating a standalone OAuth connect flow now requires write ownership of the
+  credential (`created_by` matching the caller, or `org:admin`). An agent that
+  can only read its owner's credential through `owner:credentials:read`
+  delegation receives `403 connect_requires_review` with an `agent_directive`
+  pointing to the reviewed connect-session flow (`POST /integrations:edit-connection`
+  / `request_access_change` or `POST /integrations:connect` / `jentic connect`).
+  `scopes` supplied to `POST /credentials/{id}/connect` may only narrow the
+  credential's stored scopes; requests that add new scopes return
+  `422 scope_widening_requires_review`.
+- **OAuth token family sweep on password change, user disable/delete, and agent JWKS updates.**
+  - Self-service password change (`POST /users/me:change-password`) revokes all
+    active user-actor OAuth access and refresh tokens and consumes unredeemed
+    authorization codes for that user, matching operator password resets. The
+    caller's web session continues via the newly returned login JWT, while OAuth
+    clients signed in as that user must re-authorize.
+  - Disabling or deleting a user account revokes the user's opaque OAuth access
+    and refresh tokens and consumes unredeemed authorization codes; re-enabling
+    a disabled user does not reactivate pre-disable OAuth tokens.
+  - Replacing an agent's public key set (`PUT /agents/{id}/jwks`) revokes all
+    active key-channel OAuth access and refresh token families
+    (`oauth_grant_id IS NULL`) for that agent and evicts warm in-process broker
+    token cache entries; user-consented grant-channel tokens remain active.
+- **Broker upstream scheme validation (`insecure_upstream_scheme`).**
+  The broker rejects plaintext `http://` execution requests with HTTP `400`
+  (`type: "insecure_upstream_scheme"`) before credential resolution or dispatch
+  when the matched operation's OpenAPI specification declares only `https://`
+  servers (or declares no servers). Plain-HTTP internal APIs remain supported
+  when their OpenAPI specification explicitly declares an `http://`,
+  scheme-relative, or templated-scheme server URL.
+- **Session JWT required claims, production assertion audience binding, and JWT secret startup warnings.**
+  `decode_jwt` requires `exp`, `iat`, and `sub` on HS256 tokens. In production
+  when neither `auth.canonical_base_url` nor `server.public_base_url` is set,
+  `POST /oauth/token` (`jwt-bearer`) no longer derives an expected assertion
+  audience from a non-loopback request `Host` header. Startup logs a structured
+  warning (and continues booting) when `admin.auth.jwt_secret` is shorter than
+  32 bytes (`insecure_jwt_secret`), when `broker.jwt_secret` is set in
+  production without `broker.jwt_verification.trusted_issuers`
+  (`broker_dev_jwt_secret_in_production`), or when `broker.jwt_secret` equals
+  `admin.auth.jwt_secret` (`broker_jwt_secret_matches_admin_jwt_secret`).
+- **Connect-session review bound-agent listing.**
+  Connect-session review and confirmation read bound-agent metadata from the
+  `agent_credential_bindings` join snapshot and batch candidate OAuth token
+  lookups; an agent deleted before review is no longer listed with `name=None`.
 
 ## 0.44.0
 

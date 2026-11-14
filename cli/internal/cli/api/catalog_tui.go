@@ -88,8 +88,7 @@ type catalogBrowser struct {
 	filter catalogFilter
 	limit  int
 
-	searching   bool
-	searchInput string
+	search searchLine
 
 	previews       map[string]*catalogPreview
 	previewErr     map[string]string
@@ -296,7 +295,7 @@ func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *catalogBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.searching {
+	if m.search.active {
 		return m.onSearchKey(msg)
 	}
 	switch msg.String() {
@@ -321,8 +320,7 @@ func (m *catalogBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "/":
-		m.searching = true
-		m.searchInput = m.query
+		m.search = searchLine{active: true, input: m.query}
 		m.status = ""
 		return m, nil
 	case "f":
@@ -374,27 +372,15 @@ func (m *catalogBrowser) back() (tea.Model, tea.Cmd) {
 }
 
 func (m *catalogBrowser) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.searching = false
-		return m, nil
-	case "enter":
-		m.searching = false
-		m.query = strings.TrimSpace(m.searchInput)
+	switch m.search.handleKey(msg) {
+	case searchSubmit:
+		m.query = strings.TrimSpace(m.search.input)
 		m.loading = true
 		return m, m.loadPage(true)
-	case "backspace":
-		if m.searchInput != "" {
-			m.searchInput = m.searchInput[:len(m.searchInput)-1]
-		}
-		return m, nil
-	case "ctrl+c":
+	case searchQuit:
 		m.done = true
 		return m, tea.Quit
 	default:
-		if len(msg.Runes) > 0 {
-			m.searchInput += string(msg.Runes)
-		}
 		return m, nil
 	}
 }
@@ -494,8 +480,8 @@ func (m *catalogBrowser) filterLine() string {
 	if m.query != "" {
 		parts = append(parts, fmt.Sprintf("search: %q", m.query))
 	}
-	if m.searching {
-		return "search: " + m.searchInput + "▏"
+	if m.search.active {
+		return "search: " + m.search.input + "▏"
 	}
 	return strings.Join(parts, "   ")
 }
@@ -613,7 +599,7 @@ func (m *catalogBrowser) previewBlock(p *catalogPreview) string {
 }
 
 func (m *catalogBrowser) hintLine() string {
-	if m.searching {
+	if m.search.active {
 		return m.st.Dim.Render("type to search · enter apply · esc cancel")
 	}
 	return m.st.Dim.Render("↑/↓ move · / search · f filter · r refresh · o preview · i import · b back · q quit")

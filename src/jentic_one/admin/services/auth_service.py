@@ -9,13 +9,11 @@ import structlog
 from jentic_one.admin.core.permissions import ORG_ADMIN
 from jentic_one.admin.core.schema.setup_sentinel import SETUP_SENTINEL_ID, SetupSentinel
 from jentic_one.admin.repos import (
-    AccessTokenRepository,
-    AuthorizationCodeRepository,
-    RefreshTokenRepository,
     UserPermissionGrantRepository,
     UserRepository,
     UserSecretRepository,
 )
+from jentic_one.admin.services._support.oauth_sweep import sweep_user_oauth_credentials
 from jentic_one.admin.services._support.passwords import (
     MIN_PASSWORD_LENGTH,
     PASSWORD_TOO_SHORT_MESSAGE,
@@ -501,6 +499,7 @@ class AuthService:
             # is issued after the cutoff, so the caller's own session survives.
             revoked = await UserRepository.revoke_login_sessions(session, user_id)
             session_generation = revoked.session_generation
+            await sweep_user_oauth_credentials(session, user_id)
 
             user = await UserRepository.get_by_id(session, user_id)
             if user is not None and user.must_change_password:
@@ -585,13 +584,7 @@ class AuthService:
             await UserRepository.revoke_login_sessions(session, user.id)
             if not user.must_change_password:
                 await UserRepository.update(session, user.id, must_change_password=True)
-            swept_access = await AccessTokenRepository.revoke_for_actor(
-                session, user.id, actor_type=ActorType.USER.value
-            )
-            swept_refresh = await RefreshTokenRepository.revoke_for_actor(
-                session, user.id, actor_type=ActorType.USER.value
-            )
-            swept_codes = await AuthorizationCodeRepository.consume_for_user(session, user.id)
+            swept = await sweep_user_oauth_credentials(session, user.id)
 
             await record_audit(
                 session,
@@ -609,9 +602,9 @@ class AuthService:
             "password_reset",
             user_id=user.id,
             email=email,
-            swept_access_tokens=swept_access,
-            swept_refresh_tokens=swept_refresh,
-            swept_auth_codes=swept_codes,
+            swept_access_tokens=swept.access,
+            swept_refresh_tokens=swept.refresh,
+            swept_auth_codes=swept.codes,
         )
         return user.id
 

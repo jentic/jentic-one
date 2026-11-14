@@ -13783,7 +13783,14 @@ type ClientInterface interface {
 
 	// ConnectCredentialWithBody Begin OAuth connect flow
 	//
-	// Initiate the OAuth connect flow for a credential.
+	// Initiate the OAuth connect flow for a write-owned credential.
+	//
+	// Requires write ownership of the credential (creator or ``org:admin``);
+	// an agent that can only read the credential through owner delegation must
+	// use the reviewed connect-session flow (403 ``connect_requires_review``).
+	// Requested ``scopes`` may only narrow the credential's stored scopes;
+	// widening scopes requires a connect session (422
+	// ``scope_widening_requires_review``).
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -13802,7 +13809,14 @@ type ClientInterface interface {
 
 	// ConnectCredential Begin OAuth connect flow
 	//
-	// Initiate the OAuth connect flow for a credential.
+	// Initiate the OAuth connect flow for a write-owned credential.
+	//
+	// Requires write ownership of the credential (creator or ``org:admin``);
+	// an agent that can only read the credential through owner delegation must
+	// use the reviewed connect-session flow (403 ``connect_requires_review``).
+	// Requested ``scopes`` may only narrow the credential's stored scopes;
+	// widening scopes requires a connect session (422
+	// ``scope_widening_requires_review``).
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -18005,7 +18019,14 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 
 // ConnectCredentialWithBody Begin OAuth connect flow
 //
-// Initiate the OAuth connect flow for a credential.
+// Initiate the OAuth connect flow for a write-owned credential.
+//
+// Requires write ownership of the credential (creator or “org:admin“);
+// an agent that can only read the credential through owner delegation must
+// use the reviewed connect-session flow (403 “connect_requires_review“).
+// Requested “scopes“ may only narrow the credential's stored scopes;
+// widening scopes requires a connect session (422
+// “scope_widening_requires_review“).
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -18034,7 +18055,14 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId Pat
 
 // ConnectCredential Begin OAuth connect flow
 //
-// Initiate the OAuth connect flow for a credential.
+// Initiate the OAuth connect flow for a write-owned credential.
+//
+// Requires write ownership of the credential (creator or “org:admin“);
+// an agent that can only read the credential through owner delegation must
+// use the reviewed connect-session flow (403 “connect_requires_review“).
+// Requested “scopes“ may only narrow the credential's stored scopes;
+// widening scopes requires a connect session (422
+// “scope_widening_requires_review“).
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -31172,7 +31200,14 @@ type ClientWithResponsesInterface interface {
 
 	// ConnectCredentialWithBodyWithResponse Begin OAuth connect flow
 	//
-	// Initiate the OAuth connect flow for a credential.
+	// Initiate the OAuth connect flow for a write-owned credential.
+	//
+	// Requires write ownership of the credential (creator or ``org:admin``);
+	// an agent that can only read the credential through owner delegation must
+	// use the reviewed connect-session flow (403 ``connect_requires_review``).
+	// Requested ``scopes`` may only narrow the credential's stored scopes;
+	// widening scopes requires a connect session (422
+	// ``scope_widening_requires_review``).
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -31191,7 +31226,14 @@ type ClientWithResponsesInterface interface {
 
 	// ConnectCredentialWithResponse Begin OAuth connect flow
 	//
-	// Initiate the OAuth connect flow for a credential.
+	// Initiate the OAuth connect flow for a write-owned credential.
+	//
+	// Requires write ownership of the credential (creator or ``org:admin``);
+	// an agent that can only read the credential through owner delegation must
+	// use the reviewed connect-session flow (403 ``connect_requires_review``).
+	// Requested ``scopes`` may only narrow the credential's stored scopes;
+	// widening scopes requires a connect session (422
+	// ``scope_widening_requires_review``).
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -41446,13 +41488,13 @@ type ConnectCredentialHTTPResp struct {
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *Forbidden
+	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *UnprocessableEntity
+	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -41477,7 +41519,7 @@ func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON401() *Unauthorized 
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON403() *Forbidden {
+func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
@@ -41492,7 +41534,7 @@ func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON409() *ProblemDetail
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
+func (r ConnectCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
@@ -50982,7 +51024,14 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 
 // ConnectCredentialWithBodyWithResponse Begin OAuth connect flow
 //
-// Initiate the OAuth connect flow for a credential.
+// Initiate the OAuth connect flow for a write-owned credential.
+//
+// Requires write ownership of the credential (creator or “org:admin“);
+// an agent that can only read the credential through owner delegation must
+// use the reviewed connect-session flow (403 “connect_requires_review“).
+// Requested “scopes“ may only narrow the credential's stored scopes;
+// widening scopes requires a connect session (422
+// “scope_widening_requires_review“).
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -51007,7 +51056,14 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 
 // ConnectCredentialWithResponse Begin OAuth connect flow
 //
-// Initiate the OAuth connect flow for a credential.
+// Initiate the OAuth connect flow for a write-owned credential.
+//
+// Requires write ownership of the credential (creator or “org:admin“);
+// an agent that can only read the credential through owner delegation must
+// use the reviewed connect-session flow (403 “connect_requires_review“).
+// Requested “scopes“ may only narrow the credential's stored scopes;
+// widening scopes requires a connect session (422
+// “scope_widening_requires_review“).
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -60567,7 +60623,7 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 		response.ApplicationproblemJSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -60588,7 +60644,7 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest UnprocessableEntity
+		var dest ProblemDetail
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

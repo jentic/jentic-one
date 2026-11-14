@@ -2,9 +2,12 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/jentic/jentic-one/cli/client"
 )
 
 // stdinHasPipedBody reports whether stdin carries a real request body that the
@@ -44,7 +47,10 @@ func stdinHasPipedBody(f *os.File) bool {
 // proves a body source is present; the explicit `-d -` calls it
 // unconditionally because the caller opted in to blocking (#1354).
 func readStdinBody() (io.Reader, error) {
-	data, err := io.ReadAll(os.Stdin)
+	data, err := client.ReadAllBounded(os.Stdin, client.MaxBodyBytes)
+	if errors.Is(err, client.ErrBodyTooLarge) {
+		return nil, fmt.Errorf("reading stdin: %w (limit %d bytes)", client.ErrRequestBodyTooLarge, client.MaxBodyBytes)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading stdin: %w", err)
 	}

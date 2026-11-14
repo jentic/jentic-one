@@ -67,6 +67,7 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
     AgentVisibility,
+    CredentialBoundAgentRow,
     PrerequisiteRepository,
 )
 from jentic_one.control.scoping.filters import bound_agent_visibility, build_access_filters
@@ -740,10 +741,6 @@ class _CapScope:
     agent_id: str | None
     owner_id: str | None
     owned_agent_ids: list[str]
-
-
-def _state_secret(ctx: Context) -> str:
-    return ctx.config.credentials.connect.state_secret.get_secret_value()
 
 
 def _session_app_from_registration(ctx: Context, registration: OAuthAppRegistration) -> SessionApp:
@@ -3851,11 +3848,9 @@ class ConnectSessionService:
                 filters=filters,
                 account_ref_providers=self._ctx.providers.account_ref_provider_names(),
             )
-            tokens = {
-                c.id: await OAuthTokenRepository.get_by_credential(session, c.id)
-                for c in candidates
-                if _is_oauth_type(c.type)
-            }
+            tokens = await OAuthTokenRepository.get_by_credentials(
+                session, [c.id for c in candidates if _is_oauth_type(c.type)]
+            )
         requested = list(row.requested_scopes or [])
         views: list[ExistingCredentialView] = []
         for credential in candidates:
@@ -3924,10 +3919,18 @@ class ConnectSessionService:
         visible_to = bound_agent_visibility(
             credential.created_by if credential is not None else None, identity
         )
-        bound, truncated = await self._other_bound_agent_ids(
+        bound_rows, truncated = await self._other_bound_agent_rows(
             row.credential_id, row.agent_id, visible_to=visible_to
         )
-        ids = set(bound)
+        bound = {
+            r.agent_id: AgentView(
+                agent_id=r.agent_id,
+                name=r.agent_name,
+                owner_id=r.agent_owner_id,
+                status=r.agent_status,
+            )
+            for r in bound_rows
+        }
         rule_set = baseline.get("rule_set")
         reached: dict[str, AgentView] = {}
         if rule_set is not None and not rule_set.get("curated"):
@@ -3974,10 +3977,8 @@ class ConnectSessionService:
                     agent_id: reached[agent_id]
                     for agent_id in sorted(reached)[:_BOUND_AGENTS_LIMIT]
                 }
-        views: list[AgentView] = []
-        for other_id in sorted(ids | reached.keys()):
-            view = reached.get(other_id) or await self._agent_view(other_id)
-            views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
+        merged = {**bound, **reached}
+        views = [merged[other_id] for other_id in sorted(merged)]
         return views, truncated
 
     async def _readable_credential_creators(
@@ -4029,25 +4030,30 @@ class ConnectSessionService:
     ) -> tuple[list[AgentView], bool]:
         """The agents other than ``agent_id`` bound to the credential, with their names.
 
-        With whether the cap cut the list, as :meth:`_other_bound_agent_ids`
+        With whether the cap cut the list, as :meth:`_other_bound_agent_rows`
         reports it.
         """
-        ids, truncated = await self._other_bound_agent_ids(
+        rows, truncated = await self._other_bound_agent_rows(
             credential_id, agent_id, visible_to=visible_to
         )
-        views: list[AgentView] = []
-        for other_id in ids:
-            view = await self._agent_view(other_id)
-            views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
+        views = [
+            AgentView(
+                agent_id=r.agent_id,
+                name=r.agent_name,
+                owner_id=r.agent_owner_id,
+                status=r.agent_status,
+            )
+            for r in rows
+        ]
         return views, truncated
 
-    async def _other_bound_agent_ids(
+    async def _other_bound_agent_rows(
         self,
         credential_id: str,
         agent_id: str | None,
         *,
         visible_to: AgentVisibility | None = None,
-    ) -> tuple[list[str], bool]:
+    ) -> tuple[list[CredentialBoundAgentRow], bool]:
         """The other agents bound to the credential, and whether the cap cut the list.
 
         Past the cap a caller can say the reach is wider than the names it
@@ -4066,8 +4072,22 @@ class ConnectSessionService:
                 limit=_BOUND_AGENTS_LIMIT + 2,
                 visible_to=visible_to,
             )
-        ids = sorted({r.agent_id for r in rows if r.agent_id != agent_id})
-        return ids[:_BOUND_AGENTS_LIMIT], len(ids) > _BOUND_AGENTS_LIMIT
+        by_agent = {r.agent_id: r for r in rows if r.agent_id != agent_id}
+        ordered = [by_agent[aid] for aid in sorted(by_agent)]
+        return ordered[:_BOUND_AGENTS_LIMIT], len(ordered) > _BOUND_AGENTS_LIMIT
+
+    async def _other_bound_agent_ids(
+        self,
+        credential_id: str,
+        agent_id: str | None,
+        *,
+        visible_to: AgentVisibility | None = None,
+    ) -> tuple[list[str], bool]:
+        """The other agents bound to the credential, and whether the cap cut the list."""
+        rows, truncated = await self._other_bound_agent_rows(
+            credential_id, agent_id, visible_to=visible_to
+        )
+        return [r.agent_id for r in rows], truncated
 
     async def _try_leave_awaiting_app(self, row: ConnectSession) -> ConnectSession:
         """:meth:`_leave_awaiting_app`, returning the session as it stands afterwards."""

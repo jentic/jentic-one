@@ -547,7 +547,14 @@ export class CredentialsService {
     }
     /**
      * Begin OAuth connect flow
-     * Initiate the OAuth connect flow for a credential.
+     * Initiate the OAuth connect flow for a write-owned credential.
+     *
+     * Requires write ownership of the credential (creator or ``org:admin``);
+     * an agent that can only read the credential through owner delegation must
+     * use the reviewed connect-session flow (403 ``connect_requires_review``).
+     * Requested ``scopes`` may only narrow the credential's stored scopes;
+     * widening scopes requires a connect session (422
+     * ``scope_widening_requires_review``).
      *
      * Discriminates on the provider's returned challenge: OAuth2
      * authorization-code providers return an ``authorize_url`` for popup
@@ -585,10 +592,10 @@ export class CredentialsService {
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                403: `Connecting this credential requires human review`,
                 404: `Not Found`,
                 409: `Credential is not connectable`,
-                422: `Unprocessable Entity`,
+                422: `Request validation failed or scope widening requires review`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

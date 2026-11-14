@@ -2,10 +2,54 @@ package api
 
 import (
 	"strings"
+	"unicode/utf8"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
+
+// searchAction reports how a browser should react after searchLine handles a key.
+type searchAction int
+
+const (
+	searchNone searchAction = iota
+	searchSubmit
+	searchCancel
+	searchQuit
+)
+
+// searchLine is the shared one-line search editor both browsers embed.
+type searchLine struct {
+	active bool
+	input  string
+}
+
+// handleKey applies esc/enter/backspace/ctrl+c/runes. It reports the action
+// the browser must take; backspace removes the last RUNE (utf8.DecodeLastRuneInString).
+func (s *searchLine) handleKey(msg tea.KeyMsg) searchAction {
+	switch msg.String() {
+	case "esc":
+		s.active = false
+		return searchCancel
+	case "enter":
+		s.active = false
+		return searchSubmit
+	case "backspace":
+		if s.input != "" {
+			_, size := utf8.DecodeLastRuneInString(s.input)
+			s.input = s.input[:len(s.input)-size]
+		}
+		return searchNone
+	case "ctrl+c":
+		return searchQuit
+	default:
+		if len(msg.Runes) > 0 {
+			s.input += string(msg.Runes)
+		}
+		return searchNone
+	}
+}
 
 // browserChrome is the number of terminal rows reserved for the logo, title,
 // status, filter, spacer, and footer/hint surrounding a browser's scrolling

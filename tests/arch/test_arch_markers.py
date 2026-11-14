@@ -14,44 +14,19 @@ from pathlib import Path
 
 import pytest
 
+from tests.arch._markers import declares_module_marker, unmarked_tests
+
 pytestmark = pytest.mark.arch
 
 _ARCH_ROOT = Path(__file__).parent
 
 
-def _declares_module_marker(tree: ast.Module) -> bool:
-    """Whether the module sets ``pytestmark`` to the arch marker."""
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == "pytestmark" for target in node.targets
-        ):
-            continue
-        if "arch" in ast.unparse(node.value):
-            return True
-    return False
-
-
-def _unmarked_tests(tree: ast.Module) -> list[str]:
-    """Test functions carrying no arch marker of their own."""
-    unmarked = []
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        if not node.name.startswith("test_"):
-            continue
-        if not any("mark.arch" in ast.unparse(d) for d in node.decorator_list):
-            unmarked.append(node.name)
-    return unmarked
-
-
 @pytest.mark.parametrize("path", sorted(_ARCH_ROOT.glob("test_*.py")), ids=lambda p: Path(p).name)
 def test_an_arch_module_is_collected_by_the_arch_marker(path: Path) -> None:
     tree = ast.parse(path.read_text())
-    if _declares_module_marker(tree):
+    if declares_module_marker(tree, "arch"):
         return
-    unmarked = _unmarked_tests(tree)
+    unmarked = unmarked_tests(tree, "arch")
     assert not unmarked, (
         f"{path.name} declares no module-level `pytestmark = pytest.mark.arch`, and "
         f"{', '.join(unmarked)} carry no marker either, so `make test-arch` (which filters "

@@ -595,6 +595,8 @@ jobs:
     # the service on the sqlite leg. Same image/credentials as
     # docker/local-setup/docker-compose.yaml; `make start-fixtures` with
     # JENTIC_PG_EXTERNAL=1 then applies that compose file's init SQL + migrations.
+    # Redis runs on both legs: the Redis state-backend tests live under
+    # tests/integration and need JENTIC_TEST_REDIS_URL in CI.
     services:
       postgres:
         image: ${{ matrix.backend == 'postgres' && 'postgres:16' || '' }}
@@ -606,6 +608,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d jentic"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -639,10 +650,14 @@ jobs:
 
       - name: Run integration tests (postgres)
         if: env.PASSED != 'true' && matrix.backend == 'postgres'
+        env:
+          JENTIC_TEST_REDIS_URL: redis://localhost:6379/15
         run: make test-integration
 
       - name: Run integration tests (sqlite)
         if: env.PASSED != 'true' && matrix.backend == 'sqlite'
+        env:
+          JENTIC_TEST_REDIS_URL: redis://localhost:6379/15
         run: make test-integration-sqlite
 
       - uses: ./.github/actions/ci-pass-marker

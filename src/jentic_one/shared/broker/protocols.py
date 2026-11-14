@@ -25,6 +25,8 @@ class ResolveResult:
     supplies a value. ``server_variables_unresolved`` is True when the registry
     could not determine the URL's server-variable values; the broker then
     injects no credential scoped by ``server_variables`` (fail closed).
+    ``plaintext_http_allowed`` is False when an ``http://`` request matched an
+    operation whose declared servers only permit HTTPS.
     """
 
     operation: OperationInfo
@@ -33,6 +35,7 @@ class ResolveResult:
     server_variables: dict[str, str] = field(default_factory=dict)
     server_variable_defaults: dict[str, str] = field(default_factory=dict)
     server_variables_unresolved: bool = False
+    plaintext_http_allowed: bool = True
 
 
 class RevisionPinOutcome(StrEnum):

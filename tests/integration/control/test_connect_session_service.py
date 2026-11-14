@@ -29,7 +29,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from pydantic import SecretStr
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, event, select, text, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.events import Event
@@ -4545,3 +4545,275 @@ async def test_an_edit_adding_scopes_lands_with_the_auth_code_grant_of_the_same_
         edit.session_id, poll_token=edit.poll_token, identity=_AGENT_IDENTITY
     )
     assert status.status == "applied"
+
+
+# ---------------------------------------------------------------------------
+# WP-07-03: review query budget and bound-agent snapshot
+# ---------------------------------------------------------------------------
+
+
+async def _seed_connected_testdev_credential(
+    ctx: Context,
+    *,
+    name: str,
+    scope: str = "read:user",
+    bound_agents: list[tuple[str, str]] | tuple[tuple[str, str], ...] = (),
+) -> str:
+    """Seed one connected OAuth credential for ``testdev`` and bind ``bound_agents``."""
+    credential_id = generate_ksuid("cred")
+    async with ctx.control_db.transaction() as session:
+        session.add(
+            Credential(
+                id=credential_id,
+                type="OAUTH2_DEVICE_CODE",
+                provider="device_authorization",
+                name=name,
+                api_vendor="testdev-example",
+                api_name="api-testdev-example",
+                catalog_api_id="testdev.example/api.testdev.example",
+                created_by=_USER_ID,
+                state="connected",
+            )
+        )
+        await session.flush()
+        session.add(
+            DeviceAuthorizationCredential(
+                id=credential_id,
+                authorization_endpoint="https://idp.example.com/device/code",
+                token_url="https://idp.example.com/token",
+                client_id="testdev-public-client",
+                granted_scopes=[scope],
+                created_by=_USER_ID,
+            )
+        )
+        session.add(
+            OAuthToken(
+                id=generate_ksuid("otok"),
+                credential_id=credential_id,
+                encrypted_access_token=ctx.encryption.encrypt(f"at_{name}"),
+                encrypted_refresh_token=ctx.encryption.encrypt(f"rt_{name}"),
+                scope=scope,
+                created_by=_USER_ID,
+            )
+        )
+    if bound_agents:
+        async with ctx.admin_db.transaction() as session:
+            for agent_id, agent_name in bound_agents:
+                await session.execute(
+                    text(
+                        "INSERT INTO agents (id, name, registered_by, owner_id, status) "
+                        "VALUES (:id, :name, :u, :u, 'approved') "
+                        "ON CONFLICT (id) DO NOTHING"
+                    ),
+                    {"id": agent_id, "name": agent_name, "u": _USER_ID},
+                )
+                await EffectsRepository.bind_agent_to_credential(
+                    session,
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                    rule_set_id=None,
+                    created_by=_USER_ID,
+                )
+    return credential_id
+
+
+async def _cleanup_test_agents(ctx: Context, prefix: str) -> None:
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            text("DELETE FROM agent_credential_bindings WHERE agent_id LIKE :p"),
+            {"p": f"{prefix}%"},
+        )
+        await session.execute(
+            text("DELETE FROM agents WHERE id LIKE :p"),
+            {"p": f"{prefix}%"},
+        )
+
+
+async def test_review_existing_candidates_query_budget(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """Review batches candidate token reads and uses the joined agent rows."""
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    other_agents = [
+        ("agnt_qbud_1", "alpha"),
+        ("agnt_qbud_2", "beta"),
+        ("agnt_qbud_3", "gamma"),
+    ]
+    try:
+        cred_ids = [
+            await _seed_connected_testdev_credential(
+                ctx, name=f"cand-{idx}", bound_agents=other_agents
+            )
+            for idx in range(3)
+        ]
+        created = await svc.create_session(
+            vendor_key="testdev",
+            agent_id=None,
+            identity=_USER_IDENTITY,
+            requested_scopes=["read:user"],
+        )
+
+        control_statements: list[str] = []
+        admin_statements: list[str] = []
+
+        def _on_control(*args: object) -> None:
+            control_statements.append(str(args[2]))
+
+        def _on_admin(*args: object) -> None:
+            admin_statements.append(str(args[2]))
+
+        control_sync = ctx.control_db.engine.sync_engine
+        admin_sync = ctx.admin_db.engine.sync_engine
+        event.listen(control_sync, "before_cursor_execute", _on_control)
+        event.listen(admin_sync, "before_cursor_execute", _on_admin)
+        try:
+            review = await svc.get_review_data(
+                created.session_id,
+                poll_token=created.poll_token,
+                identity=_USER_IDENTITY,
+            )
+        finally:
+            event.remove(control_sync, "before_cursor_execute", _on_control)
+            event.remove(admin_sync, "before_cursor_execute", _on_admin)
+
+        token_reads = [
+            s
+            for s in control_statements
+            if "SELECT oauth_tokens.id, oauth_tokens.credential_id" in s
+        ]
+        agent_reads = [s for s in admin_statements if "FROM agents WHERE id =" in s]
+
+        assert len(token_reads) <= 1, f"expected <= 1 token reads, got {len(token_reads)}"
+        assert len(agent_reads) == 0, f"expected 0 agent reads, got {len(agent_reads)}"
+
+        assert {c.credential_id for c in review.existing_credentials} == set(cred_ids)
+        expected_agents = [
+            ("agnt_qbud_1", "alpha", _USER_ID, "approved"),
+            ("agnt_qbud_2", "beta", _USER_ID, "approved"),
+            ("agnt_qbud_3", "gamma", _USER_ID, "approved"),
+        ]
+        for cand in review.existing_credentials:
+            assert cand.other_bound_agents_truncated is False
+            assert [
+                (a.agent_id, a.name, a.owner_id, a.status) for a in cand.other_bound_agents
+            ] == expected_agents
+    finally:
+        await _cleanup_test_agents(ctx, "agnt_qbud_")
+
+
+async def test_review_bound_agent_window_unchanged_at_cap(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windowing at ``_BOUND_AGENTS_LIMIT`` keeps the smallest-id agent and ``truncated=True``."""
+    monkeypatch.setattr(connect_session_service, "_BOUND_AGENTS_LIMIT", 1)
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    try:
+        cred_id = await _seed_connected_testdev_credential(
+            ctx,
+            name="capped",
+            bound_agents=[
+                (_AGENT_ID, "scout"),
+                ("agnt_qcap_2", "cap-two"),
+                ("agnt_qcap_1", "cap-one"),
+            ],
+        )
+        created = await svc.create_session(
+            vendor_key="testdev",
+            agent_id=_AGENT_ID,
+            identity=_USER_IDENTITY,
+            requested_scopes=["read:user"],
+        )
+
+        admin_statements: list[tuple[str, object]] = []
+
+        def _on_admin(*args: object) -> None:
+            admin_statements.append((str(args[2]), args[3]))
+
+        admin_sync = ctx.admin_db.engine.sync_engine
+        event.listen(admin_sync, "before_cursor_execute", _on_admin)
+        try:
+            review = await svc.get_review_data(
+                created.session_id,
+                poll_token=created.poll_token,
+                identity=_USER_IDENTITY,
+            )
+        finally:
+            event.remove(admin_sync, "before_cursor_execute", _on_admin)
+
+        (cand,) = [c for c in review.existing_credentials if c.credential_id == cred_id]
+        assert cand.other_bound_agents_truncated is True
+        assert [(a.agent_id, a.name, a.owner_id, a.status) for a in cand.other_bound_agents] == [
+            ("agnt_qcap_1", "cap-one", _USER_ID, "approved")
+        ]
+        other_agent_reads = [
+            s
+            for s, params in admin_statements
+            if "FROM agents WHERE id =" in s and "agnt_qcap_" in str(params)
+        ]
+        assert other_agent_reads == []
+    finally:
+        await _cleanup_test_agents(ctx, "agnt_qcap_")
+
+
+async def test_review_deleted_agent_between_reads(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """An agent deleted before review is omitted; joined rows need no second read."""
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    try:
+        cred_id = await _seed_connected_testdev_credential(
+            ctx,
+            name="deleted-agent-cand",
+            bound_agents=[
+                ("agnt_qdel_1", "gone-before-review"),
+                ("agnt_qdel_2", "kept-at-join"),
+            ],
+        )
+        # Delete agnt_qdel_1 from agents before review (leaving the FK-less binding row).
+        async with ctx.admin_db.transaction() as session:
+            await session.execute(text("DELETE FROM agents WHERE id = 'agnt_qdel_1'"))
+
+        created = await svc.create_session(
+            vendor_key="testdev",
+            agent_id=None,
+            identity=_USER_IDENTITY,
+            requested_scopes=["read:user"],
+        )
+
+        admin_statements: list[str] = []
+
+        def _on_admin(*args: object) -> None:
+            admin_statements.append(str(args[2]))
+
+        admin_sync = ctx.admin_db.engine.sync_engine
+        event.listen(admin_sync, "before_cursor_execute", _on_admin)
+        try:
+            review = await svc.get_review_data(
+                created.session_id,
+                poll_token=created.poll_token,
+                identity=_USER_IDENTITY,
+            )
+        finally:
+            event.remove(admin_sync, "before_cursor_execute", _on_admin)
+
+        (cand,) = [c for c in review.existing_credentials if c.credential_id == cred_id]
+        # agnt_qdel_1 (deleted before review) is omitted; agnt_qdel_2 comes from the join snapshot.
+        assert [(a.agent_id, a.name, a.owner_id, a.status) for a in cand.other_bound_agents] == [
+            ("agnt_qdel_2", "kept-at-join", _USER_ID, "approved")
+        ]
+        assert [s for s in admin_statements if "FROM agents WHERE id =" in s] == []
+    finally:
+        await _cleanup_test_agents(ctx, "agnt_qdel_")

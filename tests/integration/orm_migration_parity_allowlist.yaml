@@ -1,0 +1,544 @@
+# Allowlist of known ORM-metadata vs migrated-schema differences.
+# Every entry must specify: backend, surface, op, table, name, and reason.
+# The ratchet test (test_parity_allowlist_entries_are_still_needed) fails when
+# any entry no longer matches an observed difference on its backend/surface.
+entries:
+  # ---------------------------------------------------------------------------
+  # sqlite / registry (7 benign dialect differences)
+  # ---------------------------------------------------------------------------
+  - backend: sqlite
+    surface: registry
+    op: add_index
+    table: operations
+    name: ix_operations_tags
+    reason: >-
+      Benign dialect difference: Operation.__table_args__ declares the GIN index
+      ix_operations_tags on tags, which migration a1b2c3d4e5f6 creates only on
+      PostgreSQL because SQLite stores tags as JSON text rather than ARRAY.
+  - backend: sqlite
+    surface: registry
+    op: remove_table
+    table: operations_fts
+    name: operations_fts
+    reason: >-
+      Benign dialect difference: SQLite FTS5 virtual table created via raw SQL in
+      migration c2d3e4f5a6b7_add_lexical_search_text.py and intentionally not
+      mapped as a SQLAlchemy ORM model.
+  - backend: sqlite
+    surface: registry
+    op: remove_table
+    table: operations_fts_config
+    name: operations_fts_config
+    reason: >-
+      Benign dialect difference: SQLite FTS5 internal shadow table backing
+      operations_fts (created by migration c2d3e4f5a6b7).
+  - backend: sqlite
+    surface: registry
+    op: remove_table
+    table: operations_fts_content
+    name: operations_fts_content
+    reason: >-
+      Benign dialect difference: SQLite FTS5 internal shadow table backing
+      operations_fts (created by migration c2d3e4f5a6b7).
+  - backend: sqlite
+    surface: registry
+    op: remove_table
+    table: operations_fts_data
+    name: operations_fts_data
+    reason: >-
+      Benign dialect difference: SQLite FTS5 internal shadow table backing
+      operations_fts (created by migration c2d3e4f5a6b7).
+  - backend: sqlite
+    surface: registry
+    op: remove_table
+    table: operations_fts_docsize
+    name: operations_fts_docsize
+    reason: >-
+      Benign dialect difference: SQLite FTS5 internal shadow table backing
+      operations_fts (created by migration c2d3e4f5a6b7).
+  - backend: sqlite
+    surface: registry
+    op: remove_table
+    table: operations_fts_idx
+    name: operations_fts_idx
+    reason: >-
+      Benign dialect difference: SQLite FTS5 internal shadow table backing
+      operations_fts (created by migration c2d3e4f5a6b7).
+
+  # ---------------------------------------------------------------------------
+  # postgres / registry (1 benign dialect difference)
+  # ---------------------------------------------------------------------------
+  - backend: postgres
+    surface: registry
+    op: remove_index
+    table: operations
+    name: ix_operations_search_text_fts
+    reason: >-
+      Benign dialect difference: PostgreSQL GIN to_tsvector expression index
+      created via raw SQL in migration c2d3e4f5a6b7_add_lexical_search_text.py
+      and not declared in Operation.__table_args__.
+
+  # ---------------------------------------------------------------------------
+  # sqlite / control (8 benign representation + 5 pre-existing drift)
+  # ---------------------------------------------------------------------------
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: basic_credentials
+    name: ix_basic_credentials_credential_id
+    reason: >-
+      Benign representation difference: BasicCredential declares
+      ix_basic_credentials_credential_id with unique=True, whereas migration
+      0b72eeb2b186 creates a column-level UNIQUE constraint plus a non-unique
+      index of the same name.
+  - backend: sqlite
+    surface: control
+    op: remove_index
+    table: basic_credentials
+    name: ix_basic_credentials_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      basic_credentials.ix_basic_credentials_credential_id (unique index in ORM
+      vs table-level UNIQUE constraint + non-unique index in migration 0b72eeb2b186).
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: customer_api_keys
+    name: ix_customer_api_keys_credential_id
+    reason: >-
+      Benign representation difference: CustomerAPIKey declares
+      ix_customer_api_keys_credential_id with unique=True, whereas migration
+      0b72eeb2b186 creates a column-level UNIQUE constraint plus a non-unique
+      index of the same name.
+  - backend: sqlite
+    surface: control
+    op: remove_index
+    table: customer_api_keys
+    name: ix_customer_api_keys_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      customer_api_keys.ix_customer_api_keys_credential_id (unique index in ORM
+      vs table-level UNIQUE constraint + non-unique index in migration 0b72eeb2b186).
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: oauth_tokens
+    name: ix_oauth_tokens_credential_id
+    reason: >-
+      Benign representation difference: OAuthToken declares
+      ix_oauth_tokens_credential_id with unique=True, whereas migration
+      0b72eeb2b186 creates a column-level UNIQUE constraint plus a non-unique
+      index of the same name.
+  - backend: sqlite
+    surface: control
+    op: remove_index
+    table: oauth_tokens
+    name: ix_oauth_tokens_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      oauth_tokens.ix_oauth_tokens_credential_id (unique index in ORM vs
+      table-level UNIQUE constraint + non-unique index in migration 0b72eeb2b186).
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: sigv4_credentials
+    name: ix_sigv4_credentials_credential_id
+    reason: >-
+      Benign representation difference: Sigv4Credential declares
+      ix_sigv4_credentials_credential_id with unique=True, whereas migration
+      p7d8e9f0a1b2 creates a column-level UNIQUE constraint plus a non-unique
+      index of the same name.
+  - backend: sqlite
+    surface: control
+    op: remove_index
+    table: sigv4_credentials
+    name: ix_sigv4_credentials_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      sigv4_credentials.ix_sigv4_credentials_credential_id (unique index in ORM
+      vs table-level UNIQUE constraint + non-unique index in migration p7d8e9f0a1b2).
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: connect_sessions
+    name: ix_connect_sessions_created_at
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration): ConnectSession
+      inherits AuditableMixin (index=True on created_at), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_connect_sessions_created_at.
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: connect_sessions
+    name: ix_connect_sessions_created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration): ConnectSession
+      inherits AuditableMixin (index=True on created_by), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_connect_sessions_created_by.
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: device_authorization_credentials
+    name: ix_device_authorization_credentials_created_at
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration):
+      DeviceAuthorizationCredential inherits AuditableMixin (index=True on
+      created_at), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_device_authorization_credentials_created_at.
+  - backend: sqlite
+    surface: control
+    op: add_index
+    table: device_authorization_credentials
+    name: ix_device_authorization_credentials_created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration):
+      DeviceAuthorizationCredential inherits AuditableMixin (index=True on
+      created_by), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_device_authorization_credentials_created_by.
+  - backend: sqlite
+    surface: control
+    op: modify_nullable
+    table: sigv4_credentials
+    name: created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up control model edit): migration
+      p7d8e9f0a1b2_add_sigv4_credentials_table.py creates created_by as NOT NULL,
+      whereas Sigv4Credential inherits AuditableMixin.created_by (nullable=True).
+
+  # ---------------------------------------------------------------------------
+  # postgres / control (12 benign representation + 5 pre-existing drift)
+  # ---------------------------------------------------------------------------
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: basic_credentials
+    name: ix_basic_credentials_credential_id
+    reason: >-
+      Benign representation difference: BasicCredential declares
+      ix_basic_credentials_credential_id with unique=True, whereas migration
+      0b72eeb2b186 creates basic_credentials_credential_id_key plus a non-unique
+      index of the same name.
+  - backend: postgres
+    surface: control
+    op: remove_index
+    table: basic_credentials
+    name: ix_basic_credentials_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      basic_credentials.ix_basic_credentials_credential_id.
+  - backend: postgres
+    surface: control
+    op: remove_constraint
+    table: basic_credentials
+    name: basic_credentials_credential_id_key
+    reason: >-
+      Benign representation difference: column-level unique=True in migration
+      0b72eeb2b186 produces basic_credentials_credential_id_key on PostgreSQL,
+      whereas BasicCredential expresses uniqueness via unique=True on
+      ix_basic_credentials_credential_id.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: customer_api_keys
+    name: ix_customer_api_keys_credential_id
+    reason: >-
+      Benign representation difference: CustomerAPIKey declares
+      ix_customer_api_keys_credential_id with unique=True, whereas migration
+      0b72eeb2b186 creates customer_api_keys_credential_id_key plus a non-unique
+      index of the same name.
+  - backend: postgres
+    surface: control
+    op: remove_index
+    table: customer_api_keys
+    name: ix_customer_api_keys_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      customer_api_keys.ix_customer_api_keys_credential_id.
+  - backend: postgres
+    surface: control
+    op: remove_constraint
+    table: customer_api_keys
+    name: customer_api_keys_credential_id_key
+    reason: >-
+      Benign representation difference: column-level unique=True in migration
+      0b72eeb2b186 produces customer_api_keys_credential_id_key on PostgreSQL,
+      whereas CustomerAPIKey expresses uniqueness via unique=True on
+      ix_customer_api_keys_credential_id.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: oauth_tokens
+    name: ix_oauth_tokens_credential_id
+    reason: >-
+      Benign representation difference: OAuthToken declares
+      ix_oauth_tokens_credential_id with unique=True, whereas migration
+      0b72eeb2b186 creates oauth_tokens_credential_id_key plus a non-unique
+      index of the same name.
+  - backend: postgres
+    surface: control
+    op: remove_index
+    table: oauth_tokens
+    name: ix_oauth_tokens_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      oauth_tokens.ix_oauth_tokens_credential_id.
+  - backend: postgres
+    surface: control
+    op: remove_constraint
+    table: oauth_tokens
+    name: oauth_tokens_credential_id_key
+    reason: >-
+      Benign representation difference: column-level unique=True in migration
+      0b72eeb2b186 produces oauth_tokens_credential_id_key on PostgreSQL,
+      whereas OAuthToken expresses uniqueness via unique=True on
+      ix_oauth_tokens_credential_id.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: sigv4_credentials
+    name: ix_sigv4_credentials_credential_id
+    reason: >-
+      Benign representation difference: Sigv4Credential declares
+      ix_sigv4_credentials_credential_id with unique=True, whereas migration
+      p7d8e9f0a1b2 creates sigv4_credentials_credential_id_key plus a non-unique
+      index of the same name.
+  - backend: postgres
+    surface: control
+    op: remove_index
+    table: sigv4_credentials
+    name: ix_sigv4_credentials_credential_id
+    reason: >-
+      Benign representation difference: paired with add_index on
+      sigv4_credentials.ix_sigv4_credentials_credential_id.
+  - backend: postgres
+    surface: control
+    op: remove_constraint
+    table: sigv4_credentials
+    name: sigv4_credentials_credential_id_key
+    reason: >-
+      Benign representation difference: column-level unique=True in migration
+      p7d8e9f0a1b2 produces sigv4_credentials_credential_id_key on PostgreSQL,
+      whereas Sigv4Credential expresses uniqueness via unique=True on
+      ix_sigv4_credentials_credential_id.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: connect_sessions
+    name: ix_connect_sessions_created_at
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration): ConnectSession
+      inherits AuditableMixin (index=True on created_at), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_connect_sessions_created_at.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: connect_sessions
+    name: ix_connect_sessions_created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration): ConnectSession
+      inherits AuditableMixin (index=True on created_by), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_connect_sessions_created_by.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: device_authorization_credentials
+    name: ix_device_authorization_credentials_created_at
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration):
+      DeviceAuthorizationCredential inherits AuditableMixin (index=True on
+      created_at), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_device_authorization_credentials_created_at.
+  - backend: postgres
+    surface: control
+    op: add_index
+    table: device_authorization_credentials
+    name: ix_device_authorization_credentials_created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up control migration):
+      DeviceAuthorizationCredential inherits AuditableMixin (index=True on
+      created_by), but migration
+      v3d4e5f6a7b8_add_connect_sessions_and_device_authorization.py omitted
+      ix_device_authorization_credentials_created_by.
+  - backend: postgres
+    surface: control
+    op: modify_nullable
+    table: sigv4_credentials
+    name: created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up control model edit): migration
+      p7d8e9f0a1b2_add_sigv4_credentials_table.py creates created_by as NOT NULL,
+      whereas Sigv4Credential inherits AuditableMixin.created_by (nullable=True).
+
+  # ---------------------------------------------------------------------------
+  # sqlite / admin (1 benign representation + 6 pre-existing drift)
+  # ---------------------------------------------------------------------------
+  - backend: sqlite
+    surface: admin
+    op: add_constraint
+    table: oauth_clients
+    name: client_id
+    reason: >-
+      Benign representation difference: OAuthClient sets unique=True on both
+      the client_id column and ix_oauth_clients_client_id, while migration
+      aa6b7c8d9e0f_add_oauth_clients.py enforces uniqueness via the unique index
+      ix_oauth_clients_client_id alone.
+  - backend: sqlite
+    surface: admin
+    op: add_index
+    table: agent_credentials
+    name: ix_agent_credentials_created_at
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): AgentCredential
+      inherits AuditableMixin (index=True on created_at), but migration
+      24852503fc19_add_agent_credentials.py omitted ix_agent_credentials_created_at.
+  - backend: sqlite
+    surface: admin
+    op: add_index
+    table: agent_credentials
+    name: ix_agent_credentials_created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): AgentCredential
+      inherits AuditableMixin (index=True on created_by), but migration
+      24852503fc19_add_agent_credentials.py omitted ix_agent_credentials_created_by.
+  - backend: sqlite
+    surface: admin
+    op: modify_nullable
+    table: agent_credentials
+    name: updated_at
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): migration
+      24852503fc19_add_agent_credentials.py created updated_at as nullable=True,
+      whereas AgentCredential inherits AuditableMixin.updated_at (nullable=False).
+  - backend: sqlite
+    surface: admin
+    op: modify_type
+    table: agent_credentials
+    name: created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): migration
+      24852503fc19_add_agent_credentials.py created created_by as VARCHAR(30),
+      whereas AgentCredential inherits AuditableMixin.created_by (String(255)).
+  - backend: sqlite
+    surface: admin
+    op: remove_index
+    table: audit_entries
+    name: ix_audit_entries_origin
+    reason: >-
+      Tracked pre-existing drift (follow-up admin model edit): migration
+      x3y4z5a6b7c8_add_origin_to_audit_entries.py creates composite index
+      ix_audit_entries_origin (origin, occurred_at), which is missing from
+      AuditEntry.__table_args__.
+  - backend: sqlite
+    surface: admin
+    op: remove_index
+    table: execution_records
+    name: ix_execution_records_origin
+    reason: >-
+      Tracked pre-existing drift (follow-up admin model edit): migration
+      y4z5a6b7c8d9_add_origin_to_execution_records.py creates composite index
+      ix_execution_records_origin (origin, started_at), which is missing from
+      ExecutionRecord.__table_args__.
+
+  # ---------------------------------------------------------------------------
+  # postgres / admin (1 benign representation + 9 pre-existing drift)
+  # ---------------------------------------------------------------------------
+  - backend: postgres
+    surface: admin
+    op: add_constraint
+    table: oauth_clients
+    name: client_id
+    reason: >-
+      Benign representation difference: OAuthClient sets unique=True on both
+      the client_id column and ix_oauth_clients_client_id, while migration
+      aa6b7c8d9e0f_add_oauth_clients.py enforces uniqueness via the unique index
+      ix_oauth_clients_client_id alone.
+  - backend: postgres
+    surface: admin
+    op: add_index
+    table: agent_credentials
+    name: ix_agent_credentials_created_at
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): AgentCredential
+      inherits AuditableMixin (index=True on created_at), but migration
+      24852503fc19_add_agent_credentials.py omitted ix_agent_credentials_created_at.
+  - backend: postgres
+    surface: admin
+    op: add_index
+    table: agent_credentials
+    name: ix_agent_credentials_created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): AgentCredential
+      inherits AuditableMixin (index=True on created_by), but migration
+      24852503fc19_add_agent_credentials.py omitted ix_agent_credentials_created_by.
+  - backend: postgres
+    surface: admin
+    op: modify_nullable
+    table: agent_credentials
+    name: updated_at
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): migration
+      24852503fc19_add_agent_credentials.py created updated_at as nullable=True,
+      whereas AgentCredential inherits AuditableMixin.updated_at (nullable=False).
+  - backend: postgres
+    surface: admin
+    op: modify_type
+    table: agent_credentials
+    name: created_by
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration): migration
+      24852503fc19_add_agent_credentials.py created created_by as VARCHAR(30),
+      whereas AgentCredential inherits AuditableMixin.created_by (String(255)).
+  - backend: postgres
+    surface: admin
+    op: modify_type
+    table: access_tokens
+    name: scopes
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration or model alignment):
+      AccessToken.scopes uses json_variant() (JSONB on PostgreSQL), whereas
+      migration l1m2n3o4p5q6_add_token_tables.py created scopes with sa.JSON().
+  - backend: postgres
+    surface: admin
+    op: modify_type
+    table: oauth_client_grants
+    name: scopes
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration or model alignment):
+      OAuthClientGrant.scopes uses json_variant() (JSONB on PostgreSQL), whereas
+      migration c8d9e0f1a2b3_add_oauth_client_grants.py created scopes with sa.JSON().
+  - backend: postgres
+    surface: admin
+    op: modify_type
+    table: refresh_tokens
+    name: scopes
+    reason: >-
+      Tracked pre-existing drift (follow-up admin migration or model alignment):
+      RefreshToken.scopes uses json_variant() (JSONB on PostgreSQL), whereas
+      migration l1m2n3o4p5q6_add_token_tables.py created scopes with sa.JSON().
+  - backend: postgres
+    surface: admin
+    op: remove_index
+    table: audit_entries
+    name: ix_audit_entries_origin
+    reason: >-
+      Tracked pre-existing drift (follow-up admin model edit): migration
+      x3y4z5a6b7c8_add_origin_to_audit_entries.py creates composite index
+      ix_audit_entries_origin (origin, occurred_at), which is missing from
+      AuditEntry.__table_args__.
+  - backend: postgres
+    surface: admin
+    op: remove_index
+    table: execution_records
+    name: ix_execution_records_origin
+    reason: >-
+      Tracked pre-existing drift (follow-up admin model edit): migration
+      y4z5a6b7c8d9_add_origin_to_execution_records.py creates composite index
+      ix_execution_records_origin (origin, started_at), which is missing from
+      ExecutionRecord.__table_args__.

@@ -49,11 +49,22 @@ async def _redis_available(url: str) -> bool:
 
 @pytest.fixture()
 async def redis_url() -> str:
+    in_ci = os.environ.get("CI") == "true"
     if not _REDIS_URL:
+        if in_ci:
+            pytest.fail("JENTIC_TEST_REDIS_URL must be set in CI")
         pytest.skip("JENTIC_TEST_REDIS_URL not set; Redis integration tests skipped")
     if not await _redis_available(_REDIS_URL):
+        if in_ci:
+            pytest.fail(f"Redis not reachable at {_REDIS_URL} in CI")
         pytest.skip(f"Redis not reachable at {_REDIS_URL}; skipping")
     return _REDIS_URL
+
+
+def test_redis_suite_is_not_skipped_in_ci() -> None:
+    """In CI on the postgres leg, JENTIC_TEST_REDIS_URL must be configured."""
+    if os.environ.get("CI") == "true" and os.environ.get("JENTIC_TEST_BACKEND") != "sqlite":
+        assert _REDIS_URL, "JENTIC_TEST_REDIS_URL must be set on the CI postgres integration leg"
 
 
 @pytest.fixture()
