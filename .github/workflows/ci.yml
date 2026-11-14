@@ -160,6 +160,10 @@ jobs:
               # and only fails the post-merge main run.
               - 'ui/src/index.css'
               - 'ui/src/shared/ui/Logo.tsx'
+              # tests/arch/test_ci_pass_markers.py and test_ci_coverage_wiring.py
+              # inspect .github/workflows/ci.yml directly, so a workflow-only
+              # edit must run the arch suite.
+              - '.github/workflows/**'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -538,7 +542,17 @@ jobs:
         run: make sync
 
       - name: Run unit tests
+        env:
+          COVERAGE_FILE: .coverage.unit
         run: make test-unit
+
+      - name: Upload unit coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-unit
+          path: .coverage.unit
+          include-hidden-files: true
+          retention-days: 7
 
       - uses: ./.github/actions/ci-pass-marker
         with:
@@ -652,18 +666,104 @@ jobs:
         if: env.PASSED != 'true' && matrix.backend == 'postgres'
         env:
           JENTIC_TEST_REDIS_URL: redis://localhost:6379/15
+          COVERAGE_FILE: .coverage.integration-${{ matrix.backend }}
+          PYTEST_ARGS: --durations=25 --cov=jentic_one --cov-config=tools/coverage-combined.toml --cov-report=
         run: make test-integration
 
       - name: Run integration tests (sqlite)
         if: env.PASSED != 'true' && matrix.backend == 'sqlite'
         env:
           JENTIC_TEST_REDIS_URL: redis://localhost:6379/15
+          COVERAGE_FILE: .coverage.integration-${{ matrix.backend }}
+          PYTEST_ARGS: --durations=25 --cov=jentic_one --cov-config=tools/coverage-combined.toml --cov-report=
         run: make test-integration-sqlite
+
+      - name: Upload integration coverage data
+        if: env.PASSED != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-integration-${{ matrix.backend }}
+          path: .coverage.*
+          include-hidden-files: true
+          retention-days: 7
 
       - uses: ./.github/actions/ci-pass-marker
         if: env.PASSED != 'true'
         with:
           key: ${{ fromJSON(needs.changes.outputs.keys)[format('test-integration-{0}', matrix.backend)] }}
+
+  coverage:
+    name: Combined coverage report
+    needs: [changes, test-unit, test-integration]
+    if: >-
+      always()
+      && (needs.changes.outputs.pr-tier != 'true' || needs.changes.outputs.unit-tests == 'true')
+      && (needs.test-unit.result == 'success' || needs.test-integration.result == 'success')
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: make sync
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+
+      - name: Combine and report coverage
+        run: |
+          shopt -s nullglob
+          files=(.coverage.*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::notice::No coverage artifacts downloaded; skipping report."
+            exit 0
+          fi
+          uv run coverage combine "${files[@]}"
+          uv run coverage report --rcfile=tools/coverage-combined.toml
+          uv run coverage json --rcfile=tools/coverage-combined.toml
+          uv run python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("coverage.json").read_text(encoding="utf-8"))
+          totals = data.get("totals", {})
+          pct = totals.get("percent_covered_display", f"{totals.get('percent_covered', 0.0):.2f}")
+          stmts = totals.get("num_statements", 0)
+          missed = totals.get("missing_lines", 0)
+
+          print(f"## Combined Coverage: {pct}% ({stmts - missed}/{stmts} statements, {missed} missed)")
+          print()
+          print("### Top 30 files by missed lines")
+          print()
+          print("| File | Statements | Missed | Coverage |")
+          print("| --- | ---: | ---: | ---: |")
+
+          rows = []
+          for path, info in data.get("files", {}).items():
+              summary = info.get("summary", {})
+              rows.append(
+                  (
+                      int(summary.get("missing_lines", 0)),
+                      int(summary.get("num_statements", 0)),
+                      summary.get("percent_covered_display", f"{summary.get('percent_covered', 0.0):.1f}"),
+                      path,
+                  )
+              )
+          rows.sort(key=lambda item: (-item[0], item[3]))
+          for miss_cnt, stmt_cnt, cov_pct, path in rows[:30]:
+              print(f"| `{path}` | {stmt_cnt} | {miss_cnt} | {cov_pct}% |")
+          PY
 
   # Container images are built + published on release, not on branch CI. The
   # `publish-image` job in .github/workflows/release.yml builds the `app` image
@@ -1461,16 +1561,18 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, coverage, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
-        # `needs.*.result` covers every job in `needs` above, so a new job only
-        # has to be added to that one list.
+        # `needs` covers every job in `needs` above; `coverage` is report-only
+        # (non-required) and excluded from the failure gate until a baseline is
+        # established.
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          for r in $RESULTS; do
+          results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage) | .[].result')
+          for r in $results; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
               echo "One or more required jobs failed or were cancelled"
               exit 1
