@@ -80,6 +80,28 @@ def test_roundtrip_empty_string():
     assert svc.decrypt(svc.encrypt("")) == ""
 
 
+def test_aad_round_trip():
+    svc = EncryptionService(_make_config())
+    aad = b"jentic/test-purpose/v1"
+    plaintext = "purpose-bound-secret"
+    assert svc.decrypt(svc.encrypt(plaintext, aad=aad), aad=aad) == plaintext
+
+
+def test_blob_sealed_with_aad_does_not_open_without_it_and_vice_versa():
+    svc = EncryptionService(_make_config())
+    aad = b"jentic/test-purpose/v1"
+
+    sealed_with_aad = svc.encrypt("purpose-bound-secret", aad=aad)
+    sealed_without_aad = svc.encrypt("purpose-bound-secret")
+
+    with pytest.raises(DecryptionError):
+        svc.decrypt(sealed_with_aad)
+    with pytest.raises(DecryptionError):
+        svc.decrypt(sealed_without_aad, aad=aad)
+    with pytest.raises(DecryptionError):
+        svc.decrypt(sealed_with_aad, aad=b"jentic/other-purpose/v1")
+
+
 # --- Blob format ---
 
 
@@ -194,6 +216,24 @@ def test_needs_reencryption_and_reencrypt():
     tampered = parts[0] + ":" + ("A" if parts[1][0] != "A" else "B") + parts[1][1:]
     with pytest.raises(DecryptionError):
         v2_svc.reencrypt(tampered)
+
+
+def test_reencrypt_preserves_aad():
+    aad = b"jentic/test-purpose/v1"
+    old_key = _make_key("v1")
+    new_key = _make_key("v2")
+    v1_svc = EncryptionService(EncryptionConfig(active_id="v1", entries=[old_key]))
+    v2_svc = EncryptionService(EncryptionConfig(active_id="v2", entries=[old_key, new_key]))
+    v1_blob = v1_svc.encrypt("purpose-bound-secret", aad=aad)
+
+    rotated_blob, changed = v2_svc.reencrypt(v1_blob, aad=aad)
+
+    assert changed is True
+    assert v2_svc.decrypt(rotated_blob, aad=aad) == "purpose-bound-secret"
+    with pytest.raises(DecryptionError):
+        v2_svc.decrypt(rotated_blob)
+    with pytest.raises(DecryptionError):
+        v2_svc.reencrypt(v1_blob, aad=b"jentic/other-purpose/v1")
 
 
 # --- Preview ---
