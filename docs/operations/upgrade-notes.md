@@ -217,6 +217,20 @@ Changes on `main` since 0.44.0; they ship in the next release.
   exceed the new owner's permission ceiling and records a `REVOKE` audit entry;
   grant the required permissions to the new owner before transferring ownership
   if the agent should keep them. `Identity.parent_permissions` has been removed.
+- **OAuth refresh-token families now have a 90-day absolute lifetime (`auth.refresh_family_max_age_seconds`).**
+  Refresh-token families track their initial issuance timestamp in
+  `refresh_tokens.family_issued_at` (admin migration `c7d2e9a41b30`) and expire
+  `7776000` seconds (90 days) after initial mint by default, regardless of how
+  recently the refresh token was rotated. Each rotated refresh token's
+  `expires_at` is also capped at
+  `family_issued_at + refresh_family_max_age_seconds`. Pre-existing refresh
+  tokens with a `NULL` `family_issued_at` anchor on their row's `created_at`
+  timestamp at first rotation. Clients must re-authorize once a family reaches
+  its maximum age (agents using JWT-bearer assertions re-authenticate
+  automatically with their signing key). Set
+  `auth.refresh_family_max_age_seconds: null` (or
+  `JENTIC_AUTH__REFRESH_FAMILY_MAX_AGE_SECONDS=null`) to disable the absolute
+  family lifetime cap.
 
 ## 0.44.0
 
