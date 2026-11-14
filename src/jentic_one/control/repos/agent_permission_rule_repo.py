@@ -14,11 +14,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.shared.db.locks import advisory_xact_lock
 
 
 class AgentPermissionRuleRepository:
@@ -39,12 +40,10 @@ class AgentPermissionRuleRepository:
         rollback). On SQLite it is a no-op: every write transaction opens with
         ``BEGIN IMMEDIATE``, which already serialises writers to the file.
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                {"key": f"agent_permission_rules:{agent_id}:{credential_id}"},
-            )
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"agent_permission_rules:{agent_id}:{credential_id}",
+        )
 
     @staticmethod
     async def list_rules(

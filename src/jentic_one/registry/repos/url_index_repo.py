@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select, text
+from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.url_index import URLIndexEntry
+from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.schemas import APIReference
 
 
@@ -216,14 +217,8 @@ async def _concrete_hosts(session: AsyncSession, revision_id: uuid.UUID) -> list
 
 async def _lock_hosts(session: AsyncSession, canonical_hosts: list[str]) -> None:
     """Take a transaction-scoped advisory lock per host (Postgres only), in the given order."""
-    bind = session.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
     for host in canonical_hosts:
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-            {"key": _HOST_LOCK_NAMESPACE + host},
-        )
+        await advisory_xact_lock(session, hashtext_name=_HOST_LOCK_NAMESPACE + host)
 
 
 def _segment_count_filter(segment_count: int) -> ColumnElement[bool]:
