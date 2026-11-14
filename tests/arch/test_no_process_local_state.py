@@ -72,9 +72,10 @@ ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # loop holds only weak ones); a task runs where it was created.
         ("shared/events/mcp_session.py", "_background_tasks"),
         ("broker/web/deps.py", "_background_tasks"),
-        # asyncio locks serialising token refreshes on SQLite, which is
-        # single-process by construction (PostgreSQL uses row locks instead).
-        ("broker/services/credentials/refresh.py", "_sqlite_locks"),
+        # In-process single-flight coalescing concurrent refreshes for a
+        # credential onto one transaction/connection per process; cross-process
+        # serialisation uses the database grant lock.
+        ("broker/services/credentials/refresh.py", "_REFRESH_FLIGHTS"),
         # Throttles a log line; log output is per process.
         ("broker/services/execution/authorization.py", "_divergence_last_logged"),
         # asyncio semaphores bounding each Context's concurrent streaming

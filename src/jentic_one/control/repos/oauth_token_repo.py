@@ -35,6 +35,25 @@ class OAuthTokenRepository:
             )
 
     @staticmethod
+    async def try_acquire_refresh_lock(session: AsyncSession, credential_id: str) -> bool:
+        """Try to acquire the transaction-scoped grant lock without blocking.
+
+        Returns ``True`` when the lock is acquired for this transaction and
+        ``False`` when another transaction holds it. On PostgreSQL this runs
+        ``pg_try_advisory_xact_lock(hashtext(:cid))``. On SQLite it returns
+        ``True``: every write transaction opens with ``BEGIN IMMEDIATE``, which
+        already serialises writers.
+        """
+        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        if dialect == "postgresql":
+            result = await session.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:cid))"),
+                {"cid": credential_id},
+            )
+            return bool(result.scalar_one())
+        return True
+
+    @staticmethod
     async def create(
         session: AsyncSession,
         *,
