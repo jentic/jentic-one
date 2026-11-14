@@ -21,6 +21,7 @@ from jentic_one.admin.repos import (
     JobRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
+    TokenLineageRepository,
     UserPermissionGrantRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
@@ -626,10 +627,7 @@ class AgentService:
             jobs = await JobRepository.cancel_active_for_actor(session, agent_id)
             grant_ids = await OAuthClientGrantRepository.delete_for_agent(session, agent_id)
             codes = await AuthorizationCodeRepository.delete_by_grant_ids(session, grant_ids)
-            access = await AccessTokenRepository.delete_for_actor(
-                session, agent_id, grant_ids=grant_ids
-            )
-            refresh = await RefreshTokenRepository.delete_for_actor(
+            tokens = await TokenLineageRepository.delete_for_actor(
                 session, agent_id, grant_ids=grant_ids
             )
             await AgentRepository.delete(session, agent_id)
@@ -656,8 +654,8 @@ class AgentService:
             prior_status=str(prior_status),
             oauth_grants=len(grant_ids),
             authorization_codes=codes,
-            access_tokens=access,
-            refresh_tokens=refresh,
+            access_tokens=tokens.access,
+            refresh_tokens=tokens.refresh,
             cancelled_jobs=jobs,
             pending_credentials=control.pending_credentials,
             connect_sessions=control.connect_sessions,

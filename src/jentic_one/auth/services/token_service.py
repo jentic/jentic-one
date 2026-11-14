@@ -18,6 +18,7 @@ from jentic_one.admin.repos import (
     OAuthClientGrantRepository,
     OAuthClientRepository,
     RefreshTokenRepository,
+    TokenLineageRepository,
     UserPermissionGrantRepository,
     UserRepository,
 )
@@ -484,8 +485,7 @@ class TokenService:
                 if client_id is None:
                     raise InvalidGrantError("client authentication required")
                 if client_id != rt.oauth_client_id:
-                    await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                    await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                    await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                     client_mismatch = True
                     await record_audit(
                         session,
@@ -506,8 +506,7 @@ class TokenService:
                     # telemetry must not be lost just because the consent
                     # grant was revoked in the meantime. The grant
                     # gate below still fails rotation closed either way.
-                    await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                    await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                    await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                     reuse_detected = True
                     await record_audit(
                         session,
@@ -523,8 +522,7 @@ class TokenService:
                     family_issued_at = _resolve_family_issued_at(rt, now)
                     max_age = self._refresh_family_max_age
                     if max_age is not None and now - family_issued_at > timedelta(seconds=max_age):
-                        await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                        await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                        await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                         family_expired = True
                         await record_audit(
                             session,
@@ -667,8 +665,7 @@ class TokenService:
                     return
                 if actor_id is not None and rt.actor_id != actor_id:
                     return
-                await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                 revoked_actor_id = rt.actor_id
                 await record_audit(
                     session,

@@ -15,9 +15,8 @@ from typing import Any
 import structlog
 
 from jentic_one.admin.repos import (
-    AccessTokenRepository,
     AuthorizationCodeRepository,
-    RefreshTokenRepository,
+    TokenLineageRepository,
 )
 from jentic_one.shared.models import ActorType
 
@@ -35,18 +34,15 @@ class OAuthSweepCounts:
 
 async def sweep_user_oauth_credentials(session: Any, user_id: str) -> OAuthSweepCounts:
     """Revoke every USER-actor access/refresh token and consume every unredeemed code."""
-    access = await AccessTokenRepository.revoke_for_actor(
-        session, user_id, actor_type=ActorType.USER.value
-    )
-    refresh = await RefreshTokenRepository.revoke_for_actor(
+    sweep = await TokenLineageRepository.revoke_for_actor(
         session, user_id, actor_type=ActorType.USER.value
     )
     codes = await AuthorizationCodeRepository.consume_for_user(session, user_id)
     logger.info(
         "user_oauth_credentials_swept",
         user_id=user_id,
-        swept_access=access,
-        swept_refresh=refresh,
+        swept_access=sweep.access,
+        swept_refresh=sweep.refresh,
         swept_codes=codes,
     )
-    return OAuthSweepCounts(access=access, refresh=refresh, codes=codes)
+    return OAuthSweepCounts(access=sweep.access, refresh=sweep.refresh, codes=codes)

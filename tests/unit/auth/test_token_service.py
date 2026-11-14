@@ -236,23 +236,22 @@ async def test_refresh_reports_live_agent_scopes_not_snapshot(
     assert mock_rt_repo.create.call_args.kwargs["scopes"] == ["apis:read", "apis:write"]
 
 
+@patch("jentic_one.auth.services.token_service.TokenLineageRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_refresh_consumed_token_triggers_reuse_detection(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_lineage_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row(consumed_at=datetime.now(UTC))
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
 
     svc = TokenService(ctx)
     with pytest.raises(InvalidGrantError, match="reuse detected"):
         await svc.refresh("rt_consumed")
 
-    mock_rt_repo.revoke_family.assert_called_once()
-    mock_at_repo.revoke_family.assert_called_once()
+    mock_lineage_repo.revoke_family.assert_called_once()
 
 
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
@@ -296,22 +295,21 @@ async def test_revoke_access_token(mock_at_repo: MagicMock, mock_rt_repo: MagicM
     mock_at_repo.revoke.assert_called_once()
 
 
+@patch("jentic_one.auth.services.token_service.TokenLineageRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_revoke_refresh_token_revokes_family(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_lineage_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
     rt_row = _make_refresh_token_row()
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
 
     svc = TokenService(ctx)
     await svc.revoke("rt_sometoken", identity=Identity(sub="usr_test123", email="test@local"))
 
-    mock_rt_repo.revoke_family.assert_called_once()
-    mock_at_repo.revoke_family.assert_called_once()
+    mock_lineage_repo.revoke_family.assert_called_once()
 
 
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
@@ -813,10 +811,14 @@ async def test_refresh_approved_client_still_rotates(
 
 
 @patch("jentic_one.auth.services.token_service.AgentRepository")
+@patch("jentic_one.auth.services.token_service.TokenLineageRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_refresh_reuse_detection_wins_over_disabled_actor(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_agent_repo: MagicMock
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
+    mock_agent_repo: MagicMock,
 ) -> None:
     """Replaying a consumed refresh token still revokes the family even when the
     actor is disabled — reuse detection must not be short-circuited."""
@@ -825,8 +827,7 @@ async def test_refresh_reuse_detection_wins_over_disabled_actor(
         actor_id="agnt_x", actor_type="agent", consumed_at=datetime.now(UTC)
     )
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
     mock_agent_repo.get_with_owner_active = AsyncMock(
         return_value=_with_owner(_make_agent_row(status="disabled"))
     )
@@ -835,8 +836,7 @@ async def test_refresh_reuse_detection_wins_over_disabled_actor(
     with pytest.raises(InvalidGrantError, match="reuse detected"):
         await svc.refresh("rt_replayed")
 
-    mock_rt_repo.revoke_family.assert_called_once()
-    mock_at_repo.revoke_family.assert_called_once()
+    mock_lineage_repo.revoke_family.assert_called_once()
 
 
 @patch("jentic_one.auth.services.token_service.AgentRepository")
@@ -1253,11 +1253,13 @@ async def test_introspect_folds_grant_gate_into_active_for_refresh_token(
 @patch("jentic_one.auth.services.token_service.record_audit")
 @patch("jentic_one.auth.services.token_service.OAuthClientGrantRepository")
 @patch("jentic_one.auth.services.token_service.OAuthClientRepository")
+@patch("jentic_one.auth.services.token_service.TokenLineageRepository")
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_refresh_reuse_detection_wins_over_revoked_grant(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_client_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_record_audit: AsyncMock,
@@ -1270,8 +1272,7 @@ async def test_refresh_reuse_detection_wins_over_revoked_grant(
     rt_row.oauth_client_id = "oc_grant_app"
     rt_row.oauth_grant_id = "ocg_test123"
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt_row)
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
 
     client_row = MagicMock()
     client_row.active = True
@@ -1283,8 +1284,7 @@ async def test_refresh_reuse_detection_wins_over_revoked_grant(
     with pytest.raises(InvalidGrantError, match="reuse detected"):
         await svc.refresh("rt_replayed_revoked_grant", client_id="oc_grant_app")
 
-    mock_rt_repo.revoke_family.assert_called_once()
-    mock_at_repo.revoke_family.assert_called_once()
+    mock_lineage_repo.revoke_family.assert_called_once()
     audit_reasons = [call.kwargs.get("reason") for call in mock_record_audit.await_args_list]
     assert "refresh token reuse detected" in audit_reasons
 

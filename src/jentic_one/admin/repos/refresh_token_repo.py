@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
@@ -66,31 +65,6 @@ class RefreshTokenRepository:
         await session.flush()
 
     @staticmethod
-    async def revoke_family(session: AsyncSession, token_family_id: str) -> None:
-        stmt = (
-            update(RefreshToken)
-            .where(RefreshToken.token_family_id == token_family_id)
-            .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        await session.execute(stmt)
-        await session.flush()
-
-    @staticmethod
-    async def revoke_for_actor(session: AsyncSession, actor_id: str, *, actor_type: str) -> int:
-        """Revoke every live refresh token held by ``(actor_id, actor_type)``."""
-        stmt = (
-            update(RefreshToken)
-            .where(RefreshToken.actor_id == actor_id)
-            .where(RefreshToken.actor_type == actor_type)
-            .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
     async def revoke_key_channel_for_agent(session: AsyncSession, agent_id: str) -> int:
         """Revoke every live key-channel refresh token held by ``agent_id``.
 
@@ -107,57 +81,5 @@ class RefreshTokenRepository:
             .values(revoked_at=datetime.now(UTC))
         )
         result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
-        """Revoke every live refresh token minted under one consent grant."""
-        stmt = (
-            update(RefreshToken)
-            .where(RefreshToken.oauth_grant_id == oauth_grant_id)
-            .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def revoke_by_client(session: AsyncSession, oauth_client_id: str) -> int:
-        """Revoke every live refresh token carrying one client's lineage.
-
-        The client hard-delete sweep — see
-        :meth:`AccessTokenRepository.revoke_by_client`. Returns rows revoked.
-        """
-        stmt = (
-            update(RefreshToken)
-            .where(RefreshToken.oauth_client_id == oauth_client_id)
-            .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def delete_expired(session: AsyncSession, before: datetime) -> int:
-        stmt = delete(RefreshToken).where(RefreshToken.expires_at < before)
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def delete_for_actor(
-        session: AsyncSession, actor_id: str, *, grant_ids: Sequence[str] = ()
-    ) -> int:
-        """Delete every token held by ``actor_id`` or minted under one of ``grant_ids``.
-
-        The agent-purge sweep (any revocation state). Returns the row count.
-        """
-        predicate = RefreshToken.actor_id == actor_id
-        if grant_ids:
-            predicate = or_(predicate, RefreshToken.oauth_grant_id.in_(list(grant_ids)))
-        result = await session.execute(delete(RefreshToken).where(predicate))
         await session.flush()
         return int(result.rowcount)  # type: ignore[attr-defined]
