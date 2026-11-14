@@ -8,14 +8,22 @@ from typing import Literal
 import structlog
 
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.repos import (
     ConnectNonceRepository,
     CredentialRepository,
     OAuthClientCredentialRepository,
     OAuthTokenRepository,
 )
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
 from jentic_one.control.scoping.filters import build_access_filters
-from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.errors import (
+    ConnectRequiresReviewError,
+    ConnectScopeWideningError,
+    CredentialNotFoundError,
+)
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
     ConnectChallenge,
@@ -43,6 +51,35 @@ class ConnectFlowError(Exception):
     """Raised when the connect flow fails for a domain reason."""
 
 
+def _stored_scopes(
+    credential: Credential, registration: OAuthAppRegistration | None = None
+) -> set[str] | None:
+    """Return the stored scope set for a device or authorization-code credential."""
+    dfc = credential.device_authorization_credential
+    if dfc is not None:
+        scopes = set(dfc.requested_scopes or ()) | set(dfc.granted_scopes or ())
+        if credential.oauth_token is not None and credential.oauth_token.scope:
+            scopes |= set(credential.oauth_token.scope.split())
+        return scopes
+    occ = credential.oauth_client_credential
+    if occ is not None:
+        if occ.scope:
+            return set(occ.scope.split())
+        if credential.oauth_token is not None and credential.oauth_token.scope:
+            return set(credential.oauth_token.scope.split())
+        return set()
+    if credential.oauth_app_registration_id is not None:
+        if credential.oauth_token is not None and credential.oauth_token.scope:
+            return set(credential.oauth_token.scope.split())
+        if registration is not None:
+            if registration.authorization_code_details is not None:
+                return set(registration.authorization_code_details.default_scopes or ())
+            if registration.device_authorization_details is not None:
+                return set(registration.device_authorization_details.default_scopes or ())
+        return set()
+    return None
+
+
 class ConnectService:
     """Thin orchestration for the credential connect flow."""
 
@@ -58,26 +95,52 @@ class ConnectService:
         redirect_uri: str | None = None,
         browser_binding: BrowserBindingClaim | None = None,
     ) -> ConnectChallenge:
-        """Load the caller's credential, resolve provider, initiate connect flow.
+        """Load the caller's write-owned credential, resolve provider, initiate connect flow.
 
-        A credential the caller cannot see is a 404. Visibility includes owner
-        delegation (see the comment on the filter below).
+        Connecting overwrites the credential's stored tokens, so it requires
+        write ownership (``for_write=True``). An agent that can only read the
+        credential through owner delegation receives
+        :class:`ConnectRequiresReviewError` (403 ``connect_requires_review``)
+        pointing at the reviewed connect-session flow; any other miss raises
+        :class:`CredentialNotFoundError` (404). Requested scopes may only
+        narrow the stored scope set; widening raises
+        :class:`ConnectScopeWideningError` (422 ``scope_widening_requires_review``).
 
         ``browser_binding`` names the browser that may finish the flow: its
         hash rides the signed state and the callback requires the matching
         cookie. Without it the state is unbound and every callback for it
         is refused.
         """
-        # Read filter on purpose, not ``for_write``: an agent holding
-        # ``owner:credentials:read`` may start a connect for its owner's
-        # credential, which the provider's authorization step then completes.
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
             )
             if credential is None:
+                if identity.actor_type == ActorType.AGENT:
+                    read_filters = build_access_filters(identity, Credential)
+                    visible = await CredentialRepository.get_by_id(
+                        session, credential_id, filters=read_filters
+                    )
+                    if visible is not None:
+                        raise ConnectRequiresReviewError(credential_id)
                 raise CredentialNotFoundError(credential_id)
+
+            registration: OAuthAppRegistration | None = None
+            if (
+                request.scopes
+                and credential.device_authorization_credential is None
+                and credential.oauth_client_credential is None
+                and credential.oauth_app_registration_id is not None
+            ):
+                registration = await OAuthAppRegistrationRepository.get_by_id(
+                    session, credential.oauth_app_registration_id
+                )
+            stored_scopes = _stored_scopes(credential, registration)
+            if request.scopes and stored_scopes is not None:
+                widened = [scope for scope in request.scopes if scope not in stored_scopes]
+                if widened:
+                    raise ConnectScopeWideningError(credential_id, widened)
 
             provider_name = credential.provider
             api = APIReference(

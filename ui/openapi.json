@@ -34133,7 +34133,7 @@
     "/credentials/{credential_id}/connect": {
       "description": "`POST`: Begin OAuth connect flow.",
       "post": {
-        "description": "Initiate the OAuth connect flow for a credential.\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.\n\nAn ``authorize_url`` response also sets a short-lived ``HttpOnly``\ncookie scoped to the OAuth callback path: the callback completes only\nin the browser that called this endpoint, so call it from the browser\nthat opens the ``authorize_url``.",
+        "description": "Initiate the OAuth connect flow for a write-owned credential.\n\nRequires write ownership of the credential (creator or ``org:admin``);\nan agent that can only read the credential through owner delegation must\nuse the reviewed connect-session flow (403 ``connect_requires_review``).\nRequested ``scopes`` may only narrow the credential's stored scopes;\nwidening scopes requires a connect session (422\n``scope_widening_requires_review``).\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.\n\nAn ``authorize_url`` response also sets a short-lived ``HttpOnly``\ncookie scoped to the OAuth callback path: the callback completes only\nin the browser that called this endpoint, so call it from the browser\nthat opens the ``authorize_url``.",
         "operationId": "connectCredential",
         "parameters": [
           {
@@ -34192,7 +34192,21 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Connecting this credential requires human review"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -34215,7 +34229,27 @@
             "description": "Credential is not connectable"
           },
           "422": {
-            "$ref": "#/components/responses/UnprocessableEntity"
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Request validation failed or scope widening requires review"
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"

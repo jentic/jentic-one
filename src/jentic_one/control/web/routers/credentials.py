@@ -97,7 +97,7 @@ from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import public_base_url
-from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import conflict, not_found, problem, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 router = APIRouter()
@@ -1162,7 +1162,14 @@ async def get_connect_flow_status(
 @router.post(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
-    responses=with_responses(not_found(), conflict("Credential is not connectable")),
+    responses=with_responses(
+        {
+            403: problem("Connecting this credential requires human review"),
+            422: problem("Request validation failed or scope widening requires review"),
+        },
+        not_found(),
+        conflict("Credential is not connectable"),
+    ),
     response_model=ConnectChallengeResponse,
 )
 async def connect_credential(
@@ -1177,7 +1184,14 @@ async def connect_credential(
     svc: ConnectService = Depends(get_connect_service),
     ctx: Context = Depends(get_ctx),
 ) -> ConnectChallengeResponse | JSONResponse:
-    """Initiate the OAuth connect flow for a credential.
+    """Initiate the OAuth connect flow for a write-owned credential.
+
+    Requires write ownership of the credential (creator or ``org:admin``);
+    an agent that can only read the credential through owner delegation must
+    use the reviewed connect-session flow (403 ``connect_requires_review``).
+    Requested ``scopes`` may only narrow the credential's stored scopes;
+    widening scopes requires a connect session (422
+    ``scope_widening_requires_review``).
 
     Discriminates on the provider's returned challenge: OAuth2
     authorization-code providers return an ``authorize_url`` for popup

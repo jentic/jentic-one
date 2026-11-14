@@ -103,3 +103,23 @@ class RuleSetAttachDeniedError(CredentialServiceError):
             f"Only the creator or an org admin may attach permission rule set '{rule_set_id}'"
         )
         self.rule_set_id = rule_set_id
+
+
+class ConnectRequiresReviewError(CredentialServiceError):
+    """Raised when an agent attempts to connect a read-visible credential it does not own."""
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"Connecting credential '{credential_id}' requires human review")
+        self.credential_id = credential_id
+
+
+class ConnectScopeWideningError(CredentialServiceError):
+    """Raised when a direct connect request widens the credential's stored scopes."""
+
+    def __init__(self, credential_id: str, widened_scopes: list[str] | None = None) -> None:
+        super().__init__(
+            f"Widening scopes on credential '{credential_id}' requires review "
+            "through a connect session"
+        )
+        self.credential_id = credential_id
+        self.widened_scopes = list(widened_scopes or [])

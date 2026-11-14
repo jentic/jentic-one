@@ -8,30 +8,42 @@ from collections.abc import AsyncGenerator, Awaitable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import patch
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
 import pytest
 from fastapi import FastAPI
+from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from sqlalchemy import delete, select, text
 
 from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
 from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
-from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.errors import (
+    ConnectRequiresReviewError,
+    ConnectScopeWideningError,
+    CredentialNotFoundError,
+)
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
 from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
+    DeviceAuthorizationChallenge,
 )
 from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialUpdate,
@@ -46,6 +58,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import TokenEndpointMovedError
 from jentic_one.control.services.integrations.flow_handlers.auth_code import AuthCodeFlowHandler
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
+from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.deps import (
     get_connect_service,
     get_connect_session_service,
@@ -134,6 +147,7 @@ async def clean_connect_tables(control_db: DatabaseSession) -> AsyncGenerator[No
     async with control_db.session() as session:
         await session.execute(delete(ConnectNonce))
         await session.execute(delete(OAuthToken))
+        await session.execute(delete(DeviceAuthorizationCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
         await session.execute(delete(Credential))
@@ -142,13 +156,16 @@ async def clean_connect_tables(control_db: DatabaseSession) -> AsyncGenerator[No
     async with control_db.session() as session:
         await session.execute(delete(ConnectNonce))
         await session.execute(delete(OAuthToken))
+        await session.execute(delete(DeviceAuthorizationCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
         await session.execute(delete(Credential))
         await session.commit()
 
 
-async def _create_oauth2_credential(ctx: Context, *, provider: str = "static") -> str:
+async def _create_oauth2_credential(
+    ctx: Context, *, provider: str = "static", created_by: str = _OWNER.sub
+) -> str:
     """Create a bare oauth2 credential and return its id."""
     async with ctx.control_db.transaction() as session:
         credential = await CredentialRepository.create(
@@ -159,7 +176,7 @@ async def _create_oauth2_credential(ctx: Context, *, provider: str = "static") -
             api_name="test-api",
             api_version="v1",
             provider=provider,
-            created_by=_OWNER.sub,
+            created_by=created_by,
         )
         return credential.id
 
@@ -415,9 +432,9 @@ async def test_org_admin_may_connect_any_credential(
     assert isinstance(challenge, AuthCodeChallenge)
 
 
-async def _connectable_credential(ctx: Context) -> str:
-    """Create an owner-held direct-OAuth2 credential ready for ``begin``."""
-    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+async def _connectable_credential(ctx: Context, *, created_by: str = _OWNER.sub) -> str:
+    """Create a direct-OAuth2 credential ready for ``begin``."""
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth", created_by=created_by)
     provider = DirectOAuth2Provider(
         DirectOAuth2ProviderConfig(
             redirect_uri="https://app.example.com/credentials/oauth/callback"
@@ -428,16 +445,166 @@ async def _connectable_credential(ctx: Context) -> str:
     return credential_id
 
 
-async def test_owner_delegated_agent_may_connect_its_owners_credential(
+async def _connectable_device_credential(
+    ctx: Context, *, scopes: list[str] | None = None, created_by: str = _OWNER.sub
+) -> str:
+    """Create a device-code credential ready for ``begin``."""
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type=StoredCredentialType.OAUTH2_DEVICE_CODE,
+            name="Test Device Code",
+            api_vendor="test-vendor",
+            api_name="test-api",
+            api_version="v1",
+            provider="device_authorization",
+            created_by=created_by,
+        )
+        await DeviceAuthorizationCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            client_id="device-client-123",
+            token_url="https://idp.example.com/token",
+            authorization_endpoint="https://idp.example.com/device/code",
+            requested_scopes=["read", "write"] if scopes is None else scopes,
+            created_by=created_by,
+        )
+        return credential.id
+
+
+def _router_app(ctx: Context, identity: Identity) -> FastAPI:
+    app = FastAPI()
+    app.include_router(credentials_router.router)
+    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    for exc_class, handler in get_exception_handlers():
+        app.add_exception_handler(exc_class, handler)
+    app.dependency_overrides[get_ctx] = lambda: ctx
+    app.dependency_overrides[get_connect_service] = lambda: ConnectService(ctx)
+    app.dependency_overrides[get_connect_session_service] = lambda: ConnectSessionService(ctx)
+    app.dependency_overrides[get_credential_service] = lambda: CredentialService(ctx)
+    app.dependency_overrides[shared_deps.resolve_identity] = lambda: identity
+    return app
+
+
+async def test_owner_delegated_agent_cannot_connect_its_owners_credential(
     integration_context: Context, clean_connect_tables: None
 ) -> None:
     ctx = integration_context
     credential_id = await _connectable_credential(ctx)
 
+    with pytest.raises(ConnectRequiresReviewError) as exc_info:
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=_DELEGATED_AGENT)
+    assert exc_info.value.credential_id == credential_id
+
+    async with ctx.control_db.session() as session:
+        nonces = (await session.execute(select(ConnectNonce))).scalars().all()
+    assert nonces == []
+
+
+async def test_agent_may_connect_its_own_credential(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx, created_by=_DELEGATED_AGENT.sub)
+
     challenge = await ConnectService(ctx).begin(
-        credential_id, ConnectRequest(), identity=_DELEGATED_AGENT
+        credential_id,
+        ConnectRequest(scopes=["read"]),
+        identity=_DELEGATED_AGENT,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(challenge, AuthCodeChallenge)
+
+
+async def test_owner_may_connect_own_credential_with_narrower_scopes(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    auth_code_id = await _connectable_credential(ctx)
+    device_id = await _connectable_device_credential(ctx, scopes=["read", "write"])
+
+    auth_challenge = await ConnectService(ctx).begin(
+        auth_code_id,
+        ConnectRequest(scopes=["read"]),
+        identity=_OWNER,
+        browser_binding=_BINDING.claim,
+    )
+    assert isinstance(auth_challenge, AuthCodeChallenge)
+    assert parse_qs(urlsplit(auth_challenge.authorize_url).query)["scope"] == ["read"]
+
+    device_response = httpx.Response(
+        200,
+        json={
+            "device_code": "dc-narrow",
+            "user_code": "NARROW-1",
+            "verification_uri": "https://idp.example.com/device",
+            "expires_in": 900,
+            "interval": 5,
+        },
+    )
+    with idp_transport(post=device_response):
+        device_challenge = await ConnectService(ctx).begin(
+            device_id,
+            ConnectRequest(scopes=["read"]),
+            identity=_OWNER,
+        )
+    assert isinstance(device_challenge, DeviceAuthorizationChallenge)
+    async with ctx.control_db.session() as session:
+        dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(session, device_id)
+    assert dfc is not None
+    assert dfc.granted_scopes == ["read"]
+
+
+@pytest.mark.parametrize("flow", ["auth_code", "device"])
+async def test_connect_with_wider_scopes_refused(
+    integration_context: Context, clean_connect_tables: None, flow: str
+) -> None:
+    ctx = integration_context
+    if flow == "auth_code":
+        credential_id = await _connectable_credential(ctx)
+    else:
+        credential_id = await _connectable_device_credential(ctx, scopes=["read", "write"])
+
+    with idp_transport() as mock_requests:
+        with pytest.raises(ConnectScopeWideningError):
+            await ConnectService(ctx).begin(
+                credential_id,
+                ConnectRequest(scopes=["read", "admin"]),
+                identity=_OWNER,
+            )
+        assert mock_requests == []
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_router_app(ctx, _OWNER)),
+        base_url="https://testserver",
+    ) as tc:
+        resp = await tc.post(
+            f"/credentials/{credential_id}/connect",
+            json={"scopes": ["read", "admin"]},
+        )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["type"] == "scope_widening_requires_review"
+
+
+@pytest.mark.parametrize("caller", [_OTHER_USER, _AGENT_OF_OTHER_OWNER], ids=["user", "agent"])
+async def test_other_users_credential_is_uniform_404(
+    integration_context: Context, clean_connect_tables: None, caller: Identity
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+
+    with pytest.raises(CredentialNotFoundError):
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=caller)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_router_app(ctx, caller)),
+        base_url="https://testserver",
+    ) as tc:
+        resp = await tc.post(f"/credentials/{credential_id}/connect", json={})
+    assert resp.status_code == 404, resp.text
+    body = resp.json()
+    assert body["type"] == "credential_not_found"
+    assert "agent_directive" not in body
 
 
 @pytest.mark.parametrize(
