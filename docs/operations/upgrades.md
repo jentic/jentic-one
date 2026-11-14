@@ -239,6 +239,34 @@ connect) or `oauth_callback.connect_session.state_invalid` (agent request)
 with `error_type: StateBrowserMismatchError`; alert on that to catch either
 case.
 
+## Free-form server hosts use credential-supplied values
+
+An API whose server host contains a free-form or undeclared template no longer
+resolves requests to arbitrary concrete hosts. Legacy arbitrary-host index rows
+are ignored at lookup. Provide concrete values through the credential's
+`server_variables` and use the literal `{name}` host template URL so discovery
+can pair it with those values. Declared variable defaults and enum members
+continue to resolve directly; a direct request to an arbitrary concrete host
+outside those declared values now returns `operation_not_found`.
+
+Re-importing byte-identical content does **not** rebuild an active revision's
+URL index: the import fails with `A revision with identical content already
+exists for this API version` before index construction. Rebuilding requires a
+new revision with changed specification content. Make the intended spec update
+while retaining the API's `vendor/name/version` identity, then:
+
+1. Import it with `jentic apis import <file|url>`; a manual import creates a
+   draft and builds that draft's URL index with the literal host templates.
+2. Find the new draft with `jentic apis revisions <vendor/name/version>`.
+3. Promote it with
+   `jentic apis promote <vendor/name/version> <revision_id>` so its index
+   serves requests; the previous live revision is archived.
+
+The equivalent HTTP flow is `POST /apis`, followed by
+`POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote`. See
+[Import APIs](../guides/importing-apis.md#re-import-revisions-and-promote) for
+job polling, revision inspection, and host-change promotion requirements.
+
 ## Where the commands live, per install
 
 | Install | Upgrade steps |

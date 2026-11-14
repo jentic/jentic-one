@@ -153,6 +153,9 @@ func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 			return err
 		}
 	}
+	if origin == "" {
+		return fmt.Errorf("cannot bind API key: environment %q has no base_url", ref.Environment)
+	}
 
 	path, err := apiKeyPath(ref)
 	if err != nil {
@@ -196,32 +199,37 @@ func readAPIKeyRecord(ref IdentityRef) (*apiKeyRecord, error) {
 	if err := recoverPendingAPIKey(path); err != nil {
 		return nil, err
 	}
+	return readAPIKeyRecordLocked(ref, path)
+}
+
+// readAPIKeyRecordLocked reads a credential while the caller holds its lock.
+func readAPIKeyRecordLocked(ref IdentityRef, path string) (*apiKeyRecord, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // path is StateDir()/<validated-stem>.apikey, not user input.
 	if err != nil {
 		return nil, err
 	}
 	trimmed := strings.TrimSpace(string(data))
+	var rec apiKeyRecord
 	if strings.HasPrefix(trimmed, "{") {
-		var rec apiKeyRecord
 		if err := json.Unmarshal([]byte(trimmed), &rec); err != nil {
 			return nil, fmt.Errorf("decoding API key %s: %w", path, err)
 		}
-		rec.APIKey = strings.TrimSpace(rec.APIKey)
-		if rec.APIKey == "" {
-			return nil, fmt.Errorf("stored API key in %s is empty", path)
-		}
-		rawOrigin := strings.TrimSpace(rec.Origin)
-		rec.Origin = NormalizeOrigin(rawOrigin)
-		if rawOrigin != "" && rec.Origin == "" {
+	} else {
+		rec = apiKeyRecord{APIKey: trimmed}
+	}
+	rec.APIKey = strings.TrimSpace(rec.APIKey)
+	if rec.APIKey == "" {
+		return nil, fmt.Errorf("stored API key in %s is empty", path)
+	}
+	rawOrigin := strings.TrimSpace(rec.Origin)
+	rec.Origin = NormalizeOrigin(rawOrigin)
+	if rawOrigin != "" {
+		if rec.Origin == "" {
 			return nil, fmt.Errorf("invalid API key origin in %s", path)
 		}
 		return &rec, nil
 	}
 
-	rec := &apiKeyRecord{APIKey: trimmed}
-	if rec.APIKey == "" {
-		return nil, fmt.Errorf("stored API key in %s is empty", path)
-	}
 	originPath, err := apiKeyOriginPath(ref)
 	if err != nil {
 		return nil, err
@@ -229,15 +237,46 @@ func readAPIKeyRecord(ref IdentityRef) (*apiKeyRecord, error) {
 	originData, err := os.ReadFile(originPath) //nolint:gosec // path is StateDir()/<validated-stem>.apikey.origin, not user input.
 	if err != nil {
 		if os.IsNotExist(err) {
-			return rec, nil
+			return &rec, nil
 		}
 		return nil, fmt.Errorf("reading API key origin %s: %w", originPath, err)
 	}
-	rawOrigin := strings.TrimSpace(string(originData))
+	rawOrigin = strings.TrimSpace(string(originData))
 	rec.Origin = NormalizeOrigin(rawOrigin)
 	if rawOrigin != "" && rec.Origin == "" {
 		return nil, fmt.Errorf("invalid API key origin in %s", originPath)
 	}
+	return &rec, nil
+}
+
+// bindAPIKeyOrigin persists an origin for a legacy record while holding the same
+// lock used by API-key replacement. A concurrent bound replacement wins and is
+// returned for the caller's origin check.
+func bindAPIKeyOrigin(ref IdentityRef, origin string) (*apiKeyRecord, error) {
+	path, err := apiKeyPath(ref)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := lockAPIKey(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lock.Unlock() }()
+	if err := recoverPendingAPIKey(path); err != nil {
+		return nil, err
+	}
+	rec, err := readAPIKeyRecordLocked(ref, path)
+	if err != nil {
+		return nil, err
+	}
+	if rec.Origin != "" {
+		return rec, nil
+	}
+	originPath := path + ".origin"
+	if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
+		return nil, fmt.Errorf("binding API key origin %s: %w", originPath, err)
+	}
+	rec.Origin = origin
 	return rec, nil
 }
 
@@ -290,6 +329,29 @@ func InvalidateAPIKey(ref IdentityRef) error {
 	return nil
 }
 
+// atomicTempFinalName recognizes the temporary name writeFileAtomic uses for
+// finalName and returns finalName without its leading dot.
+func atomicTempFinalName(name string) (string, bool) {
+	if !strings.HasPrefix(name, ".") {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(name, ".")
+	marker := strings.LastIndex(trimmed, ".tmp-")
+	if marker <= 0 {
+		return "", false
+	}
+	suffix := trimmed[marker+len(".tmp-"):]
+	if suffix == "" {
+		return "", false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return trimmed[:marker], true
+}
+
 // PurgeEnvironmentCredentials removes all cached OAuth tokens and stored
 // static API keys for envName across all identities in the XDG state dir.
 func PurgeEnvironmentCredentials(envName string) error {
@@ -317,12 +379,17 @@ func PurgeEnvironmentCredentials(envName string) error {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasSuffix(name, tokSuffix) && !strings.HasSuffix(name, akSuffix) &&
-			!strings.HasSuffix(name, akOriginSuffix) && !strings.HasSuffix(name, akPendingSuffix) {
+		credentialName := name
+		tempFinalName, isAtomicTemp := atomicTempFinalName(name)
+		if isAtomicTemp {
+			credentialName = tempFinalName
+		}
+		if !strings.HasSuffix(credentialName, tokSuffix) && !strings.HasSuffix(credentialName, akSuffix) &&
+			!strings.HasSuffix(credentialName, akOriginSuffix) && !strings.HasSuffix(credentialName, akPendingSuffix) {
 			continue
 		}
 		fullPath := filepath.Join(stateDir, name)
-		if strings.HasSuffix(name, akOriginSuffix) {
+		if !isAtomicTemp && strings.HasSuffix(name, akOriginSuffix) {
 			keyPath := strings.TrimSuffix(fullPath, ".origin")
 			if _, err := os.Stat(keyPath); err == nil || !os.IsNotExist(err) {
 				// A surviving key keeps its origin binding when its removal failed.

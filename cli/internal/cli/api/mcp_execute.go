@@ -256,7 +256,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	// envelope passes through with its directive intact, the model polls with
 	// get_execution_result and never re-sends).
 	payload := s.executeResultPayload(res)
-	if envelope := heldEnvelope(res.Status, payload["body"]); envelope != nil {
+	if envelope := heldEnvelope(res, payload["body"]); envelope != nil {
 		return s.answerHeld(cctx, req, agent, envelope, payload, op.Method, heldPath(op))
 	}
 	return s.result(cctx, payload), nil

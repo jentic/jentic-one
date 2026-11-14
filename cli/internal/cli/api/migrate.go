@@ -361,7 +361,7 @@ func copyProfileMaterial(p *legacyProfile, meta *legacyMeta, ref auth.IdentityRe
 	if existing, rerr := auth.ReadAPIKey(ref); rerr == nil && existing != "" {
 		return nil
 	}
-	return auth.SaveAPIKey(ref, key)
+	return auth.SaveAPIKeyForOrigin(ref, key, baseURL)
 }
 
 // copyLegacyKey reads the legacy PKCS#8 PEM agent.key, validates it is Ed25519,
@@ -427,25 +427,33 @@ func copyLegacyTokens(p *legacyProfile, ref auth.IdentityRef, baseURL string) er
 	}
 	targetOrigin := auth.NormalizeOrigin(baseURL)
 
-	if existing, rerr := auth.ReadTokens(ref); rerr == nil && existing != nil {
-		sameOrigin := existing.Origin == "" || targetOrigin == "" || existing.Origin == targetOrigin
-		if sameOrigin && (existing.AccessToken != "" || existing.RefreshToken != "") {
-			// Backfill a missing refresh token only when XDG holds the exact
-			// unrotated legacy access token; any rotated or newer V2 token set
-			// stays untouched.
-			if existing.AccessToken == accessToken &&
-				existing.RefreshToken == "" &&
-				refreshToken != "" &&
-				!existing.ExpiresAt.After(toks.AccessExpiresAt) {
-				repaired := *existing
-				repaired.RefreshToken = refreshToken
-				if repaired.Origin == "" {
-					repaired.Origin = targetOrigin
-				}
-				return auth.SaveTokens(ref, &repaired)
-			}
+	existing, readErr := auth.ReadTokens(ref)
+	if readErr != nil {
+		if errors.Is(readErr, auth.ErrOriginMismatch) {
 			return nil
 		}
+		if !errors.Is(readErr, os.ErrNotExist) {
+			return fmt.Errorf("reading existing V2 tokens: %w", readErr)
+		}
+	}
+	if readErr == nil && existing != nil && (existing.AccessToken != "" || existing.RefreshToken != "") {
+		sameOrigin := existing.Origin == "" || targetOrigin == "" || existing.Origin == targetOrigin
+		// Backfill a missing refresh token only when XDG holds the exact
+		// unrotated legacy access token; any rotated or newer V2 token set
+		// stays untouched.
+		if sameOrigin &&
+			existing.AccessToken == accessToken &&
+			existing.RefreshToken == "" &&
+			refreshToken != "" &&
+			!existing.ExpiresAt.After(toks.AccessExpiresAt) {
+			repaired := *existing
+			repaired.RefreshToken = refreshToken
+			if repaired.Origin == "" {
+				repaired.Origin = targetOrigin
+			}
+			return auth.SaveTokens(ref, &repaired)
+		}
+		return nil
 	}
 
 	return auth.SaveTokens(ref, &auth.TokenSet{

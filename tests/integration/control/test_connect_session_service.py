@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
@@ -1359,7 +1360,7 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
     assert isinstance(confirmed, AuthCodeConfirmResult)
     raw_state = _state_from_authorize_url(confirmed.authorize_url)
 
-    token_response = __import__("httpx").Response(
+    token_response = httpx.Response(
         200,
         json={
             "access_token": "at_ok",
@@ -1369,19 +1370,15 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
         },
     )
 
-    class _FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return token_response
+    def _vendor(request: httpx.Request) -> httpx.Response:
+        return token_response
 
     identity = identity_echo.IdentityEchoResult(display="alice", raw={"username": "alice"})
     with (
-        patch("httpx.AsyncClient", return_value=_FakeClient()),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(_vendor),
+        ),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
         result = await svc.complete_from_callback(
@@ -1451,29 +1448,25 @@ async def test_complete_from_callback_refuses_state_replay(
     # ``handler.complete_from_callback`` would bump this a second time.
     post_calls = 0
 
-    class _FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, *args, **kwargs):
-            nonlocal post_calls
-            post_calls += 1
-            return __import__("httpx").Response(
-                200,
-                json={
-                    "access_token": "at_ok",
-                    "refresh_token": "rt_ok",
-                    "expires_in": 3600,
-                    "scope": "scope-a",
-                },
-            )
+    def _vendor(request: httpx.Request) -> httpx.Response:
+        nonlocal post_calls
+        post_calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "at_ok",
+                "refresh_token": "rt_ok",
+                "expires_in": 3600,
+                "scope": "scope-a",
+            },
+        )
 
     identity = identity_echo.IdentityEchoResult(display="alice", raw={"username": "alice"})
     with (
-        patch("httpx.AsyncClient", return_value=_FakeClient()),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(_vendor),
+        ),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
         result = await svc.complete_from_callback(
@@ -1735,24 +1728,20 @@ async def test_error_callback_replay_after_connect_cannot_delete_live_credential
     assert isinstance(confirmed, AuthCodeConfirmResult)
     raw_state = _state_from_authorize_url(confirmed.authorize_url)
 
-    token_response = __import__("httpx").Response(
+    token_response = httpx.Response(
         200,
         json={"access_token": "at_ok", "expires_in": 3600, "scope": "scope-a"},
     )
 
-    class _FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return token_response
+    def _vendor(request: httpx.Request) -> httpx.Response:
+        return token_response
 
     identity = identity_echo.IdentityEchoResult(display="alice", raw={"username": "alice"})
     with (
-        patch("httpx.AsyncClient", return_value=_FakeClient()),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(_vendor),
+        ),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity)),
     ):
         result = await svc.complete_from_callback(
@@ -4450,7 +4439,7 @@ async def test_an_edit_adds_only_scopes_the_vendor_offers(
 
 
 class _TokenClient:
-    """httpx.AsyncClient stand-in answering the token exchange."""
+    """Vendor token endpoint answering the token exchange."""
 
     def __init__(self, scope: str) -> None:
         self._response = Response(
@@ -4463,13 +4452,7 @@ class _TokenClient:
             },
         )
 
-    async def __aenter__(self) -> _TokenClient:
-        return self
-
-    async def __aexit__(self, *a: object) -> bool:
-        return False
-
-    async def post(self, *args: object, **kwargs: object) -> Response:
+    def handle(self, request: httpx.Request) -> Response:
         return self._response
 
 
@@ -4478,7 +4461,10 @@ async def _callback(
 ) -> StatusResult:
     echo = identity_echo.IdentityEchoResult(display=account, raw={"username": account})
     with (
-        patch("httpx.AsyncClient", return_value=_TokenClient(scope)),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(_TokenClient(scope).handle),
+        ),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echo)),
     ):
         return await svc.complete_from_callback(

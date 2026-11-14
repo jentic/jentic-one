@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
 import pytest
@@ -430,20 +430,16 @@ async def test_complete_from_callback_through_registration_end_to_end(
         },
     )
 
-    class _FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, url, data=None, **kwargs):
-            posted_payloads.append(dict(data or {}))
-            return token_response
+    def _vendor(request: httpx.Request) -> httpx.Response:
+        posted_payloads.append(dict(parse_qsl(request.content.decode())))
+        return token_response
 
     identity_result = identity_echo.IdentityEchoResult(display="alice", raw={"username": "alice"})
     with (
-        patch("httpx.AsyncClient", return_value=_FakeClient()),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(_vendor),
+        ),
         patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=identity_result)),
     ):
         result = await svc.complete_from_callback(
@@ -693,16 +689,9 @@ async def _refresh_capturing_post(ctx: Context, credential_id: str) -> tuple[str
         200, json={"access_token": "at_new", "expires_in": 3600, "scope": "scope-a"}
     )
 
-    class _FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, url, data=None, **kwargs):
-            posted.append(dict(data or {}))
-            return token_response
+    def _vendor(request: httpx.Request) -> httpx.Response:
+        posted.append(dict(parse_qsl(request.content.decode())))
+        return token_response
 
     async def _decrypt() -> str:
         return "old-refresh"
@@ -718,7 +707,10 @@ async def _refresh_capturing_post(ctx: Context, credential_id: str) -> tuple[str
         expires_at=datetime.now(UTC),
         decrypt=_decrypt,
     )
-    with patch("httpx.AsyncClient", return_value=_FakeClient()):
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_vendor),
+    ):
         result = await provider.refresh(ctx, token=token_view)
     assert len(posted) == 1
     return result.access_token, posted[0]

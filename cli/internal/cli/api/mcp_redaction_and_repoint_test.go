@@ -19,6 +19,39 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 )
 
+func seedEnvironmentRegistration(t *testing.T, identity, environment, clientID string) {
+	t.Helper()
+	if err := sdkconfig.MutateConfig(func(c *sdkconfig.Config) error {
+		ident := c.Identities[identity]
+		if ident.Type == "" {
+			ident.Type = "agent"
+		}
+		if ident.Environments == nil {
+			ident.Environments = make(map[string]sdkconfig.EnvRegState)
+		}
+		ident.Environments[environment] = sdkconfig.EnvRegState{ClientID: clientID, Status: "approved"}
+		c.Identities[identity] = ident
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func removeAPIKeyOriginSidecar(t *testing.T, ref auth.IdentityRef) {
+	t.Helper()
+	stem, err := ref.Stem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir, err := sdkconfig.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(stateDir, stem+".apikey.origin")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEnvAddForce_OriginChangePurgesCredentialsWhileSameOriginPreservesThem(t *testing.T) {
 	withXDG(t)
 
@@ -51,8 +84,8 @@ func TestEnvAddForce_OriginChangePurgesCredentialsWhileSameOriginPreservesThem(t
 		t.Fatalf("SaveAPIKey: %v", err)
 	}
 
-	// 1. Same-origin path or broker-only update preserves registration, cached token, and API key.
-	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com:443/v2", "--broker-url", "https://broker-b.example.com", "--force"); err != nil {
+	// 1. Equivalent base and broker origins preserve registration, cached token, and API key.
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com:443/v2", "--broker-url", "https://broker-a.example.com:443/v2", "--force"); err != nil {
 		t.Fatalf("env add same-origin --force: %v", err)
 	}
 	cfg, err := sdkconfig.Load()
@@ -91,6 +124,64 @@ func TestEnvAddForce_OriginChangePurgesCredentialsWhileSameOriginPreservesThem(t
 	}
 }
 
+func TestEnvAddForce_BrokerOriginChangePurgesCredentials(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com", "--broker-url", "https://broker-a.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	seedEnvironmentRegistration(t, "agent1", "prod", "cid_prod_a")
+	ref := auth.IdentityRef{Identity: "agent1", Environment: "prod"}
+	if err := auth.SaveTokens(ref, &auth.TokenSet{AccessToken: "tok_broker_repoint", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.SaveAPIKey(ref, "jak_broker_repoint_test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com/v2", "--broker-url", "https://broker-b.example.com", "--force"); err != nil {
+		t.Fatalf("env add broker-origin change: %v", err)
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Identities["agent1"].Environments["prod"]; ok {
+		t.Fatal("broker-origin change preserved the environment registration")
+	}
+	if _, err := auth.ReadTokens(ref); err == nil {
+		t.Fatal("broker-origin change preserved the cached token")
+	}
+	if _, err := auth.ReadAPIKey(ref); err == nil {
+		t.Fatal("broker-origin change preserved the stored API key")
+	}
+}
+
+func TestEnvAddForce_SameBrokerOriginPreserves(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com", "--broker-url", "https://broker-a.example.com/v1"); err != nil {
+		t.Fatal(err)
+	}
+	seedEnvironmentRegistration(t, "agent1", "prod", "cid_prod_a")
+	ref := auth.IdentityRef{Identity: "agent1", Environment: "prod"}
+	if err := auth.SaveAPIKey(ref, "jak_same_broker_test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com:443/v2", "--broker-url", "https://broker-a.example.com:443/v2", "--force"); err != nil {
+		t.Fatalf("env add equivalent broker origin: %v", err)
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Identities["agent1"].Environments["prod"].ClientID != "cid_prod_a" {
+		t.Fatal("equivalent broker origin removed the environment registration")
+	}
+	if _, err := auth.ReadAPIKey(ref); err != nil {
+		t.Fatalf("equivalent broker origin removed the stored API key: %v", err)
+	}
+}
+
 func TestEnvAddForce_EmptyExistingOriginPurgesCredentials(t *testing.T) {
 	withXDG(t)
 	if err := sdkconfig.MutateConfig(func(c *sdkconfig.Config) error {
@@ -104,7 +195,7 @@ func TestEnvAddForce_EmptyExistingOriginPurgesCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := auth.IdentityRef{Identity: "agent1", Environment: "prod"}
-	if err := auth.SaveAPIKey(ref, "jak_empty_origin_secret"); err != nil {
+	if err := auth.SaveAPIKeyForOrigin(ref, "jak_empty_origin_secret", "https://origin-a.example.com"); err != nil {
 		t.Fatal(err)
 	}
 	if err := runJentic(t, "env", "add", "prod", "--url", "https://new.example.com", "--force"); err != nil {
@@ -215,6 +306,115 @@ func TestEnvAddForce_RevalidatesOldOriginAfterPurge(t *testing.T) {
 	}
 	if got := cfg.Environments["prod"].BaseURL; got != "https://concurrent-origin.example.com" {
 		t.Fatalf("stale prepared update overwrote concurrent origin: %q", got)
+	}
+}
+
+func TestEnvAddForce_RevalidatesOldBrokerOriginAfterPurge(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com", "--broker-url", "https://broker-a.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	originalPurge := purgeEnvironmentCredentials
+	t.Cleanup(func() { purgeEnvironmentCredentials = originalPurge })
+	purgeEnvironmentCredentials = func(name string) error {
+		if err := originalPurge(name); err != nil {
+			return err
+		}
+		return sdkconfig.MutateConfig(func(c *sdkconfig.Config) error {
+			env := c.Environments[name]
+			env.BrokerURL = "https://concurrent-broker.example.com"
+			c.Environments[name] = env
+			return nil
+		})
+	}
+
+	err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com", "--broker-url", "https://broker-b.example.com", "--force")
+	if err == nil || !strings.Contains(err.Error(), "changed while") {
+		t.Fatalf("concurrent broker-origin change must abort the update, got %v", err)
+	}
+	cfg, loadErr := sdkconfig.Load()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if got := cfg.Environments["prod"].BrokerURL; got != "https://concurrent-broker.example.com" {
+		t.Fatalf("stale prepared update overwrote concurrent broker origin: %q", got)
+	}
+}
+
+func TestEnvDelete_PurgesCredentialsAndRegistrations(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "env", "add", "other", "--url", "https://other.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	seedEnvironmentRegistration(t, "agent1", "prod", "cid_prod")
+	seedEnvironmentRegistration(t, "agent1", "other", "cid_other")
+	ref := auth.IdentityRef{Identity: "agent1", Environment: "prod"}
+	if err := auth.SaveTokens(ref, &auth.TokenSet{AccessToken: "tok_env_delete", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.SaveAPIKey(ref, "jak_env_delete_test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runJentic(t, "env", "delete", "prod", "--yes"); err != nil {
+		t.Fatalf("env delete: %v", err)
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Environments["prod"]; ok {
+		t.Fatal("environment remains after deletion")
+	}
+	if _, ok := cfg.Identities["agent1"].Environments["prod"]; ok {
+		t.Fatal("environment deletion left its identity registration")
+	}
+	if cfg.Identities["agent1"].Environments["other"].ClientID != "cid_other" {
+		t.Fatal("environment deletion removed another environment's registration")
+	}
+	if _, err := auth.ReadTokens(ref); err == nil {
+		t.Fatal("environment deletion left its cached token")
+	}
+	if _, err := auth.ReadAPIKey(ref); err == nil {
+		t.Fatal("environment deletion left its stored API key")
+	}
+}
+
+func TestEnvDelete_PurgeFailurePreservesEnvironmentAndRegistrations(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://origin-a.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	seedEnvironmentRegistration(t, "agent1", "prod", "cid_prod")
+	ref := auth.IdentityRef{Identity: "agent1", Environment: "prod"}
+	if err := auth.SaveAPIKey(ref, "jak_env_delete_failure_test"); err != nil {
+		t.Fatal(err)
+	}
+	originalPurge := purgeEnvironmentCredentials
+	t.Cleanup(func() { purgeEnvironmentCredentials = originalPurge })
+	purgeEnvironmentCredentials = func(string) error {
+		return errors.New("injected environment credential removal failure")
+	}
+
+	if err := runJentic(t, "env", "delete", "prod", "--yes"); err == nil {
+		t.Fatal("env delete must fail when its pre-commit credential purge fails")
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Environments["prod"]; !ok {
+		t.Fatal("failed credential purge deleted the environment")
+	}
+	if cfg.Identities["agent1"].Environments["prod"].ClientID != "cid_prod" {
+		t.Fatal("failed credential purge removed the environment registration")
+	}
+	if _, err := auth.ReadAPIKey(ref); err != nil {
+		t.Fatalf("failed credential purge removed the old environment's API key: %v", err)
 	}
 }
 
@@ -373,6 +573,118 @@ func diskBackedActiveCtx(baseURL, brokerURL, caCertPath string) context.Context 
 		},
 		Mode: clictx.ModeHuman,
 	})
+}
+
+func TestEnvDeleteThenAdd_DoesNotSendOldKeyToNewOrigin(t *testing.T) {
+	withXDG(t)
+	serverAAuth := make(chan string, 1)
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverAAuth <- r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"origin":"a"}`))
+	}))
+	defer serverA.Close()
+	serverBAuth := make(chan string, 1)
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverBAuth <- r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"origin":"b"}`))
+	}))
+	defer serverB.Close()
+
+	if err := runJentic(t, "env", "add", "prod", "--url", serverA.URL); err != nil {
+		t.Fatal(err)
+	}
+	ref := auth.IdentityRef{Identity: "ci", Environment: "prod"}
+	if err := auth.SaveAPIKey(ref, "jak_delete_readd_test"); err != nil {
+		t.Fatal(err)
+	}
+	removeAPIKeyOriginSidecar(t, ref)
+	if err := runJentic(t, "env", "delete", "prod", "--yes"); err != nil {
+		t.Fatalf("env delete: %v", err)
+	}
+	if err := runJentic(t, "env", "add", "prod", "--url", serverB.URL); err != nil {
+		t.Fatalf("env re-add: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, serverB.URL+"/credentials", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachErr := auth.AttachAuth(auth.Credentials{
+		BaseURL:         serverB.URL,
+		IdentityName:    ref.Identity,
+		EnvironmentName: ref.Environment,
+	}, req)
+	if attachErr == nil {
+		resp, err := serverB.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+	}
+	select {
+	case got := <-serverBAuth:
+		if got != "" {
+			t.Fatal("new origin received the deleted environment's API key")
+		}
+		t.Fatal("authentication unexpectedly dispatched a request after environment deletion")
+	default:
+	}
+	if attachErr == nil {
+		t.Fatal("deleted environment credentials still authenticate after re-adding the environment")
+	}
+}
+
+func TestMCPExecute_BrokerRepointDoesNotLeakBearer(t *testing.T) {
+	withXDG(t)
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer control.Close()
+	brokerA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"broker":"a"}`))
+	}))
+	defer brokerA.Close()
+	brokerBAuth := make(chan string, 1)
+	brokerB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		brokerBAuth <- r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"broker":"b"}`))
+	}))
+	defer brokerB.Close()
+
+	if err := runJentic(t, "env", "add", "test", "--url", control.URL, "--broker-url", brokerA.URL); err != nil {
+		t.Fatal(err)
+	}
+	seedEnvironmentRegistration(t, "test-agent", "test", "cid_test")
+	ref := auth.IdentityRef{Identity: "test-agent", Environment: "test"}
+	if err := auth.SaveAPIKey(ref, "jak_mcp_broker_repoint_test"); err != nil {
+		t.Fatal(err)
+	}
+	removeAPIKeyOriginSidecar(t, ref)
+	if err := runJentic(t, "env", "add", "test", "--url", control.URL, "--broker-url", brokerB.URL, "--force"); err != nil {
+		t.Fatalf("broker repoint: %v", err)
+	}
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(
+		diskBackedActiveCtx(control.URL, brokerA.URL, ""),
+		callToolRequest("execute", `{"operation_id":"GET:/v1/pets"}`),
+	)
+	if err != nil {
+		t.Fatalf("handleExecute returned a protocol error: %v", err)
+	}
+	select {
+	case got := <-brokerBAuth:
+		if got != "" {
+			t.Fatal("repointed broker received the old environment bearer")
+		}
+		t.Fatalf("repointed broker received an unexpected unauthenticated request: %s", toolResultText(res))
+	default:
+	}
 }
 
 func TestMCPGetExecutionResult_RefreshesOriginBetweenPolls(t *testing.T) {

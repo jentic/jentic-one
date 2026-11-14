@@ -15,12 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
 import structlog
 
 from jentic_one.shared.config import EgressConfig, VendorIdentityProbeConfig
-from jentic_one.shared.egress import build_always_pinned_transport
-from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.http.idp_client import IdpTransportError, idp_request
 
 _logger = structlog.get_logger(__name__)
 
@@ -50,38 +48,31 @@ async def echo_identity(
     probe: VendorIdentityProbeConfig,
     access_token: str,
     egress: EgressConfig | None,
-    timeout_seconds: float = 15.0,
 ) -> IdentityEchoResult:
     """Run the identity probe and return the extracted identity.
 
     ``egress`` is the control-plane egress policy, applied to the URL check and
     the connect-time DNS pin.
     """
-    # Defense-in-depth SSRF guard: ``probe.endpoint`` is operator config, but
-    # a misconfigured entry could aim this call at a private / metadata target
-    # with the freshly minted bearer token — refuse to send it unless the
-    # operator allowlisted that target.
+    # ``probe.endpoint`` is operator config, but a misconfigured entry could aim
+    # this call at a private / metadata target with the freshly minted bearer
+    # token. ``idp_request`` refuses it unless the operator allowlisted that
+    # target, pins the connection, and bounds the exchange by a total deadline
+    # and a body cap.
     try:
-        safe_url = await validate_upstream_url_async(probe.endpoint, egress)
-    except ValueError as exc:
-        raise IdentityEchoError(f"unsafe upstream URL: {exc}") from exc
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
-        ) as client:
-            response = await client.request(
-                probe.method,
-                safe_url,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-            )
-    except ValueError as exc:
-        # Raised by the pinning transport: the host re-resolved to a blocked
-        # address or did not resolve at all.
-        raise IdentityEchoError(f"unsafe upstream URL: {exc}") from exc
+        response = await idp_request(
+            probe.method,
+            probe.endpoint,
+            egress=egress,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+        )
+    except IdpTransportError as exc:
+        if exc.kind == "unsafe_url":
+            raise IdentityEchoError(f"unsafe upstream URL: {exc.detail}") from None
+        raise IdentityEchoError(f"identity probe {exc.kind}") from None
     if response.status_code in (401, 403):
         raise IdentityEchoAuthError(
             f"identity probe rejected the token: HTTP {response.status_code}"

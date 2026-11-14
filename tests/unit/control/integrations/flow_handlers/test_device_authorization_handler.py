@@ -11,11 +11,14 @@ on transient upstream blips, so every branch gets an explicit test.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import socket
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -43,6 +46,7 @@ from jentic_one.shared.config import (
     EncryptionKey,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.http.idp_client import idp_request
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
@@ -645,3 +649,37 @@ async def test_advance_refuses_endpoint_outside_control_egress(
         "vendor 0",
     )
     mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_poll_tarpit_reports_failed_not_hang() -> None:
+    """A token endpoint that trickles bytes forever fails the advance at the deadline."""
+
+    class _Drip(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            while True:
+                await asyncio.sleep(0.05)
+                yield b" "
+
+    ctx = _make_context()
+    p_get, p_claim, p_update = _patch_repo(_make_dfc(ctx, last_polled_at=None))
+    with (
+        p_get,
+        p_claim,
+        p_update,
+        patch.object(df, "idp_request", partial(idp_request, deadline_s=0.5)),
+        patch(
+            "jentic_one.shared.http.idp_client.validate_upstream_url_async",
+            new=AsyncMock(return_value="https://idp.example.com/token"),
+        ),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(lambda request: httpx.Response(200, stream=_Drip())),
+        ),
+    ):
+        report = await asyncio.wait_for(DeviceAuthorizationHandler(ctx).advance("cred_1"), 5)
+    assert (report.kind, report.error_code, report.terminal_detail) == (
+        "failed",
+        "vendor_error",
+        "vendor 0",
+    )

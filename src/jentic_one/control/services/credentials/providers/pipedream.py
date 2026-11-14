@@ -5,10 +5,8 @@ from __future__ import annotations
 import os
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
-import httpx
 
 from jentic_one.control.services.credentials.providers.base import ProviderError
 from jentic_one.control.services.credentials.providers.direct_oauth2 import _true_expiry
@@ -37,7 +35,7 @@ from jentic_one.shared.config import (
     resolved_control_egress,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_always_pinned_transport
+from jentic_one.shared.http.idp_client import IdpResponse, IdpTransportError, idp_request
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.url import is_loopback_url
 from jentic_one.shared.url_validation import validate_upstream_url_async
@@ -252,31 +250,60 @@ class PipedreamProvider:
             expires_at=expires_at,
         )
 
+    async def _send(
+        self,
+        method: Literal["GET", "POST"],
+        url: str,
+        *,
+        egress: EgressConfig | None,
+        reset_app_token: bool,
+        data: dict[str, str] | None = None,
+        json: dict[str, str] | None = None,
+        headers: dict[str, str],
+    ) -> IdpResponse:
+        """Send one Pipedream API request under the bounded IdP client.
+
+        A failed exchange clears the cached app token when ``reset_app_token``
+        is set, so the next call mints a fresh one.
+        """
+        try:
+            return await idp_request(
+                method,
+                url,
+                egress=egress,
+                data=data,
+                json_body=json,
+                headers=headers,
+            )
+        except IdpTransportError as exc:
+            if reset_app_token:
+                self._app_token = None
+            if exc.kind == "unsafe_url":
+                raise ProviderError(f"unsafe upstream URL: {exc.detail}") from None
+            if exc.detail:
+                raise ProviderError(f"Pipedream {exc.kind} error: {exc.detail}") from None
+            raise ProviderError(f"Pipedream {exc.kind}") from None
+
     async def _get_app_token(self, *, egress: EgressConfig | None = None) -> str:
         if self._app_token is not None:
             return self._app_token
 
         safe_url = await _validated_pipedream_url(f"{self._base_url}/oauth/token", egress)
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.post(
-                    safe_url,
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": self._client_id,
-                        "client_secret": self._client_secret.get_secret_value(),
-                    },
-                    headers={"Accept": "application/json"},
-                )
-        except ValueError as exc:
-            raise ProviderError(f"unsafe upstream URL: {exc}") from exc
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"Pipedream transport error: {type(exc).__name__}") from exc
+        response = await self._send(
+            "POST",
+            safe_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self._client_id,
+                "client_secret": self._client_secret.get_secret_value(),
+            },
+            headers={"Accept": "application/json"},
+            egress=egress,
+            reset_app_token=False,
+        )
 
         if response.status_code != 200:
-            raise PipedreamAPIError(response.status_code, response.text)
+            raise PipedreamAPIError(response.status_code, response.text())
 
         try:
             data = response.json()
@@ -310,25 +337,18 @@ class PipedreamProvider:
             payload["error_redirect_uri"] = error_redirect_uri
 
         safe_url = await _validated_pipedream_url(f"{self._base_url}/connect/tokens", egress)
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.post(
-                    safe_url,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {app_token}", "Accept": "application/json"},
-                )
-        except ValueError as exc:
-            self._app_token = None
-            raise ProviderError(f"unsafe upstream URL: {exc}") from exc
-        except httpx.HTTPError as exc:
-            self._app_token = None
-            raise ProviderError(f"Pipedream transport error: {type(exc).__name__}") from exc
+        response = await self._send(
+            "POST",
+            safe_url,
+            json=payload,
+            headers={"Authorization": f"Bearer {app_token}", "Accept": "application/json"},
+            egress=egress,
+            reset_app_token=True,
+        )
 
         if response.status_code != 200:
             self._app_token = None
-            raise PipedreamAPIError(response.status_code, response.text)
+            raise PipedreamAPIError(response.status_code, response.text())
 
         try:
             data = response.json()
@@ -353,27 +373,20 @@ class PipedreamProvider:
         safe_url = await _validated_pipedream_url(
             f"{self._base_url}/connect/accounts/{account_id}", egress
         )
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.get(
-                    safe_url,
-                    headers={
-                        "Authorization": f"Bearer {app_token}",
-                        "Accept": "application/json",
-                    },
-                )
-        except ValueError as exc:
-            self._app_token = None
-            raise ProviderError(f"unsafe upstream URL: {exc}") from exc
-        except httpx.HTTPError as exc:
-            self._app_token = None
-            raise ProviderError(f"Pipedream transport error: {type(exc).__name__}") from exc
+        response = await self._send(
+            "GET",
+            safe_url,
+            headers={
+                "Authorization": f"Bearer {app_token}",
+                "Accept": "application/json",
+            },
+            egress=egress,
+            reset_app_token=True,
+        )
 
         if response.status_code != 200:
             self._app_token = None
-            raise PipedreamAPIError(response.status_code, response.text)
+            raise PipedreamAPIError(response.status_code, response.text())
 
         try:
             data = response.json()
@@ -398,27 +411,20 @@ class PipedreamProvider:
         safe_url = await _validated_pipedream_url(
             f"{self._base_url}/connect/accounts/{account_id}/token", egress
         )
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.get(
-                    safe_url,
-                    headers={
-                        "Authorization": f"Bearer {app_token}",
-                        "Accept": "application/json",
-                    },
-                )
-        except ValueError as exc:
-            self._app_token = None
-            raise ProviderError(f"unsafe upstream URL: {exc}") from exc
-        except httpx.HTTPError as exc:
-            self._app_token = None
-            raise ProviderError(f"Pipedream transport error: {type(exc).__name__}") from exc
+        response = await self._send(
+            "GET",
+            safe_url,
+            headers={
+                "Authorization": f"Bearer {app_token}",
+                "Accept": "application/json",
+            },
+            egress=egress,
+            reset_app_token=True,
+        )
 
         if response.status_code != 200:
             self._app_token = None
-            raise PipedreamAPIError(response.status_code, response.text)
+            raise PipedreamAPIError(response.status_code, response.text())
 
         try:
             data = response.json()

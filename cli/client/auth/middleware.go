@@ -183,14 +183,30 @@ func targetOriginFor(creds Credentials) (string, error) {
 }
 
 // readStoredAPIKey distinguishes an absent key from a key whose binding cannot
-// be trusted. Only absence selects the OAuth exchange fallback.
-func readStoredAPIKey(ref IdentityRef) (*apiKeyRecord, error) {
+// be trusted. Only absence selects the OAuth exchange fallback. An origin-less
+// key binds on first use when the configured environment and target agree.
+func readStoredAPIKey(creds Credentials, targetOrigin string) (*apiKeyRecord, error) {
+	ref := creds.IdentityRef()
 	rec, err := readAPIKeyRecord(ref)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading stored API key for %s/%s: %w", ref.Identity, ref.Environment, err)
+	}
+	if rec.Origin == "" && targetOrigin != "" {
+		envOrigin, err := configuredEnvOrigin(ref.Environment)
+		if err != nil {
+			return nil, err
+		}
+		if envOrigin == "" || envOrigin != targetOrigin {
+			return nil, fmt.Errorf("%w: stored API key for %s/%s has no origin binding and the configured environment does not match target %s",
+				ErrOriginMismatch, ref.Identity, ref.Environment, targetOrigin)
+		}
+		rec, err = bindAPIKeyOrigin(ref, envOrigin)
+		if err != nil {
+			return nil, fmt.Errorf("binding stored API key for %s/%s: %w", ref.Identity, ref.Environment, err)
+		}
 	}
 	return rec, nil
 }
@@ -219,11 +235,11 @@ func BearerToken(creds Credentials) (string, error) {
 	// Ed25519/JWT-bearer flow it is NOT exchanged or minted — the backend
 	// dispatches on the key prefix, so the raw key IS the bearer value
 	// (parity with V1: internal/agentauth Session.ValidToken returns the stored
-	// key verbatim, sent by httpx as `Authorization: Bearer *** Presence of
-	// the on-disk credential is the signal; we only treat a missing-file error
+	// key verbatim as the Authorization bearer value). Presence of the on-disk
+	// credential is the signal; we only treat a missing-file error
 	// as "no API key, fall through to OAuth" — a cross-origin key is refused
 	// fail-closed so a repointed environment never sends the old backend's key.
-	rec, err := readStoredAPIKey(creds.IdentityRef())
+	rec, err := readStoredAPIKey(creds, targetOrigin)
 	if err != nil {
 		return "", err
 	}
@@ -239,7 +255,7 @@ func BearerToken(creds Credentials) (string, error) {
 	// uniformly as needing rotation or exchange; we never return a cached token
 	// unless it is non-nil, same-origin, non-empty, and unexpired.
 	tokens, err := readTokensRaw(creds.IdentityRef())
-	originMismatch := tokens != nil && tokens.Origin != "" && targetOrigin != "" && tokens.Origin != targetOrigin
+	originMismatch := tokens != nil && targetOrigin != "" && tokens.Origin != targetOrigin
 	if originMismatch {
 		_ = InvalidateTokens(creds.IdentityRef())
 	}
@@ -258,7 +274,7 @@ func BearerToken(creds Credentials) (string, error) {
 		// stops waiting without cancelling the shared flight.
 		v, xerr, _ := mintGroup.Do(mintKey(creds), func() (any, error) {
 			cur, cerr := readTokensRaw(creds.IdentityRef())
-			curMismatch := cur != nil && cur.Origin != "" && targetOrigin != "" && cur.Origin != targetOrigin
+			curMismatch := cur != nil && targetOrigin != "" && cur.Origin != targetOrigin
 			if curMismatch {
 				_ = InvalidateTokens(creds.IdentityRef())
 			}
@@ -326,7 +342,7 @@ func RefreshBearerToken(creds Credentials) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rec, err := readStoredAPIKey(creds.IdentityRef())
+	rec, err := readStoredAPIKey(creds, targetOrigin)
 	if err != nil {
 		return "", err
 	}
@@ -351,6 +367,10 @@ func CanReExchange(creds Credentials) bool {
 	if creds.InjectedBearerToken != "" {
 		return false
 	}
-	rec, err := readStoredAPIKey(creds.IdentityRef())
+	targetOrigin, err := targetOriginFor(creds)
+	if err != nil {
+		return false
+	}
+	rec, err := readStoredAPIKey(creds, targetOrigin)
 	return err == nil && (rec == nil || rec.APIKey == "")
 }

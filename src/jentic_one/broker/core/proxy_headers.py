@@ -9,17 +9,23 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
+from urllib.parse import unquote, unquote_plus
 
 from jentic_one.broker.core.headers import (
     BROKER_CONSUMED_HEADERS,
+    BROKER_OWNED_RESPONSE_HEADER_PREFIXES,
+    BROKER_OWNED_RESPONSE_HEADERS,
     HOP_BY_HOP_HEADERS,
     SPOOFABLE_HEADERS,
+    URL_BEARING_RESPONSE_HEADERS,
     connection_nominated_headers,
     extract_header_items,
     scrub_sensitive_header_items,
 )
 from jentic_one.shared.http.injection import (
+    ReflectionGuard,
     filter_inbound_cookie,
+    get_current_reflection_guard,
     get_current_upstream_url,
     record_upstream_set_cookie,
     set_current_upstream_url,
@@ -272,6 +278,107 @@ def replay_headers(inbound: Mapping[str, str]) -> dict[str, str]:
 extract_replay_headers = replay_headers
 
 
+_LINK_TARGET_RE = re.compile(r"<([^<>]*)>")
+_REFRESH_URL_RE = re.compile(r"(\burl\s*=\s*)(.*)$", re.IGNORECASE)
+_PERCENT_ESCAPE_RE = re.compile(r"%([0-9A-Fa-f]{2})")
+
+
+def _strip_query_credentials(target: str, query_param_names: frozenset[str]) -> str:
+    """Remove injected query fields while retaining the target's other components."""
+    before_fragment, fragment_marker, fragment = target.partition("#")
+    path, query_marker, query = before_fragment.partition("?")
+    if not query_marker:
+        return target
+    kept: list[str] = []
+    for segment in query.split("&"):
+        raw_name = segment.partition("=")[0]
+        if (
+            raw_name in query_param_names
+            or unquote(raw_name) in query_param_names
+            or unquote_plus(raw_name) in query_param_names
+        ):
+            continue
+        kept.append(segment)
+    cleaned = path
+    if kept:
+        cleaned = f"{cleaned}?{'&'.join(kept)}"
+    if fragment_marker:
+        cleaned = f"{cleaned}#{fragment}"
+    return cleaned
+
+
+def _replace_reflected_secret(value: str, secret: str) -> str:
+    """Replace a credential, ignoring hex case only inside percent-escape octets."""
+    pattern: list[str] = []
+    offset = 0
+    for escape in _PERCENT_ESCAPE_RE.finditer(secret):
+        pattern.append(re.escape(secret[offset : escape.start()]))
+        octet = escape.group(1)
+        pattern.append(
+            "%"
+            + "".join(
+                f"[{char.lower()}{char.upper()}]" if char in "abcdefABCDEF" else char
+                for char in octet
+            )
+        )
+        offset = escape.end()
+    pattern.append(re.escape(secret[offset:]))
+    return re.sub("".join(pattern), "[REDACTED]", value)
+
+
+def _strip_refresh_query_credentials(value: str, query_param_names: frozenset[str]) -> str:
+    """Remove injected query fields while preserving Refresh URL delimiters."""
+
+    def replace(match: re.Match[str]) -> str:
+        target = match.group(2)
+        if target.startswith(('"', "'")):
+            delimiter = target[0]
+            closing = target.find(delimiter, 1)
+            if closing != -1:
+                return (
+                    match.group(1)
+                    + delimiter
+                    + _strip_query_credentials(target[1:closing], query_param_names)
+                    + target[closing:]
+                )
+        return match.group(1) + _strip_query_credentials(target, query_param_names)
+
+    return _REFRESH_URL_RE.sub(replace, value, count=1)
+
+
+def _scrub_url_header(name: str, value: str, query_param_names: frozenset[str]) -> str:
+    """Remove injected query fields from one URL-bearing response header."""
+    if name == "link":
+        return _LINK_TARGET_RE.sub(
+            lambda match: f"<{_strip_query_credentials(match.group(1), query_param_names)}>",
+            value,
+        )
+    if name == "refresh":
+        return _strip_refresh_query_credentials(value, query_param_names)
+    return _strip_query_credentials(value, query_param_names)
+
+
+def scrub_reflected_secrets(
+    items: Iterable[tuple[str, str]], guard: ReflectionGuard | None
+) -> list[tuple[str, str]]:
+    """Remove broker metadata, injected query fields, and reflected credential values."""
+    query_param_names = guard.query_param_names if guard is not None else frozenset()
+    secrets = guard.secrets if guard is not None else ()
+    scrubbed: list[tuple[str, str]] = []
+    for key, value in items:
+        lowered = key.lower()
+        if lowered in BROKER_OWNED_RESPONSE_HEADERS or lowered.startswith(
+            BROKER_OWNED_RESPONSE_HEADER_PREFIXES
+        ):
+            continue
+        if lowered in URL_BEARING_RESPONSE_HEADERS and query_param_names:
+            value = _scrub_url_header(lowered, value, query_param_names)
+        for secret in secrets:
+            value = _replace_reflected_secret(value, secret)
+        scrubbed.append((key, value))
+    return scrubbed
+
+
 def passthrough_response_header_items(
     upstream: Mapping[str, str] | Iterable[tuple[str, str]],
     *,
@@ -301,6 +408,7 @@ def passthrough_response_header_items(
         if lowered == "set-cookie" and effective_url:
             record_upstream_set_cookie(effective_url, value)
         kept.append((key, value))
+    kept = scrub_reflected_secrets(kept, get_current_reflection_guard())
     kept.append(("cache-control", PASSTHROUGH_CACHE_CONTROL))
     return kept
 
@@ -364,5 +472,6 @@ __all__ = [
     "passthrough_streaming_headers",
     "reconstruct_upstream_url",
     "replay_headers",
+    "scrub_reflected_secrets",
     "scrub_sensitive_header_items",
 ]

@@ -294,11 +294,18 @@ func (s *mcpServer) heldPollPayload(cctx context.Context, heldExecutionID string
 	if held.ExecutionId != nil && *held.ExecutionId != "" {
 		payload["execution_id"] = *held.ExecutionId
 	}
+	untrustedReview := *reviewURL != "" && !mcpTrustedReviewURL(cctx, *reviewURL)
+	if untrustedReview {
+		markUntrustedReview(payload)
+	}
 	if status == agentops.HeldStatusCompleted || status == agentops.HeldStatusFailed {
 		s.attachHeldResult(cctx, client, heldExecutionID, payload)
 	}
 	if !isTerminalJobStatus(status) {
 		payload["agent_directive"] = stillHeldAgentDirective
+		if untrustedReview {
+			payload["agent_directive"] = mcpUntrustedReviewDirective
+		}
 	}
 	return payload, nil
 }
@@ -325,12 +332,23 @@ func (s *mcpServer) heldPollError(ctx context.Context, heldExecutionID, reviewUR
 		Details:    details,
 		Cause:      coded.Cause,
 	}
+	untrustedReview := reviewURL != "" && !mcpTrustedReviewURL(ctx, reviewURL)
+	if untrustedReview {
+		details["review_url_trusted"] = false
+		wrapped.Actionable = mcpUntrustedReviewDirective
+	}
 	if coded.Code != ux.CodeTransportError {
 		return s.softError(ctx, wrapped)
 	}
-	wrapped.Actionable = "The held call is unaffected: it may still be waiting for a human decision. " +
-		"If the user has not approved it yet, show them the review_url again; then call " +
-		"get_execution_result again with this held_execution_id. Do not re-send the call."
+	if !untrustedReview {
+		wrapped.Actionable = "The held call is unaffected: it may still be waiting for a human decision. " +
+			"Call get_execution_result again with this held_execution_id. Do not re-send the call."
+		if reviewURL != "" {
+			wrapped.Actionable = "The held call is unaffected: it may still be waiting for a human decision. " +
+				"If the user has not approved it yet, show them the review_url again; then call " +
+				"get_execution_result again with this held_execution_id. Do not re-send the call."
+		}
+	}
 	return s.softErrorExtra(ctx, wrapped, "get_execution_result", map[string]any{"retryable": true})
 }
 

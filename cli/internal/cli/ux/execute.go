@@ -160,6 +160,8 @@ type HeldNotice struct {
 	HeldExecutionID string
 	ReviewURL       string
 	ExpiresAt       string
+	// Trusted reports whether ReviewURL belongs to the configured Jentic instance.
+	Trusted bool
 	// Waiting is true when the command goes on to wait for the decision
 	// (`execute --wait`), false when it stops at the hold.
 	Waiting bool
@@ -172,8 +174,12 @@ func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(w, st.Warn.Render("Held — this call needs human approval before it runs:"))
 	fmt.Fprintln(w, "  held execution: "+n.HeldExecutionID)
-	fmt.Fprintln(w, "  Show the user this link; they approve or deny the call there.")
-	fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+	if n.Trusted {
+		fmt.Fprintln(w, "  Show the user this link; they approve or deny the call there.")
+		fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+	} else {
+		fmt.Fprintln(w, st.Warn.Render("  warning: review_url did not come from the configured Jentic instance; do not open it or ask the user to sign in."))
+	}
 	if n.ExpiresAt != "" {
 		fmt.Fprintln(w, "  expires: "+n.ExpiresAt)
 	}
@@ -193,8 +199,12 @@ func RenderHeldUnfinished(ctx context.Context, w io.Writer, n HeldNotice, headli
 	fmt.Fprintln(w, st.Warn.Render(headline))
 	fmt.Fprintln(w, "  held execution: "+n.HeldExecutionID)
 	if n.ReviewURL != "" {
-		fmt.Fprintln(w, "  Show the user this link again if they have not decided; they approve or deny the call there.")
-		fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+		if n.Trusted {
+			fmt.Fprintln(w, "  Show the user this link again if they have not decided; they approve or deny the call there.")
+			fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+		} else {
+			fmt.Fprintln(w, st.Warn.Render("  warning: review_url did not come from the configured Jentic instance; do not open it or ask the user to sign in."))
+		}
 	}
 	if n.ExpiresAt != "" {
 		fmt.Fprintln(w, "  expires: "+n.ExpiresAt)

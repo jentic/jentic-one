@@ -407,7 +407,9 @@ Add a Control Plane environment. --broker-url is optional and is NEVER
 derived from --url (Control Plane and Broker often live on different
 domains). `jentic register` seeds broker_url automatically for a loopback
 install; set it explicitly here for a remote broker or to fix an existing
-environment (use --force to replace one of the same name).
+environment (use --force to replace one of the same name). Replacing an
+environment with a different Control Plane or Broker origin purges its
+cached credentials and identity registrations before saving.
 ```
 
 **Flags**
