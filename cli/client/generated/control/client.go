@@ -12564,10 +12564,12 @@ type ClientInterface interface {
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
 	// `org:admin`-only, revokes every active OAuth client grant bound to the
-	// agent (so the new owner must re-consent any connected client), and
-	// suspends active credential bindings to credentials outside the new
-	// owner's ownership. The agent's API key and permissions are unaffected. An
-	// archived agent cannot be updated (409). Returns the updated agent.
+	// agent (so the new owner must re-consent any connected client), suspends
+	// active credential bindings to credentials outside the new owner's
+	// ownership, and revokes agent permission grants above the new owner's
+	// permission ceiling (grant those permissions to the new owner first to
+	// keep them on the agent). The agent's API key is unaffected. An archived
+	// agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12582,10 +12584,12 @@ type ClientInterface interface {
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
 	// `org:admin`-only, revokes every active OAuth client grant bound to the
-	// agent (so the new owner must re-consent any connected client), and
-	// suspends active credential bindings to credentials outside the new
-	// owner's ownership. The agent's API key and permissions are unaffected. An
-	// archived agent cannot be updated (409). Returns the updated agent.
+	// agent (so the new owner must re-consent any connected client), suspends
+	// active credential bindings to credentials outside the new owner's
+	// ownership, and revokes agent permission grants above the new owner's
+	// permission ceiling (grant those permissions to the new owner first to
+	// keep them on the agent). The agent's API key is unaffected. An archived
+	// agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15850,10 +15854,12 @@ func (c *Client) GetAgent(ctx context.Context, agentId string, reqEditors ...Req
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
 // `org:admin`-only, revokes every active OAuth client grant bound to the
-// agent (so the new owner must re-consent any connected client), and
-// suspends active credential bindings to credentials outside the new
-// owner's ownership. The agent's API key and permissions are unaffected. An
-// archived agent cannot be updated (409). Returns the updated agent.
+// agent (so the new owner must re-consent any connected client), suspends
+// active credential bindings to credentials outside the new owner's
+// ownership, and revokes agent permission grants above the new owner's
+// permission ceiling (grant those permissions to the new owner first to
+// keep them on the agent). The agent's API key is unaffected. An archived
+// agent cannot be updated (409). Returns the updated agent.
 //
 // Takes any type of body and a specified content type.
 //
@@ -15878,10 +15884,12 @@ func (c *Client) UpdateAgentWithBody(ctx context.Context, agentId string, conten
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
 // `org:admin`-only, revokes every active OAuth client grant bound to the
-// agent (so the new owner must re-consent any connected client), and
-// suspends active credential bindings to credentials outside the new
-// owner's ownership. The agent's API key and permissions are unaffected. An
-// archived agent cannot be updated (409). Returns the updated agent.
+// agent (so the new owner must re-consent any connected client), suspends
+// active credential bindings to credentials outside the new owner's
+// ownership, and revokes agent permission grants above the new owner's
+// permission ceiling (grant those permissions to the new owner first to
+// keep them on the agent). The agent's API key is unaffected. An archived
+// agent cannot be updated (409). Returns the updated agent.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -29875,10 +29883,12 @@ type ClientWithResponsesInterface interface {
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
 	// `org:admin`-only, revokes every active OAuth client grant bound to the
-	// agent (so the new owner must re-consent any connected client), and
-	// suspends active credential bindings to credentials outside the new
-	// owner's ownership. The agent's API key and permissions are unaffected. An
-	// archived agent cannot be updated (409). Returns the updated agent.
+	// agent (so the new owner must re-consent any connected client), suspends
+	// active credential bindings to credentials outside the new owner's
+	// ownership, and revokes agent permission grants above the new owner's
+	// permission ceiling (grant those permissions to the new owner first to
+	// keep them on the agent). The agent's API key is unaffected. An archived
+	// agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -29893,10 +29903,12 @@ type ClientWithResponsesInterface interface {
 	// agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 	// else gets 404). Changing `owner_id` transfers ownership, is
 	// `org:admin`-only, revokes every active OAuth client grant bound to the
-	// agent (so the new owner must re-consent any connected client), and
-	// suspends active credential bindings to credentials outside the new
-	// owner's ownership. The agent's API key and permissions are unaffected. An
-	// archived agent cannot be updated (409). Returns the updated agent.
+	// agent (so the new owner must re-consent any connected client), suspends
+	// active credential bindings to credentials outside the new owner's
+	// ownership, and revokes agent permission grants above the new owner's
+	// permission ceiling (grant those permissions to the new owner first to
+	// keep them on the agent). The agent's API key is unaffected. An archived
+	// agent cannot be updated (409). Returns the updated agent.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -46761,6 +46773,8 @@ type RegisterEndpointHTTPResp struct {
 	ApplicationproblemJSON400 *BadRequest
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *InternalServerError
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -46782,6 +46796,11 @@ func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON400() *BadRequest {
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON422() *UnprocessableEntity {
 	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r RegisterEndpointHTTPResp) GetApplicationproblemJSON429() *ProblemDetail {
+	return r.ApplicationproblemJSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -49129,10 +49148,12 @@ func (c *ClientWithResponses) GetAgentWithResponse(ctx context.Context, agentId 
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
 // `org:admin`-only, revokes every active OAuth client grant bound to the
-// agent (so the new owner must re-consent any connected client), and
-// suspends active credential bindings to credentials outside the new
-// owner's ownership. The agent's API key and permissions are unaffected. An
-// archived agent cannot be updated (409). Returns the updated agent.
+// agent (so the new owner must re-consent any connected client), suspends
+// active credential bindings to credentials outside the new owner's
+// ownership, and revokes agent permission grants above the new owner's
+// permission ceiling (grant those permissions to the new owner first to
+// keep them on the agent). The agent's API key is unaffected. An archived
+// agent cannot be updated (409). Returns the updated agent.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -49153,10 +49174,12 @@ func (c *ClientWithResponses) UpdateAgentWithBodyWithResponse(ctx context.Contex
 // agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
 // else gets 404). Changing `owner_id` transfers ownership, is
 // `org:admin`-only, revokes every active OAuth client grant bound to the
-// agent (so the new owner must re-consent any connected client), and
-// suspends active credential bindings to credentials outside the new
-// owner's ownership. The agent's API key and permissions are unaffected. An
-// archived agent cannot be updated (409). Returns the updated agent.
+// agent (so the new owner must re-consent any connected client), suspends
+// active credential bindings to credentials outside the new owner's
+// ownership, and revokes agent permission grants above the new owner's
+// permission ceiling (grant those permissions to the new owner first to
+// keep them on the agent). The agent's API key is unaffected. An archived
+// agent cannot be updated (409). Returns the updated agent.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -64994,6 +65017,13 @@ func ParseRegisterEndpointHTTPResp(rsp *http.Response) (*RegisterEndpointHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalServerError

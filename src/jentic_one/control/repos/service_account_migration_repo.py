@@ -40,6 +40,7 @@ from jentic_one.shared.auth.permission_catalog import (
     USERS_WRITE,
 )
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.locks import advisory_xact_lock
 
 # The job's system actor — stamped as created_by/registered_by/granted_by so
 # every migrated row is attributable to the run (theme-5 provenance shape).
@@ -241,12 +242,7 @@ class ServiceAccountMigrationRepository:
         ``oauth_token_repo.acquire_refresh_lock`` precedent. The unique
         partial index remains the enforcing mechanism on both dialects.
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:sid))"),
-                {"sid": service_account_id},
-            )
+        await advisory_xact_lock(session, hashtext_name=service_account_id)
 
     @staticmethod
     async def list_service_accounts(session: AsyncSession) -> list[Any]:

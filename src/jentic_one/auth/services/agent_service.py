@@ -21,6 +21,8 @@ from jentic_one.admin.repos import (
     JobRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
+    TokenLineageRepository,
+    UserPermissionGrantRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
@@ -55,6 +57,10 @@ from jentic_one.auth.services.schemas.agents import (
     CredentialBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import (
+    ADMIN_ONLY_AGENT_PERMISSIONS,
+    cap_agent_permissions,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
@@ -284,6 +290,34 @@ class AgentService:
             existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
+            dropped_self_admin = [
+                g.permission
+                for g in existing_grants
+                if g.granted_by is None and g.permission in ADMIN_ONLY_AGENT_PERMISSIONS
+            ]
+            if dropped_self_admin:
+                before_permissions = [g.permission for g in existing_grants]
+                for permission in dropped_self_admin:
+                    await ActorPermissionGrantRepository.revoke(
+                        session, actor_id=agent_id, permission=permission
+                    )
+                existing_grants = [
+                    g
+                    for g in existing_grants
+                    if not (g.granted_by is None and g.permission in ADMIN_ONLY_AGENT_PERMISSIONS)
+                ]
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"permissions": before_permissions},
+                    after={"permissions": [g.permission for g in existing_grants]},
+                    reason="self_requested_admin_permission_dropped",
+                    origin=identity.origin.value,
+                )
             # Permissions a self-registration requested become live on approval, so
             # the approver's ceiling applies to them. Requested strings outside
             # the catalogue grant nothing and are left as-is (not a 422: the
@@ -593,10 +627,7 @@ class AgentService:
             jobs = await JobRepository.cancel_active_for_actor(session, agent_id)
             grant_ids = await OAuthClientGrantRepository.delete_for_agent(session, agent_id)
             codes = await AuthorizationCodeRepository.delete_by_grant_ids(session, grant_ids)
-            access = await AccessTokenRepository.delete_for_actor(
-                session, agent_id, grant_ids=grant_ids
-            )
-            refresh = await RefreshTokenRepository.delete_for_actor(
+            tokens = await TokenLineageRepository.delete_for_actor(
                 session, agent_id, grant_ids=grant_ids
             )
             await AgentRepository.delete(session, agent_id)
@@ -623,8 +654,8 @@ class AgentService:
             prior_status=str(prior_status),
             oauth_grants=len(grant_ids),
             authorization_codes=codes,
-            access_tokens=access,
-            refresh_tokens=refresh,
+            access_tokens=tokens.access,
+            refresh_tokens=tokens.refresh,
             cancelled_jobs=jobs,
             pending_credentials=control.pending_credentials,
             connect_sessions=control.connect_sessions,
@@ -1093,10 +1124,10 @@ class AgentService:
         self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
         back; the new owner re-consents through the normal flow if the
         connection is still wanted. Active credential bindings to credentials
-        outside the new owner's ownership are suspended in the same
-        transaction, so the new owner does not inherit active access to the
-        previous owner's credentials; the agent's API key and scopes are
-        untouched.
+        outside the new owner's ownership are suspended and permission grants
+        above the new owner's ceiling are revoked in the same transaction, so
+        the new owner does not inherit active access to the previous owner's
+        credentials or permissions; the agent's API key is untouched.
 
         Only the owner or an ``org:admin`` caller may update the agent (others
         get a uniform 404); changing ``owner_id`` is ``org:admin``-only. An
@@ -1130,6 +1161,7 @@ class AgentService:
                     await self._suspend_foreign_bindings_on_transfer(
                         session, agent, identity=identity
                     )
+                    await self._recap_permissions_on_transfer(session, agent, identity=identity)
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -1226,6 +1258,48 @@ class AgentService:
                 actor_id=identity.sub,
             )
         return suspended_count
+
+    async def _recap_permissions_on_transfer(
+        self,
+        session: AsyncSession,
+        agent: Agent,
+        *,
+        identity: Identity,
+    ) -> None:
+        """Revoke grants on ``agent`` that exceed the new owner's permission ceiling."""
+        existing_grants = await ActorPermissionGrantRepository.list_for_actor(
+            session, agent.id, actor_type=ActorType.AGENT
+        )
+        if not existing_grants:
+            return
+        before_permissions = [g.permission for g in existing_grants]
+        owner_effective: set[str] | None = None
+        if agent.owner_id is not None:
+            owner_grants = await UserPermissionGrantRepository.get_grants_for_user(
+                session, agent.owner_id
+            )
+            owner_effective = compute_effective({g.permission for g in owner_grants})
+        allowed = set(cap_agent_permissions(before_permissions, owner_effective))
+        revoked = [p for p in before_permissions if p not in allowed]
+        if not revoked:
+            return
+        for permission in revoked:
+            await ActorPermissionGrantRepository.revoke(
+                session, actor_id=agent.id, permission=permission
+            )
+        after_permissions = [p for p in before_permissions if p in allowed]
+        await record_audit(
+            session,
+            action=AuditAction.REVOKE,
+            target_type=AuditTargetType.AGENT,
+            target_id=agent.id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            before={"permissions": before_permissions},
+            after={"permissions": after_permissions},
+            reason="agent ownership transferred: permissions above new owner",
+            origin=identity.origin.value,
+        )
 
     async def update_jwks(
         self,

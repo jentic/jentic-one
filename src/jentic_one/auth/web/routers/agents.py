@@ -194,10 +194,12 @@ async def update_agent(
     agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
     else gets 404). Changing `owner_id` transfers ownership, is
     `org:admin`-only, revokes every active OAuth client grant bound to the
-    agent (so the new owner must re-consent any connected client), and
-    suspends active credential bindings to credentials outside the new
-    owner's ownership. The agent's API key and permissions are unaffected. An
-    archived agent cannot be updated (409). Returns the updated agent.
+    agent (so the new owner must re-consent any connected client), suspends
+    active credential bindings to credentials outside the new owner's
+    ownership, and revokes agent permission grants above the new owner's
+    permission ceiling (grant those permissions to the new owner first to
+    keep them on the agent). The agent's API key is unaffected. An archived
+    agent cannot be updated (409). Returns the updated agent.
     """
     update_data = body.model_dump(exclude_unset=True)
     view = await agent_svc.update_agent(agent_id, update_data=update_data, identity=identity)

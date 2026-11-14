@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/atomicfile"
 )
 
 // AgentStateName is the agent-account record under the XDG config dir
@@ -137,7 +138,7 @@ func saveAgentState(st *AgentState) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(st.Path, data, 0o600)
+	return atomicfile.Write(st.Path, data, atomicfile.Options{Perm: 0o600})
 }
 
 // lockAgentState takes an exclusive advisory flock on the agent-state sidecar

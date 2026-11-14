@@ -160,15 +160,16 @@ func TestBundledParsesFreeform(t *testing.T) {
 	}
 }
 
-func TestBundledSetLoadsAll(t *testing.T) {
-	set, err := BundledSet("http://example.test")
-	if err != nil {
-		t.Fatal(err)
+func TestBundledLoadsAllBundledNames(t *testing.T) {
+	names := BundledNames()
+	if len(names) == 0 {
+		t.Fatal("expected at least one bundled skill")
 	}
-	if len(set) != len(BundledNames()) {
-		t.Fatalf("BundledSet len = %d, want %d", len(set), len(BundledNames()))
-	}
-	for _, c := range set {
+	for _, name := range names {
+		c, err := Bundled(name, "http://example.test")
+		if err != nil {
+			t.Fatalf("Bundled(%q): %v", name, err)
+		}
 		if c.BaseURL != "http://example.test" {
 			t.Errorf("%s BaseURL not stamped", c.Name)
 		}

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -18,11 +19,15 @@ from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.core.claim import get_claim_token_minter
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import ADMIN_ONLY_AGENT_PERMISSIONS
+from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS, RETIRED_PERMISSIONS
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
+
+logger = structlog.get_logger(__name__)
 
 RAT_PREFIX = "rat_"
 
@@ -90,6 +95,27 @@ def validate_jwks(jwks: dict[str, Any]) -> None:
         )
 
 
+def _registrable_scopes(scope: str | None) -> list[str]:
+    """Filter self-registration ``scope`` to non-admin catalogue permissions."""
+    if not scope:
+        return []
+    tokens = list(dict.fromkeys(scope.split()))
+    kept: list[str] = []
+    dropped: list[str] = []
+    for token in tokens:
+        if (
+            token in ALL_PERMISSIONS
+            and token not in RETIRED_PERMISSIONS
+            and token not in ADMIN_ONLY_AGENT_PERMISSIONS
+        ):
+            kept.append(token)
+        else:
+            dropped.append(token)
+    if dropped:
+        logger.warning("dcr_scope_dropped", dropped=dropped)
+    return kept
+
+
 class RegistrationService:
     """Handles agent self-registration via Dynamic Client Registration."""
 
@@ -133,7 +159,7 @@ class RegistrationService:
                 agent.claim_token_hash = _hash_rat(claim_plain)
                 agent.claim_expires_at = datetime.now(UTC) + timedelta(seconds=claim_ttl)
                 await session.flush()
-            requested_scopes = list(dict.fromkeys(scope.split())) if scope else []
+            requested_scopes = _registrable_scopes(scope)
             for scope_value in requested_scopes:
                 await ActorPermissionGrantRepository.grant(
                     session,

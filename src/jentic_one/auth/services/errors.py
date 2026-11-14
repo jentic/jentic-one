@@ -92,14 +92,6 @@ class UserNotAdmittedError(AuthServiceError):
         self.reason = reason
 
 
-class TokenExpiredError(AuthServiceError):
-    """Raised when a token has expired."""
-
-    def __init__(self, token_id: str) -> None:
-        super().__init__(f"Token '{token_id}' has expired")
-        self.token_id = token_id
-
-
 class RegistrationAccessDeniedError(AuthServiceError):
     """Raised when a registration access token is invalid or expired."""
 

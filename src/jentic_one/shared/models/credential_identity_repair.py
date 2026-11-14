@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cache
 from typing import Any
@@ -30,6 +30,7 @@ from publicsuffixlist import PublicSuffixList
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
+    catalog_api_name,
     credential_covers,
     slugify_api_field,
 )
@@ -93,30 +94,7 @@ def looks_like_domain_segment(value: str) -> bool:
     return _known_psl().publicsuffix(cleaned) is not None
 
 
-def catalog_entry_api_name(api_id: str, manifest_api_ids: Iterable[str]) -> str:
-    """Derive the workspace ``api_name`` seed for a catalog ``api_id``.
-
-    A ``domain/sub`` entry yields ``sub`` unless another manifest entry collapses
-    onto the same ``(vendor, slug(sub))``, in which case every clashing member
-    keeps its full host-qualified ``api_id``. Bare-domain entries keep ``api_id``.
-    """
-    host, sep, sub = api_id.partition("/")
-    if not sep or not sub:
-        return api_id
-    vendor = vendor_from_api_id(host)
-    key = slugify_api_field(sub)
-    for other in manifest_api_ids:
-        if other == api_id:
-            continue
-        other_host, other_sep, other_sub = other.partition("/")
-        if (
-            other_sep
-            and other_sub
-            and slugify_api_field(other_sub) == key
-            and vendor_from_api_id(other_host) == vendor
-        ):
-            return api_id
-    return sub
+catalog_entry_api_name = catalog_api_name
 
 
 @dataclass(frozen=True)
@@ -508,55 +486,6 @@ def validate_backup_document(document: Mapping[str, Any]) -> dict[str, list[dict
             validated_rows.append(dict(entry))
         parsed[table] = validated_rows
     return parsed
-
-
-def has_candidate_anomalies(
-    *,
-    apis: Sequence[RegistryApiSnapshot],
-    credentials: Sequence[CredentialSnapshot],
-    manifest_entries: Sequence[Mapping[str, Any]] = (),
-    revision_urls_by_api_id: Mapping[str, Sequence[str]] | None = None,
-) -> bool:
-    """Fast read-only check: return True when any API or credential row needs analysis."""
-    manifest_ids = _collect_manifest_ids(apis, credentials, manifest_entries)
-    url_to_catalog_id = _unique_spec_url_map(manifest_entries)
-    cred_cat_map = _credential_catalog_id_by_doubled_slug(credentials)
-    rev_urls = revision_urls_by_api_id or {}
-
-    for api in apis:
-        if (
-            _detect_api_doubled_target(
-                api,
-                manifest_ids=manifest_ids,
-                url_to_catalog_id=url_to_catalog_id,
-                revision_urls=rev_urls.get(api.id, ()),
-                cred_cat_map=cred_cat_map,
-            )
-            is not None
-        ):
-            return True
-
-    for cred in credentials:
-        canon = canonical_credential_scope(
-            vendor=cred.api_vendor, name=cred.api_name, version=cred.api_version
-        )
-        if (
-            cred.api_vendor != canon.vendor
-            or cred.api_name != canon.name
-            or cred.api_version != canon.version
-        ):
-            return True
-        if (
-            "/" in cred.api_vendor
-            or (cred.api_name is not None and "/" in cred.api_name)
-            or (cred.api_version is not None and "/" in cred.api_version)
-        ):
-            return True
-        if not any(
-            credential_covers(canon, vendor=a.vendor, name=a.name, version=a.version) for a in apis
-        ) and (cred.api_name is not None or cred.api_version is not None or "-" in canon.vendor):
-            return True
-    return False
 
 
 def _collect_manifest_ids(

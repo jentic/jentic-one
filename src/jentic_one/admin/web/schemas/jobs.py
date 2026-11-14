@@ -85,12 +85,6 @@ class ApiImportRevisionResult(BaseModel):
     state: str
 
 
-class ApiImportJobResult(BaseModel):
-    """Result body for a completed kind=import job."""
-
-    revisions: list[ApiImportRevisionResult]
-
-
 class JobListResponse(BaseModel):
     """Paginated list of jobs."""
 

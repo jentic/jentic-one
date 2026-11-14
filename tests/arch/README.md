@@ -66,6 +66,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_no_sqlalchemy_tuple_shims.py`](test_no_sqlalchemy_tuple_shims.py) — no SQLAlchemy typed-tuple shims (`Result.tuples()`, `.t`, `Row._tuple()`, `._t`)
 - [`test_repeated_failure_counter_threading.py`](test_repeated_failure_counter_threading.py) — every call site that runs repeated-failure detection passes the shared counter
 - [`test_keyset_helper.py`](test_keyset_helper.py) — keyset pagination predicates come from `shared/db/keyset.py`, never hand-written
+- [`test_advisory_lock_single_source.py`](test_advisory_lock_single_source.py) — transaction-scoped advisory locks go through `shared/db/locks.py`, never hand-rolled `pg_advisory_xact_lock` / `pg_advisory_lock` SQL
 - [`test_no_direct_db.py`](test_no_direct_db.py) — model modules never import DB internals directly
 - [`test_no_manual_commit.py`](test_no_manual_commit.py) — no production `session.commit()`/`rollback()`
 - [`test_migration_single_head.py`](test_migration_single_head.py) — exactly one alembic head per migration tree

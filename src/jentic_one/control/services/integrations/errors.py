@@ -55,10 +55,6 @@ class ConfirmationForbiddenError(ConnectSessionServiceError):
     """Caller is not permitted to confirm this session (e.g. agent confirming own session)."""
 
 
-class AgentRequiredError(ConnectSessionServiceError):
-    """Caller is a USER/SA but agent_id was not supplied."""
-
-
 class AgentNotFoundError(ConnectSessionServiceError):
     """The ``agent_id`` to bind does not exist in the admin DB."""
 

@@ -96,12 +96,6 @@ func IsFinishedHeldStatus(status string) bool {
 	return false
 }
 
-// HasHeldResult reports whether a held call's execution status carries a
-// result to collect (GET /executions/holds/{id}/result).
-func HasHeldResult(status string) bool {
-	return status == HeldStatusCompleted || status == HeldStatusFailed
-}
-
 // executionResultDoc is the result document of a held execution: the
 // upstream status and body (base64) of a run, or the problem body of a call
 // that never reached the upstream (a run-time denial).

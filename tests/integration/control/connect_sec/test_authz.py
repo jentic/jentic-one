@@ -63,12 +63,11 @@ pytestmark = pytest.mark.integration
 _CANARY = "sk_authz_" + "A" * 24
 _ALL = ["org:admin", "credentials:write", "agents:write", "credentials:connect"]
 
-# An agent granted everything directly, and one inheriting it from its owner.
+# An agent granted everything directly, and one owned by the session owner.
 _ADMIN_AGENT = Identity(sub=AGENT_ID, permissions=_ALL, actor_type=ActorType.AGENT)
 _INHERITING_AGENT = Identity(
     sub=AGENT_ID,
     permissions=list(DEFAULT_AGENT_PERMISSIONS),
-    parent_permissions=_ALL,
     parent_actor_id=OWNER_ID,
     actor_type=ActorType.AGENT,
 )

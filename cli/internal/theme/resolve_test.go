@@ -26,10 +26,11 @@ func TestThemesRegistryClosedSet(t *testing.T) {
 	}
 }
 
-// forceTTY makes ResolveTheme's stdout-TTY probe return want for the duration of
-// the test, so the human colour ladder can be exercised deterministically off a
-// real terminal (the ladder assumes an interactive stdout; the non-TTY branch is
-// covered separately by TestResolveTheme_NonTTYForcesNoColor).
+// forceTTY makes ResolveThemeWithName's stdout-TTY probe return want for the
+// duration of the test, so the human colour ladder can be exercised
+// deterministically off a real terminal (the ladder assumes an interactive
+// stdout; the non-TTY branch is covered separately by
+// TestResolveThemeWithName_NonTTYForcesNoColor).
 func forceTTY(t *testing.T, want bool) {
 	t.Helper()
 	prev := stdoutIsTTY
@@ -37,7 +38,7 @@ func forceTTY(t *testing.T, want bool) {
 	t.Cleanup(func() { stdoutIsTTY = prev })
 }
 
-func TestResolveTheme_Ladder(t *testing.T) {
+func TestResolveThemeWithName_Ladder(t *testing.T) {
 	forceTTY(t, true)
 	// Ensure NO_COLOR is absent (present-but-empty still counts as present).
 	t.Setenv("NO_COLOR", "")
@@ -45,74 +46,79 @@ func TestResolveTheme_Ladder(t *testing.T) {
 	t.Setenv("JENTIC_THEME", "")
 
 	t.Run("flag override wins", func(t *testing.T) {
-		got := ResolveTheme("light", "dark")
-		if got.Primary != Themes["light"].Primary {
-			t.Error("--theme light did not win")
+		got, name := ResolveThemeWithName("light", "dark")
+		if name != "light" || got.Primary != Themes["light"].Primary {
+			t.Errorf("--theme light did not win (name=%q)", name)
 		}
 	})
 
 	t.Run("JENTIC_THEME beats config", func(t *testing.T) {
 		t.Setenv("JENTIC_THEME", "light")
-		got := ResolveTheme("", "dark")
-		if got.Primary != Themes["light"].Primary {
-			t.Error("JENTIC_THEME=light did not beat config dark")
+		got, name := ResolveThemeWithName("", "dark")
+		if name != "light" || got.Primary != Themes["light"].Primary {
+			t.Errorf("JENTIC_THEME=light did not beat config dark (name=%q)", name)
 		}
 	})
 
 	t.Run("config theme used when no flag/env", func(t *testing.T) {
 		t.Setenv("JENTIC_THEME", "")
-		got := ResolveTheme("", "light")
-		if got.Primary != Themes["light"].Primary {
-			t.Error("config theme light not used")
+		got, name := ResolveThemeWithName("", "light")
+		if name != "light" || got.Primary != Themes["light"].Primary {
+			t.Errorf("config theme light not used (name=%q)", name)
 		}
 	})
 
 	t.Run("default dark", func(t *testing.T) {
 		t.Setenv("JENTIC_THEME", "")
-		got := ResolveTheme("", "")
-		if got.Primary != Themes["dark"].Primary {
-			t.Error("expected dark fallback")
+		got, name := ResolveThemeWithName("", "")
+		if name != "dark" || got.Primary != Themes["dark"].Primary {
+			t.Errorf("expected dark fallback (name=%q)", name)
 		}
 	})
 
 	t.Run("unknown name falls back to dark", func(t *testing.T) {
-		got := ResolveTheme("chartreuse", "")
-		if got.Primary != Themes["dark"].Primary {
-			t.Error("unknown theme did not fall back to dark")
+		got, name := ResolveThemeWithName("chartreuse", "")
+		if name != "dark" || got.Primary != Themes["dark"].Primary {
+			t.Errorf("unknown theme did not fall back to dark (name=%q)", name)
 		}
 	})
 }
 
-func TestResolveTheme_NoColorEnv(t *testing.T) {
+func TestResolveThemeWithName_NoColorEnv(t *testing.T) {
 	forceTTY(t, true) // isolate the NO_COLOR decision from the non-TTY branch
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("JENTIC_THEME", "dark")
 
 	// NO_COLOR present + no explicit --theme => no-color, beating JENTIC_THEME/config.
-	if _, ok := ResolveTheme("", "dark").Primary.(lipgloss.NoColor); !ok {
-		t.Error("NO_COLOR should force no-color when no --theme is given")
+	got, name := ResolveThemeWithName("", "dark")
+	if _, ok := got.Primary.(lipgloss.NoColor); !ok || name != "no-color" {
+		t.Errorf("NO_COLOR should force no-color when no --theme is given (name=%q)", name)
 	}
 	// But an explicit --theme overrides NO_COLOR (per no-color.org: user asked).
-	if _, ok := ResolveTheme("light", "dark").Primary.(lipgloss.NoColor); ok {
-		t.Error("explicit --theme light should override NO_COLOR")
+	got, name = ResolveThemeWithName("light", "dark")
+	if _, ok := got.Primary.(lipgloss.NoColor); ok || name != "light" {
+		t.Errorf("explicit --theme light should override NO_COLOR (name=%q)", name)
 	}
 }
 
-// TestResolveTheme_NonTTYForcesNoColor pins OPS-1: when stdout is NOT a terminal
-// (piped/redirected human run) and no --theme was given, ResolveTheme degrades to
-// no-color so ANSI never leaks into a consumer — but an explicit --theme still
-// wins, because that is the operator deliberately asking for colour.
-func TestResolveTheme_NonTTYForcesNoColor(t *testing.T) {
+// TestResolveThemeWithName_NonTTYForcesNoColor pins OPS-1: when stdout is NOT a
+// terminal (piped/redirected human run) and no --theme was given,
+// ResolveThemeWithName degrades to no-color so ANSI never leaks into a consumer
+// — but an explicit --theme still wins, because that is the operator
+// deliberately asking for colour.
+func TestResolveThemeWithName_NonTTYForcesNoColor(t *testing.T) {
 	forceTTY(t, false)
 	t.Setenv("NO_COLOR", "")
 	os.Unsetenv("NO_COLOR")
 	t.Setenv("JENTIC_THEME", "dark") // would pick dark on a TTY
 
-	if _, ok := ResolveTheme("", "dark").Primary.(lipgloss.NoColor); !ok {
-		t.Error("non-TTY stdout should force no-color when no --theme is given")
+	got, name := ResolveThemeWithName("", "dark")
+	if _, ok := got.Primary.(lipgloss.NoColor); !ok || name != "no-color" {
+		t.Errorf("non-TTY stdout should force no-color when no --theme is given (name=%q)", name)
 	}
-	if _, ok := ResolveTheme("light", "dark").Primary.(lipgloss.NoColor); ok {
-		t.Error("explicit --theme light should override non-TTY auto no-color")
+	got, name = ResolveThemeWithName("light", "dark")
+	if _, ok := got.Primary.(lipgloss.NoColor); ok || name != "light" {
+		t.Errorf("explicit --theme light should override non-TTY auto no-color (name=%q)", name)
 	}
 }
 

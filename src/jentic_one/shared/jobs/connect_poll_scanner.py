@@ -24,7 +24,7 @@ route, not this scanner — they have no aux row here.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import structlog
 from sqlalchemy import select
@@ -36,6 +36,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
 from jentic_one.shared.http.idp_client import IDP_DEADLINE_SECONDS
+from jentic_one.shared.jobs.periodic import PeriodicScanner
 
 if TYPE_CHECKING:
     from jentic_one.shared.catalog import CatalogAutoImportProtocol
@@ -57,8 +58,10 @@ _ADVANCE_CONCURRENCY = 20
 _ADVANCE_DEADLINE_SECONDS = 2 * IDP_DEADLINE_SECONDS + 10
 
 
-class ConnectPollScanner:
+class ConnectPollScanner(PeriodicScanner):
     """Periodically advances device-flow sessions in state=polling."""
+
+    name: ClassVar[str] = "connect_poll_scanner"
 
     def __init__(
         self,
@@ -77,34 +80,6 @@ class ConnectPollScanner:
         # ``app.state``, but the scanner runs outside the request
         # scope, so we have to plumb it in explicitly.
         self._catalog_auto_importer = catalog_auto_importer
-
-    async def run(self) -> None:
-        """Main loop — sweep every ``poll_interval`` seconds until cancelled.
-
-        Mirrors ``WorkerLoop.run`` / ``CredentialExpiryScanner.run``: a
-        single tick's error is caught and logged so a transient DB hiccup
-        never kills the scanner permanently.
-        """
-        self._running = True
-        _logger.info("connect_poll_scanner_started")
-        try:
-            while self._running:
-                try:
-                    await self._tick()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    _logger.exception("connect_poll_scanner_tick_error")
-                await asyncio.sleep(self._poll_interval)
-        except asyncio.CancelledError:
-            _logger.info("connect_poll_scanner_cancelled")
-        finally:
-            self._running = False
-            _logger.info("connect_poll_scanner_stopped")
-
-    def stop(self) -> None:
-        """Signal the scanner to stop after the current tick."""
-        self._running = False
 
     async def _tick(self) -> None:
         """Advance every in-flight device-flow credential up to a per-tick cap.

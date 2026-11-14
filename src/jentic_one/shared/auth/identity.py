@@ -55,9 +55,6 @@ class Identity(BaseModel):
     # ---------------------------------------------------------
     permissions: list[str] = []
 
-    # Inherited capabilities from the Agent's owner.
-    parent_permissions: list[str] = []
-
     must_change_password: bool = False
     # Convenience default for trusted constructors (tests, resolvers that
     # already know the type). The *untrusted* boundary must never rely on

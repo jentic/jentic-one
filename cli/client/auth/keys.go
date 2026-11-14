@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/client/internal/atomicfile"
 )
 
 // IdentityRef identifies the (identity, environment) pair that all env-scoped
@@ -138,7 +139,7 @@ func GetOrGenerateKey(ref IdentityRef) (ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("marshaling key: %w", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	if err := writeFileAtomic(keyPath, pemBytes); err != nil {
+	if err := atomicfile.Write(keyPath, pemBytes, atomicfile.Options{Perm: 0o600}); err != nil {
 		return nil, fmt.Errorf("writing key %s: %w", keyPath, err)
 	}
 	return priv, nil

@@ -172,6 +172,20 @@
           "title": "Rat Ttl Seconds",
           "type": "integer"
         },
+        "refresh_family_max_age_seconds": {
+          "anyOf": [
+            {
+              "minimum": 60,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 7776000,
+          "description": "Maximum absolute lifetime (seconds, default 90 days) of an OAuth refresh-token family from initial mint, across rotations. Set to null to disable the family cap.",
+          "title": "Refresh Family Max Age Seconds"
+        },
         "refresh_ttl_seconds": {
           "default": 604800,
           "description": "Lifetime (seconds, default 7 days) of an OAuth refresh token; each refresh rotates it and the new token gets a fresh lifetime.",
@@ -1535,7 +1549,7 @@
         },
         "registration_rpm": {
           "default": 10,
-          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (``POST /oauth-clients``).",
+          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (``POST /oauth-clients``) and agent self-registration (``POST /register``), in its own bucket.",
           "title": "Registration Rpm",
           "type": "integer"
         },

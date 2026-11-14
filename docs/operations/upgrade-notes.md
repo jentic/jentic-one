@@ -178,6 +178,59 @@ Changes on `main` since 0.44.0; they ship in the next release.
   Connect-session review and confirmation read bound-agent metadata from the
   `agent_credential_bindings` join snapshot and batch candidate OAuth token
   lookups; an agent deleted before review is no longer listed with `name=None`.
+- **Agent self-registration scope filtering and rate limiting.**
+  Anonymous agent self-registration (`POST /register`) now filters requested
+  `scope` values to non-admin catalogue permissions, ignoring unknown, retired,
+  and admin-only (`org:admin`, `agents:write`) permissions. Approving a pending
+  agent also removes any pre-staged self-requested `org:admin` or `agents:write`
+  grants; administrators can still grant those permissions explicitly via
+  `PUT /agents/{id}/permissions` after approval. Additionally, `POST /register`
+  is rate-limited per client network in its own `agent-registration` bucket using
+  `auth.oauth_rate_limit.registration_rpm` (default `10` rpm) and
+  `auth.oauth_rate_limit.registration_burst` (default `5`). Deployments behind a
+  reverse proxy or high-concurrency NAT should configure
+  `auth.oauth_rate_limit.trusted_proxies` or raise the registration rate-limit
+  thresholds.
+- **OAuth credential reconnect grant replacement.**
+  Reconnecting an OAuth credential now replaces the stored grant rather than
+  merging into the prior grant's refresh token and scope. On the standalone
+  credential connect path (which has no identity echo), or on a connect-session
+  reconnect where the OAuth app registration or confirmed vendor account differs
+  from the stored credential, an omitted `refresh_token` in the provider's token
+  response clears the prior refresh token and logs
+  `oauth_reconnect_dropped_prior_refresh_token`. For providers that omit
+  `refresh_token` on re-consent unless prompted (such as Google OAuth), configure
+  `prompt=consent` / `access_type=offline` in `authorize_extra_params` if
+  standalone reconnects require offline refresh continuity.
+- **Agent permission ceiling enforced at resolution time and on ownership transfer.**
+  Owned agents now have their effective permissions capped at resolution time
+  (across API keys, access tokens, token introspection/refresh, and queued/held
+  broker execution checks) by the owning user's current effective permissions
+  plus default agent permissions (`capabilities:read`, `capabilities:execute`,
+  `owner:resources:read`, `owner:credentials:read`, `owner:agents:read`). Agents
+  owned by an `org:admin` user or ownerless agents keep all granted permissions.
+  If an owned agent holds non-default permissions (such as `config:write`,
+  `users:write`, `credentials:write`, `apis:write`, or `oauth-clients:write`)
+  that its owner does not currently hold, grant those permissions to the owner to
+  retain them on the agent. In addition, transferring an agent to a new owner via
+  `PATCH /agents/{agent_id}` revokes any stored agent permission grants that
+  exceed the new owner's permission ceiling and records a `REVOKE` audit entry;
+  grant the required permissions to the new owner before transferring ownership
+  if the agent should keep them. `Identity.parent_permissions` has been removed.
+- **OAuth refresh-token families now have a 90-day absolute lifetime (`auth.refresh_family_max_age_seconds`).**
+  Refresh-token families track their initial issuance timestamp in
+  `refresh_tokens.family_issued_at` (admin migration `c7d2e9a41b30`) and expire
+  `7776000` seconds (90 days) after initial mint by default, regardless of how
+  recently the refresh token was rotated. Each rotated refresh token's
+  `expires_at` is also capped at
+  `family_issued_at + refresh_family_max_age_seconds`. Pre-existing refresh
+  tokens with a `NULL` `family_issued_at` anchor on their row's `created_at`
+  timestamp at first rotation. Clients must re-authorize once a family reaches
+  its maximum age (agents using JWT-bearer assertions re-authenticate
+  automatically with their signing key). Set
+  `auth.refresh_family_max_age_seconds: null` (or
+  `JENTIC_AUTH__REFRESH_FAMILY_MAX_AGE_SECONDS=null`) to disable the absolute
+  family lifetime cap.
 
 ## 0.44.0
 

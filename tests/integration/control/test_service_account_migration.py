@@ -32,11 +32,9 @@ import structlog
 from alembic import command
 from sqlalchemy import inspect, text
 
-from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.agent_credentials import AgentCredential
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
-from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -204,30 +202,29 @@ async def _seed_sa(
                 },
             )
         if with_tokens:
-            session.add(
-                AccessToken(
-                    id=f"at_t8m_{suffix}",
-                    token_hash=_digest(f"at_t8m_{suffix}"),
-                    actor_id=sa_id,
-                    actor_type="service_account",
-                    scopes=list(scopes),
-                    token_family_id=f"tf_t8m_{suffix}",
-                    expires_at=now + dt.timedelta(hours=1),
-                    created_by=_OWNER,
+            scopes_json = json.dumps(list(scopes))
+            for table, tok_id, exp in (
+                ("access_tokens", f"at_t8m_{suffix}", now + dt.timedelta(hours=1)),
+                ("refresh_tokens", f"rt_t8m_{suffix}", now + dt.timedelta(days=7)),
+            ):
+                await session.execute(
+                    text(
+                        f"INSERT INTO {table}"
+                        " (id, token_hash, actor_id, actor_type, scopes,"
+                        " token_family_id, expires_at, created_by)"
+                        " VALUES (:id, :token_hash, :actor_id, 'service_account',"
+                        " :scopes, :family_id, :expires_at, :by)"
+                    ),
+                    {
+                        "id": tok_id,
+                        "token_hash": _digest(tok_id),
+                        "actor_id": sa_id,
+                        "scopes": scopes_json,
+                        "family_id": f"tf_t8m_{suffix}",
+                        "expires_at": exp,
+                        "by": _OWNER,
+                    },
                 )
-            )
-            session.add(
-                RefreshToken(
-                    id=f"rt_t8m_{suffix}",
-                    token_hash=_digest(f"rt_t8m_{suffix}"),
-                    actor_id=sa_id,
-                    actor_type="service_account",
-                    scopes=list(scopes),
-                    token_family_id=f"tf_t8m_{suffix}",
-                    expires_at=now + dt.timedelta(days=7),
-                    created_by=_OWNER,
-                )
-            )
         await session.commit()
     return sa_id
 
@@ -1740,30 +1737,27 @@ async def test_sweep_revokes_sa_sessions_minted_during_the_window(
 
     now = dt.datetime.now(dt.UTC)
     async with admin_db.session() as session:
-        session.add(
-            AccessToken(
-                id="at_t8m_ccgrant_window",
-                token_hash=_digest("at_t8m_ccgrant_window"),
-                actor_id=sa_id,
-                actor_type="service_account",
-                scopes=["toolkit:read"],
-                token_family_id="tf_t8m_ccgrant_window",
-                expires_at=now + dt.timedelta(hours=1),
-                created_by=_OWNER,
+        for table, tok_id, exp in (
+            ("access_tokens", "at_t8m_ccgrant_window", now + dt.timedelta(hours=1)),
+            ("refresh_tokens", "rt_t8m_ccgrant_window", now + dt.timedelta(days=7)),
+        ):
+            await session.execute(
+                text(
+                    f"INSERT INTO {table}"
+                    " (id, token_hash, actor_id, actor_type, scopes,"
+                    " token_family_id, expires_at, created_by)"
+                    " VALUES (:id, :token_hash, :actor_id, 'service_account',"
+                    " :scopes, 'tf_t8m_ccgrant_window', :expires_at, :by)"
+                ),
+                {
+                    "id": tok_id,
+                    "token_hash": _digest(tok_id),
+                    "actor_id": sa_id,
+                    "scopes": json.dumps(["toolkit:read"]),
+                    "expires_at": exp,
+                    "by": _OWNER,
+                },
             )
-        )
-        session.add(
-            RefreshToken(
-                id="rt_t8m_ccgrant_window",
-                token_hash=_digest("rt_t8m_ccgrant_window"),
-                actor_id=sa_id,
-                actor_type="service_account",
-                scopes=["toolkit:read"],
-                token_family_id="tf_t8m_ccgrant_window",
-                expires_at=now + dt.timedelta(days=7),
-                created_by=_OWNER,
-            )
-        )
         await session.commit()
 
     swept = await svc.sweep()

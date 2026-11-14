@@ -4,11 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jentic/jentic-one/cli/internal/atomicfile"
 )
 
 // composeDoc is a compose file as read back off disk: the raw bytes and the
@@ -257,62 +258,11 @@ func splitEOL(line string) (body, eol string) {
 // password, and no update can regenerate it, so a truncating write could lose
 // it outright: a reader either sees the old file or the new one, never a
 // half-written one. The new contents are fsynced before the rename; the
-// directory entry is flushed too where the platform allows it (see syncDir),
-// so on a host that does not, a crash in the instant after the rename can
-// still lose the repoint.
-//
-// Near-identical helpers live in internal/config, internal/mcpcfg and
-// internal/skillgen; they are worth promoting to one shared implementation.
+// directory entry is flushed too where the platform allows it.
 func atomicWriteFile(path string, data []byte) error {
-	perm := os.FileMode(0o600)
-	if info, err := os.Stat(path); err == nil {
-		perm = info.Mode().Perm()
-	}
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
-	if err != nil {
-		return fmt.Errorf("create temp file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		// Best-effort cleanup of the staging file: on the success path the
-		// rename has already consumed it, and on a failure path the error being
-		// returned is the one worth reporting.
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync %s: %w", tmpName, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmpName, err)
-	}
-	if err := os.Chmod(tmpName, perm); err != nil {
-		return fmt.Errorf("chmod %s: %w", tmpName, err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace %s: %w", path, err)
-	}
-	syncDir(dir)
-	return nil
-}
-
-// syncDir flushes a directory entry so a completed rename is durable, where the
-// platform supports it.
-//
-// Best-effort on purpose: flushing a directory handle is a POSIX notion and
-// fails outright on Windows ("Access is denied"), where the rename carries its
-// own ordering. Returning that error would make every repoint fail there, so
-// the sync is attempted and its result dropped — the file's own contents are
-// already fsynced before the rename either way.
-func syncDir(dir string) {
-	d, err := os.Open(dir) //nolint:gosec // dir is the CLI-managed ~/.jentic install root.
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
+	return atomicfile.Write(path, data, atomicfile.Options{
+		Perm:         0o600,
+		PreserveMode: true,
+		SyncDir:      true,
+	})
 }
