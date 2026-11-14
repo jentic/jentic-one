@@ -213,6 +213,7 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import InvalidCursorError, decode_cursor, encode_cursor
+from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
@@ -6220,6 +6221,7 @@ class ConnectSessionService:
         ``oauth_app_changed``) is deliberately left system-attributed too:
         ending it is the platform's decision, not the confirming caller's.
         """
+        detail = redact_value(detail)
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
         if row is None:
