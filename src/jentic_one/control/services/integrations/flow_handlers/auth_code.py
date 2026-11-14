@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-import httpx
 import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
@@ -58,10 +57,9 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.config import bind_origin, resolved_control_egress
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_always_pinned_transport
+from jentic_one.shared.http.idp_client import IdpResponse, IdpTransportError, idp_request
 from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
-from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -93,9 +91,9 @@ _ALLOWED_OAUTH_ERRORS: frozenset[str] = frozenset(
 )
 
 
-def _extract_oauth_error_slug(response: httpx.Response) -> str | None:
+def _extract_oauth_error_slug(response: IdpResponse) -> str | None:
     """Extract a strictly allowlisted RFC 6749 error slug from a JSON error response."""
-    if not response.text:
+    if not response.body:
         return None
     try:
         body = response.json()
@@ -324,30 +322,21 @@ class AuthCodeFlowHandler:
         }
         if row.pkce_code_verifier:
             payload["code_verifier"] = row.pkce_code_verifier
-        # Defense-in-depth SSRF guard.
+        # ``idp_request`` re-validates the URL (SSRF guard), pins the
+        # connection, and bounds the exchange by a total deadline and a body cap.
         egress = resolved_control_egress(self._ctx.config)
         try:
-            safe_url = await validate_upstream_url_async(token_url, egress)
-        except ValueError as exc:
-            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.post(
-                    safe_url,
-                    data=payload,
-                    headers={"Accept": "application/json"},
-                )
-        except ValueError as exc:
-            # Raised by the pinning transport: the host re-resolved to a blocked
-            # address or did not resolve at all.
-            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
-        except httpx.HTTPError as exc:
-            raise AuthCodeExchangeError(
-                f"token endpoint transport error: {type(exc).__name__}"
-            ) from exc
+            response = await idp_request(
+                "POST",
+                token_url,
+                egress=egress,
+                data=payload,
+                headers={"Accept": "application/json"},
+            )
+        except IdpTransportError as exc:
+            if exc.kind == "unsafe_url":
+                raise AuthCodeExchangeError(f"unsafe upstream URL: {exc.detail}") from None
+            raise AuthCodeExchangeError(f"token endpoint {exc.kind}") from None
         if response.status_code != 200:
             _logger.warning(
                 "auth_code.token_exchange_failed",

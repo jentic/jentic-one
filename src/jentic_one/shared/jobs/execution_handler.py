@@ -59,7 +59,7 @@ from jentic_one.shared.events.repeated_failure import (
     RepeatedFailureCounter,
     maybe_emit_repeated_failure,
 )
-from jentic_one.shared.http.injection import apply_injection
+from jentic_one.shared.http.injection import apply_injection, get_current_reflection_guard
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -550,6 +550,16 @@ class ExecutionHandler:
             )
             status = ExecutionStatus.FAILED
             error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
+
+        guard = get_current_reflection_guard()
+        if (
+            http_status is not None
+            and 300 <= http_status < 400
+            and guard is not None
+            and guard.secrets
+        ):
+            response_body = b""
+            content_type = None
 
         thirdparty_tag = thirdparty_auth_error_tag(http_status, api_vendor)
         error_tags: set[EventTag] | None = {thirdparty_tag} if thirdparty_tag is not None else None

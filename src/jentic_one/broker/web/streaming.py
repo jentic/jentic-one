@@ -80,6 +80,7 @@ from jentic_one.shared.broker.execution import (
     ErrorOrigin,
     StreamingOutcome,
 )
+from jentic_one.shared.http.injection import get_current_reflection_guard
 from jentic_one.shared.logging import mark_response_aborted
 from jentic_one.shared.tracing import JENTIC_TRACESTATE_KEY, pack_jentic_tracestate
 
@@ -494,11 +495,40 @@ async def open_streaming_response(
     passthrough_items = passthrough_streaming_header_items(raw_source, upstream_url=request.url)
     passthrough = passthrough_streaming_headers(raw_source, upstream_url=request.url)
     metadata_lower = {k.lower() for k in metadata}
+    guard = get_current_reflection_guard()
+    suppress_body = bool(guard is not None and guard.secrets and 300 <= result.status_code < 400)
+    suppressed_headers = {"content-encoding", "content-type"} if suppress_body else set()
     combined_items = [
-        *(item for item in passthrough_items if item[0].lower() not in metadata_lower),
+        *(
+            item
+            for item in passthrough_items
+            if item[0].lower() not in metadata_lower and item[0].lower() not in suppressed_headers
+        ),
         *metadata.items(),
     ]
-    body = guarded_body(result, stack, transfer_deadline_s=transfer_deadline_s, outcome=outcome)
+    body_result = result
+    media_type = result.content_type
+    if suppress_body:
+
+        async def empty_body() -> AsyncGenerator[bytes, None]:
+            return
+            yield b""
+
+        body_result = StreamingResult(
+            status_code=result.status_code,
+            headers=result.headers,
+            content_type=None,
+            aiter=empty_body(),
+        )
+        media_type = None
+    body = guarded_body(
+        body_result, stack, transfer_deadline_s=transfer_deadline_s, outcome=outcome
+    )
+    response_headers = {
+        key: value
+        for key, value in {**passthrough, **metadata}.items()
+        if key.lower() not in suppressed_headers
+    }
     return OutcomeStreamingResponse(
         body,
         stack=stack,
@@ -507,7 +537,7 @@ async def open_streaming_response(
         host=urlsplit(request.url).hostname,
         trace_id=ctx_req.trace_id,
         status_code=result.status_code,
-        media_type=result.content_type,
-        headers={**passthrough, **metadata},
+        media_type=media_type,
+        headers=response_headers,
         raw_header_items=combined_items,
     )

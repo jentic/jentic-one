@@ -31,7 +31,7 @@ export type PermissionRuleSchema = {
      */
     operations?: (Array<string> | null);
     /**
-     * Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+     * Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path) and is limited to linear-time shapes: a repeated group may not contain another repeat or ambiguous alternation, and back-references and lookarounds are refused (422 `unsafe_regex`); paths over 2048 characters never match a regex rule. `prefix` and `exact` are literal. None matches all paths.
      */
     path?: (string | null);
 };

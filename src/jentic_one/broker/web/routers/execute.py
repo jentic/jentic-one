@@ -155,7 +155,11 @@ from jentic_one.shared.events import (
     summary_text,
     valid_trace_id_or_none,
 )
-from jentic_one.shared.http.injection import apply_injection, filter_inbound_cookie
+from jentic_one.shared.http.injection import (
+    apply_injection,
+    filter_inbound_cookie,
+    get_current_reflection_guard,
+)
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -800,7 +804,7 @@ async def _handle(
                 await claim_lease.complete(
                     status_code=assembled_response.status_code,
                     headers=raw_pairs,
-                    body=outcome_exec.result.body,
+                    body=bytes(assembled_response.body),
                 )
 
     async with claim_lease if claim_lease is not None else contextlib.nullcontext():
@@ -1051,13 +1055,18 @@ def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext
 
     passthrough = passthrough_response_headers(result.headers, upstream_url=ctx_req.upstream_url)
     meta_lower = {k.lower() for k in metadata}
-    raw_items = [(k, v) for k, v in passthrough.raw_headers if k.lower() not in meta_lower] + list(
-        metadata.items()
-    )
+    guard = get_current_reflection_guard()
+    suppress_body = bool(guard is not None and guard.secrets and 300 <= result.status_code < 400)
+    suppressed_headers = {"content-encoding", "content-type"} if suppress_body else set()
+    raw_items = [
+        (k, v)
+        for k, v in passthrough.raw_headers
+        if k.lower() not in meta_lower and k.lower() not in suppressed_headers
+    ] + list(metadata.items())
     response = Response(
-        content=result.body,
+        content=b"" if suppress_body else result.body,
         status_code=result.status_code,
-        media_type=result.content_type,
+        media_type=None if suppress_body else result.content_type,
     )
     return _set_raw_response_headers(response, raw_items)
 

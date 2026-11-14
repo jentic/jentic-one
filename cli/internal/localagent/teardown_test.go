@@ -3,6 +3,7 @@ package localagent
 import (
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,14 +24,14 @@ func TestTeardownCmdShape(t *testing.T) {
 		{"leaf-revoke", LeafRevokeCmd("alice-local-agent", dir).Args, dir, true},
 		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
 		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
-		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
-		{"remove-identity", RemoveAgentIdentityCmd(AgentIdentityDirs(homeDir)).Args, homeDir + "/.jentic", false},
-		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
-		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
+		{"delete-home", DeleteAgentHomeCmd(homeDir).Args, homeDir, false},
+		{"remove-identity", RemoveAsAgentCmd("alice-local-agent", AgentIdentityDirs(homeDir)).Args, homeDir + "/.jentic", true},
+		{"remove-sudoers", RemoveAgentSudoersCmd("alice-local-agent").Args, "", true},
+		{"delete-account", DeleteAgentAccountCmd("alice-local-agent").Args, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.args[0] != "sudo" {
+			if tc.args[0] != "/usr/bin/sudo" {
 				t.Errorf("%s: expected sudo-fronted command, got %v", tc.name, tc.args)
 			}
 			joined := strings.Join(tc.args, " ")
@@ -43,20 +44,30 @@ func TestTeardownCmdShape(t *testing.T) {
 		})
 	}
 
-	// ReownHomeCmd walks with find and execs `chown -fh`: -f suppresses
-	// per-file errors on SIP/TCC-protected macOS template files, and -h
-	// (no-dereference) stops an agent-planted symlink from redirecting the
-	// recursive chown onto a target outside the tree.
-	reown := strings.Join(ReownHomeCmd("alice", homeDir).Args, " ")
-	if !strings.Contains(reown, "find "+homeDir) || !strings.Contains(reown, "-exec chown -fh alice ") {
-		t.Errorf("re-own must walk with find and exec `chown -fh` (force, no-dereference): %s", reown)
+	// ReownHomeCmd walks with find and execs `chown -fh` from each entry's
+	// parent directory: -f suppresses per-file errors on SIP/TCC-protected
+	// macOS template files, -h acts on links themselves, and -execdir avoids
+	// resolving an entry through its full path a second time.
+	chownPath := "/bin/chown"
+	if runtime.GOOS == "darwin" {
+		chownPath = "/usr/sbin/chown"
 	}
+	reownCmd := ReownHomeCmd("alice", homeDir)
+	reown := strings.Join(reownCmd.Args, " ")
+	if !strings.Contains(reown, "/usr/bin/find "+homeDir) || !strings.Contains(reown, "-execdir "+chownPath+" -fh alice ") {
+		t.Errorf("re-own must use absolute find/chown with execdir and no-dereference: %s", reown)
+	}
+	assertFixedUtilityPATH(t, reownCmd)
+	if got, want := DeleteAgentHomeCmd(homeDir).Args, []string{"/usr/bin/sudo", "/bin/rm", "-rf", "--", homeDir}; !slices.Equal(got, want) {
+		t.Errorf("delete-home = %v, want %v", got, want)
+	}
+	assertFixedUtilityPATH(t, DeleteAgentHomeCmd(homeDir))
 
-	// DeleteAccountCmd must keep the home (it is settled separately): macOS
+	// DeleteAgentAccountCmd must keep the home (it is settled separately): macOS
 	// deletes the DirectoryService record with `dscl . -delete` (no filesystem
 	// side effect) rather than `sysadminctl -deleteUser`, whose `-keepHome` is
 	// rejected at runtime on recent macOS; Linux uses `userdel` without -r.
-	del := strings.Join(DeleteAccountCmd("alice-local-agent").Args, " ")
+	del := strings.Join(DeleteAgentAccountCmd("alice-local-agent").Args, " ")
 	if runtime.GOOS == "darwin" {
 		if !strings.Contains(del, "dscl") || !strings.Contains(del, "-delete") {
 			t.Errorf("macOS account delete must use `dscl . -delete` so the home survives: %s", del)

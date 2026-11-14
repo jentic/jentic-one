@@ -5,10 +5,11 @@ from __future__ import annotations
 import base64
 import json
 import os
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
 import pytest
@@ -45,6 +46,38 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
@@ -176,14 +209,8 @@ async def test_complete_connect_exchanges_code() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=token_response)),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
         result = await provider.complete_connect(ctx, state=state, callback=callback)
 
     assert result.access_token == "at_fresh"
@@ -269,14 +296,8 @@ async def test_refresh_exchanges_refresh_token() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=token_response)),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
         result = await provider.refresh(ctx, token=token_view)
 
     assert result.access_token == "at_rotated"
@@ -319,16 +340,10 @@ async def test_refresh_raises_invalid_grant() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(400, text=error_body)),
+        pytest.raises(InvalidGrantError),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(400, text=error_body))
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(InvalidGrantError):
-            await provider.refresh(ctx, token=token_view)
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -360,14 +375,8 @@ async def test_refresh_raises_token_exchange_error_on_other_failure() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(500, text="Internal Server Error")),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(500, text="Internal Server Error"))
-        mock_client_cls.return_value = mock_client
-
         with pytest.raises(TokenExchangeError) as exc_info:
             await provider.refresh(ctx, token=token_view)
         assert exc_info.value.status == 500
@@ -403,14 +412,8 @@ async def test_post_token_raises_on_non_json_response() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, text="<html>Not JSON</html>")),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, text="<html>Not JSON</html>"))
-        mock_client_cls.return_value = mock_client
-
         with pytest.raises(TokenExchangeError) as exc_info:
             await provider.complete_connect(ctx, state=state, callback=callback)
         assert exc_info.value.status == 200
@@ -766,19 +769,13 @@ async def test_complete_connect_replays_state_redirect_uri_in_exchange() -> None
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        ) as mock_client,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
-        )
-        mock_client_cls.return_value = mock_client
-
         await provider.complete_connect(ctx, state=state, callback=callback)
 
-        sent_data = mock_client.post.await_args.kwargs["data"]
+        sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
         assert sent_data["redirect_uri"] == "http://127.0.0.1:8020/credentials/oauth/callback"
 
 
@@ -871,20 +868,12 @@ async def test_refresh_rejects_invalid_expires_in(bad_expires_in: object) -> Non
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at_new", "expires_in": bad_expires_in})
+        ),
+        pytest.raises(ProviderError, match="expires_in"),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(
-                200, json={"access_token": "at_new", "expires_in": bad_expires_in}
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(ProviderError, match="expires_in"):
-            await provider.refresh(ctx, token=token_view)
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -912,17 +901,12 @@ async def test_refresh_rejects_missing_access_token_and_maps_transport_error() -
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(
+            post=[httpx.Response(200, json={"scope": "read"}), httpx.ReadError("connection reset")]
+        ),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json={"scope": "read"}))
-        mock_client_cls.return_value = mock_client
-
         with pytest.raises(ProviderError, match="access_token"):
             await provider.refresh(ctx, token=token_view)
 
-        mock_client.post = AsyncMock(side_effect=httpx.ReadError("connection reset"))
         with pytest.raises(TokenExchangeError):
             await provider.refresh(ctx, token=token_view)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -888,18 +888,14 @@ async def test_update_auth_code_refuses_cross_origin_token_url_and_protects_live
     )
     provider = DirectOAuth2Provider(DirectOAuth2ProviderConfig())
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+    def _record_post(request: httpx.Request) -> httpx.Response:
+        posted_urls.append(str(request.url))
+        return httpx.Response(200, json={"access_token": "at-refreshed"})
 
-        async def _record_post(url: str, **_kwargs: object) -> httpx.Response:
-            posted_urls.append(url)
-            return httpx.Response(200, json={"access_token": "at-refreshed"})
-
-        mock_client.post = AsyncMock(side_effect=_record_post)
-        mock_client_cls.return_value = mock_client
-
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_record_post),
+    ):
         with pytest.raises(InvalidOAuthAppRegistrationInputError, match="origin"):
             await asyncio.gather(
                 svc.update(
@@ -986,18 +982,14 @@ async def test_update_device_flow_refuses_cross_origin_token_endpoint_and_protec
     )
     provider = DeviceAuthorizationConnectProvider()
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+    def _record_post(request: httpx.Request) -> httpx.Response:
+        posted_urls.append(str(request.url))
+        return httpx.Response(200, json={"access_token": "at-dev-refreshed"})
 
-        async def _record_post(url: str, **_kwargs: object) -> httpx.Response:
-            posted_urls.append(url)
-            return httpx.Response(200, json={"access_token": "at-dev-refreshed"})
-
-        mock_client.post = AsyncMock(side_effect=_record_post)
-        mock_client_cls.return_value = mock_client
-
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_record_post),
+    ):
         with pytest.raises(InvalidOAuthAppRegistrationInputError, match="origin"):
             await asyncio.gather(
                 svc.update(

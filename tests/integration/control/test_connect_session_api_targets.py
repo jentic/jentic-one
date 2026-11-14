@@ -1322,31 +1322,24 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
     raw_state = parse_qs(urlsplit(confirmed.authorize_url).query)["state"][0]
     posted_to: list[str] = []
 
-    class _ExchangeWhileTokenUrlMoves:
+    async def _exchange_while_token_url_moves(request: httpx.Request) -> httpx.Response:
         """The vendor answers the exchange; the cross-origin edit commits first."""
+        posted_to.append(str(request.url))
+        await CredentialService(env).update(
+            credential_id,
+            CredentialUpdate(
+                type=CredentialType.OAUTH2,
+                token_url="https://login.other.example.org/token",
+                client_secret="moved-secret",  # pragma: allowlist secret
+            ),
+            identity=_OWNER,
+        )
+        return httpx.Response(200, json={"access_token": "at-stale", "refresh_token": "rt-stale"})
 
-        async def __aenter__(self) -> _ExchangeWhileTokenUrlMoves:
-            return self
-
-        async def __aexit__(self, *_exc: object) -> bool:
-            return False
-
-        async def post(self, url: str, **_kwargs: object) -> httpx.Response:
-            posted_to.append(url)
-            await CredentialService(env).update(
-                credential_id,
-                CredentialUpdate(
-                    type=CredentialType.OAUTH2,
-                    token_url="https://login.other.example.org/token",
-                    client_secret="moved-secret",  # pragma: allowlist secret
-                ),
-                identity=_OWNER,
-            )
-            return httpx.Response(
-                200, json={"access_token": "at-stale", "refresh_token": "rt-stale"}
-            )
-
-    with patch("httpx.AsyncClient", return_value=_ExchangeWhileTokenUrlMoves()):
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_exchange_while_token_url_moves),
+    ):
         result = await _svc(env).complete_from_callback(
             raw_state=raw_state, code="the-code", browser_binding=binding.value
         )

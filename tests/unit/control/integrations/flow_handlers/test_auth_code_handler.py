@@ -12,13 +12,16 @@ mapping matters too.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import socket
 import threading
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
 import pytest
@@ -47,7 +50,40 @@ from jentic_one.shared.config import (
     ServerConfig,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.http.idp_client import idp_request
 from jentic_one.shared.redaction import redact_event
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 _STATE_SECRET = "test-state-secret"  # pragma: allowlist secret
@@ -275,16 +311,10 @@ async def test_complete_from_callback_exchanges_code_and_returns_tokens() -> Non
             new_callable=AsyncMock,
             return_value=occ,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=token_response)) as mock_client,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
         tokens = await handler.complete_from_callback(row, code="the-code")
-        posted_payload = mock_client.post.await_args.kwargs["data"]
+        posted_payload = dict(parse_qsl(mock_client[-1].content.decode()))
 
     assert tokens.access_token == "at_ok"
     assert tokens.refresh_token == "rt_ok"
@@ -331,15 +361,10 @@ async def test_complete_from_callback_raises_on_non_200() -> None:
             new_callable=AsyncMock,
             return_value=occ,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(400, text="bad_request")),
+        pytest.raises(AuthCodeExchangeError, match="HTTP 400"),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(400, text="bad_request"))
-        mock_client_cls.return_value = mock_client
-        with pytest.raises(AuthCodeExchangeError, match="HTTP 400"):
-            await handler.complete_from_callback(_row(), code="c")
+        await handler.complete_from_callback(_row(), code="c")
 
 
 @pytest.mark.asyncio()
@@ -357,15 +382,10 @@ async def test_complete_from_callback_raises_when_no_access_token() -> None:
             new_callable=AsyncMock,
             return_value=occ,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json={"scope": "x"})),
+        pytest.raises(AuthCodeExchangeError, match="no access_token"),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json={"scope": "x"}))
-        mock_client_cls.return_value = mock_client
-        with pytest.raises(AuthCodeExchangeError, match="no access_token"):
-            await handler.complete_from_callback(_row(), code="c")
+        await handler.complete_from_callback(_row(), code="c")
 
 
 def _occ_for(ctx: Context, token_url: str) -> MagicMock:
@@ -396,11 +416,11 @@ async def test_complete_from_callback_refuses_unsafe_token_url() -> None:
     occ = _occ_for(ctx, "http://127.0.0.1/token")
     with (
         patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport() as mock_client,
     ):
         with pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"):
             await handler.complete_from_callback(_row(), code="c")
-        mock_client_cls.assert_not_called()
+        assert not mock_client
 
 
 @pytest.mark.asyncio()
@@ -545,11 +565,11 @@ async def test_complete_from_callback_refuses_idp_outside_control_egress(
     with (
         patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
         patch.object(socket, "getaddrinfo", return_value=_addrinfo("10.50.0.7")),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport() as mock_client,
         pytest.raises(AuthCodeExchangeError, match="unsafe upstream URL"),
     ):
         await AuthCodeFlowHandler(ctx).complete_from_callback(_row(), code="c")
-    mock_client_cls.assert_not_called()
+    assert not mock_client
 
 
 @pytest.mark.asyncio()
@@ -632,17 +652,11 @@ async def test_non_200_token_response_never_logs_raw_secret_bearing_body(
 
     with (
         patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(400, text=body_text)),
         structlog.testing.capture_logs() as captured,
+        pytest.raises(AuthCodeExchangeError, match="HTTP 400"),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(400, text=body_text))
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(AuthCodeExchangeError, match="HTTP 400"):
-            await handler.complete_from_callback(_row(), code="live-code")
+        await handler.complete_from_callback(_row(), code="live-code")
 
     assert len(captured) == 1
     redacted = redact_event(None, "warning", dict(captured[0]))
@@ -666,20 +680,12 @@ async def test_complete_from_callback_rejects_malformed_or_zero_expires_in(
     occ = _occ_for(ctx, "https://idp.example.com/token")
     with (
         patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at_ok", "expires_in": bad_expires_in})
+        ),
+        pytest.raises(AuthCodeExchangeError, match="expires_in"),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(
-                200, json={"access_token": "at_ok", "expires_in": bad_expires_in}
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(AuthCodeExchangeError, match="expires_in"):
-            await handler.complete_from_callback(_row(), code="c")
+        await handler.complete_from_callback(_row(), code="c")
 
 
 @pytest.mark.asyncio()
@@ -699,13 +705,48 @@ async def test_complete_from_callback_preserves_omitted_or_numeric_string_expire
     occ = _occ_for(ctx, "https://idp.example.com/token")
     with (
         patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=payload)),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=payload))
-        mock_client_cls.return_value = mock_client
-
         tokens = await handler.complete_from_callback(_row(), code="c")
     assert tokens.expires_in == expected_expires_in
+
+
+@pytest.mark.asyncio()
+async def test_exchange_oversized_body_fails_closed() -> None:
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    huge = httpx.Response(200, json={"access_token": "at", "pad": "x" * (512 * 1024)})
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        idp_transport(post=huge),
+        pytest.raises(AuthCodeExchangeError, match="too_large"),
+    ):
+        await handler.complete_from_callback(_row(), code="c")
+
+
+@pytest.mark.asyncio()
+async def test_exchange_drip_feed_fails_closed_at_total_deadline() -> None:
+    class _Drip(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            while True:
+                await asyncio.sleep(0.05)
+                yield b" "
+
+    ctx = _make_context()
+    handler = AuthCodeFlowHandler(ctx)
+    occ = _occ_for(ctx, "https://idp.example.com/token")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=_Drip()))
+    with (
+        patch(_GET_BY_CREDENTIAL, new_callable=AsyncMock, return_value=occ),
+        patch(
+            "jentic_one.control.services.integrations.flow_handlers.auth_code.idp_request",
+            partial(idp_request, deadline_s=0.5),
+        ),
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=transport,
+        ),
+        pytest.raises(AuthCodeExchangeError, match="token endpoint timeout"),
+    ):
+        await handler.complete_from_callback(_row(), code="c")

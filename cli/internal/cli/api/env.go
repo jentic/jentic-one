@@ -52,7 +52,9 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 			"derived from --url (Control Plane and Broker often live on different\n" +
 			"domains). `jentic register` seeds broker_url automatically for a loopback\n" +
 			"install; set it explicitly here for a remote broker or to fix an existing\n" +
-			"environment (use --force to replace one of the same name).",
+			"environment (use --force to replace one of the same name). Replacing an\n" +
+			"environment with a different Control Plane or Broker origin purges its\n" +
+			"cached credentials and identity registrations before saving.",
 		Example: "  # Local install: point both the control plane and broker at loopback (http).\n" +
 			"  jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force\n" +
 			"  # Remote: broker on its own host.\n" +
@@ -77,8 +79,10 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 				return reportCoded(aud, err)
 			}
 			existing, exists := before.Environments[name]
-			previousOrigin := auth.NormalizeOrigin(existing.BaseURL)
-			originChanged := force && exists && previousOrigin != auth.NormalizeOrigin(baseURL)
+			previousBaseOrigin := auth.NormalizeOrigin(existing.BaseURL)
+			previousBrokerOrigin := auth.NormalizeOrigin(existing.BrokerURL)
+			originChanged := force && exists &&
+				(previousBaseOrigin != auth.NormalizeOrigin(baseURL) || previousBrokerOrigin != auth.NormalizeOrigin(brokerURL))
 			if originChanged {
 				// Purge before persistence so a removal failure leaves the old origin and
 				// registrations intact. A later config-write failure can only cause
@@ -90,7 +94,9 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 
 			if err := config.MutateConfig(func(cfg *config.Config) error {
 				current, currentExists := cfg.Environments[name]
-				if force && (currentExists != exists || (exists && auth.NormalizeOrigin(current.BaseURL) != previousOrigin)) {
+				if force && (currentExists != exists || (exists &&
+					(auth.NormalizeOrigin(current.BaseURL) != previousBaseOrigin ||
+						auth.NormalizeOrigin(current.BrokerURL) != previousBrokerOrigin))) {
 					return fmt.Errorf("environment %q changed while the update was being prepared; retry the command", name)
 				}
 				// OVERWRITE GUARD: env add on an existing name would silently wipe
@@ -120,14 +126,18 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 				return reportCoded(aud, err)
 			}
 
+			fields := map[string]any{
+				"base_url":   baseURL,
+				"broker_url": brokerURL,
+			}
+			if originChanged {
+				fields["credentials_purged"] = true
+			}
 			aud.Render(ux.Result{
 				Status:   ux.StatusAdded,
 				Resource: "environment",
 				Name:     name,
-				Fields: map[string]any{
-					"base_url":   baseURL,
-					"broker_url": brokerURL,
-				},
+				Fields:   fields,
 			})
 			return nil
 		},
@@ -176,8 +186,17 @@ func newEnvDeleteCmd(_ *app) *cobra.Command {
 			return ok
 		},
 		references: contextsReferencingEnv,
+		beforeRemove: func(_ *config.Config, name string) error {
+			return purgeEnvironmentCredentials(name)
+		},
 		remove: func(cfg *config.Config, name string) {
 			delete(cfg.Environments, name)
+			for idName, ident := range cfg.Identities {
+				if ident.Environments != nil {
+					delete(ident.Environments, name)
+					cfg.Identities[idName] = ident
+				}
+			}
 		},
 	})
 }

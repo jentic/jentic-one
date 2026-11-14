@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/agentops"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -84,13 +87,31 @@ func addHeldTimeoutFlag(cmd *cobra.Command, dst *time.Duration, usage string) {
 // heldRef is what the CLI knows about a held call it follows: its id and,
 // once seen, its review link and expiry.
 type heldRef struct {
-	ID        string
-	ReviewURL string
-	ExpiresAt string
+	ID             string
+	ReviewURL      string
+	ExpiresAt      string
+	controlBaseURL string
+	brokerURL      string
+}
+
+func (r *heldRef) configureTrust(ctx context.Context, brokerScheme, brokerHost string) {
+	r.controlBaseURL, r.brokerURL = "", ""
+	if st := clictx.ActiveContext(ctx); st != nil {
+		r.controlBaseURL, r.brokerURL = st.BaseURL, st.BrokerURL
+	}
+	if brokerScheme != "" && brokerHost != "" {
+		r.brokerURL = brokerScheme + "://" + brokerHost
+	} else if brokerScheme == "" && brokerHost == "" && r.brokerURL == "" {
+		r.brokerURL = config.DefaultBrokerScheme + "://" + config.DefaultBrokerHost
+	}
+}
+
+func (r *heldRef) trustedReviewURL() bool {
+	return agentops.TrustedReviewURL(r.ReviewURL, r.controlBaseURL, r.brokerURL)
 }
 
 func (r *heldRef) notice() ux.HeldNotice {
-	return ux.HeldNotice{HeldExecutionID: r.ID, ReviewURL: r.ReviewURL, ExpiresAt: r.ExpiresAt}
+	return ux.HeldNotice{HeldExecutionID: r.ID, ReviewURL: r.ReviewURL, ExpiresAt: r.ExpiresAt, Trusted: r.trustedReviewURL()}
 }
 
 // learn records the review link and expiry a held execution read reports.
@@ -127,31 +148,76 @@ func (r *heldRef) details() map[string]any {
 // exactly like a call that ran at once. It never re-sends the call.
 func (a *app) executeHeld(cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, held *agentops.Held) error {
 	ref := &heldRef{ID: held.HeldExecutionID, ReviewURL: held.ReviewURL, ExpiresAt: held.ExpiresAt}
+	ref.configureTrust(cmd.Context(), opts.brokerScheme, opts.brokerHost)
 	notice := ref.notice()
 	notice.Waiting = opts.wait
 	ux.RenderHeld(cmd.Context(), a.Err, notice)
+	outputRes := res
+	if !ref.trustedReviewURL() {
+		var err error
+		outputRes, err = heldResultWithDirective(res, untrustedReviewRecovery(ref))
+		if err != nil {
+			return err
+		}
+	}
 	if !opts.wait {
-		if err := a.executeOutput(cmd, opts, res); err != nil {
+		if err := a.executeOutput(cmd, opts, outputRes); err != nil {
 			return err
 		}
 		return heldPendingErr(ref)
 	}
 	// Still held at the timeout: the held envelope is the data an agent
 	// needs to poll again or relay the link.
-	return a.followHeld(cmd, opts, ref, func() error { return a.executeOutput(cmd, opts, res) })
+	return a.followHeld(cmd, opts, ref, func() error { return a.executeOutput(cmd, opts, outputRes) })
+}
+
+const untrustedReviewInstruction = "Tell the operator that the review_url did not come from the configured Jentic instance; " +
+	"do not open it or ask them to sign in."
+
+func untrustedReviewRecovery(ref *heldRef) string {
+	return fmt.Sprintf("%s When they reply, run `%s` once for the result. Do not re-send the call.",
+		untrustedReviewInstruction, ref.pollCommand())
+}
+
+// heldResultWithDirective clones a held result and replaces only its body
+// directive. Raw JSON members preserve unknown broker response fields.
+func heldResultWithDirective(res *agentops.ExecuteResult, directive string) (*agentops.ExecuteResult, error) {
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(res.Body, &body); err != nil {
+		return nil, fmt.Errorf("failed to sanitize held response directive: %w", err)
+	}
+	if body == nil {
+		return nil, errors.New("failed to sanitize held response directive: body is not a JSON object")
+	}
+	encodedDirective, err := json.Marshal(directive)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode held response directive: %w", err)
+	}
+	body["agent_directive"] = encodedDirective
+	encodedBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode held response body: %w", err)
+	}
+	cloned := *res
+	cloned.Body = encodedBody
+	return &cloned, nil
 }
 
 // heldPendingErr is the exit-3 outcome of a held execute without --wait.
 func heldPendingErr(ref *heldRef) *ux.CodedError {
 	details := ref.details()
 	details["next_command"] = ref.pollCommand()
+	actionable := fmt.Sprintf("Show the user the review_url (%s) — they approve or deny the call there — "+
+		"and end your turn. When they reply, run `%s` once for the result. Do not re-send the call.",
+		ref.ReviewURL, ref.pollCommand())
+	if !ref.trustedReviewURL() {
+		actionable = untrustedReviewRecovery(ref)
+	}
 	return &ux.CodedError{
-		Code: ux.CodeTimeoutPending,
-		Msg:  fmt.Sprintf("the call is held for human approval (held execution %s); it has not run", ref.ID),
-		Actionable: fmt.Sprintf("Show the user the review_url (%s) — they approve or deny the call there — "+
-			"and end your turn. When they reply, run `%s` once for the result. Do not re-send the call.",
-			ref.ReviewURL, ref.pollCommand()),
-		Details: details,
+		Code:       ux.CodeTimeoutPending,
+		Msg:        fmt.Sprintf("the call is held for human approval (held execution %s); it has not run", ref.ID),
+		Actionable: actionable,
+		Details:    details,
 	}
 }
 
@@ -163,6 +229,7 @@ func heldPendingErr(ref *heldRef) *ux.CodedError {
 // held at the timeout.
 func (a *app) followHeld(cmd *cobra.Command, opts *executeOptions, ref *heldRef, pendingOutput func() error) error {
 	ctx := cmd.Context()
+	ref.configureTrust(ctx, opts.brokerScheme, opts.brokerHost)
 	final, err := a.waitForHeldExecution(ctx, ref, opts.timeout)
 	if err == nil {
 		finished := *opts
@@ -210,6 +277,9 @@ func heldStillPendingErr(ref *heldRef, h *control.HeldExecutionDetailResponse, w
 	if approved {
 		actionable = fmt.Sprintf("The call was approved and has not finished. Run `%s` again shortly. "+
 			"Do not re-send the call.", ref.pollCommand())
+	} else if !ref.trustedReviewURL() {
+		actionable = fmt.Sprintf("%s When they reply, run `%s` once. Do not re-send the call.",
+			untrustedReviewInstruction, ref.pollCommand())
 	}
 	return &ux.CodedError{
 		Code: ux.CodeTimeoutPending,
@@ -235,7 +305,9 @@ func heldPollFailedErr(ref *heldRef, err error) *ux.CodedError {
 	actionable := fmt.Sprintf("The held call is unaffected: it may still be waiting for a human decision. "+
 		"Show the user the review_url (%s) if they have not approved it yet, then run `%s` to retry. "+
 		"Do not re-send the call.", valueOr(ref.ReviewURL, "printed by the held execute"), ref.pollCommand())
-	if coded.Actionable != "" && coded.Code != ux.CodeTransportError {
+	if !ref.trustedReviewURL() {
+		actionable = untrustedReviewInstruction + " Then run `" + ref.pollCommand() + "` to retry; do not re-send the call."
+	} else if coded.Actionable != "" && coded.Code != ux.CodeTransportError {
 		actionable = coded.Actionable + " Then run `" + ref.pollCommand() + "`; do not re-send the call."
 	}
 	return &ux.CodedError{

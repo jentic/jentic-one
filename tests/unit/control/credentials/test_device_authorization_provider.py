@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import base64
 import os
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qsl
 
 import httpx
 import pytest
@@ -51,6 +53,38 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
@@ -318,18 +352,11 @@ async def test_refresh_omits_client_secret() -> None:
             new_callable=AsyncMock,
             return_value=dfc,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=token_response)) as mock_client,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
         result = await provider.refresh(ctx, token=token_view)
 
-        call = mock_client.post.await_args
-        posted_payload: dict[str, str] = call.kwargs["data"]
+        posted_payload: dict[str, str] = dict(parse_qsl(mock_client[-1].content.decode()))
 
     assert result.access_token == "at_rotated"
     assert result.refresh_token == "rt_rotated"
@@ -367,18 +394,10 @@ async def test_refresh_maps_invalid_grant_via_shared_base() -> None:
             new_callable=AsyncMock,
             return_value=dfc,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(400, text='{"error":"invalid_grant"}')),
+        pytest.raises(InvalidGrantError),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(400, text='{"error":"invalid_grant"}')
-        )
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(InvalidGrantError):
-            await provider.refresh(ctx, token=token_view)
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -406,16 +425,10 @@ async def test_refresh_maps_other_failures_to_token_exchange_error() -> None:
             new_callable=AsyncMock,
             return_value=dfc,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(503, text="upstream down")),
+        pytest.raises(TokenExchangeError) as exc_info,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(503, text="upstream down"))
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(TokenExchangeError) as exc_info:
-            await provider.refresh(ctx, token=token_view)
+        await provider.refresh(ctx, token=token_view)
     assert exc_info.value.status == 503
 
 
@@ -447,11 +460,11 @@ async def test_refresh_refuses_inactive_registration(_legacy_credential_row: Asy
             new_callable=AsyncMock,
             return_value=MagicMock(id="oar_1", is_active=False),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport() as mock_client,
         pytest.raises(InactiveRegistrationError, match="inactive"),
     ):
         await provider.refresh(ctx, token=token_view)
-    mock_client_cls.assert_not_called()
+    assert not mock_client
 
 
 @pytest.mark.asyncio()
@@ -495,22 +508,14 @@ async def test_refresh_uses_live_registration_token_endpoint(
             new_callable=AsyncMock,
             return_value=registration,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json={"access_token": "at_new"})) as mock_client,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "at_new"})
-        )
-        mock_client_cls.return_value = mock_client
-
         result = await provider.refresh(ctx, token=token_view)
-        call = mock_client.post.await_args
+        call = mock_client[-1]
 
     assert result.access_token == "at_new"
-    assert call.args[0] == "https://idp.example.com/v2/token"
-    assert call.kwargs["data"]["client_id"] == "live-client"
+    assert str(call.url) == "https://idp.example.com/v2/token"
+    assert dict(parse_qsl(call.content.decode()))["client_id"] == "live-client"
 
 
 @pytest.mark.asyncio()
@@ -549,11 +554,11 @@ async def test_refresh_refuses_cross_origin_registration_token_endpoint(
             new_callable=AsyncMock,
             return_value=registration,
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport() as mock_client,
         pytest.raises(ProviderError, match="origin"),
     ):
         await provider.refresh(ctx, token=token_view)
-    mock_client_cls.assert_not_called()
+    assert not mock_client
 
 
 @pytest.mark.asyncio()
@@ -580,20 +585,12 @@ async def test_refresh_rejects_malformed_or_non_positive_expires_in(
             new_callable=AsyncMock,
             return_value=_FakeDFC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at_new", "expires_in": bad_expires_in})
+        ),
+        pytest.raises(ProviderError, match="expires_in"),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(
-                200, json={"access_token": "at_new", "expires_in": bad_expires_in}
-            )
-        )
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(ProviderError, match="expires_in"):
-            await provider.refresh(ctx, token=token_view)
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -614,16 +611,8 @@ async def test_refresh_preserves_omitted_expires_in() -> None:
             new_callable=AsyncMock,
             return_value=_FakeDFC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json={"access_token": "at_new"})),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "at_new"})
-        )
-        mock_client_cls.return_value = mock_client
-
         result = await provider.refresh(ctx, token=token_view)
     assert result.access_token == "at_new"
     assert result.expires_at is None

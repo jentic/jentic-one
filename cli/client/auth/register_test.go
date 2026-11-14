@@ -13,6 +13,7 @@ import (
 // `Authorization: Bearer jak_...` and does NOT reach the OAuth exchange path.
 func TestAttachAuth_APIKeyTakesPrecedence(t *testing.T) {
 	withConfigDir(t)
+	seedEnvironmentBaseURL(t, "prod", "https://ctl.example")
 	ref := IdentityRef{Identity: "ci", Environment: "prod"}
 	const key = "jak_secretkeyvalue"
 	if err := SaveAPIKey(ref, key); err != nil {
@@ -37,6 +38,7 @@ func TestAttachAuth_APIKeyTakesPrecedence(t *testing.T) {
 // on-disk API key (the orchestrator's intent is explicit).
 func TestAttachAuth_InjectedBeatsAPIKey(t *testing.T) {
 	withConfigDir(t)
+	seedEnvironmentBaseURL(t, "prod", "https://ctl.example")
 	ref := IdentityRef{Identity: "ci", Environment: "prod"}
 	if err := SaveAPIKey(ref, "jak_ondiskkey"); err != nil {
 		t.Fatalf("SaveAPIKey: %v", err)
@@ -85,6 +87,7 @@ func TestCanReExchange(t *testing.T) {
 		t.Error("injected token must NOT be re-exchangeable")
 	}
 
+	seedEnvironmentBaseURL(t, "e", "https://origin-a.example.com")
 	ref := IdentityRef{Identity: "k", Environment: "e"}
 	if err := SaveAPIKey(ref, "jak_key"); err != nil {
 		t.Fatalf("SaveAPIKey: %v", err)

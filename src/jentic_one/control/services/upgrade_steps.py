@@ -15,6 +15,12 @@ Registered steps:
   agent's owner created
   (:class:`~jentic_one.control.services.rule_set_curation.RuleSetCurationService`).
 
+- ``unsafe_permission_rules_report`` (repeatable, informational) lists stored
+  permission rules whose path no longer passes validation, with their effect
+  (:mod:`~jentic_one.control.services.unsafe_permission_rule_report`). It
+  rewrites nothing: such a rule never matches, so a ``deny`` or
+  ``require-approval`` one now blocks and an ``allow`` one stops granting.
+
 The theme-5 steps (``theme5_retire_toolkit_keys``,
 ``theme5_flatten_toolkits``) no longer exist; rows they recorded remain in the
 ledger as history.
@@ -60,6 +66,10 @@ from jentic_one.control.services.rule_set_curation import (
     RuleSetCurationService,
 )
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
+from jentic_one.control.services.unsafe_permission_rule_report import (
+    UnsafeRule,
+    find_unsafe_permission_rules,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.models.credential_identity_repair import RepairRunResult
@@ -103,6 +113,7 @@ class UpgradeStepSpec:
 
 RULE_SETS_MARK_CURATED = "rule_sets_mark_curated"
 CREDENTIAL_IDENTITY_REPAIR = "credential_identity_repair"
+UNSAFE_PERMISSION_RULES_REPORT = "unsafe_permission_rules_report"
 
 #: Runs above this size persist their full planned backup before any live mutation.
 _PREPARED_BACKUP_ROW_THRESHOLD = 200
@@ -239,12 +250,61 @@ async def _repair_credential_identities(ctx: Context) -> UpgradeStepOutcome:
     )
 
 
+#: Leads the per-rule warnings of ``unsafe_permission_rules_report``.
+UNSAFE_RULE_WARNING = (
+    "{count} stored permission rule(s) have a path that no longer passes validation and "
+    "never match. A deny rule now denies every request in its method scope, a "
+    "require-approval rule halts the call as default-deny, and an allow rule grants "
+    "nothing. Rewrite each path (PUT the binding's or rule set's rules with a path "
+    "without nested repeats or ambiguous alternation, or use prefix/exact mode). The rules:"
+)
+
+#: Per-rule warning lines printed before the rest are summarised as a count.
+UNSAFE_RULE_WARNING_LIMIT = 50
+
+
+def _unsafe_rule_line(rule: UnsafeRule) -> str:
+    return (
+        f"{rule.source} rule {rule.rule_id} ({rule.owner_key}): effect {rule.effect}, "
+        f"match_mode {rule.match_mode}, {rule.code}"
+    )
+
+
+async def _report_unsafe_permission_rules(ctx: Context) -> UpgradeStepOutcome:
+    report = await find_unsafe_permission_rules(ctx)
+    found = report.rules
+    summary: dict[str, Any] = {
+        "unsafe_rules": len(found),
+        "deny": sum(1 for r in found if r.effect == "deny"),
+        "require_approval": sum(1 for r in found if r.effect == "require-approval"),
+        "allow": sum(1 for r in found if r.effect == "allow"),
+    }
+    warnings: tuple[str, ...] = ()
+    if found:
+        lines = [UNSAFE_RULE_WARNING.format(count=len(found))]
+        lines += [_unsafe_rule_line(r) for r in found[:UNSAFE_RULE_WARNING_LIMIT]]
+        if len(found) > UNSAFE_RULE_WARNING_LIMIT:
+            lines.append(f"...and {len(found) - UNSAFE_RULE_WARNING_LIMIT} more")
+        warnings = tuple(lines)
+    return UpgradeStepOutcome(
+        name=UNSAFE_PERMISSION_RULES_REPORT,
+        action="performed",
+        summary=summary,
+        warnings=warnings,
+    )
+
+
 #: Every step, in run order.
 STEPS: tuple[UpgradeStepSpec, ...] = (
     UpgradeStepSpec(name=RULE_SETS_MARK_CURATED, run=_mark_curated_rule_sets, repeatable=True),
     UpgradeStepSpec(
         name=CREDENTIAL_IDENTITY_REPAIR,
         run=_repair_credential_identities,
+        repeatable=True,
+    ),
+    UpgradeStepSpec(
+        name=UNSAFE_PERMISSION_RULES_REPORT,
+        run=_report_unsafe_permission_rules,
         repeatable=True,
     ),
 )

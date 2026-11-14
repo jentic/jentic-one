@@ -360,13 +360,7 @@ class _VendorTokenEndpoint:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def __aenter__(self) -> _VendorTokenEndpoint:
-        return self
-
-    async def __aexit__(self, *_: object) -> bool:
-        return False
-
-    async def post(self, *_: object, **__: object) -> httpx.Response:
+    def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls += 1
         return httpx.Response(
             200, json={"access_token": "at", "refresh_token": "rt", "expires_in": 3600}
@@ -418,14 +412,17 @@ async def test_agent_session_callback_completes_only_in_the_approvers_browser(
     approval = await _approval(env, kind)
     token_endpoint = _VendorTokenEndpoint()
     echoed = identity_echo.IdentityEchoResult(display="approver", raw={})
-    # Browsers first: the patch below swaps ``httpx.AsyncClient`` for the vendor.
+    # The patch below swaps the IdP transport for the vendor's token endpoint.
     async with _browser(env) as approver, _browser(env) as other:
         confirmed = await _confirm(approver, env, approval.session_id, approval.body)
         assert confirmed.status_code == 200, confirmed.text
         cookie_name = _binding_set_cookie(confirmed).split("=", 1)[0]
         state = _state_of(confirmed.json()["authorize_url"])
         with (
-            patch("httpx.AsyncClient", return_value=token_endpoint),
+            patch(
+                "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+                return_value=httpx.MockTransport(token_endpoint.handle),
+            ),
             patch.object(identity_echo, "echo_identity", new=AsyncMock(return_value=echoed)),
         ):
             for sent in ({}, {cookie_name: new_browser_binding().value}):

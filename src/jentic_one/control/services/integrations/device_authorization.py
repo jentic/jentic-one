@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-import httpx
 import structlog
 
 from jentic_one.control.services.credentials.providers.base import ProviderError
@@ -25,9 +24,7 @@ from jentic_one.control.services.credentials.providers.oauth2 import (
     sanitize_oauth_error_slug,
 )
 from jentic_one.shared.config import EgressConfig
-from jentic_one.shared.egress import build_always_pinned_transport
-from jentic_one.shared.redaction import redact_value
-from jentic_one.shared.url_validation import validate_upstream_url_async
+from jentic_one.shared.http.idp_client import IdpResponse, IdpTransportError, idp_request
 
 _logger = structlog.get_logger(__name__)
 
@@ -107,13 +104,30 @@ def _optional_string(data: dict[str, object], field: str) -> str | None:
     return value
 
 
+async def _post_form(url: str, payload: dict[str, str], egress: EgressConfig | None) -> IdpResponse:
+    """POST a form to a vendor endpoint under the bounded IdP client."""
+    try:
+        return await idp_request(
+            "POST",
+            url,
+            egress=egress,
+            data=payload,
+            headers={"Accept": "application/json"},
+        )
+    except IdpTransportError as exc:
+        if exc.kind == "unsafe_url":
+            raise DeviceAuthorizationUpstreamError(
+                0, f"unsafe upstream URL: {exc.detail}"
+            ) from None
+        raise DeviceAuthorizationUpstreamError(0, exc.detail or exc.kind) from None
+
+
 async def begin_device_authorization(
     *,
     authorization_endpoint: str,
     client_id: str,
     scopes: list[str],
     egress: EgressConfig | None,
-    timeout_seconds: float = 15.0,
 ) -> BeginResult:
     """Start a device flow session with the vendor.
 
@@ -125,33 +139,9 @@ async def begin_device_authorization(
     if scopes:
         payload["scope"] = " ".join(scopes)
 
-    # Defense-in-depth SSRF guard: the ``authorization_endpoint`` originates from
-    # operator config, but a config error or compromised entry could point at a
-    # private / metadata target the operator has not allowlisted.
-    try:
-        safe_url = await validate_upstream_url_async(authorization_endpoint, egress)
-    except ValueError as exc:
-        raise DeviceAuthorizationUpstreamError(
-            0, f"unsafe upstream URL: {redact_value(str(exc))}"
-        ) from exc
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
-        ) as client:
-            response = await client.post(
-                safe_url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            )
-    except ValueError as exc:
-        # Raised by the pinning transport: the host re-resolved to a blocked
-        # address or did not resolve at all.
-        raise DeviceAuthorizationUpstreamError(
-            0, f"unsafe upstream URL: {redact_value(str(exc))}"
-        ) from exc
-    except (httpx.HTTPError, httpx.InvalidURL) as exc:
-        raise DeviceAuthorizationUpstreamError(0, type(exc).__name__) from None
+    # ``idp_request`` re-validates the endpoint (SSRF guard), pins the connection,
+    # and bounds the exchange by a total deadline and a body cap.
+    response = await _post_form(authorization_endpoint, payload, egress)
     if response.status_code != 200:
         raise DeviceAuthorizationUpstreamError(response.status_code)
     try:
@@ -197,7 +187,6 @@ async def poll_device_authorization(
     client_id: str,
     device_code: str,
     egress: EgressConfig | None,
-    timeout_seconds: float = 15.0,
 ) -> PollResult:
     """Poll the vendor's token endpoint once for the device flow result.
 
@@ -216,34 +205,12 @@ async def poll_device_authorization(
         "device_code": device_code,
         "client_id": client_id,
     }
-    # Defense-in-depth SSRF guard — mirror of ``begin_device_authorization``.
     # The token endpoint is stored on ``device_authorization_credentials`` at
-    # ``prepare`` time from operator config; validate every poll in case
-    # the DB row is tampered with post-vault.
+    # ``prepare`` time; ``idp_request`` validates it on every poll in case the DB
+    # row is tampered with post-vault.
+    response = await _post_form(token_endpoint, payload, egress)
     try:
-        safe_url = await validate_upstream_url_async(token_endpoint, egress)
-    except ValueError as exc:
-        raise DeviceAuthorizationUpstreamError(
-            0, f"unsafe upstream URL: {redact_value(str(exc))}"
-        ) from exc
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout_seconds, transport=build_always_pinned_transport(egress)
-        ) as client:
-            response = await client.post(
-                safe_url,
-                data=payload,
-                headers={"Accept": "application/json"},
-            )
-    except ValueError as exc:
-        raise DeviceAuthorizationUpstreamError(
-            0, f"unsafe upstream URL: {redact_value(str(exc))}"
-        ) from exc
-    except (httpx.HTTPError, httpx.InvalidURL) as exc:
-        raise DeviceAuthorizationUpstreamError(0, type(exc).__name__) from None
-    try:
-        data = response.json() if response.text else {}
+        data = response.json() if response.body else {}
     except ValueError as exc:
         # A form-encoded 200 success (access_token=…) lands here — never
         # carry the body into the exception or a log line.
