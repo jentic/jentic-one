@@ -386,8 +386,7 @@ func copyLegacyKey(p *legacyProfile, ref auth.IdentityRef) error {
 	if existing, rerr := os.ReadFile(dst); rerr == nil && validateEd25519PEM(existing, "migrated key") == nil { //nolint:gosec // dst is <config>/keys/<validated-stem>.key from KeyPathForImport.
 		return nil
 	}
-	//nolint:gosec // dst is <config>/keys/<validated-stem>.key (KeyPathForImport re-validates via Stem's path-traversal guard); the 0600 key is the migration target.
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
+	if err := sdkconfig.WriteFileAtomic(dst, data); err != nil {
 		return fmt.Errorf("writing migrated key: %w", err)
 	}
 	return nil

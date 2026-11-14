@@ -199,8 +199,12 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 
 	breq, err := agentops.BuildRequest(cctx, execReq)
 	if err != nil {
-		// SEC-1 (bearer over plaintext to a non-loopback broker) is the only
-		// coded failure here — a setup problem, default pointer.
+		var coded *ux.CodedError
+		if errors.As(err, &coded) && coded.Code == ux.CodeMissingArgument {
+			return nil, invalidParams(err)
+		}
+		// SEC-1 (bearer over plaintext to a non-loopback broker) is a setup
+		// problem: default pointer (get_started).
 		return s.softError(cctx, err), nil
 	}
 

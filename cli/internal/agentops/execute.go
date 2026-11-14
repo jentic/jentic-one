@@ -173,6 +173,12 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 		upstream = r.URL
 	}
 	for _, kv := range r.PathParams {
+		if kv.Value == "." || kv.Value == ".." {
+			return nil, &ux.CodedError{
+				Code: ux.CodeMissingArgument,
+				Msg:  fmt.Sprintf("path parameter %q has a dot-segment value", kv.Key),
+			}
+		}
 		upstream = strings.ReplaceAll(upstream, "{"+kv.Key+"}", url.PathEscape(kv.Value))
 	}
 
