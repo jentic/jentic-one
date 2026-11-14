@@ -605,3 +605,14 @@ def request_override_not_allowed_directive(*, header: str) -> AgentDirective:
             "and URL path directly."
         ),
     )
+
+
+def insecure_upstream_scheme_directive(*, scheme: str = "https") -> AgentDirective:
+    """Directive for an ``insecure_upstream_scheme`` 400 — rewrite the URL scheme to ``https://``."""
+    return AgentDirective(
+        strategy="retry",
+        parameters={"scheme": scheme},
+        human_readable_instruction=(
+            f"Rewrite the upstream URL scheme from http:// to {scheme}:// and resend the request."
+        ),
+    )

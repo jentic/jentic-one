@@ -21,7 +21,7 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
@@ -38,6 +38,7 @@ from jentic_one.broker.adapters.runners.base import (
 from jentic_one.broker.core.directives import (
     approval_pending_limit_directive,
     held_execution_directive,
+    insecure_upstream_scheme_directive,
     request_override_not_allowed_directive,
     switch_toolkit_directive,
 )
@@ -681,6 +682,15 @@ async def _handle(
                         revision_id
                     )
                 }
+
+    if urlsplit(upstream_url).scheme == "http" and not resolved.plaintext_http_allowed:
+        raise UpstreamUrlNotAllowedError(
+            detail="This API is only served over HTTPS; call it with https://.",
+            type="insecure_upstream_scheme",
+            directive=insecure_upstream_scheme_directive(),
+            instance=request.url.path,
+            pre_send=True,
+        )
 
     ctx_req = _context_from_discovery(
         upstream_url=upstream_url, method=method, request=request, resolved=resolved
