@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -11,7 +12,7 @@ import (
 // and the brand-coloured prompt glyph for text inputs, so every form looks the
 // same. Rendering the style emits the SetString glyph, which we assert on.
 func TestFormThemeUsesRadioGlyphs(t *testing.T) {
-	ft := FormTheme()
+	ft := prompt.FormTheme()
 	cases := map[string]struct {
 		got  string
 		want string
@@ -30,8 +31,8 @@ func TestFormThemeUsesRadioGlyphs(t *testing.T) {
 // PromptGlyph (used by Input()) must be the filled radio ring so a text field's
 // prompt matches the select selector.
 func TestPromptGlyphIsRadioRing(t *testing.T) {
-	if !strings.Contains(PromptGlyph, theme.SelectOn) {
-		t.Errorf("PromptGlyph = %q, want it to contain %q", PromptGlyph, theme.SelectOn)
+	if !strings.Contains(prompt.PromptGlyph, theme.SelectOn) {
+		t.Errorf("PromptGlyph = %q, want it to contain %q", prompt.PromptGlyph, theme.SelectOn)
 	}
 }
 
@@ -39,7 +40,7 @@ func TestPromptGlyphIsRadioRing(t *testing.T) {
 // default fuchsia focused button: the focused (selected) button uses the brand
 // green background and the blurred button the muted grey-teal foreground.
 func TestFormThemeBrandsConfirmButtons(t *testing.T) {
-	ft := FormTheme()
+	ft := prompt.FormTheme()
 	if got := ft.Focused.FocusedButton.GetBackground(); got != theme.Green {
 		t.Errorf("focused confirm button background = %v, want brand green %v", got, theme.Green)
 	}

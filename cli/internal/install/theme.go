@@ -25,10 +25,6 @@ var (
 // These aliases keep install's own callers (the wizard) working through the one
 // shared, themed implementation.
 var (
-	// FormKeyMap is re-exported from internal/cli/prompt.
-	FormKeyMap = prompt.FormKeyMap
-	// FormTheme is re-exported from internal/cli/prompt.
-	FormTheme = prompt.FormTheme
 	// NewForm is re-exported from internal/cli/prompt.
 	NewForm = prompt.NewForm
 	// Input is re-exported from internal/cli/prompt.
@@ -38,9 +34,6 @@ var (
 	// RunForm is re-exported from internal/cli/prompt.
 	RunForm = prompt.RunForm
 )
-
-// PromptGlyph is re-exported from internal/cli/prompt.
-const PromptGlyph = prompt.PromptGlyph
 
 // Compile-time assurance the re-exported helpers keep their huh signatures.
 var (

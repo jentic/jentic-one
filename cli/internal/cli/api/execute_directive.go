@@ -7,7 +7,7 @@ import (
 )
 
 // Directive decoding and parsing live in ux.Directive and
-// agentops.ParseAgentDirective; styled rendering lives in ux, the terminal
+// agentops.Classify; styled rendering lives in ux, the terminal
 // gatekeeper, so command code never composes stderr text itself. These thin
 // methods keep stream choice (a.Err) in the app, which owns its writers.
 

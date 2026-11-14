@@ -390,9 +390,9 @@ func brokerRedirect(res *ExecuteResult) bool {
 }
 
 // Execute is the one-call UX-free core (ExecuteRequest → ExecuteResult):
-// BuildRequest + Do. The CLI drives the two phases itself so its --dry-run/
-// --export-plan hook can render the built request and stop; embedders with no
-// plan surface (the MCP handler) call this.
+// BuildRequest + Do. The CLI and MCP handler drive the two phases separately
+// (so --dry-run/--export-plan can stop before firing and MCP can pass its
+// CA-pinned client to DoWith); parity tests and simple callers use this helper.
 func Execute(ctx context.Context, r ExecuteRequest) (*ExecuteResult, error) {
 	req, err := BuildRequest(ctx, r)
 	if err != nil {

@@ -35,9 +35,9 @@ func BuildDynamicForm(target interface{}, opts FormOptions) *huh.Form {
 	if v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Struct {
 		panic("binder: BuildDynamicForm target must be a non-nil pointer to a struct")
 	}
-	// Reuse the exact same leaf walk BindFlags uses, so the form and the flags can
-	// never disagree on which leaves exist, their paths, or their kinds. Group the
-	// leaves by their top-level section (the first path segment).
+	// Reuse the exact same leaf walk BindFlagsWithOptions uses, so the form and
+	// the flags can never disagree on which leaves exist, their paths, or their
+	// kinds. Group the leaves by their top-level section (the first path segment).
 	leaves := collectLeaves(target)
 	order, bySection := groupLeaves(leaves, opts.Exclude)
 

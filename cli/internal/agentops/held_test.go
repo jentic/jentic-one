@@ -177,7 +177,4 @@ func TestHeldStatuses(t *testing.T) {
 			t.Errorf("%q is not finished", s)
 		}
 	}
-	if !HasHeldResult(HeldStatusCompleted) || !HasHeldResult(HeldStatusFailed) || HasHeldResult(HeldStatusCancelled) {
-		t.Error("HasHeldResult")
-	}
 }
