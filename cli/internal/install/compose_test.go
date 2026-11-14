@@ -523,3 +523,110 @@ func TestRemoveDataVolumesSwallowsMissingVolume(t *testing.T) {
 		t.Errorf("removed = %v, want [jentic_db-data] (missing one skipped)", removed)
 	}
 }
+
+func TestAdminCommands_PasswordOnStdinNeverArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-stub PATH technique is POSIX-only")
+	}
+	const (
+		composePath = "/home/u/.jentic/docker-compose.yaml"
+		configPath  = "/home/u/.jentic/jentic-one.yaml"
+		email       = "admin@example.com"
+		password    = "s3cret-admin-pass!" // pragma: allowlist secret
+	)
+
+	cases := []struct {
+		name     string
+		run      func(w *strings.Builder) error
+		wantVerb string
+		wantEnv  string
+	}{
+		{
+			name: "ComposeCreateAdmin",
+			run: func(w *strings.Builder) error {
+				return ComposeCreateAdmin(w, composePath, email, password)
+			},
+			wantVerb: "create-admin",
+		},
+		{
+			name: "VenvCreateAdmin",
+			run: func(w *strings.Builder) error {
+				return VenvCreateAdmin(w, "python", configPath, email, password)
+			},
+			wantVerb: "create-admin",
+			wantEnv:  configPath,
+		},
+		{
+			name: "ComposeResetPassword",
+			run: func(w *strings.Builder) error {
+				return ComposeResetPassword(w, composePath, email, password)
+			},
+			wantVerb: "reset-password",
+		},
+		{
+			name: "VenvResetPassword",
+			run: func(w *strings.Builder) error {
+				return VenvResetPassword(w, "python", configPath, email, password)
+			},
+			wantVerb: "reset-password",
+			wantEnv:  configPath,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			argvFile := filepath.Join(dir, "argv")
+			stdinFile := filepath.Join(dir, "stdin")
+			envFile := filepath.Join(dir, "env")
+			script := "#!/bin/sh\n" +
+				"printf '%s\\n' \"$*\" > '" + argvFile + "'\n" +
+				"cat > '" + stdinFile + "'\n" +
+				"printf '%s' \"$JENTIC_CONFIG_FILE\" > '" + envFile + "'\n" +
+				"exit 0\n"
+			for _, bin := range []string{"docker", "python"} {
+				if err := os.WriteFile(filepath.Join(dir, bin), []byte(script), 0o755); err != nil {
+					t.Fatalf("write %s stub: %v", bin, err)
+				}
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			var out strings.Builder
+			if err := tc.run(&out); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+
+			argvBytes, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatalf("read argv: %v", err)
+			}
+			argv := string(argvBytes)
+			if strings.Contains(argv, password) {
+				t.Fatalf("%s leaked password into argv: %q", tc.name, argv)
+			}
+			for _, want := range []string{"-m jentic_one " + tc.wantVerb, "--email " + email} {
+				if !strings.Contains(argv, want) {
+					t.Errorf("%s argv = %q, missing %q", tc.name, argv, want)
+				}
+			}
+
+			stdinBytes, err := os.ReadFile(stdinFile)
+			if err != nil {
+				t.Fatalf("read stdin: %v", err)
+			}
+			if got, want := string(stdinBytes), password+"\n"; got != want {
+				t.Errorf("%s stdin = %q, want %q", tc.name, got, want)
+			}
+
+			if tc.wantEnv != "" {
+				envBytes, err := os.ReadFile(envFile)
+				if err != nil {
+					t.Fatalf("read env: %v", err)
+				}
+				if got := string(envBytes); got != tc.wantEnv {
+					t.Errorf("%s JENTIC_CONFIG_FILE = %q, want %q", tc.name, got, tc.wantEnv)
+				}
+			}
+		})
+	}
+}
