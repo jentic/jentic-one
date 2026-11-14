@@ -32,7 +32,9 @@ OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@
 # the repo moved to omissis/go-jsonschema but kept the old import path (impl/6.0 §2).
 GO_JSONSCHEMA := go run github.com/atombender/go-jsonschema@v0.23.0
 
-.PHONY: help build build-ctl build-api test test-race test-arch test-golden test-sdk-consumer golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen check-vendored-specs generate-config check-ctl-gen
+FUZZTIME ?= 30s
+
+.PHONY: help build build-ctl build-api test test-race test-arch test-golden test-sdk-consumer golden-update cov fuzz fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen check-vendored-specs generate-config check-ctl-gen
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -67,6 +69,12 @@ golden-update: ## Regenerate the V1 golden files (only when a change is authoriz
 cov: ## Run tests with a coverage report
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
+
+fuzz: ## Run native Go fuzz targets (override duration with FUZZTIME=30s)
+	go test -run=^$$ -fuzz=^FuzzRetryAfterSecondsAt$$ -fuzztime=$(FUZZTIME) ./internal/agentops/
+	go test -run=^$$ -fuzz=^FuzzParseMethodPath$$ -fuzztime=$(FUZZTIME) ./internal/agentops/
+	go test -run=^$$ -fuzz=^FuzzParseKVs$$ -fuzztime=$(FUZZTIME) ./internal/agentops/
+	go test -run=^$$ -fuzz=^FuzzRedactBytes$$ -fuzztime=$(FUZZTIME) ./internal/cli/ux/
 
 fmt: ## Format Go source
 	gofmt -w .
