@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jentic/jentic-one/cli/internal/atomicfile"
 )
 
 // ConfigName is the CLI's own settings file under ~/.jentic.
@@ -188,46 +189,7 @@ func (c *FileConfig) Save(paths Paths) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(paths.ConfigPath(), data, 0o600)
-}
-
-// writeFileAtomic writes data to path via a same-directory temp file that is
-// fsynced and then renamed over path, so a reader (or a crash) never observes a
-// partial write. The temp file is created with perm and removed on any error
-// before the rename.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp config in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	// Clean up the temp file on any failure path before the successful rename.
-	defer func() {
-		if tmpName != "" {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename temp config over %s: %w", path, err)
-	}
-	tmpName = "" // renamed successfully — nothing to clean up
-	return nil
+	return atomicfile.Write(paths.ConfigPath(), data, atomicfile.Options{Perm: 0o600})
 }
 
 // Mutate performs a race-safe read-modify-write of config.yaml: it takes an

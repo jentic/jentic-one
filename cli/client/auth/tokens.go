@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/client/internal/atomicfile"
 )
 
 // TokenSet is the cached OAuth token state for an identity+environment (#1384).
@@ -144,7 +145,7 @@ func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
 	if err != nil {
 		return fmt.Errorf("encoding token state: %w", err)
 	}
-	if err := writeFileAtomic(path, data); err != nil {
+	if err := atomicfile.Write(path, data, atomicfile.Options{Perm: 0o600}); err != nil {
 		return fmt.Errorf("writing token state %s: %w", path, err)
 	}
 	return nil

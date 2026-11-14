@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/client/internal/atomicfile"
 )
 
 // APIKeyPrefix is the required prefix for a Jentic API key credential. It mirrors
@@ -72,12 +73,12 @@ func lockAPIKey(path string) (*flock.Flock, error) {
 // process stops between those writes, the old origin rejects the new key rather
 // than allowing the old key to inherit the new origin.
 func commitAPIKeyRecord(path, key, origin string) error {
-	if err := writeFileAtomic(path, []byte(key)); err != nil {
+	if err := atomicfile.Write(path, []byte(key), atomicfile.Options{Perm: 0o600}); err != nil {
 		return fmt.Errorf("writing API key %s: %w", path, err)
 	}
 	originPath := path + ".origin"
 	if origin != "" {
-		if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
+		if err := atomicfile.Write(originPath, []byte(origin), atomicfile.Options{Perm: 0o600}); err != nil {
 			return fmt.Errorf("writing API key origin %s: %w", originPath, err)
 		}
 		return nil
@@ -172,7 +173,7 @@ func SaveAPIKeyForOrigin(ref IdentityRef, key, rawOrigin string) error {
 		return fmt.Errorf("encoding pending API key update: %w", err)
 	}
 	pendingPath := apiKeyPendingPath(path)
-	if err := writeFileAtomic(pendingPath, pending); err != nil {
+	if err := atomicfile.Write(pendingPath, pending, atomicfile.Options{Perm: 0o600}); err != nil {
 		return fmt.Errorf("writing pending API key update %s: %w", pendingPath, err)
 	}
 	if err := commitAPIKeyRecord(path, key, origin); err != nil {
@@ -273,7 +274,7 @@ func bindAPIKeyOrigin(ref IdentityRef, origin string) (*apiKeyRecord, error) {
 		return rec, nil
 	}
 	originPath := path + ".origin"
-	if err := writeFileAtomic(originPath, []byte(origin)); err != nil {
+	if err := atomicfile.Write(originPath, []byte(origin), atomicfile.Options{Perm: 0o600}); err != nil {
 		return nil, fmt.Errorf("binding API key origin %s: %w", originPath, err)
 	}
 	rec.Origin = origin
@@ -329,7 +330,7 @@ func InvalidateAPIKey(ref IdentityRef) error {
 	return nil
 }
 
-// atomicTempFinalName recognizes the temporary name writeFileAtomic uses for
+// atomicTempFinalName recognizes the temporary name atomicfile.Write uses for
 // finalName and returns finalName without its leading dot.
 func atomicTempFinalName(name string) (string, bool) {
 	if !strings.HasPrefix(name, ".") {

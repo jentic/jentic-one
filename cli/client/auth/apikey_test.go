@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/client/internal/atomicfile"
 )
 
 func withStateDir(t *testing.T) {
@@ -98,21 +100,21 @@ func TestReadAPIKey_RecoversInterruptedReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			pendingPath := apiKeyPendingPath(path)
-			if err := writeFileAtomic(pendingPath, pending); err != nil {
+			if err := atomicfile.Write(pendingPath, pending, atomicfile.Options{Perm: 0o600}); err != nil {
 				t.Fatal(err)
 			}
 			switch stage {
 			case "new key committed", "both files committed":
-				if err := writeFileAtomic(path, []byte(newKey)); err != nil {
+				if err := atomicfile.Write(path, []byte(newKey), atomicfile.Options{Perm: 0o600}); err != nil {
 					t.Fatal(err)
 				}
 			case "new origin committed":
-				if err := writeFileAtomic(path+".origin", []byte(newOrigin)); err != nil {
+				if err := atomicfile.Write(path+".origin", []byte(newOrigin), atomicfile.Options{Perm: 0o600}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if stage == "both files committed" {
-				if err := writeFileAtomic(path+".origin", []byte(newOrigin)); err != nil {
+				if err := atomicfile.Write(path+".origin", []byte(newOrigin), atomicfile.Options{Perm: 0o600}); err != nil {
 					t.Fatal(err)
 				}
 			}

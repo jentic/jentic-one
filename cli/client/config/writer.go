@@ -10,6 +10,8 @@ import (
 
 	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
+
+	"github.com/jentic/jentic-one/cli/client/internal/atomicfile"
 )
 
 // validNamePattern is the canonical charset for user-supplied identity,
@@ -148,7 +150,7 @@ func MutateConfig(mutator func(*Config) error) error {
 
 	// Atomic write: temp file + fsync + rename. The lock prevents interleaving;
 	// the rename prevents a torn file.
-	if err := WriteFileAtomic(file, out); err != nil {
+	if err := atomicfile.Write(file, out, atomicfile.Options{Perm: 0o600}); err != nil {
 		return fmt.Errorf("writing config.yaml: %w", err)
 	}
 	return nil
@@ -160,36 +162,7 @@ func MutateConfig(mutator func(*Config) error) error {
 // symlink or mode cannot redirect or widen the write. All config and credential
 // files share the 0600 mode, so it is fixed here rather than a parameter.
 func WriteFileAtomic(path string, data []byte) error {
-	const perm os.FileMode = 0o600
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	// Best-effort cleanup if we bail before the rename; a successful rename makes
-	// this a no-op (the temp name no longer exists).
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename temp file into place: %w", err)
-	}
-	return nil
+	return atomicfile.Write(path, data, atomicfile.Options{Perm: 0o600})
 }
 
 // typedMapSections are the top-level keys whose value is a Go map fully owned by
