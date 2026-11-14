@@ -238,6 +238,7 @@ async def test_resolution_honors_quadruple_scope_intersection(
     ceiling ∩ grant scopes — on both resolvers. Narrowing the agent's live
     grants after mint narrows the effective set without a re-mint."""
     user_id = await _seed_user(integration_context, "usr_g_quad")
+    await seeds.seed_permissions(integration_context, user_id, ["apis:read", "apis:write"])
     agent_id = await _seed_agent(
         integration_context, owner_id=user_id, scopes=["apis:read", "apis:write"]
     )
