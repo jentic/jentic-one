@@ -14,7 +14,9 @@ its safety reason. Missing methods and newly scoped methods make that entry stal
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -53,6 +55,8 @@ _ATTRIBUTION_ONLY_ALLOWLIST: dict[str, str] = {
     "OAuthClientService.deactivate": _ORG_OAUTH_CLIENT,
     "OAuthClientService.delete": _ORG_OAUTH_CLIENT,
     "OAuthClientService.rotate_secret": _ORG_OAUTH_CLIENT,
+    "OAuthClientService.approve": _ORG_OAUTH_CLIENT,
+    "OAuthClientService.deny": _ORG_OAUTH_CLIENT,
     "ProviderConfigService.set": (
         "org-wide runtime provider config, no owner column; route gated by config:write"
     ),
@@ -82,26 +86,19 @@ _ATTRIBUTION_ONLY_ALLOWLIST: dict[str, str] = {
     "CredentialService.create": (
         "create-only credentials:write operation; ownership is assigned from identity.sub"
     ),
-    "CredentialService.list_agents": (
-        "delegates identity to the credential-access mixin, which performs the scoped "
-        "credential load"
-    ),
-    "CredentialService.list_agent_permissions": (
-        "delegates identity to the credential-access mixin, which performs the scoped "
-        "credential load"
-    ),
     "OAuthAppRegistrationService.create_authorization_code": _ORG_OAUTH_APP,
     "OAuthAppRegistrationService.create_device_authorization": _ORG_OAUTH_APP,
     "OAuthAppRegistrationService.update": _ORG_OAUTH_APP,
     "OAuthAppRegistrationService.rotate_client_secret": _ORG_OAUTH_APP,
     "OAuthAppRegistrationService.delete": _ORG_OAUTH_APP,
-    "ApiService.update": (
-        "org-wide API registry content, no owner column; route gated by apis:write"
-    ),
+    "ApiService.update": _ORG_REVISION,
+    "ApiService.delete": _ORG_REVISION,
     "NoteService.create": (
         "create-only operation: the note is caller-owned through created_by == identity.sub"
     ),
     "OverlayService.submit": _ORG_OVERLAY,
+    "OverlayService.update": _ORG_OVERLAY,
+    "OverlayService.confirm": _ORG_OVERLAY,
     "OverlayService.deprecate": _ORG_OVERLAY,
     "OverlayService.rollback": _ORG_OVERLAY,
     "RevisionService.promote": _ORG_REVISION,
@@ -123,52 +120,296 @@ def _receives_whole_identity(call: ast.Call) -> bool:
     return any(isinstance(value, ast.Name) and value.id == "identity" for value in values)
 
 
-def _is_service_receiver(receiver: ast.expr) -> bool:
-    if isinstance(receiver, ast.Name):
-        return receiver.id == "self"
-    return (
-        isinstance(receiver, ast.Attribute)
-        and isinstance(receiver.value, ast.Name)
-        and receiver.value.id == "self"
+def _is_identity_filter(node: ast.AST) -> bool:
+    return any(
+        isinstance(call, ast.Call)
+        and _name_of(call.func) == "build_access_filters"
+        and _receives_whole_identity(call)
+        for call in ast.walk(node)
     )
 
 
-def _is_scoped(method: _Func) -> bool:
-    for node in ast.walk(method):
-        if not isinstance(node, ast.Call) or not _receives_whole_identity(node):
-            continue
-        name = _name_of(node.func)
-        if name == "build_access_filters" or (
-            name is not None and name.startswith(("_load_", "_require_"))
+def _is_repository_call(call: ast.Call) -> bool:
+    if not isinstance(call.func, ast.Attribute):
+        return False
+    receiver = _name_of(call.func.value)
+    return receiver is not None and (
+        receiver.endswith("Repository")
+        or receiver in {"repo", "repository", "_repo", "_repository"}
+        or receiver.endswith(("_repo", "_repository"))
+    )
+
+
+def _argument_values(call: ast.Call) -> list[ast.expr]:
+    return list(call.args) + [kw.value for kw in call.keywords]
+
+
+def _assigned_names(node: ast.stmt) -> Iterator[str]:
+    targets: list[ast.expr]
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, ast.AnnAssign):
+        targets = [node.target]
+    else:
+        return
+    for target in targets:
+        if isinstance(target, ast.Name):
+            yield target.id
+
+
+#: Helpers whose bodies implement owner/permission authorization without a query filter.
+_EXPLICIT_AUTHORIZATION_HELPERS: dict[str, str] = {
+    "AgentAuthService._ensure_active_and_owned": (
+        "locks the agent and rejects every non-admin whose identity.sub is not agent.owner_id"
+    ),
+    "AgentService._load_owned_agent": (
+        "loads the agent and rejects every non-admin whose identity.sub is not agent.owner_id"
+    ),
+    "ConnectSessionService._require_session_access": (
+        "requires the session poll token or validates the target agent's owner/org:admin"
+    ),
+    "ConnectSessionService._is_session_approver": (
+        "requires org:admin or a human target-agent owner with credentials/agents write grants"
+    ),
+    "_CredentialAccessMixin._may_mutate_rule_set": (
+        "requires org:admin or identity.sub == the non-curated rule set's created_by"
+    ),
+    "_CredentialAccessMixin._may_attach_rule_set": (
+        "requires org:admin, the rule-set creator, or a curated set after the scoped binding load"
+    ),
+}
+
+
+class _ResolvedMethod(NamedTuple):
+    owner: str
+    method: _Func
+    path: Path
+
+
+class _ServiceIndex:
+    """Resolve concrete service methods, including inherited implementations."""
+
+    def __init__(self, sources: list[tuple[ast.Module, Path]]) -> None:
+        self.classes: dict[str, ast.ClassDef] = {}
+        self.paths: dict[str, Path] = {}
+        self.methods: dict[str, dict[str, _Func]] = {}
+        for tree, path in sources:
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                self.classes[node.name] = node
+                self.paths[node.name] = path
+                self.methods[node.name] = {
+                    item.name: item for item in node.body if isinstance(item, _Func)
+                }
+
+    def owners(self) -> Iterator[str]:
+        for name in self.classes:
+            if name.endswith("Service"):
+                yield name
+
+    def _base_owners(self, owner: str) -> Iterator[str]:
+        for base in self.classes[owner].bases:
+            name = _name_of(base)
+            if name in self.classes:
+                yield name
+
+    def resolve(self, owner: str, method_name: str) -> _ResolvedMethod | None:
+        method = self.methods.get(owner, {}).get(method_name)
+        if method is not None:
+            return _ResolvedMethod(owner, method, self.paths[owner])
+        for base in self._base_owners(owner):
+            resolved = self.resolve(base, method_name)
+            if resolved is not None:
+                return resolved
+        return None
+
+    def operations(self) -> Iterator[tuple[str, _ResolvedMethod]]:
+        """Yield each public operation once per concrete owner, honouring overrides."""
+        for owner in self.owners():
+            for resolved in self._visit_operations(owner, owner, set()):
+                yield f"{owner}.{resolved.method.name}", resolved
+
+    def _visit_operations(
+        self, owner: str, class_name: str, seen: set[str]
+    ) -> Iterator[_ResolvedMethod]:
+        for name, method in self.methods.get(class_name, {}).items():
+            if name in seen:
+                continue
+            seen.add(name)
+            positional = method.args.posonlyargs + method.args.args
+            takes_identity = any(arg.arg == "identity" for arg in method.args.kwonlyargs)
+            if not name.startswith("_") and len(positional) > 1 and takes_identity:
+                yield _ResolvedMethod(owner, method, self.paths[class_name])
+        for base in self._base_owners(class_name):
+            yield from self._visit_operations(owner, base, seen)
+
+    def _local_service_types(self, method: _Func) -> dict[str, str]:
+        types: dict[str, str] = {}
+        for node in ast.walk(method):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            class_name = _name_of(node.value.func)
+            if class_name not in self.classes:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    types[target.id] = class_name
+        return types
+
+    def _resolve_call(self, owner: str, method: _Func, call: ast.Call) -> _ResolvedMethod | None:
+        if not isinstance(call.func, ast.Attribute):
+            return None
+        receiver = call.func.value
+        if isinstance(receiver, ast.Name) and receiver.id == "self":
+            return self.resolve(owner, call.func.attr)
+        if (
+            isinstance(receiver, ast.Call)
+            and isinstance(receiver.func, ast.Name)
+            and receiver.func.id == "super"
         ):
+            for base in self._base_owners(owner):
+                resolved = self.resolve(base, call.func.attr)
+                if resolved is not None:
+                    return resolved
+            return None
+        if isinstance(receiver, ast.Name):
+            service_type = self._local_service_types(method).get(receiver.id)
+            if service_type is not None:
+                return self.resolve(service_type, call.func.attr)
+        return None
+
+    @staticmethod
+    def _filter_parameters(call: ast.Call, target: _ResolvedMethod) -> set[str]:
+        parameters = target.method.args.posonlyargs + target.method.args.args
+        passed: set[str] = set()
+        for parameter, value in zip(parameters[1:], call.args, strict=False):
+            if isinstance(value, ast.Name) or _is_identity_filter(value):
+                passed.add(parameter.arg)
+        for keyword in call.keywords:
+            if keyword.arg is not None and (
+                isinstance(keyword.value, ast.Name) or _is_identity_filter(keyword.value)
+            ):
+                passed.add(keyword.arg)
+        return passed
+
+    def _filter_reaches_repository(
+        self,
+        owner: str,
+        method: _Func,
+        filter_parameters: frozenset[str] = frozenset(),
+        seen: frozenset[tuple[str, str]] = frozenset(),
+    ) -> bool:
+        key = (owner, method.name)
+        if key in seen:
+            return False
+        filter_names = set(filter_parameters)
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(method):
+                if not isinstance(node, ast.Assign | ast.AnnAssign):
+                    continue
+                value = node.value
+                if value is None:
+                    continue
+                names = set(_assigned_names(node))
+                if (
+                    _is_identity_filter(value)
+                    or (isinstance(value, ast.Name) and value.id in filter_names)
+                ) and not names.issubset(filter_names):
+                    filter_names.update(names)
+                    changed = True
+        for call in ast.walk(method):
+            if not isinstance(call, ast.Call):
+                continue
+            values = _argument_values(call)
+            carries_filter = any(
+                _is_identity_filter(value)
+                or (isinstance(value, ast.Name) and value.id in filter_names)
+                for value in values
+            )
+            if not carries_filter:
+                continue
+            if _is_repository_call(call):
+                if any(
+                    keyword.arg is not None
+                    and keyword.arg.endswith("filters")
+                    and (
+                        _is_identity_filter(keyword.value)
+                        or (
+                            isinstance(keyword.value, ast.Name) and keyword.value.id in filter_names
+                        )
+                    )
+                    for keyword in call.keywords
+                ):
+                    return True
+                continue
+            target = self._resolve_call(owner, method, call)
+            if target is None:
+                continue
+            forwarded = self._filter_parameters(call, target) & filter_names
+            if any(_is_identity_filter(value) for value in values):
+                forwarded.update(self._filter_parameters(call, target))
+            if forwarded and self._filter_reaches_repository(
+                target.owner,
+                target.method,
+                frozenset(forwarded),
+                seen | {key},
+            ):
+                return True
+        return False
+
+    def is_authorized(
+        self, owner: str, method: _Func, seen: frozenset[tuple[str, str]] = frozenset()
+    ) -> bool:
+        """Accept repository-bound filters or delegation to a proven authorizer."""
+        key = (owner, method.name)
+        if key in seen:
+            return False
+        if self._filter_reaches_repository(owner, method):
             return True
-        if isinstance(node.func, ast.Attribute) and _is_service_receiver(node.func.value):
-            return True
-    return False
+        for call in ast.walk(method):
+            if not isinstance(call, ast.Call) or not _receives_whole_identity(call):
+                continue
+            target = self._resolve_call(owner, method, call)
+            if target is None:
+                continue
+            explicit_keys = {
+                f"{target.owner}.{target.method.name}",
+                f"{owner}.{target.method.name}",
+            }
+            if explicit_keys & _EXPLICIT_AUTHORIZATION_HELPERS.keys():
+                return True
+            if self.is_authorized(target.owner, target.method, seen | {key}):
+                return True
+        return False
 
 
 def _by_id_methods_in_tree(tree: ast.Module, py_file: Path) -> dict[str, tuple[Path, int, bool]]:
-    found: dict[str, tuple[Path, int, bool]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef) or not node.name.endswith("Service"):
-            continue
-        for item in node.body:
-            if not isinstance(item, _Func) or item.name.startswith("_"):
-                continue
-            positional = item.args.posonlyargs + item.args.args
-            takes_identity = any(arg.arg == "identity" for arg in item.args.kwonlyargs)
-            if len(positional) > 1 and takes_identity:
-                found[f"{node.name}.{item.name}"] = (py_file, item.lineno, _is_scoped(item))
-    return found
+    index = _ServiceIndex([(tree, py_file)])
+    return {
+        name: (resolved.path, resolved.method.lineno, index.is_authorized(owner, resolved.method))
+        for name, resolved in index.operations()
+        for owner in [name.split(".", 1)[0]]
+    }
+
+
+def _service_sources() -> list[tuple[ast.Module, Path]]:
+    return [
+        (ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file)), py_file)
+        for services_dir in SCOPED_SERVICE_DIRS
+        for py_file in python_files_in(services_dir)
+    ]
 
 
 def _by_id_methods() -> dict[str, tuple[Path, int, bool]]:
-    found: dict[str, tuple[Path, int, bool]] = {}
-    for services_dir in SCOPED_SERVICE_DIRS:
-        for py_file in python_files_in(services_dir):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-            found.update(_by_id_methods_in_tree(tree, py_file))
-    return found
+    index = _ServiceIndex(_service_sources())
+    return {
+        name: (resolved.path, resolved.method.lineno, index.is_authorized(owner, resolved.method))
+        for name, resolved in index.operations()
+        for owner in [name.split(".", 1)[0]]
+    }
 
 
 @pytest.mark.arch
@@ -214,3 +455,57 @@ def test_attribution_only_by_id_method_is_flagged() -> None:
     )
     methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
     assert methods["ExampleService.get"][2] is False
+
+
+@pytest.mark.arch
+def test_by_id_identity_call_shape_is_not_scoping() -> None:
+    """Self-check: filter construction and identity-accepting calls are not proof."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def get_unused(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "    async def get_ignoring_helper(self, thing_id: str, *, identity: Identity):\n"
+        "        return await self._load_thing(thing_id, identity)\n"
+        "    async def _load_thing(self, thing_id: str, identity: Identity):\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "    async def get_audit(self, thing_id: str, *, identity: Identity):\n"
+        "        await self.audit(identity=identity)\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "    async def get_recorded(self, thing_id: str, *, identity: Identity):\n"
+        "        await self.service.record_view(identity)\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    assert {name for name, (_, _, scoped) in methods.items() if not scoped} == {
+        "ExampleService.get_unused",
+        "ExampleService.get_ignoring_helper",
+        "ExampleService.get_audit",
+        "ExampleService.get_recorded",
+    }
+
+
+@pytest.mark.arch
+def test_by_id_inherited_methods_are_collected_once() -> None:
+    """Self-check: concrete services expose authorizing methods inherited from mixins."""
+    tree = ast.parse(
+        "class AccessMixin:\n"
+        "    async def get_shared(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def update_unscoped(self, thing_id: str, *, identity: Identity):\n"
+        "        return await ThingRepository.update(thing_id)\n"
+        "class FirstService(AccessMixin): pass\n"
+        "class SecondService(AccessMixin): pass\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    assert set(methods) == {
+        "FirstService.get_shared",
+        "FirstService.update_unscoped",
+        "SecondService.get_shared",
+        "SecondService.update_unscoped",
+    }
+    assert methods["FirstService.get_shared"][2] is True
+    assert methods["SecondService.get_shared"][2] is True
+    assert methods["FirstService.update_unscoped"][2] is False
+    assert methods["SecondService.update_unscoped"][2] is False

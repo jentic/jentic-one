@@ -19,14 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import SRC_ROOT, python_files_in
-
-SCOPED_SERVICE_DIRS = [
-    SRC_ROOT / "admin" / "services",
-    SRC_ROOT / "auth" / "services",
-    SRC_ROOT / "control" / "services",
-    SRC_ROOT / "registry" / "services",
-]
+from .test_scoped_by_id_services import _service_sources, _ServiceIndex
 
 _LIST_METHOD = re.compile(r"^(list_\w+|get_page|search\w*|count_\w+|stream\w*|export\w*|iter_\w+)$")
 
@@ -48,6 +41,9 @@ _ALLOWLIST: dict[str, str] = {
     ),
     "AuthorizeService.list_consentable_agents": (
         "consent flow: keyed on the authenticated consenting user's id, lists only their agents"
+    ),
+    "OAuthGrantService.list_grants_for_agent": (
+        "inline owner-or-org:admin check precedes delegation to the identity-scoped grant listing"
     ),
     "CredentialService.list_providers": "static credential-provider metadata, no rows",
     "CredentialService.list_rule_sets": (
@@ -73,68 +69,32 @@ _ALLOWLIST: dict[str, str] = {
 _Func = ast.FunctionDef | ast.AsyncFunctionDef
 
 
-def _name_of(node: ast.expr) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return None
-
-
-def _receives_whole_identity(call: ast.Call) -> bool:
-    values = list(call.args) + [kw.value for kw in call.keywords]
-    return any(isinstance(value, ast.Name) and value.id == "identity" for value in values)
-
-
-def _is_service_receiver(receiver: ast.expr) -> bool:
-    if isinstance(receiver, ast.Name):
-        return receiver.id == "self"
-    if isinstance(receiver, ast.Attribute):
-        return isinstance(receiver.value, ast.Name) and receiver.value.id == "self"
-    if isinstance(receiver, ast.Call):
-        name = _name_of(receiver.func)
-        return name == "super" or (name is not None and name.endswith("Service"))
-    return False
-
-
-def _uses_identity(method: _Func) -> bool:
-    """Whether the whole identity reaches a scoping call rather than an attribute read."""
-    for node in ast.walk(method):
-        if not isinstance(node, ast.Call) or not _receives_whole_identity(node):
-            continue
-        name = _name_of(node.func)
-        if name == "build_access_filters" or (
-            name is not None and name.startswith(("_load_", "_require_"))
-        ):
-            return True
-        if isinstance(node.func, ast.Attribute) and _is_service_receiver(node.func.value):
-            return True
-    return False
-
-
-def _is_scoped(method: _Func) -> bool:
-    takes_identity = any(arg.arg == "identity" for arg in method.args.kwonlyargs)
-    return takes_identity and _uses_identity(method)
-
-
 def _list_methods_in_tree(tree: ast.Module, py_file: Path) -> dict[str, tuple[Path, int, bool]]:
+    index = _ServiceIndex([(tree, py_file)])
     found: dict[str, tuple[Path, int, bool]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef) or not node.name.endswith("Service"):
             continue
         for item in node.body:
-            if isinstance(item, _Func) and _LIST_METHOD.match(item.name):
-                found[f"{node.name}.{item.name}"] = (py_file, item.lineno, _is_scoped(item))
+            if not isinstance(item, _Func) or not _LIST_METHOD.match(item.name):
+                continue
+            takes_identity = any(arg.arg == "identity" for arg in item.args.kwonlyargs)
+            scoped = takes_identity and index.is_authorized(node.name, item)
+            found[f"{node.name}.{item.name}"] = (py_file, item.lineno, scoped)
     return found
 
 
 def _list_methods() -> dict[str, tuple[Path, int, bool]]:
     """``Class.method`` -> (file, line, is_scoped) for every service collection read."""
+    index = _ServiceIndex(_service_sources())
     found: dict[str, tuple[Path, int, bool]] = {}
-    for services_dir in SCOPED_SERVICE_DIRS:
-        for py_file in python_files_in(services_dir):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-            found.update(_list_methods_in_tree(tree, py_file))
+    for owner in index.owners():
+        for name, method in index.methods.get(owner, {}).items():
+            if not _LIST_METHOD.match(name):
+                continue
+            takes_identity = any(arg.arg == "identity" for arg in method.args.kwonlyargs)
+            scoped = takes_identity and index.is_authorized(owner, method)
+            found[f"{owner}.{name}"] = (index.paths[owner], method.lineno, scoped)
     return found
 
 
@@ -196,3 +156,57 @@ def test_search_and_count_methods_are_collected() -> None:
         "ExampleService.export",
         "ExampleService.iter_items",
     }
+
+
+@pytest.mark.arch
+def test_identity_call_shape_is_not_scoping() -> None:
+    """Self-check: filters and helper names require evidence of authorization."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def list_unused(self, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.list_all()\n"
+        "    async def list_ignoring_helper(self, *, identity: Identity):\n"
+        "        return await self._load_things(identity)\n"
+        "    async def _load_things(self, identity: Identity):\n"
+        "        return await ThingRepository.list_all()\n"
+        "    async def list_audit(self, *, identity: Identity):\n"
+        "        await self.audit(identity=identity)\n"
+        "        return await ThingRepository.list_all()\n"
+        "    async def list_recorded(self, *, identity: Identity):\n"
+        "        await self.service.record_view(identity)\n"
+        "        return await ThingRepository.list_all()\n"
+    )
+    methods = _list_methods_in_tree(tree, Path("<self-check>"))
+    assert {name for name, (_, _, scoped) in methods.items() if not scoped} == {
+        "ExampleService.list_unused",
+        "ExampleService.list_ignoring_helper",
+        "ExampleService.list_audit",
+        "ExampleService.list_recorded",
+    }
+
+
+@pytest.mark.arch
+def test_filter_flow_and_scoped_delegation_are_scoping() -> None:
+    """Self-check: repository filter flow and real delegated loads are accepted."""
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def list_direct(self, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.list_all(filters=filters)\n"
+        "    async def list_delegated(self, *, identity: Identity):\n"
+        "        return await self._load_things(identity=identity)\n"
+        "    async def _load_things(self, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.list_all(filters=filters)\n"
+        "    async def list_inline(self, thing_id: str, *, identity: Identity):\n"
+        "        return await self._load_thing(\n"
+        "            thing_id, filters=build_access_filters(identity, Thing)\n"
+        "        )\n"
+        "    async def _load_thing(self, thing_id: str, *, filters: list):\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+    )
+    methods = _list_methods_in_tree(tree, Path("<self-check>"))
+    assert methods["ExampleService.list_direct"][2] is True
+    assert methods["ExampleService.list_delegated"][2] is True
+    assert methods["ExampleService.list_inline"][2] is True
