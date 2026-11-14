@@ -296,7 +296,7 @@ class HttpRunner(UpstreamRunner):
             if lowered == "connection" or lowered in nominated:
                 continue
             if lowered == "cookie" and url:
-                filtered_cookie = filter_inbound_cookie(value, url)
+                filtered_cookie = filter_inbound_cookie(value, url, allow_untracked=True)
                 if not filtered_cookie:
                     continue
                 value = filtered_cookie
