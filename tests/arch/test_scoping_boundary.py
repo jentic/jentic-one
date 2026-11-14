@@ -111,18 +111,27 @@ def _uses_write_filter(call: ast.Call, true_parameters: frozenset[str]) -> bool:
     )
 
 
-def _true_parameters(call: ast.Call, target: _Func) -> frozenset[str]:
+def _true_parameters(
+    call: ast.Call, target: _Func, true_parameters: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """Parameters of *target* known to be ``True`` at this delegation site.
+
+    A literal ``True`` and a name already known-true (``for_write=for_write``) both
+    propagate, so a known-true flag survives every delegation hop.
+    """
+
+    def is_true(value: ast.expr) -> bool:
+        return (isinstance(value, ast.Constant) and value.value is True) or (
+            isinstance(value, ast.Name) and value.id in true_parameters
+        )
+
     parameters = target.args.posonlyargs + target.args.args
     names = {
         parameter.arg
         for parameter, value in zip(parameters[1:], call.args, strict=False)
-        if isinstance(value, ast.Constant) and value.value is True
+        if is_true(value)
     }
-    names.update(
-        kw.arg
-        for kw in call.keywords
-        if kw.arg is not None and isinstance(kw.value, ast.Constant) and kw.value.value is True
-    )
+    names.update(kw.arg for kw in call.keywords if kw.arg is not None and is_true(kw.value))
     return frozenset(names)
 
 
@@ -179,7 +188,7 @@ class _WriteFilterIndex:
             child_found, child_write_scoped = self._filter_status(
                 target.owner,
                 target.method,
-                _true_parameters(call, target.method),
+                _true_parameters(call, target.method, true_parameters),
                 seen | {key},
             )
             found = found or child_found
@@ -196,6 +205,39 @@ class _WriteFilterIndex:
             if has_filters:
                 found[name] = (resolved.path, resolved.method.lineno, write_scoped)
         return found
+
+
+#: Credential mutations whose read filter is justified solely by the
+#: ``_require_visible_binding(for_write=True)`` gate; removing that flag makes them stale.
+_CREDENTIAL_WRITE_GATE_EXEMPTIONS = frozenset(
+    {
+        "CredentialService.replace_agent_permissions",
+        "CredentialService.patch_agent_permissions",
+        "CredentialService.attach_binding_rule_set",
+        "CredentialService.detach_binding_rule_set",
+    }
+)
+
+
+def _credential_write_gate_present(index: _ServiceIndex, name: str) -> bool:
+    """Whether *name* still calls ``_require_visible_binding(..., for_write=True)``.
+
+    The exemption is only valid while that exact write gate is present; downgrading or
+    removing the flag (leaving only a read filter) makes the exemption stale.
+    """
+    owner, method_name = name.split(".", 1)
+    resolved = index.resolve(owner, method_name)
+    if resolved is None:
+        return False
+    for call in ast.walk(resolved.method):
+        if not isinstance(call, ast.Call) or _name_of(call.func) != "_require_visible_binding":
+            continue
+        if any(
+            kw.arg == "for_write" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+            for kw in call.keywords
+        ):
+            return True
+    return False
 
 
 def _write_filter_findings(tree: ast.Module, py_file: Path) -> dict[str, tuple[Path, int, bool]]:
@@ -241,10 +283,7 @@ def test_delegated_write_filter_coverage_is_exercised() -> None:
     assert methods["AgentService.unbind_credential"][2] is True
 
 
-@pytest.mark.arch
-def test_job_cancel_exception_matches_its_integration_contract() -> None:
-    """The cancellation exemption stays tied to its real filter and integration test."""
-    assert _write_filter_findings_in_services()["JobService.cancel"][2] is False
+def _job_cancel_contract_source() -> str:
     job_contract = (
         SRC_ROOT.parent.parent
         / "tests"
@@ -253,10 +292,177 @@ def test_job_cancel_exception_matches_its_integration_contract() -> None:
         / "services"
         / "test_job_scoping.py"
     )
-    source = job_contract.read_text(encoding="utf-8")
-    assert "cancel" in source
-    assert "agent" in source
-    assert "owner" in source
+    return job_contract.read_text(encoding="utf-8")
+
+
+def _owner_cancel_agent_job_test(source: str) -> _Func | None:
+    """The named positive integration test, if present."""
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == "test_owner_can_cancel_their_agents_job"
+        ):
+            return node
+    return None
+
+
+def _owner_cancel_test_has_contract(func: _Func) -> bool:
+    """The owner cancels the agent's queued job and observes the CANCELLED status.
+
+    Requires a ``JobService(ctx).cancel(...)`` call whose identity is the owner and a
+    ``cancelled.status == JobStatus.CANCELLED`` assertion, so the exemption tracks the
+    actual behaviour rather than incidental words in the file.
+    """
+    calls_cancel = False
+    asserts_cancelled = False
+    for node in ast.walk(func):
+        if (
+            isinstance(node, ast.Call)
+            and _name_of(node.func) == "cancel"
+            and any(
+                isinstance(kw.value, ast.Call) and _name_of(kw.value.func) == "_user"
+                for kw in node.keywords
+                if kw.arg == "identity"
+            )
+        ):
+            calls_cancel = True
+        if (
+            isinstance(node, ast.Assert)
+            and isinstance(node.test, ast.Compare)
+            and any(
+                isinstance(comp, ast.Attribute) and comp.attr == "CANCELLED"
+                for comp in node.test.comparators
+            )
+        ):
+            asserts_cancelled = True
+    return calls_cancel and asserts_cancelled
+
+
+@pytest.mark.arch
+def test_job_cancel_exception_matches_its_integration_contract() -> None:
+    """The cancellation exemption requires the named positive owner-cancels-agent test."""
+    assert _write_filter_findings_in_services()["JobService.cancel"][2] is False
+    test = _owner_cancel_agent_job_test(_job_cancel_contract_source())
+    assert test is not None, "test_owner_can_cancel_their_agents_job is missing"
+    assert _owner_cancel_test_has_contract(test), (
+        "test_owner_can_cancel_their_agents_job must cancel the agent's job as the owner "
+        "and assert cancelled.status == JobStatus.CANCELLED"
+    )
+
+
+@pytest.mark.arch
+def test_job_cancel_contract_self_check() -> None:
+    """Self-check: a same-named test without the owner-cancel contract does not qualify."""
+    bare = _owner_cancel_agent_job_test(
+        "async def test_owner_can_cancel_their_agents_job():\n    assert True\n"
+    )
+    assert bare is not None
+    assert not _owner_cancel_test_has_contract(bare)
+    complete = _owner_cancel_agent_job_test(
+        "async def test_owner_can_cancel_their_agents_job():\n"
+        "    cancelled = await JobService(ctx).cancel(queued.id, identity=_user(seed.owner_id))\n"
+        "    assert cancelled.status == JobStatus.CANCELLED\n"
+    )
+    assert complete is not None
+    assert _owner_cancel_test_has_contract(complete)
+
+
+@pytest.mark.arch
+def test_for_write_true_propagates_through_wrapper_hops() -> None:
+    """Self-check: a known-true for_write name survives every delegation hop.
+
+    A public method passing literal ``for_write=True`` to a wrapper that forwards
+    ``for_write=for_write`` down to the filter builder is valid and must not be
+    falsely rejected.
+    """
+    tree = ast.parse(
+        "class ExampleService:\n"
+        "    async def replace(self, thing_id: str, *, identity: Identity):\n"
+        "        await self._load_manageable(thing_id, identity=identity, for_write=True)\n"
+        "        await ThingRepository.replace(thing_id)\n"
+        "    async def _load_manageable(\n"
+        "        self, thing_id: str, *, identity: Identity, for_write: bool = False\n"
+        "    ):\n"
+        "        return await self._load_thing(thing_id, identity=identity, for_write=for_write)\n"
+        "    async def _load_thing(\n"
+        "        self, thing_id: str, *, identity: Identity, for_write: bool = False\n"
+        "    ):\n"
+        "        filters = build_access_filters(identity, Thing, for_write=for_write)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+    )
+    methods = _write_filter_findings(tree, Path("<self-check>"))
+    assert methods["ExampleService.replace"][2] is True
+
+
+@pytest.mark.arch
+def test_credential_exemption_requires_for_write_gate() -> None:
+    """Self-check: the credential exemption is only valid with for_write=True.
+
+    Removing or downgrading the ``_require_visible_binding`` write flag must make
+    the exemption stale even when a read filter remains.
+    """
+    gated = ast.parse(
+        "class CredentialService:\n"
+        "    async def attach_binding_rule_set(self, cid: str, aid: str, *, identity: Identity):\n"
+        "        await self._require_visible_binding(cid, aid, identity=identity, for_write=True)\n"
+        "        await ThingRepository.update(cid)\n"
+        "    async def _require_visible_binding(\n"
+        "        self, cid: str, aid: str, *, identity: Identity, for_write: bool = False\n"
+        "    ):\n"
+        "        filters = build_access_filters(identity, Credential)\n"
+        "        return await CredentialRepository.get_by_id(cid, filters=filters)\n"
+    )
+    downgraded = ast.parse(
+        "class CredentialService:\n"
+        "    async def attach_binding_rule_set(self, cid: str, aid: str, *, identity: Identity):\n"
+        "        await self._require_visible_binding(cid, aid, identity=identity)\n"
+        "        await ThingRepository.update(cid)\n"
+        "    async def _require_visible_binding(\n"
+        "        self, cid: str, aid: str, *, identity: Identity, for_write: bool = False\n"
+        "    ):\n"
+        "        filters = build_access_filters(identity, Credential)\n"
+        "        return await CredentialRepository.get_by_id(cid, filters=filters)\n"
+    )
+    name = "CredentialService.attach_binding_rule_set"
+    assert _credential_write_gate_present(_ServiceIndex([(gated, Path("<self-check>"))]), name)
+    assert not _credential_write_gate_present(
+        _ServiceIndex([(downgraded, Path("<self-check>"))]), name
+    )
+
+
+@pytest.mark.arch
+def test_credential_exemptions_have_write_gate_in_production() -> None:
+    """Each credential exemption still delegates to _require_visible_binding(for_write=True)."""
+    methods = _write_filter_findings_in_services()
+    index = _ServiceIndex(_service_sources())
+    for name in _CREDENTIAL_WRITE_GATE_EXEMPTIONS:
+        assert name in methods, f"{name} no longer a scoped mutating method"
+        assert _credential_write_gate_present(index, name), (
+            f"{name} no longer reaches _require_visible_binding(for_write=True); "
+            "its _WRITE_FILTER_ALLOWLIST entry is stale"
+        )
+
+
+@pytest.mark.arch
+def test_write_filter_mixin_resolution_uses_c3_mro() -> None:
+    """Self-check: write-filter analysis inspects the C3-resolved override."""
+    tree = ast.parse(
+        "class Root:\n"
+        "    async def update(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing, for_write=True)\n"
+        "        return await ThingRepository.update(thing_id, filters=filters)\n"
+        "class Left(Root):\n"
+        "    pass\n"
+        "class Right(Root):\n"
+        "    async def update(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.update(thing_id, filters=filters)\n"
+        "class DiamondService(Left, Right):\n"
+        "    pass\n"
+    )
+    methods = _write_filter_findings(tree, Path("<self-check>"))
+    # C3 resolves DiamondService.update to Right.update, which uses a read filter.
+    assert methods["DiamondService.update"][2] is False
 
 
 @pytest.mark.arch
