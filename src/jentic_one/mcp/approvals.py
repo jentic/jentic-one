@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any
+from typing import Any, Final
 
 import mcp.types as mcp_types
 import structlog
@@ -56,6 +56,7 @@ FRONT_DOOR_URL_ELICITATION = "url_elicitation"
 FRONT_DOOR_HELD_RESULT = "held_result"
 
 _STATE_VERSION = 1
+_REQUEST_STATE_AAD: Final = b"jentic/mcp/request-state/v1"
 
 
 def client_capabilities(meta: Any) -> dict[str, Any]:
@@ -95,13 +96,13 @@ def seal_request_state(encryption: Any, *, envelope: dict[str, Any], agent_id: s
         "links": envelope.get("_links", {}),
         "exp": int(time.time() + SHORT_WAIT_SECONDS * 20),
     }
-    return str(encryption.encrypt(json.dumps(state, separators=(",", ":"))))
+    return str(encryption.encrypt(json.dumps(state, separators=(",", ":")), aad=_REQUEST_STATE_AAD))
 
 
 def open_request_state(encryption: Any, token: str, *, agent_id: str) -> dict[str, Any] | None:
     """The sealed retry state, or None when it is forged, expired, or another agent's."""
     try:
-        state = json.loads(encryption.decrypt(token))
+        state = json.loads(encryption.decrypt(token, aad=_REQUEST_STATE_AAD))
     except Exception:
         return None
     if not isinstance(state, dict) or state.get("v") != _STATE_VERSION:
