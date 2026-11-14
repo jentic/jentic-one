@@ -2,12 +2,46 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
+
+_OWNER_MODELS: dict[type[Any], Any] = {
+    Note: Note.created_by,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedModelSpec:
+    """Read-only scoping metadata for one owner-scoped registry ORM model."""
+
+    table: str
+    model: str
+    owner_columns: tuple[str, ...]
+    id_column: str | None
+    delegation_permission: str | None
+    owned_agent_axis: bool
+
+
+def scoped_model_specs() -> tuple[ScopedModelSpec, ...]:
+    """Return read-only scoping specs for every owner-scoped registry ORM model."""
+    return tuple(
+        ScopedModelSpec(
+            table=model.__tablename__,
+            model=f"{model.__module__}.{model.__qualname__}",
+            owner_columns=(col.key,),
+            id_column=None,
+            delegation_permission=None,
+            owned_agent_axis=False,
+        )
+        for model, col in _OWNER_MODELS.items()
+    )
 
 
 def build_access_filters(

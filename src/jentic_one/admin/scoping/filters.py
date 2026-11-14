@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -61,6 +62,36 @@ _DELEGATION_PERMISSIONS: dict[type[Any], str] = {
 _OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset(
     {Job, ExecutionRecord, Event, AuditEntry, OAuthClientGrant, HeldExecution}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedModelSpec:
+    """Read-only scoping metadata for one owner-scoped admin ORM model."""
+
+    table: str
+    model: str
+    owner_columns: tuple[str, ...]
+    id_column: str | None
+    delegation_permission: str | None
+    owned_agent_axis: bool
+
+
+def scoped_model_specs() -> tuple[ScopedModelSpec, ...]:
+    """Return read-only scoping specs for every owner-scoped admin ORM model."""
+    return tuple(
+        ScopedModelSpec(
+            table=model.__tablename__,
+            model=f"{model.__module__}.{model.__qualname__}",
+            owner_columns=(
+                col.key,
+                *(extra.key for extra in _EXTRA_OWNER_COLUMNS.get(model, ())),
+            ),
+            id_column=_ID_MODELS[model].key if model in _ID_MODELS else None,
+            delegation_permission=_DELEGATION_PERMISSIONS.get(model),
+            owned_agent_axis=model in _OWNED_AGENT_ACTOR_MODELS,
+        )
+        for model, col in _OWNER_MODELS.items()
+    )
 
 
 def build_access_filters(

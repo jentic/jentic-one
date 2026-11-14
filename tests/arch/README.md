@@ -28,7 +28,9 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_gateway_routes.py`](test_gateway_routes.py) — the split-deploy gateway (Docker + Helm) routes every backend path to a backend that serves it, carries no dead locations, and both configs share one map
 - [`test_ci_pass_markers.py`](test_ci_pass_markers.py) — `tools/ci_pass_markers.py` hashes the same input globs the CI paths filter declares, and computes the marker ids the workflow reads back
 - [`test_image_lock_install.py`](test_image_lock_install.py) — every Dockerfile that installs the wheel installs exactly `uv.lock` (hash-checked binary wheels, `--no-deps`, `pip check`)
+- [`test_composition_public_api.py`](test_composition_public_api.py) — `jentic_one.composition` public entrypoints and signatures stay in lockstep with `jentic_one.__main__`
 - [`test_testing_public_api.py`](test_testing_public_api.py) — the `jentic_one.testing` symbols the extending guide uses exist and are exported
+- [`test_testing_introspect_api.py`](test_testing_introspect_api.py) — `jentic_one.testing.introspect` route and scoping introspection contract, scoping-table parity, and module boundary
 
 ## Module boundaries and layering
 

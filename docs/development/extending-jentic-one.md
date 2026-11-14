@@ -25,9 +25,11 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `ACTIVE_REVISION_STATES` / `search_filter_clause` | `jentic_one.registry.repos.search` | The shared pin/active-state/api-filter contract every strategy applies, so composite strategies fuse filter-identical result sets. Use `search_filter_clause(api_filters=..., revision_pins=...)` on a statement that joins `ApiRevision`; hand-written SQL builds its state predicate from `ACTIVE_REVISION_STATES`. |
 | `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
 | `register_state_backend` | `jentic_one.shared.state` | Register a shared-state backend (rate-limit buckets, circuit counters, `Idempotency-Key` records, auth single-use markers) under a name operators select with `state.backend`. The builder receives a `StateBackendBuildContext` (the `state:` section, whose free-form `options` mapping it validates itself, and the process's surface set) and returns a `SharedStateBackend`. The process builds one backend at app assembly, shares it across every surface it serves, and closes it once at shutdown; an unregistered name fails startup listing the registered ones. `memory` (the default) and `redis` (deprecated) are built in. Prove it with `BaseStateBackendContract`. |
-| `register_access_filter_provider` | `jentic_one.control.scoping.filters` | OR an extra read-only visibility clause into control-surface read filters (`include_shared=True` call sites only; writes stay owner-scoped). Any table the clause references must be readable by the control DB role. |
+| `register_access_filter_provider` | `jentic_one.control.scoping.filters` | OR an extra read-only visibility clause into control-surface read filters (`include_shared=True` call sites only; writes stay owner-scoped). Any table the clause references must be readable by the control DB role. Inspect registered providers via `access_filter_providers()`. |
 | `register_user_deleted_hook` | `jentic_one.admin.services.user_hooks` | Run an async `fn(ctx, user_id, identity)` after a user delete commits, e.g. to clean up the extension's own per-user rows. Hooks run inside the delete request, each bounded by `USER_DELETED_HOOK_TIMEOUT_S` (10 s). Best effort, not durable: a hook that raises or times out is logged, counted (`admin.user_deleted_hook.failures`) and skipped, and nothing retries it automatically. Hooks must be idempotent: deleting an already-deleted user runs them again. |
+| `jentic_one.composition` | `jentic_one.composition` | Public composition entrypoints (`build_app`, `build_context`, `expand_allowed_dbs`) that assemble a `Context` and `FastAPI` app through the same path `jentic-one serve` uses. |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
+| `jentic_one.testing.introspect` | `jentic_one.testing.introspect` | Read-only route and scoping introspection (`build_app`, `route_facts`, `scoped_tables`, `access_filter_providers`, `RouteFact`, `ScopedTable`, `INTROSPECTION_SCHEMA`) for downstream architecture and security gates. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
 
 All Python registries are process-global and populated **at import time** (e.g.
@@ -300,6 +302,24 @@ class TestMyClusterBackendContract(BaseStateBackendContract):
     # Expiry and refill tests call advance(); it sleeps by default. Override it
     # to move an injected clock instead, as the memory backend's suite does
     # (tests/unit/shared/state/test_state_backend_contract.py).
+```
+
+To gate route authentication, permission wiring, and ORM scoping coverage in a
+downstream architecture suite without importing private `_` symbols, use
+`jentic_one.testing.introspect`:
+
+```python
+from jentic_one.testing.introspect import (
+    access_filter_providers,
+    build_app,
+    route_facts,
+    scoped_tables,
+)
+
+app = build_app(["control", "admin", "auth", "registry"])
+facts = route_facts(app)
+tables = scoped_tables()
+providers = access_filter_providers()
 ```
 
 ### 4. (Optional) Compose your own CLI binary
