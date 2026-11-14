@@ -76,7 +76,10 @@ from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
     consume_callback_state,
 )
-from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
+from jentic_one.control.services.credentials.token_endpoint import (
+    may_carry_refresh_token,
+    minted_at_current_origin,
+)
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -6086,10 +6089,10 @@ class ConnectSessionService:
                 registration_id_stamp = credential_for_stamp.oauth_app_registration_id
 
             # Upsert: a re-connect over an existing token row (same
-            # credential, fresh grant) MUST update in place rather than
+            # credential, fresh grant) MUST replace in place rather than
             # INSERT — ``oauth_tokens.credential_id`` is uniquely
             # indexed, and a plain create would trip the constraint on
-            # the second successful poll. ``update_tokens`` also clears
+            # the second successful poll. ``replace_grant`` also clears
             # ``revoked_at``, so a re-connect over a revoked row yields
             # a live token (the derived ``connected`` flag reads that
             # column).
@@ -6111,20 +6114,33 @@ class ConnectSessionService:
                     created_by=token_created_by,
                 )
             else:
-                await OAuthTokenRepository.update_tokens(
+                stored_account_ref = (
+                    credential_for_stamp.provider_account_ref
+                    if credential_for_stamp is not None
+                    else None
+                )
+                if encrypted_refresh is None and existing.encrypted_refresh_token is not None:
+                    if may_carry_refresh_token(
+                        existing,
+                        new_registration_id=registration_id_stamp,
+                        connected_as=connected_as,
+                        stored_account_ref=stored_account_ref,
+                    ):
+                        encrypted_refresh = existing.encrypted_refresh_token
+                    else:
+                        _logger.info(
+                            "oauth_reconnect_dropped_prior_refresh_token",
+                            credential_id=credential_id,
+                        )
+                await OAuthTokenRepository.replace_grant(
                     session,
                     credential_id,
                     encrypted_access_token=encrypted_access,
                     encrypted_refresh_token=encrypted_refresh,
                     expires_at=expires_at,
                     scope=scope_to_persist,
+                    app_registration_id=registration_id_stamp,
                 )
-                # Refresh the provenance columns on the existing row too so
-                # a re-connect that starts going through a shared registration
-                # (or migrates off one) is reflected on the token row.
-                if registration_id_stamp is not None:
-                    existing.app_registration_id = registration_id_stamp
-                    await session.flush()
             if flow_nonce is not None:
                 await ConnectNonceRepository.mark_completed(
                     session,

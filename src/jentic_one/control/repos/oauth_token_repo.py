@@ -121,6 +121,12 @@ class OAuthTokenRepository:
         expires_at: datetime | None = None,
         scope: str | None = None,
     ) -> OAuthToken | None:
+        """Merge refreshed token material onto the existing row (RFC 6749 §6).
+
+        Omitted ``encrypted_refresh_token`` and ``scope`` keep their prior
+        values. Intended for the broker refresh path only; reconnect writers
+        must use :meth:`replace_grant`.
+        """
         row = await OAuthTokenRepository.get_by_credential(session, credential_id)
         if row is None:
             return None
@@ -133,6 +139,35 @@ class OAuthTokenRepository:
         # Fresh tokens supersede any past revocation: a re-connect over a
         # previously revoked row must yield a live token, not a permanently
         # revoked one (the derived `connected` flag reads `revoked_at`).
+        row.revoked_at = None
+        row.last_refreshed = datetime.now(UTC)
+        await session.flush()
+        return row
+
+    @staticmethod
+    async def replace_grant(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        encrypted_access_token: str,
+        encrypted_refresh_token: str | None = None,
+        expires_at: datetime | None = None,
+        scope: str | None = None,
+        app_registration_id: str | None = None,
+    ) -> OAuthToken | None:
+        """Replace the credential's grant unconditionally with a newly issued one.
+
+        Sets every field as supplied (``None`` clears the column), clears
+        ``revoked_at``, and stamps ``last_refreshed`` to now.
+        """
+        row = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        if row is None:
+            return None
+        row.encrypted_access_token = encrypted_access_token
+        row.encrypted_refresh_token = encrypted_refresh_token
+        row.expires_at = expires_at
+        row.scope = scope
+        row.app_registration_id = app_registration_id
         row.revoked_at = None
         row.last_refreshed = datetime.now(UTC)
         await session.flush()

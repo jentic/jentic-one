@@ -36,7 +36,10 @@ from jentic_one.control.services.credentials.state import (
     consume_callback_state,
     decode_state,
 )
-from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
+from jentic_one.control.services.credentials.token_endpoint import (
+    may_carry_refresh_token,
+    minted_at_current_origin,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -280,13 +283,30 @@ class ConnectService:
                     )
 
                     if existing_token is not None:
-                        await OAuthTokenRepository.update_tokens(
+                        if (
+                            encrypted_refresh is None
+                            and existing_token.encrypted_refresh_token is not None
+                        ):
+                            if may_carry_refresh_token(
+                                existing_token,
+                                new_registration_id=credential.oauth_app_registration_id,
+                                connected_as=None,
+                                stored_account_ref=credential.provider_account_ref,
+                            ):
+                                encrypted_refresh = existing_token.encrypted_refresh_token
+                            else:
+                                logger.info(
+                                    "oauth_reconnect_dropped_prior_refresh_token",
+                                    credential_id=state.credential_id,
+                                )
+                        await OAuthTokenRepository.replace_grant(
                             session,
                             state.credential_id,
                             encrypted_access_token=encrypted_access,
                             encrypted_refresh_token=encrypted_refresh,
                             expires_at=result.expires_at,
                             scope=result.scope,
+                            app_registration_id=credential.oauth_app_registration_id,
                         )
                     else:
                         await OAuthTokenRepository.create(
@@ -296,6 +316,7 @@ class ConnectService:
                             encrypted_refresh_token=encrypted_refresh,
                             expires_at=result.expires_at,
                             scope=result.scope,
+                            app_registration_id=credential.oauth_app_registration_id,
                             created_by=created_by,
                         )
                 elif result.provider_account_ref:

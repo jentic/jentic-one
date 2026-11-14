@@ -23,6 +23,7 @@ from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.device_authorization_credentials import (
     DeviceAuthorizationCredential,
 )
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
@@ -30,6 +31,9 @@ from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
 from jentic_one.control.services.credentials.errors import (
@@ -151,6 +155,7 @@ async def clean_connect_tables(control_db: DatabaseSession) -> AsyncGenerator[No
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
         await session.execute(delete(Credential))
+        await session.execute(delete(OAuthAppRegistration))
         await session.commit()
     yield
     async with control_db.session() as session:
@@ -160,6 +165,7 @@ async def clean_connect_tables(control_db: DatabaseSession) -> AsyncGenerator[No
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
         await session.execute(delete(Credential))
+        await session.execute(delete(OAuthAppRegistration))
         await session.commit()
 
 
@@ -1216,6 +1222,178 @@ async def test_reconnect_clears_revocation(
         )
         assert updated is not None
         assert updated.revoked_at is None
+
+
+async def test_reconnect_without_refresh_token_drops_previous_grants_refresh_token(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """A standalone reconnect replaces the grant instead of merging into the prior one."""
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    svc = ConnectService(ctx)
+
+    first = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(first, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_account_a",
+                "refresh_token": "rt_account_a",
+                "expires_in": 3600,
+                "scope": "read write",
+            },
+        )
+    ):
+        await svc.complete(
+            first.state, ConnectCallback(code="code-a"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        initial = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert initial is not None
+        assert initial.encrypted_refresh_token is not None
+        assert ctx.encryption.decrypt(initial.encrypted_refresh_token) == "rt_account_a"
+        assert initial.scope == "read write"
+
+    second = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(second, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_account_b",
+                "expires_in": 3600,
+            },
+        )
+    ):
+        await svc.complete(
+            second.state, ConnectCallback(code="code-b"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        replaced = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert replaced is not None
+        assert ctx.encryption.decrypt(replaced.encrypted_access_token) == "at_account_b"
+        assert replaced.encrypted_refresh_token is None
+        assert replaced.scope is None
+
+
+async def test_reconnect_to_other_client_never_keeps_old_refresh_token(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Reconnecting after switching OAuth app registration drops the old client's refresh token."""
+    ctx = integration_context
+    provider = DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback"
+        )
+    )
+    _patch_provider_registry(ctx, "my_oauth", provider)
+
+    async with ctx.control_db.transaction() as session:
+        reg_a = await OAuthAppRegistrationRepository.create_authorization_code(
+            session,
+            name="Client A",
+            api_vendor="test-vendor",
+            catalog_api_id="test-vendor/test-api",
+            display_name="Client A",
+            client_id="client-a",
+            encrypted_client_secret=ctx.encryption.encrypt("secret-a"),
+            authorize_url="https://idp.example.com/authorize",
+            token_url="https://idp.example.com/token",
+            default_scopes=["read", "write"],
+            created_by=_OWNER.sub,
+        )
+        reg_b = await OAuthAppRegistrationRepository.create_authorization_code(
+            session,
+            name="Client B",
+            api_vendor="test-vendor",
+            catalog_api_id="test-vendor/test-api",
+            display_name="Client B",
+            client_id="client-b",
+            encrypted_client_secret=ctx.encryption.encrypt("secret-b"),
+            authorize_url="https://idp.example.com/authorize",
+            token_url="https://idp.example.com/token",
+            default_scopes=["read", "write"],
+            created_by=_OWNER.sub,
+        )
+        credential = await CredentialRepository.create(
+            session,
+            type=StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+            name="Registration OAuth2",
+            api_vendor="test-vendor",
+            api_name="test-api",
+            api_version="v1",
+            provider="my_oauth",
+            created_by=_OWNER.sub,
+        )
+        await CredentialRepository.set_oauth_app_registration(
+            session, credential.id, registration_id=reg_a.id
+        )
+        credential_id = credential.id
+
+    svc = ConnectService(ctx)
+    first = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(first, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_client_a",
+                "refresh_token": "rt_client_a",
+                "expires_in": 3600,
+                "scope": "read write",
+            },
+        )
+    ):
+        await svc.complete(
+            first.state, ConnectCallback(code="code-client-a"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        token_a = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert token_a is not None
+        assert token_a.app_registration_id == reg_a.id
+        assert token_a.encrypted_refresh_token is not None
+        assert ctx.encryption.decrypt(token_a.encrypted_refresh_token) == "rt_client_a"
+
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_oauth_app_registration(
+            session, credential_id, registration_id=reg_b.id
+        )
+
+    second = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(second, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_client_b",
+                "expires_in": 3600,
+                "scope": "read",
+            },
+        )
+    ):
+        await svc.complete(
+            second.state, ConnectCallback(code="code-client-b"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        token_b = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert token_b is not None
+        assert ctx.encryption.decrypt(token_b.encrypted_access_token) == "at_client_b"
+        assert token_b.encrypted_refresh_token is None
+        assert token_b.scope == "read"
+        assert token_b.app_registration_id == reg_b.id
 
 
 async def test_state_without_browser_binding_is_refused_and_not_consumed(
