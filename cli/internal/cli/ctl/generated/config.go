@@ -229,10 +229,17 @@ type AuthConfig struct {
 	// registers, which the agent uses to check its registration status.
 	RatTtlSeconds int `json:"rat_ttl_seconds" yaml:"rat_ttl_seconds" mapstructure:"rat_ttl_seconds"`
 
+	// Maximum absolute lifetime (seconds, default 90 days) of an OAuth refresh-token
+	// family from initial mint, across rotations. Set to null to disable the family
+	// cap.
+	RefreshFamilyMaxAgeSeconds interface{} `json:"refresh_family_max_age_seconds" yaml:"refresh_family_max_age_seconds" mapstructure:"refresh_family_max_age_seconds"`
+
 	// Lifetime (seconds, default 7 days) of an OAuth refresh token; each refresh
 	// rotates it and the new token gets a fresh lifetime.
 	RefreshTtlSeconds int `json:"refresh_ttl_seconds" yaml:"refresh_ttl_seconds" mapstructure:"refresh_ttl_seconds"`
 }
+
+type AuthConfigRefreshFamilyMaxAgeSeconds_0 *int
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *AuthConfig) UnmarshalJSON(value []byte) error {
@@ -262,6 +269,9 @@ func (j *AuthConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["rat_ttl_seconds"]; !ok || v == nil {
 		plain.RatTtlSeconds = 900
+	}
+	if v, ok := raw["refresh_family_max_age_seconds"]; !ok || v == nil {
+		plain.RefreshFamilyMaxAgeSeconds = 7776000.0
 	}
 	if v, ok := raw["refresh_ttl_seconds"]; !ok || v == nil {
 		plain.RefreshTtlSeconds = 604800
@@ -3610,83 +3620,31 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Risk class shown on the review page: write and admin scopes carry a warning.
-	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
-
-	// Pre-select this scope on the review page.
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Human-facing explanation of the scope, shown on the review page.
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Scope string as the vendor expects it on the authorize request.
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
 	}
-	*j = VendorScopeConfigClassification(v)
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -3717,18 +3675,93 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-
-// Verified vendors offered by the agent-driven connect flow, keyed by a short slug
-// (e.g. “github“).
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Verified vendors offered by the agent-driven connect flow, keyed by a short
 	// slug (e.g. ``github``).
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+// Verified vendors offered by the agent-driven connect flow, keyed by a short slug
+// (e.g. “github“).
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Risk class shown on the review page: write and admin scopes carry a warning.
+	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
+
+	// Pre-select this scope on the review page.
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Human-facing explanation of the scope, shown on the review page.
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Scope string as the vendor expects it on the authorize request.
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3880,27 +3913,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
-}
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig

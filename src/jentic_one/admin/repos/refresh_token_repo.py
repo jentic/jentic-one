@@ -25,6 +25,7 @@ class RefreshTokenRepository:
         token_family_id: str,
         expires_at: datetime,
         created_by: str,
+        family_issued_at: datetime | None = None,
         oauth_client_id: str | None = None,
         oauth_grant_id: str | None = None,
     ) -> RefreshToken:
@@ -35,6 +36,7 @@ class RefreshTokenRepository:
             scopes=scopes,
             token_family_id=token_family_id,
             expires_at=expires_at,
+            family_issued_at=family_issued_at,
             created_by=created_by,
             oauth_client_id=oauth_client_id,
             oauth_grant_id=oauth_grant_id,

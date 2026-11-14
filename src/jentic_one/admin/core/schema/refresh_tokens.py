@@ -36,6 +36,7 @@ class RefreshToken(AuditableMixin, AdminBase):
     scopes: Mapped[list[str]] = mapped_column(json_variant(), nullable=False)
     token_family_id: Mapped[str] = mapped_column(String(30), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    family_issued_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     replaced_by_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
