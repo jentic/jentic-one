@@ -287,7 +287,7 @@ func ProbeServerVersion(ctx context.Context, raw *control.Client) (string, error
 		return "", fmt.Errorf("version probe returned status %d", resp.StatusCode)
 	}
 	var vr control.VersionResponse
-	if derr := json.NewDecoder(resp.Body).Decode(&vr); derr != nil {
+	if derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&vr); derr != nil {
 		return "", derr
 	}
 	return vr.Current, nil

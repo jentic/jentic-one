@@ -192,6 +192,46 @@ func TestRetry_429OverBudgetSurfaces(t *testing.T) {
 	}
 }
 
+func TestRetryAfter_RejectsSignAndOverflow(t *testing.T) {
+	shrinkRetryKnobs(t) // maxRetryAfter = 5s
+	for _, raw := range []string{"+5", "-0", "-1"} {
+		r := &http.Response{Header: http.Header{"Retry-After": {raw}}}
+		if wait, ok := retryAfter(r); ok {
+			t.Errorf("retryAfter(%q) = (%v, true), want (_, false)", raw, wait)
+		}
+	}
+	for _, raw := range []string{"9300000000", "999999999999999999999999999999"} {
+		r := &http.Response{Header: http.Header{"Retry-After": {raw}}}
+		wait, ok := retryAfter(r)
+		if !ok {
+			t.Errorf("retryAfter(%q) = (_, false), want over-cap duration with ok=true", raw)
+		}
+		if wait <= maxRetryAfter {
+			t.Errorf("retryAfter(%q) = %v, want > maxRetryAfter (%v)", raw, wait, maxRetryAfter)
+		}
+	}
+}
+
+func TestRetry_429HugeRetryAfterSurfaces(t *testing.T) {
+	shrinkRetryKnobs(t)
+	fake := &fakeRT{respond: func(_ int, _ *http.Request) (*http.Response, error) {
+		return resp(http.StatusTooManyRequests, map[string]string{"Retry-After": "9300000000"}), nil
+	}}
+	rt := newRetryTransport(fake, auth.Credentials{InjectedBearerToken: "at_x"})
+
+	r, err := rt.RoundTrip(newReq(t, http.MethodGet, "https://x.test/thing", ""))
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	defer closeResp(r)
+	if r.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 surfaced", r.StatusCode)
+	}
+	if got := int(fake.calls); got != 1 {
+		t.Errorf("calls = %d, want 1 (no retry on overflowing Retry-After)", got)
+	}
+}
+
 // TestRetry_429PerpetualSurfacesAfterSingleRetry is the SEC-3 regression: a
 // server returning 429 + a small Retry-After on EVERY attempt must get exactly
 // one retry and then surface — not loop until a context deadline (which the

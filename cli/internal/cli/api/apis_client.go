@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -344,7 +343,7 @@ func (c *apiClient) Reference(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := sdkclient.ReadAllBounded(resp.Body, sdkclient.MaxBodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read reference: %w", err)
 	}

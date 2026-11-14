@@ -231,16 +231,24 @@ func rewind(req *http.Request, body replayBody, canRewind bool) error {
 }
 
 // retryAfter parses a Retry-After header (delta-seconds or HTTP-date).
+// The full Python-parity parser for CLI/MCP surfaces lives in
+// internal/agentops.RetryAfterSeconds; the SDK keeps this minimal,
+// overflow-safe parser because client/ cannot import internal/.
 func retryAfter(resp *http.Response) (time.Duration, bool) {
 	v := resp.Header.Get("Retry-After")
-	if v == "" {
+	if v == "" || v[0] == '+' || v[0] == '-' {
 		return 0, false
 	}
 	if secs, err := strconv.Atoi(v); err == nil {
 		if secs < 0 {
 			return 0, false
 		}
+		if secs > int(maxRetryAfter/time.Second) {
+			return maxRetryAfter + time.Second, true
+		}
 		return time.Duration(secs) * time.Second, true
+	} else if errors.Is(err, strconv.ErrRange) {
+		return maxRetryAfter + time.Second, true
 	}
 	if when, err := http.ParseTime(v); err == nil {
 		d := time.Until(when)

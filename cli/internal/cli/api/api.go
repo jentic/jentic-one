@@ -163,9 +163,13 @@ func runAPICall(cmd *cobra.Command, app *app, opts *apiOptions, method, path str
 // exit 0 for any transport-successful response by default, or exit 1 on non-2xx
 // when --fail-on-error is set.
 func emitAPIResponse(out io.Writer, resp *http.Response, failOnError bool) error {
-	data, err := io.ReadAll(resp.Body)
+	return emitAPIResponseLimit(out, resp, failOnError, client.MaxBodyBytes)
+}
+
+func emitAPIResponseLimit(out io.Writer, resp *http.Response, failOnError bool, limit int64) error {
+	data, err := client.ReadAllBounded(resp.Body, limit)
 	if err != nil {
-		return &ux.CodedError{Code: ux.CodeInternalError, Msg: fmt.Sprintf("reading response: %v", err)}
+		return &ux.CodedError{Code: ux.CodeInternalError, Msg: fmt.Sprintf("reading response: %v", err), Cause: err}
 	}
 	// Pass the body through the byte-level redaction backstop before printing:
 	// even raw API data must not leak a secret to a machine parser.
@@ -224,9 +228,9 @@ func loadAPISpec(ctx context.Context, live bool, raw *control.Client) (*apispec.
 	if resp.StatusCode != http.StatusOK {
 		return nil, &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("live spec returned status %d", resp.StatusCode)}
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := client.ReadAllBounded(resp.Body, client.MaxBodyBytes)
 	if err != nil {
-		return nil, &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("reading live spec: %v", err)}
+		return nil, &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("reading live spec: %v", err), Cause: err}
 	}
 	return apispec.Parse(data)
 }
