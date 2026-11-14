@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from jentic_one.registry.core import url_index
 from jentic_one.shared.models.api_identity import CredentialScope
 from jentic_one.shared.permissions.evaluation import (
     PermissionRule,
@@ -287,3 +290,31 @@ def test_resolve_live_operation_handles_synthetic_non_pk_operation_id() -> None:
     resolved = resolve_live_operation(spec_operation_id=None, registry_operation_id="getPet")
     assert resolved.operation_id == "getPet"
     assert resolved.registry_operation_id is None
+
+
+@pytest.mark.parametrize(
+    ("template", "request_path", "expected"),
+    [
+        ("/pets/{petId}", "/pets/42", True),
+        ("/pets/{petId}", "/pets", False),
+        ("/items/{1id}", "/items/abc", True),
+        ("/items/{1id}", "/other/abc", False),
+        ("/v/{2fa-code}/x", "/v/123456/x", True),
+        ("/v/{2fa-code}/x", "/v/123456/y", False),
+        ("/a/{+}", "/a/b/c", True),
+        ("/a/{+}", "/a", False),
+        ("/x/{a.b}/{a_b}", "/x/one/two", True),
+        ("/x/{1a}/{p_1a}", "/x/first/second", True),
+        ("/orgs/{id}/mirrors/{id}", "/orgs/acme/mirrors/acme", True),
+        ("/orgs/{id}/mirrors/{id}", "/orgs/acme/mirrors/other", False),
+        ("/%61dmin/{1x}/", "/admin/val", True),
+    ],
+)
+def test_match_spec_path_agrees_with_url_index_regex(
+    template: str, request_path: str, expected: bool
+) -> None:
+    compiled = url_index.build_path_regex(url_index.normalize_path_template(template))
+    regex_matched = compiled.fullmatch(request_path) is not None
+    spec_matched, _ = match_spec_path(template, request_path)
+    assert regex_matched is expected
+    assert spec_matched is expected

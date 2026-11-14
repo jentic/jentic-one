@@ -26,11 +26,13 @@ from dataclasses import dataclass
 
 from jentic_one.shared.models.api_identity import CredentialScope, credential_covers
 from jentic_one.shared.permissions.evaluation import is_registry_operation_id
-from jentic_one.shared.url_path import normalize_path
-
-_PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
-_RFC6570_OPERATORS = frozenset("+#./;?&")
-_SAFE_GROUP_RE = re.compile(r"[^A-Za-z0-9_]")
+from jentic_one.shared.url_path import (
+    PATH_PARAM_RE,
+    RFC6570_OPERATORS,
+    allocate_group_names,
+    normalize_path_template,
+    split_param_token,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,32 +57,10 @@ class ResolvedRuleOperation:
     ambiguous_operation_ids: frozenset[str] = frozenset()
 
 
-def _split_param_token(token: str) -> tuple[str, bool]:
-    if token and token[0] in _RFC6570_OPERATORS:
-        return token[1:], token[0] == "+"
-    return token, False
-
-
-def _normalize_path_template(template: str) -> str:
-    parts = _PATH_PARAM_RE.split(template)
-    tokens: list[str] = []
-    shielded: list[str] = []
-    for idx, part in enumerate(parts):
-        if idx % 2 == 0:
-            shielded.append(part)
-        else:
-            tokens.append(part)
-            shielded.append(f"\x00{len(tokens) - 1}\x00")
-    normalized = normalize_path("".join(shielded))
-    for idx, token in enumerate(tokens):
-        normalized = normalized.replace(f"\x00{idx}\x00", "{" + token + "}")
-    return normalized
-
-
 def _compile_spec_template(
     normalized_template: str, *, widen_trailing: bool = False
 ) -> tuple[re.Pattern[str], bool]:
-    parts = _PATH_PARAM_RE.split(normalized_template)
+    parts = PATH_PARAM_RE.split(normalized_template)
     raw_tokens = [parts[i] for i in range(1, len(parts), 2)]
     is_parameterized = bool(raw_tokens)
     trailing_token = (
@@ -91,23 +71,11 @@ def _compile_spec_template(
         else None
     )
 
+    group_by_name = allocate_group_names(raw_tokens)
     catch_all_by_name: dict[str, bool] = {}
-    group_by_name: dict[str, str] = {}
-    taken_groups: set[str] = set()
     for token in raw_tokens:
-        name, is_catch_all = _split_param_token(token)
+        name, is_catch_all = split_param_token(token)
         catch_all_by_name[name] = catch_all_by_name.get(name, True) and is_catch_all
-        if name not in group_by_name:
-            base = _SAFE_GROUP_RE.sub("_", name)
-            if not base or base[0].isdigit():
-                base = f"p_{base}"
-            group = base
-            suffix = 2
-            while group in taken_groups:
-                group = f"{base}__{suffix}"
-                suffix += 1
-            group_by_name[name] = group
-            taken_groups.add(group)
 
     seen_groups: set[str] = set()
     regex_parts: list[str] = ["^"]
@@ -115,7 +83,7 @@ def _compile_spec_template(
         if idx % 2 == 0:
             regex_parts.append(re.escape(part))
             continue
-        name, _ = _split_param_token(part)
+        name, _ = split_param_token(part)
         body = ".+" if catch_all_by_name.get(name, False) else "[^/]+"
         group = group_by_name[name]
         if group in seen_groups:
@@ -126,7 +94,7 @@ def _compile_spec_template(
                 and idx == len(parts) - 2
                 and part == trailing_token
                 and part
-                and part[0] not in _RFC6570_OPERATORS
+                and part[0] not in RFC6570_OPERATORS
             ):
                 body = "[^/]+(?:/[^/]+)+"
             seen_groups.add(group)
@@ -201,7 +169,7 @@ def _literal_positions(
 
 
 def _match_spec_path(template: str, normalized_request_path: str) -> _SpecPathMatch | None:
-    normalized_template = _normalize_path_template(template)
+    normalized_template = normalize_path_template(template)
     pattern, is_parameterized = _compile_spec_template(normalized_template)
     is_catch_all = "{+" in normalized_template or "**" in normalized_template
     request_has_catch_all_syntax = (
