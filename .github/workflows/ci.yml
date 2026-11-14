@@ -1065,6 +1065,10 @@ jobs:
           JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS: "5"
           JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS: "5"
           JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: "127.0.0.0/8"
+          # The specs register many agents from one loopback address; the default
+          # per-network registration limit (10/min, burst 5) would 429 them.
+          JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM: "1000"
+          JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST: "1000"
         run: |
           # Own a process group so teardown can reap uvicorn even though it runs
           # under `make -> uv -> python` (kill of the make PID alone wouldn't
