@@ -609,6 +609,15 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
+      redis:
+        image: ${{ matrix.backend == 'postgres' && 'redis:7' || '' }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - name: Already passed on these inputs
         if: env.PASSED == 'true'
@@ -639,6 +648,8 @@ jobs:
 
       - name: Run integration tests (postgres)
         if: env.PASSED != 'true' && matrix.backend == 'postgres'
+        env:
+          JENTIC_TEST_REDIS_URL: redis://localhost:6379/15
         run: make test-integration
 
       - name: Run integration tests (sqlite)
