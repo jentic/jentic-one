@@ -37,9 +37,11 @@ DB_SYMBOLS = frozenset(
     }
 )
 
-# Pre-existing test files that still patch repository methods or transaction
-# context managers; new test files and migrated suites (such as
-# ``unit/broker/test_refresh.py``) are not permitted here.
+# Pre-existing test files that still patch repository methods, transaction
+# context managers, or DB session attributes; new test files and migrated
+# suites (such as ``unit/broker/test_refresh.py``) are not permitted here.
+# Shrink-only: test_legacy_allowlist_entries_still_violate enforces removal
+# once a listed file is migrated to real database fixtures.
 _LEGACY_REPO_OR_TX_MOCK_ALLOWLIST: frozenset[str] = frozenset(
     {
         "integration/admin/services/test_event_stream_service.py",
@@ -52,6 +54,8 @@ _LEGACY_REPO_OR_TX_MOCK_ALLOWLIST: frozenset[str] = frozenset(
         "integration/registry/ingest/test_revision_delete_count_race.py",
         "integration/registry/services/test_import_failure_classification.py",
         "unit/admin/services/test_actor_job_cancel.py",
+        "unit/admin/services/test_monitoring_service.py",
+        "unit/admin/services/test_monitoring_service_grouped_totals.py",
         "unit/admin/services/test_monitoring_service_usage.py",
         "unit/admin/services/test_oauth_client_service.py",
         "unit/admin/services/test_passwords_concurrency.py",
@@ -74,6 +78,7 @@ _LEGACY_REPO_OR_TX_MOCK_ALLOWLIST: frozenset[str] = frozenset(
         "unit/broker/test_resolver.py",
         "unit/broker/test_resolver_credential_name.py",
         "unit/broker/test_streaming_execution_persistence.py",
+        "unit/broker/test_streaming_persist_gate.py",
         "unit/control/credentials/test_device_authorization_provider.py",
         "unit/control/credentials/test_direct_oauth2_provider.py",
         "unit/control/integrations/flow_handlers/test_auth_code_handler.py",
@@ -95,6 +100,9 @@ _LEGACY_REPO_OR_TX_MOCK_ALLOWLIST: frozenset[str] = frozenset(
         "unit/registry/services/test_spec_download_service.py",
         "unit/registry/web/routers/test_notes.py",
         "unit/registry/web/routers/test_overlays.py",
+        "unit/registry/web/routers/test_security_schemes_endpoint.py",
+        "unit/registry/web/routers/test_spec_download_routes.py",
+        "unit/shared/auth/test_verify.py",
         "unit/shared/events/test_emit_tags.py",
         "unit/shared/events/test_mcp_session.py",
         "unit/shared/events/test_summary_label.py",
@@ -103,10 +111,29 @@ _LEGACY_REPO_OR_TX_MOCK_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+_DB_SESSION_ATTRS = frozenset({"registry_db", "control_db", "admin_db"})
+_DB_PATCH_ATTRS = _DB_SESSION_ATTRS | frozenset({"transaction", "session"})
+
+
+def _collect_real_db_vars(tree: ast.AST) -> set[str]:
+    """Return variable names bound directly to ``DatabaseSession(...)``."""
+    return {
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and _resolve_call_target(node.value).endswith("DatabaseSession")
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
 def _is_repo_or_tx_symbol(text: str) -> bool:
     parts = text.replace(":", ".").split(".")
     return any(
-        part.endswith("Repository") or part in ("transaction", "acquire_refresh_lock")
+        part.endswith("Repository")
+        or part in ("transaction", "acquire_refresh_lock")
+        or part in _DB_SESSION_ATTRS
         for part in parts
     )
 
@@ -119,15 +146,31 @@ def _check_source(
 ) -> list[str]:
     """Return violation messages if ``source`` mocks DB, repository, or transaction seams."""
     tree = ast.parse(source, filename=str(filepath))
+    real_db_vars = _collect_real_db_vars(tree)
     violations: list[str] = []
 
     for node in ast.walk(tree):
         if check_repo_and_tx and isinstance(node, ast.Assign):
+            rhs_is_real_db = (
+                isinstance(node.value, ast.Name) and node.value.id in real_db_vars
+            ) or (
+                isinstance(node.value, ast.Call)
+                and _resolve_call_target(node.value).endswith("DatabaseSession")
+            )
             for target_node in node.targets:
                 unparsed = ast.unparse(target_node)
                 if unparsed.endswith(".transaction") or ".transaction." in unparsed:
                     violations.append(
                         f"{filepath}:{node.lineno} — mocks transaction boundary '{unparsed}' "
+                        f"(DB mocking forbidden; use real database connections)"
+                    )
+                elif (
+                    isinstance(target_node, ast.Attribute)
+                    and target_node.attr in _DB_SESSION_ATTRS
+                    and not rhs_is_real_db
+                ):
+                    violations.append(
+                        f"{filepath}:{node.lineno} — assigns DB session '{unparsed}' "
                         f"(DB mocking forbidden; use real database connections)"
                     )
             continue
@@ -167,7 +210,11 @@ def _check_source(
                 else ""
             )
             combined = f"{first_str}.{second_str}" if second_str else first_str
-            if any(symbol in combined for symbol in DB_SYMBOLS) or _is_repo_or_tx_symbol(combined):
+            if (
+                any(symbol in combined for symbol in DB_SYMBOLS)
+                or _is_repo_or_tx_symbol(combined)
+                or second_str in _DB_PATCH_ATTRS
+            ):
                 violations.append(
                     f"{filepath}:{node.lineno} — mocks '{combined}' "
                     f"(DB mocking forbidden; use real database connections)"
@@ -250,6 +297,10 @@ _FLAGGED_SOURCES: dict[str, str] = {
     "mock_spec_async_session": (
         "from unittest.mock import AsyncMock\nm = AsyncMock(spec=db.AsyncSession)\n"
     ),
+    "assign_db_session_wholesale": ("def test_it(ctx):\n    ctx.control_db = MagicMock()\n"),
+    "monkeypatch_setattr_db_attribute": (
+        "def test_it(monkeypatch, ctx):\n    monkeypatch.setattr(ctx, 'admin_db', object())\n"
+    ),
 }
 
 _ALLOWED_SOURCES: dict[str, str] = {
@@ -261,7 +312,19 @@ _ALLOWED_SOURCES: dict[str, str] = {
         "provider = AsyncMock()\n"
         "provider.refresh.return_value = None\n"
     ),
+    "assign_unrelated_attr": ("def test_it(ctx):\n    ctx.config = object()\n"),
 }
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("rel", sorted(_LEGACY_REPO_OR_TX_MOCK_ALLOWLIST))
+def test_legacy_allowlist_entries_still_violate(rel: str) -> None:
+    """Every legacy allowlist entry must exist and still violate."""
+    filepath = TESTS_ROOT / rel
+    assert filepath.exists(), f"{rel} no longer exists — remove from allowlist"
+    source = filepath.read_text(encoding="utf-8")
+    violations = _check_source(source, filepath=filepath, check_repo_and_tx=True)
+    assert violations, f"{rel} has no violations — remove from allowlist"
 
 
 @pytest.mark.arch
