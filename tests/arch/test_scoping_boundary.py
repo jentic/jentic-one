@@ -234,13 +234,31 @@ def _executable_nodes(root: _Func) -> Iterator[ast.AST]:
             elif node.test.value is False:
                 yield from visit_statements(node.orelse)
             return
+        if isinstance(node, ast.While) and isinstance(node.test, ast.Constant):
+            if node.test.value is False:
+                yield from visit_statements(node.orelse)
+                return
+            if node.test.value is True:
+                yield node
+                yield from visit_statements(node.body)
+                return
         yield node
-        for child in ast.iter_child_nodes(node):
-            yield from visit(child)
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if value and all(isinstance(item, ast.stmt) for item in value):
+                    yield from visit_statements(value)
+                else:
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            yield from visit(item)
+            elif isinstance(value, ast.AST):
+                yield from visit(value)
 
     def visit_statements(statements: list[ast.stmt]) -> Iterator[ast.AST]:
         for statement in statements:
             yield from visit(statement)
+            if isinstance(statement, ast.Return | ast.Raise | ast.Break | ast.Continue):
+                return
 
     yield from visit(root)
 
@@ -366,9 +384,18 @@ def _owner_cancel_test_has_contract(func: _Func) -> bool:
             and isinstance(left.value, ast.Name)
             and left.value.id in cancelled_results
         )
-        if observes_result and any(
-            isinstance(comp, ast.Attribute) and comp.attr == "CANCELLED"
-            for comp in node.test.comparators
+        if (
+            not observes_result
+            or len(node.test.ops) != 1
+            or not isinstance(node.test.ops[0], ast.Eq)
+        ):
+            continue
+        comparator = node.test.comparators[0]
+        if (
+            isinstance(comparator, ast.Attribute)
+            and comparator.attr == "CANCELLED"
+            and isinstance(comparator.value, ast.Name)
+            and comparator.value.id == "JobStatus"
         ):
             return True
     return False
@@ -648,12 +675,39 @@ def test_credential_write_gate_ignores_dead_and_nested_calls() -> None:
         "            )\n"
         "        await self._require_visible_binding(cid, aid, identity=identity)\n"
     )
+    while_dead = ast.parse(
+        "class CredentialService:\n"
+        "    async def attach_binding_rule_set(self, cid: str, aid: str, *, identity: Identity):\n"
+        "        while False:\n"
+        "            await self._require_visible_binding(\n"
+        "                cid, aid, identity=identity, for_write=True\n"
+        "            )\n"
+        "        await self._require_visible_binding(cid, aid, identity=identity)\n"
+    )
+    after_return = ast.parse(
+        "class CredentialService:\n"
+        "    async def attach_binding_rule_set(self, cid: str, aid: str, *, identity: Identity):\n"
+        "        return\n"
+        "        await self._require_visible_binding(\n"
+        "            cid, aid, identity=identity, for_write=True\n"
+        "        )\n"
+    )
     name = "CredentialService.attach_binding_rule_set"
     actual = {
         label: _credential_write_gate_present(_ServiceIndex([(tree, Path("<self-check>"))]), name)
-        for label, tree in {"dead": dead, "nested": nested}.items()
+        for label, tree in {
+            "dead": dead,
+            "nested": nested,
+            "while_dead": while_dead,
+            "after_return": after_return,
+        }.items()
     }
-    assert actual == {"dead": False, "nested": False}
+    assert actual == {
+        "dead": False,
+        "nested": False,
+        "while_dead": False,
+        "after_return": False,
+    }
 
 
 @pytest.mark.arch
@@ -682,6 +736,18 @@ def test_job_cancel_contract_binds_owner_and_same_result() -> None:
             "    other = await JobService(ctx).cancel(queued.id, identity=_user(seed.owner_id))\n"
             "    assert cancelled.status == JobStatus.CANCELLED\n"
         ),
+        "negative_status": has_contract(
+            "    cancelled = await JobService(ctx).cancel(\n"
+            "        queued.id, identity=_user(seed.owner_id)\n"
+            "    )\n"
+            "    assert cancelled.status != JobStatus.CANCELLED\n"
+        ),
+        "wrong_enum": has_contract(
+            "    cancelled = await JobService(ctx).cancel(\n"
+            "        queued.id, identity=_user(seed.owner_id)\n"
+            "    )\n"
+            "    assert cancelled.status == OtherStatus.CANCELLED\n"
+        ),
         "complete": has_contract(
             "    cancelled = await JobService(ctx).cancel(\n"
             "        queued.id, identity=_user(seed.owner_id)\n"
@@ -693,5 +759,7 @@ def test_job_cancel_contract_binds_owner_and_same_result() -> None:
         "wrong_owner": False,
         "unrelated_status": False,
         "different_result": False,
+        "negative_status": False,
+        "wrong_enum": False,
         "complete": True,
     }

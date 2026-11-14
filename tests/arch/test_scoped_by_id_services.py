@@ -31,6 +31,7 @@ SCOPED_SERVICE_DIRS = [
 ]
 
 _Func = ast.FunctionDef | ast.AsyncFunctionDef
+_States = set[frozenset[str]]
 
 #: Repository methods that load a single row by identifier.
 _BY_ID_REPO_READ = re.compile(
@@ -205,14 +206,13 @@ def _is_repository_call(call: ast.Call) -> bool:
 
 
 def _call_argument_names(call: ast.Call) -> set[str]:
-    names: set[str] = set()
-    for value in list(call.args) + [kw.value for kw in call.keywords]:
-        for node in ast.walk(value):
-            if isinstance(node, ast.Name):
-                names.add(node.id)
-            elif isinstance(node, ast.Attribute):
-                names.add(node.attr)
-    return names
+    """Variable roots in call arguments; attribute suffixes are not resource aliases."""
+    return {
+        node.id
+        for value in list(call.args) + [kw.value for kw in call.keywords]
+        for node in ast.walk(value)
+        if isinstance(node, ast.Name)
+    }
 
 
 def _argument_values(call: ast.Call) -> list[ast.expr]:
@@ -265,6 +265,40 @@ def _assigned_call_names(method: _Func, call: ast.Call) -> set[str]:
         if any(node is call for node in ast.walk(statement.value)):
             return set(_assigned_names(statement))
     return set()
+
+
+def _call_runs_on_every_normal_path(method: _Func, call: ast.Call) -> bool:
+    """Whether normal execution reaches *call* before subsequent method statements."""
+    parents = {
+        child: parent for parent in ast.walk(method) for child in ast.iter_child_nodes(parent)
+    }
+    node: ast.AST = call
+    while node is not method:
+        parent = parents[node]
+        if isinstance(parent, ast.If) and node is not parent.test:
+            return False
+        if isinstance(parent, ast.While) and node is not parent.test:
+            return False
+        if isinstance(parent, ast.For | ast.AsyncFor) and node is not parent.iter:
+            return False
+        if isinstance(parent, ast.BoolOp) and node is not parent.values[0]:
+            return False
+        if isinstance(parent, ast.IfExp) and node is not parent.test:
+            return False
+        if isinstance(parent, ast.Compare) and len(parent.ops) > 1 and node is not parent.left:
+            return False
+        if isinstance(parent, ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp):
+            return False
+        if isinstance(parent, ast.Try | ast.TryStar) and node not in parent.finalbody:
+            return False
+        if isinstance(parent, ast.Match) and node is not parent.subject:
+            return False
+        if parent is not method and isinstance(
+            parent, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+        ):
+            return False
+        node = parent
+    return True
 
 
 #: Helpers whose bodies implement owner/permission authorization without a query filter.
@@ -425,7 +459,20 @@ class _ServiceIndex:
             and isinstance(receiver.func, ast.Name)
             and receiver.func.id == "super"
         ):
-            for class_name in self.mro(owner)[1:]:
+            mro = self.mro(owner)
+            defining_class = next(
+                (
+                    class_name
+                    for class_name, methods in self.methods.items()
+                    if methods.get(method.name) is method
+                ),
+                owner,
+            )
+            try:
+                start = mro.index(defining_class) + 1
+            except ValueError:
+                start = 1
+            for class_name in mro[start:]:
                 candidate = self.methods.get(class_name, {}).get(call.func.attr)
                 if candidate is not None:
                     return _ResolvedMethod(class_name, candidate, self.paths[class_name])
@@ -452,33 +499,98 @@ class _ServiceIndex:
 
     @staticmethod
     def _filter_aliases(method: _Func, call: ast.Call, filter_names: set[str]) -> set[str]:
-        """Filter-tainted names live at the point of *call*, honouring reassignment.
+        """Filter names tainted on every control-flow path reaching *call*."""
 
-        Walking assignments in source order up to *call*, a tainted value adds taint
-        and a clean value kills it, so a reassigned filter no longer authorizes a
-        later repository occurrence.
-        """
-        live = set(filter_names)
-        stop = (call.lineno, call.col_offset)
-        for node in sorted(
-            (n for n in ast.walk(method) if isinstance(n, ast.Assign | ast.AnnAssign)),
-            key=lambda n: (n.lineno, n.col_offset),
-        ):
-            if (node.lineno, node.col_offset) >= stop:
-                break
-            value = node.value
-            if value is None:
-                continue
-            names = set(_assigned_names(node))
+        def contains(root: ast.AST) -> bool:
+            return any(node is call for node in ast.walk(root))
+
+        def assign(states: _States, statement: ast.stmt) -> _States:
+            if not isinstance(statement, ast.Assign | ast.AnnAssign) or statement.value is None:
+                return states
+            names = set(_assigned_names(statement))
             if not names:
-                continue
-            if _is_scope_builder(method, value) or (
-                isinstance(value, ast.Name) and value.id in live
-            ):
-                live.update(names)
-            else:
-                live.difference_update(names)
-        return live
+                return states
+            value = statement.value
+            updated: _States = set()
+            for state in states:
+                if _is_scope_builder(method, value) or (
+                    isinstance(value, ast.Name) and value.id in state
+                ):
+                    updated.add(state | frozenset(names))
+                else:
+                    updated.add(state - frozenset(names))
+            return updated
+
+        def after(statements: list[ast.stmt], states: _States) -> _States:
+            for statement in statements:
+                states = assign(states, statement)
+                if isinstance(statement, ast.If):
+                    body = after(statement.body, set(states))
+                    branches = after(statement.orelse, set(states)) if statement.orelse else states
+                    states = body | branches
+                elif isinstance(statement, ast.While | ast.For | ast.AsyncFor):
+                    iterated = after(statement.body, set(states))
+                    states = after(statement.orelse, states | iterated)
+                elif isinstance(statement, ast.Try | ast.TryStar):
+                    body = after(statement.body, set(states))
+                    body = after(statement.orelse, body)
+                    handled = set().union(
+                        *(after(handler.body, set(states)) for handler in statement.handlers)
+                    )
+                    states = after(statement.finalbody, body | handled)
+                elif isinstance(statement, ast.With | ast.AsyncWith):
+                    states = after(statement.body, states)
+                elif isinstance(statement, ast.Return | ast.Raise | ast.Break | ast.Continue):
+                    return set()
+            return states
+
+        def before(statements: list[ast.stmt], states: _States) -> _States:
+            for statement in statements:
+                if contains(statement):
+                    if isinstance(statement, ast.If):
+                        if contains(statement.test):
+                            return states
+                        branch = (
+                            statement.body
+                            if any(map(contains, statement.body))
+                            else statement.orelse
+                        )
+                        return before(branch, states)
+                    if isinstance(statement, ast.While | ast.For | ast.AsyncFor):
+                        entered = (
+                            statement.test if isinstance(statement, ast.While) else statement.iter
+                        )
+                        if contains(entered):
+                            return states
+                        if any(map(contains, statement.body)):
+                            return before(statement.body, states)
+                        return before(statement.orelse, states | after(statement.body, set(states)))
+                    if isinstance(statement, ast.With | ast.AsyncWith):
+                        if any(contains(item.context_expr) for item in statement.items):
+                            return states
+                        return before(statement.body, states)
+                    if isinstance(statement, ast.Try | ast.TryStar):
+                        if any(map(contains, statement.body)):
+                            return before(statement.body, states)
+                        if any(map(contains, statement.orelse)):
+                            return before(statement.orelse, after(statement.body, states))
+                        for handler in statement.handlers:
+                            if any(map(contains, handler.body)):
+                                return before(handler.body, states)
+                        body = after(statement.body, set(states))
+                        body = after(statement.orelse, body)
+                        handled = set().union(
+                            *(after(handler.body, set(states)) for handler in statement.handlers)
+                        )
+                        return before(statement.finalbody, body | handled)
+                    return states
+                states = after([statement], states)
+            return states
+
+        states = before(method.body, {frozenset(filter_names)})
+        if not states:
+            return set()
+        return set.intersection(*(set(state) for state in states))
 
     def _delegation_scopes_call(
         self,
@@ -607,27 +719,31 @@ class _ServiceIndex:
                 and bool(bound.intersection(_call_argument_roots(source)))
             )
 
-        def returns_loaded_object(expression: ast.expr) -> bool:
+        def returns_loaded_object(expression: ast.expr, position: tuple[int, int]) -> bool:
             if isinstance(expression, ast.IfExp):
-                return returns_loaded_object(expression.body) and returns_loaded_object(
-                    expression.orelse
+                return returns_loaded_object(expression.body, position) and returns_loaded_object(
+                    expression.orelse, position
                 )
             if not isinstance(expression, ast.Name):
                 return False
-            if expression.id in bound:
-                return True
+            found_reload = False
             for assignment in ast.walk(target.method):
                 if not isinstance(assignment, ast.Assign | ast.AnnAssign):
                     continue
+                if (assignment.lineno, assignment.col_offset) >= position:
+                    continue
                 if expression.id not in set(_assigned_names(assignment)):
                     continue
-                if assignment.value is not None and is_reload(assignment.value):
-                    return True
-            return False
+                if assignment.value is None or not is_reload(assignment.value):
+                    return False
+                found_reload = True
+            return expression.id in bound or found_reload
 
         returns = [node for node in ast.walk(target.method) if isinstance(node, ast.Return)]
         if not returns or any(
-            node.value is None or not returns_loaded_object(node.value) for node in returns
+            node.value is None
+            or not returns_loaded_object(node.value, (node.lineno, node.col_offset))
+            for node in returns
         ):
             return set()
         return {
@@ -689,6 +805,8 @@ class _ServiceIndex:
                 target = self._resolve_call(owner, method, candidate)
                 if target is None or not self._validates_loaded_resource(target):
                     continue
+                if not _call_runs_on_every_normal_path(method, candidate):
+                    continue
                 live = self._filter_aliases(method, candidate, set(filter_parameters))
                 if self._delegation_scopes_call(owner, method, candidate, live, seen):
                     validators[candidate] = load
@@ -744,6 +862,8 @@ class _ServiceIndex:
                 call for call in ast.walk(statement.value) if isinstance(call, ast.Call)
             )
         validators = self._validated_loads(owner, method, calls, filter_parameters, seen)
+        predicate_names = {key.rsplit(".", 1)[1] for key in _BOOLEAN_AUTHORIZATION_PREDICATES}
+        enforced_predicates = self._enforcing_identity_calls(method, predicate_names)
         validated_loads = set(validators.values())
         assignments = sorted(
             (n for n in ast.walk(method) if isinstance(n, ast.Assign | ast.AnnAssign)),
@@ -775,6 +895,9 @@ class _ServiceIndex:
             live = self._filter_aliases(method, call, set(filter_parameters))
             aliases = self._resource_aliases(method, call, resource_params)
             used = {aliases[name] for name in _call_argument_names(call) if name in aliases}
+            authorized_keys = scoped_keys | self._predicate_resource_keys(
+                owner, method, call, aliases, enforced_predicates
+            )
             validated_load = validators.get(call)
             if validated_load is not None:
                 load_aliases = self._resource_aliases(method, validated_load, resource_params)
@@ -790,7 +913,6 @@ class _ServiceIndex:
                 if call in validated_loads:
                     pending_values |= _assigned_call_names(method, call)
                 related_roots = _call_attribute_roots(call) - {"self", "identity"}
-                pending_related = related_roots.intersection(pending_values) - scoped_values
                 unscoped_related = related_roots - scoped_values - pending_values
                 filter_kws = [
                     kw for kw in call.keywords if kw.arg is not None and kw.arg.endswith("filters")
@@ -812,19 +934,20 @@ class _ServiceIndex:
                     name is not None
                     and _BY_ID_REPO_READ.match(name)
                     and call not in validated_loads
-                    and (
-                        used - scoped_keys
-                        or (not used and unscoped_related)
-                        or (call in returned_calls and pending_related)
-                    )
                 ):
-                    return False
+                    resource_scoped = bool(used) and not (used - authorized_keys)
+                    object_scoped = not used and bool(
+                        related_roots & (scoped_values | pending_values)
+                    )
+                    if not (resource_scoped or object_scoped):
+                        return False
                 if (
                     name is not None
                     and _COLLECTION_REPO_READ.match(name)
                     and call in returned_calls
                     and (
-                        used - scoped_keys or (not used and (unscoped_related or not related_roots))
+                        used - authorized_keys
+                        or (not used and (unscoped_related or not related_roots))
                     )
                 ):
                     return False
@@ -834,8 +957,9 @@ class _ServiceIndex:
                         ("get", "list", "count", "search", "stream", "export", "iter")
                     )
                 )
-                if used & scoped_keys and returns_resource:
+                if used & authorized_keys and returns_resource:
                     scoped_values |= _assigned_call_names(method, call)
+                    found_sensitive = True
                 continue
             carries_filter = any(
                 _is_identity_filter(value) or (isinstance(value, ast.Name) and value.id in live)
@@ -879,35 +1003,67 @@ class _ServiceIndex:
                 for node in ast.walk(statement)
             )
 
-        def predicate_polarities(
-            node: ast.expr, negated: bool = False
-        ) -> Iterator[tuple[ast.Call, bool]]:
-            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-                yield from predicate_polarities(node.operand, not negated)
-                return
-            if isinstance(node, ast.Call):
-                name = _name_of(node.func)
-                is_predicate = (
-                    name is not None and name.startswith(("_can_", "_may_", "_is_", "_has_"))
-                    if predicate_names is None
-                    else name in predicate_names
+        def outcome_when_false(node: ast.expr, predicate: ast.Call) -> bool | None:
+            """Three-valued test result when *predicate* is false and peers are unknown."""
+            if node is predicate:
+                return False
+            if isinstance(node, ast.Await):
+                return outcome_when_false(node.value, predicate)
+            if (
+                isinstance(node, ast.Compare)
+                and len(node.ops) == 1
+                and isinstance(node.ops[0], ast.NotEq)
+                and any(
+                    isinstance(side, ast.Attribute)
+                    and side.attr == "sub"
+                    and isinstance(side.value, ast.Name)
+                    and side.value.id == "identity"
+                    for side in (node.left, *node.comparators)
                 )
-                if is_predicate and _receives_whole_identity(node):
-                    yield node, negated
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.expr):
-                    yield from predicate_polarities(child, negated)
+            ):
+                # A non-self comparison documents the alternate caller-is-owner path.
+                return True
+            if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+                return node.value
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                value = outcome_when_false(node.operand, predicate)
+                return None if value is None else not value
+            if isinstance(node, ast.BoolOp):
+                values = [outcome_when_false(value, predicate) for value in node.values]
+                if isinstance(node.op, ast.And):
+                    if any(value is False for value in values):
+                        return False
+                    if all(value is True for value in values):
+                        return True
+                else:
+                    if any(value is True for value in values):
+                        return True
+                    if all(value is False for value in values):
+                        return False
+            return None
 
         def block(statements: list[ast.stmt]) -> None:
             for index, statement in enumerate(statements):
                 if isinstance(statement, ast.If):
-                    for call, negated in predicate_polarities(statement.test):
-                        if negated and denies(statement.body):
+                    for call in ast.walk(statement.test):
+                        if not isinstance(call, ast.Call):
+                            continue
+                        name = _name_of(call.func)
+                        is_predicate = (
+                            name is not None
+                            and name.startswith(("_can_", "_may_", "_is_", "_has_"))
+                            if predicate_names is None
+                            else name in predicate_names
+                        )
+                        if not is_predicate or not _receives_whole_identity(call):
+                            continue
+                        outcome = outcome_when_false(statement.test, call)
+                        if outcome is True and denies(statement.body):
                             enforced.add(call)
-                        if not negated and denies(statement.orelse):
+                        if outcome is False and denies(statement.orelse):
                             enforced.add(call)
                         if (
-                            not negated
+                            outcome is False
                             and returns(statement.body)
                             and denies(statements[index + 1 :])
                         ):
@@ -922,18 +1078,35 @@ class _ServiceIndex:
         block(method.body)
         return enforced
 
-    def _predicate_enforces(self, owner: str, method: _Func) -> bool:
-        """Whether a false documented predicate reaches a denying control-flow branch."""
-        predicate_names = {key.rsplit(".", 1)[1] for key in _BOOLEAN_AUTHORIZATION_PREDICATES}
-        return bool(self._enforcing_identity_calls(method, predicate_names))
+    def _predicate_resource_keys(
+        self,
+        owner: str,
+        method: _Func,
+        call: ast.Call,
+        aliases: dict[str, str],
+        enforced: set[ast.Call],
+    ) -> set[str]:
+        """Canonical resource keys guarded by enforced predicates before *call*."""
+        keys: set[str] = set()
+        for predicate in enforced:
+            if (predicate.lineno, predicate.col_offset) >= (call.lineno, call.col_offset):
+                continue
+            if not _call_runs_on_every_normal_path(method, predicate):
+                continue
+            target = self._resolve_call(owner, method, predicate)
+            if target is not None:
+                keys |= self._delegated_resource_keys(predicate, target, aliases)
+            else:
+                keys |= {
+                    aliases[name] for name in _call_argument_names(predicate) if name in aliases
+                }
+        return keys
 
     def is_authorized(
         self, owner: str, method: _Func, seen: frozenset[tuple[str, str]] = frozenset()
     ) -> bool:
         """Accept repository-bound filters or delegation to a proven authorizer."""
-        return self._filter_reaches_repository(
-            owner, method, seen=seen
-        ) or self._predicate_enforces(owner, method)
+        return self._filter_reaches_repository(owner, method, seen=seen)
 
 
 def _by_id_methods_in_tree(tree: ast.Module, py_file: Path) -> dict[str, tuple[Path, int, bool]]:
@@ -1106,6 +1279,23 @@ def test_scoping_is_occurrence_sensitive_and_reassignment_kills_taint() -> None:
         "        filters = build_access_filters(identity, Thing)\n"
         "        filters = other()\n"
         "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def get_branch_mixed(self, thing_id: str, *, identity: Identity):\n"
+        "        if condition:\n"
+        "            filters = []\n"
+        "        else:\n"
+        "            filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def get_branch_scoped(self, thing_id: str, *, identity: Identity):\n"
+        "        if condition:\n"
+        "            filters = build_access_filters(identity, Thing)\n"
+        "        else:\n"
+        "            filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "    async def get_internal_literal(self, thing_id: str, *, identity: Identity):\n"
+        "        leaked = await ThingRepository.get_by_id('other')\n"
+        "        await audit(leaked)\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
         "    async def get_scoped(self, thing_id: str, *, identity: Identity):\n"
         "        filters = build_access_filters(identity, Thing)\n"
         "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
@@ -1113,6 +1303,9 @@ def test_scoping_is_occurrence_sensitive_and_reassignment_kills_taint() -> None:
     methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
     assert methods["ExampleService.get_side"][2] is False
     assert methods["ExampleService.get_reassigned"][2] is False
+    assert methods["ExampleService.get_branch_mixed"][2] is False
+    assert methods["ExampleService.get_branch_scoped"][2] is True
+    assert methods["ExampleService.get_internal_literal"][2] is False
     assert methods["ExampleService.get_scoped"][2] is True
 
 
@@ -1159,6 +1352,18 @@ def test_predicate_test_must_enforce_denial() -> None:
         "        if not self._may_mutate_rule_set(rule_set_id, identity):\n"
         "            raise Denied(rule_set_id)\n"
         "        return await ThingRepository.get_by_id(rule_set_id)\n"
+        "    async def mutate_short_circuit(self, rule_set_id: str, *, identity: Identity):\n"
+        "        if not self._may_mutate_rule_set(rule_set_id, identity) and feature_enabled:\n"
+        "            raise Denied(rule_set_id)\n"
+        "        return await ThingRepository.get_by_id(rule_set_id)\n"
+        "    async def mutate_or(self, rule_set_id: str, *, identity: Identity):\n"
+        "        if not self._may_mutate_rule_set(rule_set_id, identity) or feature_enabled:\n"
+        "            raise Denied(rule_set_id)\n"
+        "        return await ThingRepository.get_by_id(rule_set_id)\n"
+        "    async def mutate_other(self, rule_set_id: str, *, identity: Identity):\n"
+        "        if not self._may_mutate_rule_set(rule_set_id, identity):\n"
+        "            raise Denied(rule_set_id)\n"
+        "        return await ThingRepository.get_by_id(other_id)\n"
     )
     methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
     actual = {name: result[2] for name, result in methods.items()}
@@ -1166,6 +1371,9 @@ def test_predicate_test_must_enforce_denial() -> None:
         "CredentialService.mutate_log": False,
         "CredentialService.mutate_pass": False,
         "CredentialService.mutate_raise": True,
+        "CredentialService.mutate_short_circuit": False,
+        "CredentialService.mutate_or": True,
+        "CredentialService.mutate_other": False,
     }
 
 
@@ -1210,6 +1418,10 @@ def test_unscoped_occurrences_and_resource_aliases_cannot_inherit_scoping() -> N
         "        filters = build_access_filters(identity, Thing)\n"
         "        await ThingRepository.get_by_id('other', filters=filters)\n"
         "        return await ThingRepository.get_by_id(target)\n"
+        "    async def get_attribute_alias(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "        return await ThingRepository.get_by_id(other.thing_id)\n"
         "    async def get_delegated_other(self, thing_id: str, *, identity: Identity):\n"
         "        await self._load_thing('other', identity=identity)\n"
         "        return await ThingRepository.get_by_id(thing_id)\n"
@@ -1224,6 +1436,7 @@ def test_unscoped_occurrences_and_resource_aliases_cannot_inherit_scoping() -> N
     assert actual == {
         "ExampleService.get_list_side": False,
         "ExampleService.get_alias": False,
+        "ExampleService.get_attribute_alias": False,
         "ExampleService.get_delegated_other": False,
         "ExampleService.get_delegated": True,
     }
@@ -1248,6 +1461,27 @@ def test_super_resolution_starts_after_concrete_owner_in_c3_mro() -> None:
     )
     methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
     assert methods["DiamondService.get"][2] is False
+
+
+@pytest.mark.arch
+def test_inherited_super_resolution_starts_after_defining_class() -> None:
+    """Self-check: an inherited super() call continues from its defining class."""
+    tree = ast.parse(
+        "class Root:\n"
+        "    async def get(self, thing_id: str, *, identity: Identity):\n"
+        "        return await ThingRepository.get_by_id(thing_id)\n"
+        "class Right(Root):\n"
+        "    async def get(self, thing_id: str, *, identity: Identity):\n"
+        "        filters = build_access_filters(identity, Thing)\n"
+        "        return await ThingRepository.get_by_id(thing_id, filters=filters)\n"
+        "class Left(Root):\n"
+        "    async def get(self, thing_id: str, *, identity: Identity):\n"
+        "        return await super().get(thing_id, identity=identity)\n"
+        "class DiamondService(Left, Right):\n"
+        "    pass\n"
+    )
+    methods = _by_id_methods_in_tree(tree, Path("<self-check>"))
+    assert methods["DiamondService.get"][2] is True
 
 
 @pytest.mark.arch
@@ -1300,6 +1534,13 @@ def test_deferred_validation_scopes_only_the_loaded_object() -> None:
         "        thing = await ThingRepository.get_by_id(thing_id)\n"
         "        thing = await self._require_thing(thing, identity=identity)\n"
         "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def get_conditionally_validated(\n"
+        "        self, thing_id: str, *, identity: Identity\n"
+        "    ):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        if should_validate:\n"
+        "            thing = await self._require_thing(thing, identity=identity)\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
         "    async def _require_thing(self, thing: Thing, *, identity: Identity):\n"
         "        filters = build_access_filters(identity, Thing)\n"
         "        return await ThingRepository.get_by_id(thing.id, filters=filters)\n"
@@ -1334,6 +1575,14 @@ def test_deferred_validation_scopes_only_the_loaded_object() -> None:
         "    async def _reload(self, thing: Thing):\n"
         "        current = await ThingRepository.get_by_id(thing.id)\n"
         "        return current if current is not None else thing\n"
+        "    async def get_rebound_reload(self, thing_id: str, *, identity: Identity):\n"
+        "        thing = await ThingRepository.get_by_id(thing_id)\n"
+        "        thing = await self._require_thing(thing, identity=identity)\n"
+        "        thing = await self._reload_other(thing)\n"
+        "        return await EntryRepository.list_for_thing(thing.id)\n"
+        "    async def _reload_other(self, thing: Thing):\n"
+        "        thing = await OtherRepository.get_by_id('other')\n"
+        "        return thing\n"
         "    async def get_replaced(self, thing_id: str, *, identity: Identity):\n"
         "        thing = await ThingRepository.get_by_id(thing_id)\n"
         "        thing = await self._require_thing(thing, identity=identity)\n"
@@ -1346,10 +1595,12 @@ def test_deferred_validation_scopes_only_the_loaded_object() -> None:
     actual = {name: result[2] for name, result in methods.items()}
     assert actual == {
         "ExampleService.get_validated": True,
+        "ExampleService.get_conditionally_validated": False,
         "ExampleService.get_predicate_validated": True,
         "ExampleService.get_count_side": False,
         "ExampleService.get_reassigned": False,
         "ExampleService.get_reassigned_after_validation": False,
         "ExampleService.get_transformed": True,
+        "ExampleService.get_rebound_reload": False,
         "ExampleService.get_replaced": False,
     }
