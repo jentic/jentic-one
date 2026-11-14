@@ -31,12 +31,28 @@ _REDIRECT_POLICY_ALLOWLIST = {
 }
 
 
-def _is_async_client_call(node: ast.Call) -> bool:
+def _is_async_client_call(node: ast.Call, tree: ast.Module) -> bool:
+    module_names = {"httpx"}
+    client_names: set[str] = set()
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            module_names.update(
+                alias.asname or alias.name for alias in statement.names if alias.name == "httpx"
+            )
+        elif isinstance(statement, ast.ImportFrom) and statement.module == "httpx":
+            client_names.update(
+                alias.asname or alias.name
+                for alias in statement.names
+                if alias.name == "AsyncClient"
+            )
+
+    if isinstance(node.func, ast.Name):
+        return node.func.id in client_names
     return (
         isinstance(node.func, ast.Attribute)
         and node.func.attr == "AsyncClient"
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "httpx"
+        and node.func.value.id in module_names
     )
 
 
@@ -52,7 +68,7 @@ def _check_file(path: Path, *, source_root: Path = SRC_ROOT) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     violations: list[str] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not _is_async_client_call(node):
+        if not isinstance(node, ast.Call) or not _is_async_client_call(node, tree):
             continue
         redirect_keyword = _follow_redirects_keyword(node)
         if (
@@ -88,6 +104,31 @@ def test_redirect_policy_checker_names_the_file_and_line(tmp_path: Path) -> None
 
     assert len(violations) == 1
     assert violations[0].startswith(f"{path}:1 —")
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "client_expression"),
+    [
+        ("import httpx", "httpx.AsyncClient"),
+        ("import httpx as hx", "hx.AsyncClient"),
+        ("from httpx import AsyncClient", "AsyncClient"),
+        ("from httpx import AsyncClient as AC", "AC"),
+    ],
+)
+def test_redirect_policy_checker_resolves_async_client_imports(
+    tmp_path: Path, import_statement: str, client_expression: str
+) -> None:
+    path = tmp_path / "broker" / "client.py"
+    path.parent.mkdir()
+    path.write_text(
+        f"{import_statement}\nclient = {client_expression}(follow_redirects=True)\n",
+        encoding="utf-8",
+    )
+
+    violations = _check_file(path, source_root=tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].startswith(f"{path}:2 —")
 
 
 @pytest.mark.parametrize("value", ["True", "redirect_setting"])
