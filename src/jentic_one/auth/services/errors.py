@@ -144,6 +144,17 @@ class PermissionNotGrantableError(AuthServiceError):
         self.permission = permission
 
 
+class AgentPermissionExceedsOwnerError(AuthServiceError):
+    """Raised when a permission to grant to an agent exceeds its owner's permission ceiling."""
+
+    def __init__(self, permission: str) -> None:
+        super().__init__(
+            f"Permission '{permission}' exceeds the agent owner's permissions; "
+            "grant it to the owner first"
+        )
+        self.permission = permission
+
+
 class OwnerTransferForbiddenError(AuthServiceError):
     """Raised when a caller without ``org:admin`` tries to change an agent's owner."""
 

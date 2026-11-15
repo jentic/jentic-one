@@ -216,7 +216,12 @@ async def update_agent(
             "`org:admin` (and only an `org:admin` for an unowned agent). Returned "
             "whatever the agent's status (`actor_not_found`), so a 404 here can mean "
             "the agent exists but is outside the caller's ownership"
-        )
+        ),
+        conflict(
+            "Agent is not pending (`invalid_transition`), or an explicit permission "
+            "grant on the agent exceeds the agent owner's permission ceiling "
+            "(`agent_permission_exceeds_owner`)"
+        ),
     ),
 )
 async def approve_agent(
@@ -230,7 +235,9 @@ async def approve_agent(
     (an unclaimed self-registration) can be approved only by an ``org:admin``,
     who becomes its owner. Any other caller gets a 404, whatever the agent's
     status, so the response does not reveal agents outside the caller's
-    ownership.
+    ownership. Self-requested permissions above the owner's permission ceiling
+    are dropped on approval; an explicit grant above the owner's ceiling
+    fails with 409 (``agent_permission_exceeds_owner``).
     """
     view = await agent_svc.approve(agent_id, identity=identity)
     return _agent_response(view)
@@ -385,6 +392,13 @@ async def get_agent_permissions(
     "/agents/{agent_id}/permissions",
     summary="Replace an agent's permissions",
     operation_id="replaceAgentPermissions",
+    responses=with_responses(
+        not_found("Agent not found."),
+        conflict(
+            "Agent is archived, or a newly added permission exceeds the agent owner's "
+            "permission ceiling (`agent_permission_exceeds_owner`)."
+        ),
+    ),
 )
 async def replace_agent_permissions(
     agent_id: AgentIdPath,
@@ -392,7 +406,12 @@ async def replace_agent_permissions(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentPermissionsResponse:
-    """Replace all permissions for an agent."""
+    """Replace all permissions for an agent.
+
+    Newly added permissions must be grantable by the caller (403
+    `agent_permission_not_grantable`) and within the agent owner's permission
+    ceiling (409 `agent_permission_exceeds_owner`).
+    """
     permissions = await agent_svc.replace_permissions(agent_id, body.permissions, identity=identity)
     return AgentPermissionsResponse(permissions=permissions)
 

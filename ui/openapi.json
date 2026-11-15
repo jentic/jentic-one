@@ -27181,7 +27181,7 @@
         ]
       },
       "put": {
-        "description": "Replace all permissions for an agent.",
+        "description": "Replace all permissions for an agent.\n\nNewly added permissions must be grantable by the caller (403\n`agent_permission_not_grantable`) and within the agent owner's permission\nceiling (409 `agent_permission_exceeds_owner`).",
         "operationId": "replaceAgentPermissions",
         "parameters": [
           {
@@ -27248,6 +27248,40 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Agent not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Agent is archived, or a newly added permission exceeds the agent owner's permission ceiling (`agent_permission_exceeds_owner`)."
+          },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
@@ -27276,7 +27310,7 @@
     "/agents/{agent_id}:approve": {
       "description": "`POST`: Approve an agent.",
       "post": {
-        "description": "Approve a pending agent.\n\nAllowed for the agent's owner or an ``org:admin``. An agent with no owner\n(an unclaimed self-registration) can be approved only by an ``org:admin``,\nwho becomes its owner. Any other caller gets a 404, whatever the agent's\nstatus, so the response does not reveal agents outside the caller's\nownership.",
+        "description": "Approve a pending agent.\n\nAllowed for the agent's owner or an ``org:admin``. An agent with no owner\n(an unclaimed self-registration) can be approved only by an ``org:admin``,\nwho becomes its owner. Any other caller gets a 404, whatever the agent's\nstatus, so the response does not reveal agents outside the caller's\nownership. Self-requested permissions above the owner's permission ceiling\nare dropped on approval; an explicit grant above the owner's ceiling\nfails with 409 (``agent_permission_exceeds_owner``).",
         "operationId": "approveAgent",
         "parameters": [
           {
@@ -27329,6 +27363,23 @@
               }
             },
             "description": "No such agent, or a caller who is neither the agent's owner nor an `org:admin` (and only an `org:admin` for an unowned agent). Returned whatever the agent's status (`actor_not_found`), so a 404 here can mean the agent exists but is outside the caller's ownership"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Agent is not pending (`invalid_transition`), or an explicit permission grant on the agent exceeds the agent owner's permission ceiling (`agent_permission_exceeds_owner`)"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"

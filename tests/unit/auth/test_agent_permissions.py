@@ -121,14 +121,24 @@ async def test_get_permissions(
     mock_permission_repo.list_for_actor.assert_called_once()
 
 
+def _owner_admin_grant() -> MagicMock:
+    grant = MagicMock()
+    grant.permission = "org:admin"
+    return grant
+
+
+@patch("jentic_one.auth.services.agent_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_replace_permissions(
-    mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent()
-    mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(return_value=[_owner_admin_grant()])
     mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
     mock_permission_repo.revoke_all = AsyncMock(return_value=2)
     mock_permission_repo.grant = AsyncMock()
@@ -144,14 +154,18 @@ async def test_replace_permissions(
     assert mock_permission_repo.grant.call_args.kwargs["permission"] == "capabilities:read"
 
 
+@patch("jentic_one.auth.services.agent_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_replace_permissions_empty_clears_all(
-    mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent()
-    mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(return_value=[_owner_admin_grant()])
     mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
     mock_permission_repo.revoke_all = AsyncMock(return_value=2)
 
@@ -169,7 +183,7 @@ async def test_replace_permissions_not_found(
     mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
 ) -> None:
     ctx = _make_ctx()
-    mock_agent_repo.get_by_id = AsyncMock(return_value=None)
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=None)
 
     svc = AgentService(ctx)
     with pytest.raises(ActorNotFoundError):
@@ -183,7 +197,7 @@ async def test_replace_permissions_archived_raises(
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent(status="archived")
-    mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
 
     svc = AgentService(ctx)
     with pytest.raises(InvalidTransitionError):
@@ -211,15 +225,19 @@ async def test_create_uses_explicit_permissions_over_defaults(
     assert granted == explicit
 
 
+@patch("jentic_one.auth.services.agent_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_approve_grants_default_permissions_when_no_existing_grants(
-    mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent(status="pending")
     mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
     mock_agent_repo.set_approval = AsyncMock(return_value=_mock_agent(status="active"))
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(return_value=[_owner_admin_grant()])
     mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
     mock_permission_repo.grant = AsyncMock()
 
@@ -232,15 +250,19 @@ async def test_approve_grants_default_permissions_when_no_existing_grants(
     assert "catalog:import" in granted
 
 
+@patch("jentic_one.auth.services.agent_service.UserPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.agent_service.AgentRepository")
 async def test_approve_preserves_existing_permissions(
-    mock_agent_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_agent_repo: MagicMock,
+    mock_permission_repo: MagicMock,
+    mock_user_grant_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent(status="pending")
     mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
     mock_agent_repo.set_approval = AsyncMock(return_value=_mock_agent(status="active"))
+    mock_user_grant_repo.get_grants_for_user = AsyncMock(return_value=[_owner_admin_grant()])
 
     existing_grant = MagicMock()
     existing_grant.permission = "capabilities:execute"

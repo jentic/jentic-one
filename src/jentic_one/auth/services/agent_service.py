@@ -286,7 +286,11 @@ class AgentService:
         its owner. Anyone else gets ``ActorNotFoundError``.
         """
         async with self._ctx.admin_db.transaction() as session:
-            await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
+            agent = await self._check_transition(
+                session, agent_id, ActorVerb.APPROVE, identity=identity
+            )
+            effective_owner_id = agent.owner_id if agent.owner_id is not None else identity.sub
+            owner_effective = await self._owner_effective(session, effective_owner_id)
             existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
@@ -318,13 +322,49 @@ class AgentService:
                     reason="self_requested_admin_permission_dropped",
                     origin=identity.origin.value,
                 )
+            self_requested_catalogue = [
+                g.permission
+                for g in existing_grants
+                if g.granted_by is None and g.permission in ALL_PERMISSIONS
+            ]
+            kept_self_requested = set(
+                cap_agent_permissions(self_requested_catalogue, owner_effective)
+            )
+            dropped_self_over_owner = [
+                p for p in self_requested_catalogue if p not in kept_self_requested
+            ]
+            if dropped_self_over_owner:
+                before_permissions = [g.permission for g in existing_grants]
+                for permission in dropped_self_over_owner:
+                    await ActorPermissionGrantRepository.revoke(
+                        session, actor_id=agent_id, permission=permission
+                    )
+                dropped_set = set(dropped_self_over_owner)
+                existing_grants = [
+                    g
+                    for g in existing_grants
+                    if not (g.granted_by is None and g.permission in dropped_set)
+                ]
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"permissions": before_permissions},
+                    after={"permissions": [g.permission for g in existing_grants]},
+                    reason="self_requested_permission_above_owner_dropped",
+                    origin=identity.origin.value,
+                )
             # Permissions a self-registration requested become live on approval, so
-            # the approver's ceiling applies to them. Requested strings outside
-            # the catalogue grant nothing and are left as-is (not a 422: the
+            # the approver's and owner's ceilings apply to them. Requested strings
+            # outside the catalogue grant nothing and are left as-is (not a 422: the
             # registrant, not the approver, chose them).
             check_agent_permission_grant(
                 [g.permission for g in existing_grants if g.permission in ALL_PERMISSIONS],
                 identity=identity,
+                owner_effective=owner_effective,
             )
             agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             if not existing_grants:
@@ -1066,12 +1106,15 @@ class AgentService:
         """Replace the agent's permission grants (owner or ``org:admin`` only).
 
         Newly added permissions are subject to the agent permission ceiling
-        (``check_agent_permission_grant``); permissions the agent already holds may be
-        kept, so an owner can narrow a set an admin widened.
+        (``check_agent_permission_grant``), including the agent owner's
+        effective permission ceiling; permissions the agent already holds may
+        be kept, so an owner can narrow a set an admin widened.
         """
         permissions = list(dict.fromkeys(permissions))
         async with self._ctx.admin_db.transaction() as session:
-            agent = await self._load_owned_agent(session, agent_id, identity=identity)
+            agent = await self._load_owned_agent(
+                session, agent_id, identity=identity, for_update=True
+            )
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_permissions")
             existing = [
@@ -1080,7 +1123,13 @@ class AgentService:
                     session, agent_id, actor_type=ActorType.AGENT
                 )
             ]
-            check_agent_permission_grant(permissions, identity=identity, already_held=existing)
+            owner_effective = await self._owner_effective(session, agent.owner_id)
+            check_agent_permission_grant(
+                permissions,
+                identity=identity,
+                already_held=existing,
+                owner_effective=owner_effective,
+            )
             await ActorPermissionGrantRepository.revoke_all(session, agent_id)
             for permission in permissions:
                 await ActorPermissionGrantRepository.grant(
@@ -1259,6 +1308,15 @@ class AgentService:
             )
         return suspended_count
 
+    async def _owner_effective(
+        self, session: AsyncSession, owner_id: str | None
+    ) -> set[str] | None:
+        """Effective permission set of ``owner_id``; ``None`` when ownerless."""
+        if owner_id is None:
+            return None
+        owner_grants = await UserPermissionGrantRepository.get_grants_for_user(session, owner_id)
+        return compute_effective({g.permission for g in owner_grants})
+
     async def _recap_permissions_on_transfer(
         self,
         session: AsyncSession,
@@ -1273,12 +1331,7 @@ class AgentService:
         if not existing_grants:
             return
         before_permissions = [g.permission for g in existing_grants]
-        owner_effective: set[str] | None = None
-        if agent.owner_id is not None:
-            owner_grants = await UserPermissionGrantRepository.get_grants_for_user(
-                session, agent.owner_id
-            )
-            owner_effective = compute_effective({g.permission for g in owner_grants})
+        owner_effective = await self._owner_effective(session, agent.owner_id)
         allowed = set(cap_agent_permissions(before_permissions, owner_effective))
         revoked = [p for p in before_permissions if p not in allowed]
         if not revoked:
@@ -1384,7 +1437,7 @@ class AgentService:
 
     async def _check_transition(
         self, session: AsyncSession, agent_id: str, verb: ActorVerb, *, identity: Identity
-    ) -> None:
+    ) -> Agent:
         """Authorize ``verb`` on the agent, then validate the state transition.
 
         Every verb, approve/deny included, is owner-or-``org:admin``: an agent
@@ -1402,3 +1455,4 @@ class AgentService:
         allowed_from = _VALID_TRANSITIONS[verb]
         if agent.status not in allowed_from:
             raise InvalidTransitionError(agent_id, agent.status, verb)
+        return agent

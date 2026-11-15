@@ -12750,6 +12750,10 @@ type ClientInterface interface {
 	//
 	// Replace all permissions for an agent.
 	//
+	// Newly added permissions must be grantable by the caller (403
+	// `agent_permission_not_grantable`) and within the agent owner's permission
+	// ceiling (409 `agent_permission_exceeds_owner`).
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
@@ -12758,6 +12762,10 @@ type ClientInterface interface {
 	// ReplaceAgentPermissions Replace an agent's permissions
 	//
 	// Replace all permissions for an agent.
+	//
+	// Newly added permissions must be grantable by the caller (403
+	// `agent_permission_not_grantable`) and within the agent owner's permission
+	// ceiling (409 `agent_permission_exceeds_owner`).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12772,7 +12780,9 @@ type ClientInterface interface {
 	// (an unclaimed self-registration) can be approved only by an ``org:admin``,
 	// who becomes its owner. Any other caller gets a 404, whatever the agent's
 	// status, so the response does not reveal agents outside the caller's
-	// ownership.
+	// ownership. Self-requested permissions above the owner's permission ceiling
+	// are dropped on approval; an explicit grant above the owner's ceiling
+	// fails with 409 (``agent_permission_exceeds_owner``).
 	//
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -16170,6 +16180,10 @@ func (c *Client) GetAgentPermissions(ctx context.Context, agentId string, reqEdi
 //
 // Replace all permissions for an agent.
 //
+// Newly added permissions must be grantable by the caller (403
+// `agent_permission_not_grantable`) and within the agent owner's permission
+// ceiling (409 `agent_permission_exceeds_owner`).
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
@@ -16188,6 +16202,10 @@ func (c *Client) ReplaceAgentPermissionsWithBody(ctx context.Context, agentId st
 // ReplaceAgentPermissions Replace an agent's permissions
 //
 // Replace all permissions for an agent.
+//
+// Newly added permissions must be grantable by the caller (403
+// `agent_permission_not_grantable`) and within the agent owner's permission
+// ceiling (409 `agent_permission_exceeds_owner`).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -16212,7 +16230,9 @@ func (c *Client) ReplaceAgentPermissions(ctx context.Context, agentId string, bo
 // (an unclaimed self-registration) can be approved only by an “org:admin“,
 // who becomes its owner. Any other caller gets a 404, whatever the agent's
 // status, so the response does not reveal agents outside the caller's
-// ownership.
+// ownership. Self-requested permissions above the owner's permission ceiling
+// are dropped on approval; an explicit grant above the owner's ceiling
+// fails with 409 (“agent_permission_exceeds_owner“).
 //
 // Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -30083,6 +30103,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Replace all permissions for an agent.
 	//
+	// Newly added permissions must be grantable by the caller (403
+	// `agent_permission_not_grantable`) and within the agent owner's permission
+	// ceiling (409 `agent_permission_exceeds_owner`).
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
@@ -30091,6 +30115,10 @@ type ClientWithResponsesInterface interface {
 	// ReplaceAgentPermissionsWithResponse Replace an agent's permissions
 	//
 	// Replace all permissions for an agent.
+	//
+	// Newly added permissions must be grantable by the caller (403
+	// `agent_permission_not_grantable`) and within the agent owner's permission
+	// ceiling (409 `agent_permission_exceeds_owner`).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -30105,7 +30133,9 @@ type ClientWithResponsesInterface interface {
 	// (an unclaimed self-registration) can be approved only by an ``org:admin``,
 	// who becomes its owner. Any other caller gets a 404, whatever the agent's
 	// status, so the response does not reveal agents outside the caller's
-	// ownership.
+	// ownership. Self-requested permissions above the owner's permission ceiling
+	// are dropped on approval; an explicit grant above the owner's ceiling
+	// fails with 409 (``agent_permission_exceeds_owner``).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -35594,6 +35624,10 @@ type ReplaceAgentPermissionsHTTPResp struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35622,6 +35656,16 @@ func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON401() *Unautho
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35686,6 +35730,8 @@ type ApproveAgentHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -35719,6 +35765,11 @@ func (r ApproveAgentHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r ApproveAgentHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ApproveAgentHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -49426,6 +49477,10 @@ func (c *ClientWithResponses) GetAgentPermissionsWithResponse(ctx context.Contex
 //
 // Replace all permissions for an agent.
 //
+// Newly added permissions must be grantable by the caller (403
+// `agent_permission_not_grantable`) and within the agent owner's permission
+// ceiling (409 `agent_permission_exceeds_owner`).
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
@@ -49440,6 +49495,10 @@ func (c *ClientWithResponses) ReplaceAgentPermissionsWithBodyWithResponse(ctx co
 // ReplaceAgentPermissionsWithResponse Replace an agent's permissions
 //
 // Replace all permissions for an agent.
+//
+// Newly added permissions must be grantable by the caller (403
+// `agent_permission_not_grantable`) and within the agent owner's permission
+// ceiling (409 `agent_permission_exceeds_owner`).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -49460,7 +49519,9 @@ func (c *ClientWithResponses) ReplaceAgentPermissionsWithResponse(ctx context.Co
 // (an unclaimed self-registration) can be approved only by an “org:admin“,
 // who becomes its owner. Any other caller gets a 404, whatever the agent's
 // status, so the response does not reveal agents outside the caller's
-// ownership.
+// ownership. Self-requested permissions above the owner's permission ceiling
+// are dropped on approval; an explicit grant above the owner's ceiling
+// fails with 409 (“agent_permission_exceeds_owner“).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -55657,6 +55718,20 @@ func ParseReplaceAgentPermissionsHTTPResp(rsp *http.Response) (*ReplaceAgentPerm
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -55738,6 +55813,13 @@ func ParseApproveAgentHTTPResp(rsp *http.Response) (*ApproveAgentHTTPResp, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity

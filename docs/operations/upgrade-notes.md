@@ -231,6 +231,28 @@ Changes on `main` since 0.44.0; they ship in the next release.
   `auth.refresh_family_max_age_seconds: null` (or
   `JENTIC_AUTH__REFRESH_FAMILY_MAX_AGE_SECONDS=null`) to disable the absolute
   family lifetime cap.
+- **Agent permission grants and approval enforce the agent owner's permission ceiling (`agent_permission_exceeds_owner`).**
+  - `PUT /agents/{agent_id}/permissions` now checks newly added permissions
+    against the agent owner's effective permissions (in addition to the caller's
+    permission ceiling) and returns `409 Conflict`
+    (`type: "agent_permission_exceeds_owner"`) when a requested permission
+    exceeds the owner's ceiling (for example, granting `org:admin`,
+    `agents:write`, or a non-default permission the owner does not hold to an
+    agent owned by a non-admin user). Permissions the agent already holds remain
+    exempt so narrowing or re-saving existing grants continues to succeed; grant
+    the permission to the owner first (or transfer ownership to an `org:admin`
+    user) before adding it to the agent.
+  - `POST /agents/{agent_id}:approve` now drops self-requested (`granted_by = NULL`)
+    catalogue permissions that exceed the owner's effective permissions and
+    records a `REVOKE` audit entry
+    (`reason: "self_requested_permission_above_owner_dropped"`), while rejecting
+    pre-staged admin-authored grants that exceed the owner's ceiling with
+    `409 Conflict` (`type: "agent_permission_exceeds_owner"`).
+- **Connect-session review for existing OAuth credentials (`GET /connect-sessions/{session_id}`).**
+  Reading the review of a create session that was confirmed onto an existing
+  credential requiring vendor consent now returns a normalized `edit.result`
+  payload (`target`, `suspended`, `scope_notes`, rule `id`s, and the union of
+  granted and requested `scopes`). No schema or client changes are required.
 
 ## 0.44.0
 

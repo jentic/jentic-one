@@ -30,15 +30,19 @@ from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import ActorPermissionGrantRepository, AgentRepository, AuditRepository
+from jentic_one.auth.services.agent_auth_service import AgentAuthService
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.services.registration_service import RegistrationService
+from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import service_error_handler
 from jentic_one.auth.web.routers import agents
+from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.shared.audit import AuditAction, AuditTargetType
+from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorStatus
+from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.web.deps import resolve_identity
 from tests.integration.auth import seeds
 
@@ -253,19 +257,167 @@ async def test_owner_can_narrow_permissions(integration_context: Context, users:
 async def test_owner_may_keep_permission_an_admin_granted(
     integration_context: Context, users: None
 ) -> None:
-    agent_id = await _create_owned_agent(integration_context)
-    async with _client(integration_context, _admin()) as client:
-        resp = await client.put(
-            f"/agents/{agent_id}/permissions",
-            json={"permissions": ["org:admin", "capabilities:read"]},
-        )
-    assert resp.status_code == 200, resp.text
+    agent_id = await seeds.seed_agent(
+        integration_context,
+        owner_id=OWNER,
+        scopes=["org:admin", "capabilities:read"],
+    )
     async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.put(
             f"/agents/{agent_id}/permissions", json={"permissions": ["org:admin"]}
         )
     assert resp.status_code == 200, resp.text
     assert await _permissions(integration_context, agent_id) == {"org:admin"}
+
+
+@pytest.mark.parametrize(
+    "permission",
+    ["org:admin", "agents:write", "users:write", "credentials:write"],
+)
+async def test_admin_replace_permissions_rejects_permission_above_owner_ceiling(
+    integration_context: Context, users: None, permission: str
+) -> None:
+    await seeds.seed_permissions(integration_context, OWNER, list(_WRITER_PERMS))
+    agent_id = await _create_owned_agent(integration_context)
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["capabilities:read", permission]},
+        )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["type"] == "agent_permission_exceeds_owner"
+    assert await _permissions(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
+
+
+async def test_admin_replace_permissions_succeeds_for_org_admin_owner(
+    integration_context: Context, users: None
+) -> None:
+    await seeds.seed_permissions(integration_context, ADMIN, ["org:admin"])
+    async with _client(integration_context, _admin()) as client:
+        created = await client.post("/agents", json={"name": "admin-owned"})
+        assert created.status_code == 201, created.text
+        agent_id = created.json()["id"]
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["org:admin", "agents:write", "users:write", "capabilities:read"]},
+        )
+    assert resp.status_code == 200, resp.text
+    assert await _permissions(integration_context, agent_id) == {
+        "org:admin",
+        "agents:write",
+        "users:write",
+        "capabilities:read",
+    }
+
+
+async def test_admin_replace_permissions_preserves_already_held_and_rejects_new_over_owner(
+    integration_context: Context, users: None
+) -> None:
+    await seeds.seed_permissions(integration_context, OWNER, ["agents:write"])
+    agent_id = await seeds.seed_agent(
+        integration_context,
+        owner_id=OWNER,
+        scopes=["org:admin", "capabilities:read"],
+    )
+    async with _client(integration_context, _admin()) as client:
+        keep_resp = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["org:admin", "capabilities:read", "agents:read"]},
+        )
+        assert keep_resp.status_code == 200, keep_resp.text
+        assert await _permissions(integration_context, agent_id) == {
+            "org:admin",
+            "capabilities:read",
+            "agents:read",
+        }
+
+        reject_resp = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["org:admin", "users:write"]},
+        )
+    assert reject_resp.status_code == 409, reject_resp.text
+    assert reject_resp.json()["type"] == "agent_permission_exceeds_owner"
+    assert await _permissions(integration_context, agent_id) == {
+        "org:admin",
+        "capabilities:read",
+        "agents:read",
+    }
+
+
+async def test_admin_replace_permissions_skips_retired_permission_in_owner_check(
+    integration_context: Context, users: None
+) -> None:
+    await seeds.seed_permissions(integration_context, OWNER, [])
+    agent_id = await _create_owned_agent(integration_context)
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["capabilities:read", "toolkits:read"]},
+        )
+    assert resp.status_code == 200, resp.text
+    assert await _permissions(integration_context, agent_id) == {
+        "capabilities:read",
+        "toolkits:read",
+    }
+
+
+async def test_accepted_owner_grant_resolves_across_token_and_api_key_resolvers(
+    integration_context: Context, users: None
+) -> None:
+    await seeds.seed_permissions(integration_context, OWNER, ["users:write", "agents:write"])
+    agent_id = await _create_owned_agent(integration_context)
+    granted = ["capabilities:execute", "users:write", "users:read"]
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": granted},
+        )
+    assert resp.status_code == 200, resp.text
+
+    api_key = await AgentAuthService(integration_context).register_api_key(
+        agent_id, identity=_admin()
+    )
+    access_token, _ = await TokenService(integration_context).issue_pair(
+        agent_id, ActorType.AGENT, granted
+    )
+
+    key_resolved = await ApiKeyResolver(integration_context.admin_db).resolve(api_key)
+    assert key_resolved is not None and key_resolved.active is True
+    assert set(key_resolved.permissions) == set(granted)
+
+    for resolver in (
+        TokenService(integration_context),
+        InProcessTokenResolver(integration_context.admin_db),
+    ):
+        tok_resolved = await resolver.resolve_access_token(access_token)
+        assert tok_resolved is not None and tok_resolved.active is True
+        assert set(tok_resolved.permissions) == set(granted)
+
+
+async def test_replace_permissions_after_transfer_enforces_new_owner_ceiling(
+    integration_context: Context, users: None
+) -> None:
+    await seeds.seed_permissions(integration_context, OWNER, ["users:write", "agents:write"])
+    await seeds.seed_permissions(integration_context, OTHER, ["agents:read"])
+    agent_id = await _create_owned_agent(integration_context)
+    async with _client(integration_context, _admin()) as client:
+        first_put = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["capabilities:read", "users:write"]},
+        )
+        assert first_put.status_code == 200, first_put.text
+
+        transfer = await client.patch(f"/agents/{agent_id}", json={"owner_id": OTHER})
+        assert transfer.status_code == 200, transfer.text
+        assert await _permissions(integration_context, agent_id) == {"capabilities:read"}
+
+        second_put = await client.put(
+            f"/agents/{agent_id}/permissions",
+            json={"permissions": ["capabilities:read", "users:write"]},
+        )
+    assert second_put.status_code == 409, second_put.text
+    assert second_put.json()["type"] == "agent_permission_exceeds_owner"
+    assert await _permissions(integration_context, agent_id) == {"capabilities:read"}
 
 
 async def test_non_owner_cannot_replace_permissions(
@@ -474,12 +626,14 @@ async def test_non_admin_cannot_decide_unowned_agent(
 async def test_admin_approving_unowned_agent_becomes_owner(
     integration_context: Context, self_register: Callable[[str], Awaitable[str]]
 ) -> None:
-    agent_id = await self_register("")
+    await seeds.seed_permissions(integration_context, ADMIN, ["org:admin"])
+    agent_id = await self_register("users:write capabilities:read")
     async with _client(integration_context, _admin()) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "active"
     assert (await _agent(integration_context, agent_id)).owner_id == ADMIN
+    assert await _permissions(integration_context, agent_id) == {"users:write", "capabilities:read"}
 
 
 async def test_admin_can_deny_unowned_agent(
@@ -510,33 +664,84 @@ async def test_claimant_can_approve_claimed_agent(
 
 
 @pytest.mark.parametrize("requested", ["users:write", "credentials:write"])
-async def test_non_admin_owner_cannot_activate_requested_permission_above_ceiling(
+async def test_approve_drops_self_requested_permission_above_owner_ceiling(
     integration_context: Context,
     self_register: Callable[[str], Awaitable[str]],
     requested: str,
 ) -> None:
+    await seeds.seed_permissions(integration_context, OTHER, list(_WRITER_PERMS))
     agent_id = await self_register(f"capabilities:read {requested}")
     assert await _register_audit_permissions(integration_context, agent_id) == [
         "capabilities:read",
         requested,
     ]
     await _claim_as(integration_context, agent_id, OTHER)
-    async with _client(integration_context, _writer(OTHER)) as client:
-        resp = await client.post(f"/agents/{agent_id}:approve")
-    assert resp.status_code == 403
-    assert resp.json()["type"] == "agent_permission_not_grantable"
-    assert (await _agent(integration_context, agent_id)).status == ActorStatus.PENDING
-
     async with _client(integration_context, _admin()) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "active"
-    assert await _permissions(integration_context, agent_id) == {"capabilities:read", requested}
+    assert await _permissions(integration_context, agent_id) == {"capabilities:read"}
+
+    async with integration_context.admin_db.session() as session:
+        entries = await AuditRepository.list_by_target(session, AuditTargetType.AGENT, agent_id)
+    revoke_entries = [
+        e
+        for e in entries
+        if e.action == AuditAction.REVOKE
+        and e.reason == "self_requested_permission_above_owner_dropped"
+    ]
+    assert len(revoke_entries) == 1
+    assert revoke_entries[0].before is not None
+    assert set(revoke_entries[0].before["permissions"]) == {"capabilities:read", requested}
+    assert revoke_entries[0].after == {"permissions": ["capabilities:read"]}
+    assert await _audit_permissions(integration_context, agent_id, AuditAction.APPROVE) == [
+        "capabilities:read"
+    ]
+
+
+@pytest.mark.parametrize("permission", ["org:admin", "agents:write", "users:write"])
+async def test_approve_rejects_authored_grant_above_owner_ceiling(
+    integration_context: Context,
+    users: None,
+    permission: str,
+) -> None:
+    await seeds.seed_permissions(integration_context, OTHER, list(_WRITER_PERMS))
+    agent_id = await seeds.seed_agent(
+        integration_context,
+        owner_id=OTHER,
+        scopes=["capabilities:read", permission],
+        status=ActorStatus.PENDING,
+    )
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["type"] == "agent_permission_exceeds_owner"
+    assert (await _agent(integration_context, agent_id)).status == ActorStatus.PENDING
+    assert await _permissions(integration_context, agent_id) == {"capabilities:read", permission}
+
+
+async def test_non_admin_owner_cannot_approve_authored_grant_above_caller_ceiling(
+    integration_context: Context,
+    users: None,
+) -> None:
+    await seeds.seed_permissions(integration_context, OTHER, ["users:write", *list(_WRITER_PERMS)])
+    agent_id = await seeds.seed_agent(
+        integration_context,
+        owner_id=OTHER,
+        scopes=["capabilities:read", "users:write"],
+        status=ActorStatus.PENDING,
+    )
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["type"] == "agent_permission_not_grantable"
+    assert (await _agent(integration_context, agent_id)).status == ActorStatus.PENDING
 
 
 async def test_non_admin_owner_can_activate_requested_default_permissions(
     integration_context: Context, self_register: Callable[[str], Awaitable[str]]
 ) -> None:
+    await seeds.seed_permissions(integration_context, OTHER, list(_WRITER_PERMS))
     # Unknown requested strings are dropped during registration and do not block the decision.
     agent_id = await self_register("capabilities:execute agents:read not-a:scope")
     await _claim_as(integration_context, agent_id, OTHER)

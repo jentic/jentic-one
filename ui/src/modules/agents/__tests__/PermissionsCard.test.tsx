@@ -245,6 +245,35 @@ describe('PermissionsCard', () => {
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
 	});
 
+	it('surfaces the server detail message when the backend rejects a grant above the owner ceiling with 409', async () => {
+		const user = userEvent.setup();
+		const detail =
+			'Permission "credentials:read" cannot be granted to this agent because the agent\'s owner does not hold it.';
+		worker.use(
+			createErrorHandler('put', '/agents/:id/permissions', {
+				status: 409,
+				body: {
+					detail,
+					error_code: 'agent_permission_exceeds_owner',
+				},
+			}),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		expect(await within(dialog).findByText(detail)).toBeInTheDocument();
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+	});
+
 	it('renders a default-granted owner permission as an editable catalogue chip', async () => {
 		// `owner:resources:read` is granted to `agnt_active_1` by default and is
 		// catalogued, so it must render as a normal editable picker row (a
