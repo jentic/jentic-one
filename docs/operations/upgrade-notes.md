@@ -217,6 +217,30 @@ Changes on `main` since 0.44.0; they ship in the next release.
   exceed the new owner's permission ceiling and records a `REVOKE` audit entry;
   grant the required permissions to the new owner before transferring ownership
   if the agent should keep them. `Identity.parent_permissions` has been removed.
+- **Agent permission grants are checked against the agent owner's permissions (`409 agent_permission_exceeds_owner`).**
+  `PUT /agents/{agent_id}/permissions` now checks each newly added permission
+  against the agent owner's effective permissions, in addition to the caller's,
+  and returns `409 Conflict` with `type: "agent_permission_exceeds_owner"` when
+  the owner does not hold it (for example `org:admin`, `agents:write`, or any
+  non-default permission the owner lacks, on an agent owned by a non-admin
+  user). Permissions the agent already holds are exempt, so re-saving or
+  narrowing an existing set keeps working. `POST /agents/{agent_id}:approve`
+  drops self-requested permissions that exceed the owner's, with a `REVOKE`
+  audit entry (`self_requested_permission_above_owner_dropped`), and rejects
+  permissions an admin staged that exceed the owner's with the same `409`.
+  Grant the permission to the owner first, or transfer the agent to an
+  `org:admin` user, before adding it to the agent. API clients that treat an
+  unexpected `409` on these two routes as fatal should handle it.
+- **Reading a connect-session review confirmed onto an existing credential returns the edit-shaped result.**
+  `GET /connect-sessions/{session_id}` for a session confirmed onto an existing
+  credential that needs vendor consent previously failed with a server error; it
+  now returns the normalized `edit.result` (`target`, `suspended`, `scope_notes`,
+  rule `id`s, and the union of granted and requested `scopes`). No client change
+  is needed.
+- **Linux CLI packages (`.deb`, `.rpm`, `.apk`) are published with each release.**
+  `jenticctl update` recognises a package-owned binary (`dpkg`, `rpm` or `apk`
+  owns the file) and leaves it to the package manager; `--stack-only` still
+  refreshes the stack. See [CLI installation](../installation/cli.md#linux-packages-deb--rpm--apk).
 - **OAuth refresh-token families now have a 90-day absolute lifetime (`auth.refresh_family_max_age_seconds`).**
   Refresh-token families track their initial issuance timestamp in
   `refresh_tokens.family_issued_at` (admin migration `c7d2e9a41b30`) and expire
