@@ -17,8 +17,10 @@ def _restore_default_minter() -> Iterator[None]:
     claim.set_claim_token_minter(original)
 
 
-def test_default_minter_returns_none() -> None:
-    """OSS default: no claim token minted (single-user product behaviour)."""
+def test_default_minter_returns_none(stock_claim_minter: None) -> None:
+    """Stock minter: no claim token minted (single-user product behaviour)."""
+    assert claim.no_claim_token("agnt_anything") is None
+    assert claim.get_claim_token_minter() is claim.no_claim_token
     assert claim.get_claim_token_minter()("agnt_anything") is None
 
 

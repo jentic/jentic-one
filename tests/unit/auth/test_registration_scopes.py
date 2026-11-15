@@ -26,6 +26,7 @@ def _make_ctx() -> MagicMock:
 
     ctx.admin_db.run_in_transaction = AsyncMock(side_effect=_run_in_transaction)
     ctx.config.auth.rat_ttl_seconds = 900
+    ctx.config.auth.claim_ttl_seconds = 900
     ctx.config.auth.canonical_base_url = "https://auth.example.com"
     return ctx
 
@@ -60,7 +61,7 @@ def test_registrable_scopes_empty_or_none() -> None:
 @patch("jentic_one.auth.services.registration_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_dcr_with_scope_creates_grants(
-    mock_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_repo: MagicMock, mock_permission_repo: MagicMock, stock_claim_minter: None
 ) -> None:
     ctx = _make_ctx()
     agent = MagicMock()
@@ -84,7 +85,7 @@ async def test_dcr_with_scope_creates_grants(
 @patch("jentic_one.auth.services.registration_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_dcr_without_scope_no_grants(
-    mock_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_repo: MagicMock, mock_permission_repo: MagicMock, stock_claim_minter: None
 ) -> None:
     ctx = _make_ctx()
     agent = MagicMock()
@@ -101,7 +102,7 @@ async def test_dcr_without_scope_no_grants(
 @patch("jentic_one.auth.services.registration_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_dcr_with_empty_scope_no_grants(
-    mock_repo: MagicMock, mock_permission_repo: MagicMock
+    mock_repo: MagicMock, mock_permission_repo: MagicMock, stock_claim_minter: None
 ) -> None:
     ctx = _make_ctx()
     agent = MagicMock()
