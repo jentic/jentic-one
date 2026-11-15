@@ -153,8 +153,10 @@ async def test_dcr_agent_remains_pending(mock_repo: MagicMock) -> None:
 
 
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
-async def test_register_no_claim_token_by_default(mock_repo: MagicMock) -> None:
-    """OSS default: no claim-token minter installed → response carries no token
+async def test_register_no_claim_token_by_default(
+    mock_repo: MagicMock, stock_claim_minter: None
+) -> None:
+    """Stock minter: no claim-token minter installed → response carries no token
     and no claim columns are set on the agent."""
     ctx = _make_ctx()
     agent = MagicMock()

@@ -45,7 +45,7 @@ def test_open_policy_admits_unverified_preserving_legacy_behaviour() -> None:
     )
 
 
-def test_default_installed_policy_is_open() -> None:
+def test_default_installed_policy_is_open(stock_idp_seams: None) -> None:
     assert get_admission_policy() is open_admission_policy
 
 
@@ -61,7 +61,7 @@ def test_set_admission_policy_overrides_and_restores() -> None:
         assert get_admission_policy()(_claims(email_verified=True)) is AdmissionDecision.REJECT
     finally:
         set_admission_policy(original)
-        assert get_admission_policy() is open_admission_policy
+        assert get_admission_policy() is original
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +78,7 @@ def test_default_grants_provider_grants_nothing() -> None:
     assert no_default_grants(_claims(email_verified=True)) == []
 
 
-def test_default_installed_grants_provider_is_none() -> None:
+def test_default_installed_grants_provider_is_none(stock_idp_seams: None) -> None:
     assert get_default_idp_grants() is no_default_grants
 
 
@@ -97,4 +97,4 @@ def test_set_default_idp_grants_overrides_and_restores() -> None:
         ]
     finally:
         set_default_idp_grants(original)
-        assert get_default_idp_grants() is no_default_grants
+        assert get_default_idp_grants() is original
