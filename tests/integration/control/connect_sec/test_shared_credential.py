@@ -225,6 +225,86 @@ async def test_edit_review_over_http_after_confirm_existing_credential(
             assert rule["added_by"] == AGENT_ID
 
 
+async def test_edit_review_and_real_terminal_routes_after_confirm_existing_credential(
+    env: Context,
+) -> None:
+    """Confirming onto an existing credential over HTTP yields a valid edit review
+    and revision history; reaching terminal state via HTTP ``:cancel`` or callback
+    completion records the terminal outcome and cleans up the edit session row."""
+    await import_spec(env, OAUTH_SCHEME)
+    narrow = await existing_credential(env, oauth_scope="read")
+
+    # 1. Confirm over HTTP and reach terminal state via the real ``POST ...:cancel`` route.
+    cancelled_session = await connect(env, rules=RULES, requested_scopes=["write"])
+    async with client(env, OWNER) as approver:
+        confirm_resp = await approver.post(
+            f"/connect-sessions/{cancelled_session.session_id}:confirm",
+            json={
+                "kind": "existing_credential",
+                "credential_id": narrow,
+                "permission_rules": RULES,
+                "expected_agent_id": AGENT_ID,
+                "digest": await digest(env, cancelled_session.session_id),
+                "revision_id": await revision(env, cancelled_session.session_id),
+            },
+        )
+        assert confirm_resp.status_code == 200, confirm_resp.text
+
+        review_resp = await approver.get(f"/connect-sessions/{cancelled_session.session_id}")
+        assert review_resp.status_code == 200, review_resp.text
+        review_body = review_resp.json()
+        assert review_body["state"] == "polling"
+        assert review_body["edit"]["result"]["target"] == "binding"
+        assert review_body["edit"]["result"]["scopes"] == ["read", "write"]
+        assert [r["id"] for r in review_body["edit"]["result"]["rules"]] == [None]
+
+        revisions_resp = await approver.get(
+            f"/connect-sessions/{cancelled_session.session_id}/revisions"
+        )
+        assert revisions_resp.status_code == 200, revisions_resp.text
+        assert len(revisions_resp.json()["data"]) == 1
+
+        cancel_resp = await approver.post(
+            f"/connect-sessions/{cancelled_session.session_id}:cancel"
+        )
+        assert cancel_resp.status_code == 204, cancel_resp.text
+
+        status_resp = await approver.get(f"/connect-sessions/{cancelled_session.session_id}/status")
+        assert status_resp.status_code == 200, status_resp.text
+        assert status_resp.json()["status"] == "failed"
+        assert status_resp.json()["error_code"] == "cancelled"
+
+        # ``_mark_terminal`` deletes ``intent="edit"`` session rows on terminal transition.
+        after_cancel_review = await approver.get(
+            f"/connect-sessions/{cancelled_session.session_id}"
+        )
+        assert after_cancel_review.status_code == 403
+
+    # 2. Confirm a second session and complete vendor consent via ``complete_from_callback``.
+    completed_session = await connect(env, rules=RULES, requested_scopes=["write"])
+    result = await _use_existing(env, completed_session.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_token_endpoint),
+    ):
+        landed = await svc(env).complete_from_callback(
+            raw_state=_state_of(result.authorize_url),
+            code="vendor-code",
+            browser_binding=_BINDING.value,
+        )
+    assert (landed.status, landed.credential_id) == ("connected", narrow)
+
+    async with client(env, OWNER) as approver:
+        completed_status = await approver.get(
+            f"/connect-sessions/{completed_session.session_id}/status"
+        )
+        assert completed_status.status_code == 200, completed_status.text
+        assert completed_status.json()["status"] == "connected"
+        assert completed_status.json()["credential_id"] == narrow
+
+
 async def test_binding_change_during_vendor_consent_keeps_the_confirmed_edit_review(
     env: Context,
 ) -> None:

@@ -149,8 +149,8 @@ class AgentPermissionExceedsOwnerError(AuthServiceError):
 
     def __init__(self, permission: str) -> None:
         super().__init__(
-            f"Permission '{permission}' exceeds the agent owner's permissions; "
-            "grant it to the owner first"
+            f"Permission '{permission}' cannot be granted to this agent because "
+            "its owner does not hold it"
         )
         self.permission = permission
 

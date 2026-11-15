@@ -19,6 +19,8 @@ dependency override (the same pattern as ``test_oauth_grant_transfer.py``).
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -47,6 +49,8 @@ from jentic_one.shared.web.deps import resolve_identity
 from tests.integration.auth import seeds
 
 pytestmark = pytest.mark.integration
+
+_SQLITE = os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite"
 
 OWNER = "usr_authz_owner"
 OTHER = "usr_authz_other"
@@ -286,6 +290,8 @@ async def test_admin_replace_permissions_rejects_permission_above_owner_ceiling(
         )
     assert resp.status_code == 409, resp.text
     assert resp.json()["type"] == "agent_permission_exceeds_owner"
+    assert permission in resp.json()["detail"]
+    assert "owner does not hold it" in resp.json()["detail"]
     assert await _permissions(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
 
 
@@ -418,6 +424,39 @@ async def test_replace_permissions_after_transfer_enforces_new_owner_ceiling(
     assert second_put.status_code == 409, second_put.text
     assert second_put.json()["type"] == "agent_permission_exceeds_owner"
     assert await _permissions(integration_context, agent_id) == {"capabilities:read"}
+
+
+@pytest.mark.skipif(_SQLITE, reason="row locks require Postgres")
+async def test_replace_permissions_waits_for_transfer_and_enforces_new_owner_ceiling(
+    integration_context: Context, users: None
+) -> None:
+    """An in-flight ownership transfer holds the agent row lock so a concurrent
+    ``replace_permissions`` waits and then evaluates the new owner's ceiling."""
+    await seeds.seed_permissions(integration_context, OWNER, ["users:write", "agents:write"])
+    await seeds.seed_permissions(integration_context, OTHER, ["agents:read"])
+    agent_id = await _create_owned_agent(integration_context)
+
+    async with _client(integration_context, _admin()) as client:
+        async with integration_context.admin_db.transaction() as session:
+            locked = await AgentRepository.get_by_id_for_update(session, agent_id)
+            assert locked is not None
+            await AgentRepository.update_agent(session, agent_id, owner_id=OTHER)
+
+            put_task = asyncio.create_task(
+                client.put(
+                    f"/agents/{agent_id}/permissions",
+                    json={"permissions": ["capabilities:read", "users:write"]},
+                )
+            )
+            await asyncio.sleep(0.3)
+            assert not put_task.done(), "replace_permissions must wait on the agent row lock"
+
+        resp = await put_task
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["type"] == "agent_permission_exceeds_owner"
+    assert (await _agent(integration_context, agent_id)).owner_id == OTHER
+    assert await _permissions(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
 
 
 async def test_non_owner_cannot_replace_permissions(
@@ -634,6 +673,36 @@ async def test_admin_approving_unowned_agent_becomes_owner(
     assert resp.json()["status"] == "active"
     assert (await _agent(integration_context, agent_id)).owner_id == ADMIN
     assert await _permissions(integration_context, agent_id) == {"users:write", "capabilities:read"}
+
+
+async def test_admin_approving_unowned_agent_accepts_admin_and_over_member_grants(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    """When an org:admin approves an unclaimed agent, the admin becomes owner and
+    both self-requested over-member grants and pre-staged admin-authored grants
+    are accepted under the admin owner's ceiling."""
+    await seeds.seed_permissions(integration_context, ADMIN, ["org:admin"])
+    agent_id = await self_register("users:write credentials:write capabilities:read")
+    async with integration_context.admin_db.transaction() as session:
+        await ActorPermissionGrantRepository.grant(
+            session,
+            actor_id=agent_id,
+            actor_type=ActorType.AGENT,
+            permission="agents:write",
+            granted_by=ADMIN,
+            created_by=ADMIN,
+        )
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    assert (await _agent(integration_context, agent_id)).owner_id == ADMIN
+    assert await _permissions(integration_context, agent_id) == {
+        "agents:write",
+        "users:write",
+        "credentials:write",
+        "capabilities:read",
+    }
 
 
 async def test_admin_can_deny_unowned_agent(
