@@ -206,6 +206,8 @@ scoops:
 nfpms:
   - id: jentic
     package_name: jentic
+    # Same shape as the per-binary archives above: <bin>_<ver>_linux_<arch>.<fmt>.
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     ids: [jentic]
     formats: [deb, rpm, apk]
     vendor: Jentic
@@ -216,6 +218,8 @@ nfpms:
     bindir: /usr/bin
   - id: jenticctl
     package_name: jenticctl
+    # Same shape as the per-binary archives above: <bin>_<ver>_linux_<arch>.<fmt>.
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     ids: [jenticctl]
     formats: [deb, rpm, apk]
     vendor: Jentic

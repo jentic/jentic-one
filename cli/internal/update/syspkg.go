@@ -20,5 +20,25 @@ const SystemPackageUpgradeHint = "install the newer .deb / .rpm / .apk from http
 // /usr/local/bin, Homebrew uses its own prefix — so a binary there came from a
 // package.
 func SystemPackageManaged(target string) bool {
-	return filepath.Dir(filepath.Clean(target)) == SystemPackageDir
+	return systemPackageManaged(target, SystemPackageDir)
+}
+
+// systemPackageManaged is the decision core behind SystemPackageManaged: it
+// resolves symlinks in both target and pkgDir (a merged-/usr distro links /bin
+// to /usr/bin) and reports whether target sits directly inside pkgDir. A
+// missing target keeps its name and has only its directory resolved.
+func systemPackageManaged(target, pkgDir string) bool {
+	target = filepath.Clean(target)
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		resolved = target
+		if dir, derr := filepath.EvalSymlinks(filepath.Dir(target)); derr == nil {
+			resolved = filepath.Join(dir, filepath.Base(target))
+		}
+	}
+	pkgDir = filepath.Clean(pkgDir)
+	if r, err := filepath.EvalSymlinks(pkgDir); err == nil {
+		pkgDir = r
+	}
+	return filepath.Dir(resolved) == pkgDir
 }
