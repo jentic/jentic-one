@@ -6,8 +6,13 @@ from collections.abc import Sequence
 
 import structlog
 
-from jentic_one.shared.auth.actor_status import SESSION_GENERATION_CLAIM, read_user_status
+from jentic_one.shared.auth.actor_status import (
+    SESSION_GENERATION_CLAIM,
+    read_agent_status,
+    read_user_status,
+)
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
 from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseUnavailableError
@@ -16,7 +21,7 @@ from jentic_one.shared.models import ActorType
 logger = structlog.get_logger(__name__)
 
 
-async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: object) -> None:
+async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: int) -> None:
     """Refuse a user token whose ``users`` row is missing, deleted, inactive, or a newer generation.
 
     One primary-key read — the same per-verdict cost the opaque ``at_`` path
@@ -31,6 +36,9 @@ async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: obj
     before any of those stays refused even once the account is active again;
     the bundle a password change returns carries the new value.
     """
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+        logger.warning("jwt_session_generation_invalid", sub=user_id)
+        raise InvalidTokenError("Token declares an invalid session generation")
     try:
         status = await read_user_status(ctx.admin_db, user_id)
     except DatabaseUnavailableError:
@@ -51,6 +59,53 @@ async def _ensure_user_accepts_token(ctx: Context, user_id: str, generation: obj
     if generation != status.session_generation:
         logger.warning("jwt_user_inactive", sub=user_id, reason="revoked")
         raise InvalidTokenError("Token belongs to a revoked login session")
+
+
+async def _ensure_agent_accepts_token(
+    ctx: Context, agent_id: str, parent_actor_id: str | None
+) -> None:
+    """Refuse an agent token when the agent or its human owner is not active."""
+    try:
+        status = await read_agent_status(ctx.admin_db, agent_id)
+    except DatabaseUnavailableError:
+        logger.warning("jwt_agent_status_unavailable", sub=agent_id)
+        raise
+    if status is None:
+        logger.warning("jwt_agent_inactive", sub=agent_id, reason="missing")
+        raise InvalidTokenError("Token subject is not an active agent")
+    if status.archived:
+        logger.warning("jwt_agent_inactive", sub=agent_id, reason="archived")
+        raise InvalidTokenError("Token subject is not an active agent")
+    if not status.accepts_credentials:
+        logger.warning("jwt_agent_inactive", sub=agent_id, reason=status.status)
+        raise InvalidTokenError("Token subject is not an active agent")
+    if (
+        status.owner_id is not None
+        and parent_actor_id is not None
+        and parent_actor_id != status.owner_id
+    ):
+        logger.warning(
+            "jwt_agent_inactive",
+            sub=agent_id,
+            reason="owner_mismatch",
+            owner_id=status.owner_id,
+            parent_actor_id=parent_actor_id,
+        )
+        raise InvalidTokenError("Token parent_actor_id does not match agent owner")
+
+    owner_id = status.owner_id if status.owner_id is not None else parent_actor_id
+    if owner_id is not None:
+        try:
+            owner_status = await read_user_status(ctx.admin_db, owner_id)
+        except DatabaseUnavailableError:
+            logger.warning("jwt_agent_status_unavailable", sub=agent_id, owner_id=owner_id)
+            raise
+        if owner_status is None or not owner_status.accepts_credentials:
+            log_agent_owner_inactive(agent_id, owner_id)
+            logger.warning(
+                "jwt_agent_inactive", sub=agent_id, reason="owner_inactive", owner_id=owner_id
+            )
+            raise InvalidTokenError("Token subject's owner is not an active user")
 
 
 def scopes_to_permissions(scopes: Sequence[object]) -> list[str]:
@@ -146,19 +201,28 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
             "jwt_actor_type_unknown", sub=claims.get("sub"), actor_type=str(actor_type_claim)
         )
         raise InvalidTokenError("Token declares an unknown actor_type") from exc
-    sub = claims["sub"]
-    parent_actor_id = claims.get("parent_actor_id")
+    sub = claims.get("sub")
+    if not isinstance(sub, str) or not sub.strip():
+        logger.warning("jwt_subject_invalid", actor_type=actor_type.value)
+        raise InvalidTokenError("Token does not declare a valid subject")
 
-    sgen_raw = claims.get(SESSION_GENERATION_CLAIM, 0)
-    session_generation = (
-        int(sgen_raw)
-        if actor_type == ActorType.USER
-        and isinstance(sgen_raw, int)
-        and not isinstance(sgen_raw, bool)
-        else None
-    )
+    parent_actor_id = claims.get("parent_actor_id")
+    if parent_actor_id is not None and (
+        not isinstance(parent_actor_id, str) or not parent_actor_id.strip()
+    ):
+        logger.warning("jwt_parent_actor_invalid", sub=sub, actor_type=actor_type.value)
+        raise InvalidTokenError("Token declares an invalid parent_actor_id")
+
+    session_generation: int | None = None
     if actor_type == ActorType.USER:
-        await _ensure_user_accepts_token(ctx, str(sub), sgen_raw)
+        sgen_raw = claims.get(SESSION_GENERATION_CLAIM, 0)
+        if isinstance(sgen_raw, bool) or not isinstance(sgen_raw, int) or sgen_raw < 0:
+            logger.warning("jwt_session_generation_invalid", sub=sub)
+            raise InvalidTokenError("Token declares an invalid session generation")
+        session_generation = sgen_raw
+        await _ensure_user_accepts_token(ctx, sub, session_generation)
+    elif actor_type == ActorType.AGENT and ctx.is_db_allowed("admin"):
+        await _ensure_agent_accepts_token(ctx, sub, parent_actor_id)
 
     embedded_permissions = claims.get("permissions")
     if embedded_permissions is not None and isinstance(embedded_permissions, list):

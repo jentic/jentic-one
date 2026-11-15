@@ -26,6 +26,7 @@ from jentic_one.registry.services.catalog.service import (
     _is_upstream_tracked,
 )
 from jentic_one.registry.services.errors import CatalogUnavailableError
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.events import EventType
 
 _API_ID = uuid.uuid4()
@@ -769,8 +770,9 @@ async def test_safe_refresh_skips_sweep_when_refresh_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_spawn_sweep_detaches_and_runs_task() -> None:
-    """The spawn seam runs the sweep as a background task (not awaited inline)."""
-    svc = CatalogService(_make_ctx(interval=86400))
+    """The spawn seam runs the sweep as a background task registered on Context."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
     ran = asyncio.Event()
 
     async def _fake_sweep() -> None:
@@ -778,8 +780,49 @@ async def test_spawn_sweep_detaches_and_runs_task() -> None:
 
     with patch.object(svc, "_run_update_notify_sweep", side_effect=_fake_sweep):
         svc.trigger_update_notify_sweep()
+        ctx.register_background_task.assert_called_once()
         # Not yet awaited — the coroutine only runs once we yield to the loop.
         await asyncio.wait_for(ran.wait(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_context_aexit_cancels_and_drains_sweep_tasks_before_db_close() -> None:
+    """Context.__aexit__ cancels and drains active catalog sweep tasks before closing DB pools."""
+    cfg = MagicMock()
+    cfg.credentials.encryption.entries = []
+    cfg.catalog.update_check_interval_seconds = 86400
+    ctx = Context(cfg, allowed_dbs=set(), refresh_providers_on_boot=False)
+
+    events: list[str] = []
+    fake_db = MagicMock()
+
+    async def _close_db() -> None:
+        events.append("db_closed")
+
+    fake_db.close = AsyncMock(side_effect=_close_db)
+    ctx._registry_db = fake_db
+
+    sweep_started = asyncio.Event()
+    never_finishes = asyncio.Event()
+
+    async def _blocking_sweep() -> None:
+        events.append("sweep_started")
+        sweep_started.set()
+        try:
+            await never_finishes.wait()
+        except asyncio.CancelledError:
+            events.append("sweep_cancelled")
+            raise
+
+    async with ctx:
+        svc = CatalogService(ctx)
+        with patch.object(svc, "_run_update_notify_sweep", side_effect=_blocking_sweep):
+            svc.trigger_update_notify_sweep()
+            await asyncio.wait_for(sweep_started.wait(), timeout=1.0)
+            assert len(ctx._background_tasks) == 1
+
+    assert events == ["sweep_started", "sweep_cancelled", "db_closed"]
+    assert ctx._background_tasks == set()
 
 
 @pytest.mark.asyncio

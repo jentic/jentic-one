@@ -3,16 +3,20 @@ and the async worker share (#1957).
 
 Header creds overlay the caller's headers in any letter case, query creds join
 the URL query, and cookie creds are **appended** to upstream-learned cookies
-whose origin, path, and Secure scope match. Unknown cookies fail closed, and
-all retained cookies share exactly one ``Cookie`` header.
+whose actor, origin/domain, path, Secure, and expiry scope match. Unknown
+cookies fail closed, and all retained cookies share exactly one ``Cookie``
+header.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from urllib.parse import parse_qsl, urlparse
 
 import pytest
 
+import jentic_one.shared.http.injection as injection_mod
 from jentic_one.shared.http.injection import (
     apply_injection,
     clear_upstream_cookie_scopes,
@@ -227,3 +231,401 @@ def test_forgetting_cookie_scopes_fails_closed_instead_of_leaking_across_origins
         {}, "https://b.example.com/profile", _auth(), inbound_cookie="sid=1"
     )
     assert headers == {}
+
+
+def test_cross_actor_isolation_blocks_cookie_replay_across_actors_and_credentials() -> None:
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        "sid=alice-session; Path=/",
+        actor_id="actor-a",
+        credential_id="cred-1",
+    )
+
+    # Actor A with the matching credential forwards the cookie.
+    _, actor_a_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=alice-session",
+        actor_id="actor-a",
+        credential_id="cred-1",
+    )
+    assert actor_a_headers == {"Cookie": "sid=alice-session"}
+
+    # Actor B cannot replay Actor A's recorded cookie pair.
+    _, actor_b_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=alice-session",
+        actor_id="actor-b",
+        credential_id="cred-1",
+    )
+    assert actor_b_headers == {}
+
+    # Different credential under Actor A is isolated as well.
+    _, other_cred_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=alice-session",
+        actor_id="actor-a",
+        credential_id="cred-2",
+    )
+    assert other_cred_headers == {}
+
+    # Unscoped caller cannot replay Actor A's recorded cookie pair.
+    _, unscoped_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=alice-session",
+    )
+    assert unscoped_headers == {}
+
+
+def test_noisy_neighbor_cookie_flood_does_not_evict_other_actor_cookies() -> None:
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        "sid=bob-session; Path=/",
+        actor_id="actor-b",
+    )
+
+    # Actor A floods well past the 256 per-partition cap.
+    for idx in range(320):
+        record_upstream_set_cookie(
+            "https://noisy.vendor.com/v1/items",
+            f"flood_{idx}=val_{idx}; Path=/",
+            actor_id="actor-a",
+        )
+
+    # Actor B's cookie survives untouched.
+    _, bob_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/profile",
+        _auth(),
+        inbound_cookie="sid=bob-session",
+        actor_id="actor-b",
+    )
+    assert bob_headers == {"Cookie": "sid=bob-session"}
+
+    # Actor A's earliest cookies are evicted while its newest cookies remain bounded at 256.
+    _, a_early = apply_injection(
+        {},
+        "https://noisy.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="flood_0=val_0",
+        actor_id="actor-a",
+    )
+    _, a_recent = apply_injection(
+        {},
+        "https://noisy.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="flood_319=val_319",
+        actor_id="actor-a",
+    )
+    assert a_early == {}
+    assert a_recent == {"Cookie": "flood_319=val_319"}
+
+
+def test_actor_partition_lru_bounds_active_partitions() -> None:
+    for idx in range(260):
+        record_upstream_set_cookie(
+            "https://api.vendor.com/v1/login",
+            f"sid=val_{idx}; Path=/",
+            actor_id=f"actor-{idx}",
+        )
+
+    _, evicted = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=val_0",
+        actor_id="actor-0",
+    )
+    _, retained = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=val_259",
+        actor_id="actor-259",
+    )
+    assert evicted == {}
+    assert retained == {"Cookie": "sid=val_259"}
+
+
+@pytest.mark.parametrize(
+    "deletion_header",
+    [
+        "sid=secret; Max-Age=0; Path=/",
+        "sid=; Max-Age=0",
+        "sid=deleted; Max-Age=-1; Path=/",
+        "sid=; Max-Age=-3600",
+        "sid=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+    ],
+)
+def test_max_age_zero_negative_and_past_expires_immediately_evict_tracked_cookies(
+    deletion_header: str,
+) -> None:
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        "sid=secret; Path=/",
+        actor_id="actor-a",
+    )
+    record_upstream_set_cookie(
+        "https://other.vendor.com/v1/login",
+        "sid=secret; Path=/",
+        actor_id="actor-a",
+    )
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        "sid=secret; Path=/",
+        actor_id="actor-b",
+    )
+
+    # Upstream logout / deletion evicts only the matching actor and host scope.
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/logout",
+        deletion_header,
+        actor_id="actor-a",
+    )
+
+    _, evicted_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/profile",
+        _auth(),
+        inbound_cookie="sid=secret",
+        actor_id="actor-a",
+    )
+    assert evicted_headers == {}
+
+    # Unrelated host for the same actor and same host for Actor B remain intact.
+    _, other_host_headers = apply_injection(
+        {},
+        "https://other.vendor.com/v1/profile",
+        _auth(),
+        inbound_cookie="sid=secret",
+        actor_id="actor-a",
+    )
+    _, actor_b_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/profile",
+        _auth(),
+        inbound_cookie="sid=secret",
+        actor_id="actor-b",
+    )
+    assert other_host_headers == {"Cookie": "sid=secret"}
+    assert actor_b_headers == {"Cookie": "sid=secret"}
+
+
+def test_stored_expiry_from_max_age_and_future_expires_invalidates_cookie_once_elapsed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_now = datetime(2026, 11, 15, 12, 0, 0, tzinfo=UTC)
+    current_now = base_now
+    monkeypatch.setattr(injection_mod, "_utc_now", lambda: current_now)
+
+    future_http_date = format_datetime(base_now + timedelta(seconds=30), usegmt=True)
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        "max_age_sid=m1; Path=/; Max-Age=60",
+        actor_id="actor-a",
+    )
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        f"expires_sid=e1; Path=/; Expires={future_http_date}",
+        actor_id="actor-a",
+    )
+
+    _, initial_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="max_age_sid=m1; expires_sid=e1",
+        actor_id="actor-a",
+    )
+    assert initial_headers == {"Cookie": "max_age_sid=m1; expires_sid=e1"}
+
+    # Advance 31 seconds: Expires cookie has elapsed, Max-Age=60 cookie is still live.
+    current_now = base_now + timedelta(seconds=31)
+    _, mid_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="max_age_sid=m1; expires_sid=e1",
+        actor_id="actor-a",
+    )
+    assert mid_headers == {"Cookie": "max_age_sid=m1"}
+
+    # Advance past 60 seconds: Max-Age cookie is now expired too.
+    current_now = base_now + timedelta(seconds=61)
+    _, final_headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="max_age_sid=m1; expires_sid=e1",
+        actor_id="actor-a",
+    )
+    assert final_headers == {}
+
+
+def test_max_age_takes_precedence_over_expires_per_rfc6265(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_now = datetime(2026, 11, 15, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(injection_mod, "_utc_now", lambda: base_now)
+    future_date = format_datetime(base_now + timedelta(hours=1), usegmt=True)
+
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/login",
+        "sid=1; Path=/",
+    )
+    # Max-Age=0 wins even when Expires is in the future.
+    record_upstream_set_cookie(
+        "https://api.vendor.com/v1/logout",
+        f"sid=1; Path=/; Expires={future_date}; Max-Age=0",
+    )
+    _, headers = apply_injection(
+        {},
+        "https://api.vendor.com/v1/items",
+        _auth(),
+        inbound_cookie="sid=1",
+    )
+    assert headers == {}
+
+
+def test_rfc6265_domain_attribute_forwards_across_matching_subdomains_and_enforces_secure() -> None:
+    record_upstream_set_cookie(
+        "https://auth.vendor.com/oauth/login",
+        "sso=vendor-token; Domain=.Vendor.COM; Path=/; Secure",
+        actor_id="actor-a",
+    )
+
+    # Forwards to sibling subdomain and apex domain over https.
+    _, sibling_https = apply_injection(
+        {},
+        "https://api.vendor.com/v1/users",
+        _auth(),
+        inbound_cookie="sso=vendor-token",
+        actor_id="actor-a",
+    )
+    _, apex_https = apply_injection(
+        {},
+        "https://vendor.com/v1/users",
+        _auth(),
+        inbound_cookie="sso=vendor-token",
+        actor_id="actor-a",
+    )
+    assert sibling_https == {"Cookie": "sso=vendor-token"}
+    assert apex_https == {"Cookie": "sso=vendor-token"}
+
+    # Secure attribute blocks forwarding over plaintext http to any subdomain.
+    _, sibling_http = apply_injection(
+        {},
+        "http://api.vendor.com/v1/users",
+        _auth(),
+        inbound_cookie="sso=vendor-token",
+        actor_id="actor-a",
+    )
+    _, issuing_http = apply_injection(
+        {},
+        "http://auth.vendor.com/oauth/users",
+        _auth(),
+        inbound_cookie="sso=vendor-token",
+        actor_id="actor-a",
+    )
+    assert sibling_http == {}
+    assert issuing_http == {}
+
+    # Lookalike suffix without dot boundary does not domain-match.
+    _, lookalike = apply_injection(
+        {},
+        "https://evilvendor.com/v1/users",
+        _auth(),
+        inbound_cookie="sso=vendor-token",
+        actor_id="actor-a",
+    )
+    assert lookalike == {}
+
+
+@pytest.mark.parametrize(
+    ("issuing_url", "bad_domain"),
+    [
+        ("https://auth.vendor.com/login", "com"),
+        ("https://auth.vendor.com/login", ".com"),
+        ("https://auth.vendor.com/login", "evil.com"),
+        ("https://auth.vendor.com/login", "other.vendor.org"),
+        ("https://auth.vendor.com/login", "sub.auth.vendor.com"),
+        ("https://127.0.0.1/login", "127.0.0.1"),
+        ("https://127.0.0.1/login", "0.0.1"),
+    ],
+)
+def test_rfc6265_rejects_public_suffix_foreign_and_ip_domain_attributes(
+    issuing_url: str,
+    bad_domain: str,
+) -> None:
+    record_upstream_set_cookie(
+        issuing_url,
+        f"sid=bad; Domain={bad_domain}; Path=/",
+    )
+
+    for candidate_target in (
+        "https://api.vendor.com/v1",
+        "https://auth.vendor.com/v1",
+        "https://evil.com/v1",
+        "https://127.0.0.1/v1",
+        "https://10.0.0.1/v1",
+    ):
+        _, headers = apply_injection(
+            {},
+            candidate_target,
+            _auth(),
+            inbound_cookie="sid=bad",
+        )
+        assert headers == {}
+
+
+def test_absent_domain_attribute_remains_strictly_host_only() -> None:
+    record_upstream_set_cookie(
+        "https://auth.vendor.com/login",
+        "sid=host-only; Path=/",
+    )
+    _, same_host = apply_injection(
+        {},
+        "https://auth.vendor.com/profile",
+        _auth(),
+        inbound_cookie="sid=host-only",
+    )
+    _, sibling_subdomain = apply_injection(
+        {},
+        "https://api.vendor.com/profile",
+        _auth(),
+        inbound_cookie="sid=host-only",
+    )
+    _, parent_domain = apply_injection(
+        {},
+        "https://vendor.com/profile",
+        _auth(),
+        inbound_cookie="sid=host-only",
+    )
+    assert same_host == {"Cookie": "sid=host-only"}
+    assert sibling_subdomain == {}
+    assert parent_domain == {}
+
+
+def test_foreign_host_cannot_evict_vendor_domain_cookie_via_forged_domain_max_age() -> None:
+    record_upstream_set_cookie(
+        "https://auth.vendor.com/login",
+        "sid=keep; Domain=vendor.com; Path=/",
+    )
+    record_upstream_set_cookie(
+        "https://evil.com/logout",
+        "sid=; Domain=vendor.com; Path=/; Max-Age=0",
+    )
+    _, headers = apply_injection(
+        {},
+        "https://api.vendor.com/items",
+        _auth(),
+        inbound_cookie="sid=keep",
+    )
+    assert headers == {"Cookie": "sid=keep"}

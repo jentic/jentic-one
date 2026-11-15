@@ -19,6 +19,7 @@ import pytest
 
 import jentic_one.__main__ as main_module
 import jentic_one.composition as composition_module
+import jentic_one.wiring as wiring_module
 
 from .conftest import SRC_ROOT
 
@@ -27,31 +28,43 @@ pytestmark = pytest.mark.arch
 EXPECTED_ALL = [
     "build_app",
     "build_context",
+    "build_default_container",
     "expand_allowed_dbs",
+    "run_cli",
 ]
 
 EXPECTED_PARAMETERS: dict[str, list[tuple[str, inspect._ParameterKind]]] = {
     "build_app": [
         ("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD),
         ("apps", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("container", inspect.Parameter.KEYWORD_ONLY),
     ],
     "build_context": [
         ("config", inspect.Parameter.POSITIONAL_OR_KEYWORD),
         ("apps", inspect.Parameter.POSITIONAL_OR_KEYWORD),
     ],
+    "build_default_container": [
+        ("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("apps", inspect.Parameter.KEYWORD_ONLY),
+    ],
     "expand_allowed_dbs": [
         ("apps", inspect.Parameter.POSITIONAL_OR_KEYWORD),
         ("config", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+    ],
+    "run_cli": [
+        ("argv", inspect.Parameter.POSITIONAL_OR_KEYWORD),
     ],
 }
 
 
 def test_composition_all_and_identity() -> None:
-    """``composition.__all__`` matches the contract and re-exports ``__main__`` builders."""
+    """``composition.__all__`` matches the contract and re-exports composition builders."""
     assert list(composition_module.__all__) == EXPECTED_ALL
     assert composition_module.build_app is main_module._build_app
     assert composition_module.build_context is main_module._build_context
+    assert composition_module.build_default_container is wiring_module.build_default_container
     assert composition_module.expand_allowed_dbs is main_module._expand_allowed_dbs
+    assert composition_module.run_cli is main_module.main
 
 
 def test_composition_signatures() -> None:
@@ -67,11 +80,11 @@ def test_composition_signatures() -> None:
 
 
 def test_main_defines_backing_composition_functions() -> None:
-    """``jentic_one.__main__`` defines the three backing composition functions."""
+    """``jentic_one.__main__`` defines the backing composition and CLI functions."""
     main_path = SRC_ROOT / "__main__.py"
     tree = ast.parse(main_path.read_text(encoding="utf-8"), filename=str(main_path))
     top_level_funcs = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    required = {"_build_app", "_build_context", "_expand_allowed_dbs"}
+    required = {"_build_app", "_build_context", "_expand_allowed_dbs", "main"}
     missing = sorted(required - top_level_funcs)
     assert not missing, (
         f"jentic_one.__main__ is missing expected composition function(s): {missing}"

@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import configparser
+import io
 import re
+import sqlite3
+import textwrap
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from sqlalchemy import MetaData
+from alembic import command
+from sqlalchemy import Column, MetaData, String, Table
 
+from jentic_one.control.services import upgrade_steps as steps_mod
+from jentic_one.migrations import run as run_mod
 from jentic_one.migrations.registry.versions import (
     e6f7a8b9c0d1_normalize_url_index_path_templates as url_index_repair_migration,
 )
@@ -20,6 +28,7 @@ from jentic_one.migrations.targets import (
     DB_TARGETS,
     MigrationTarget,
     register_target,
+    unregister_target,
 )
 from jentic_one.registry.core import url_index as live_url_index
 from jentic_one.shared.db.base import AdminBase, ControlBase, RegistryBase
@@ -93,6 +102,270 @@ def test_register_target_is_idempotent_for_same_target() -> None:
 def test_register_target_rejects_conflicting_redefinition() -> None:
     with pytest.raises(ValueError, match="already registered"):
         register_target(MigrationTarget("registry", ControlBase.metadata))
+
+
+@contextmanager
+def _registered_target(target: MigrationTarget) -> Iterator[MigrationTarget]:
+    """Register an external target for the duration of a test and clean up afterwards."""
+    register_target(target)
+    try:
+        yield target
+    finally:
+        unregister_target(target.name)
+
+
+def _write_ext_migration(versions_dir: Path, revision: str = "ext0001a") -> MetaData:
+    """Write a minimal reversible Alembic revision into ``versions_dir``."""
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    script = textwrap.dedent(
+        f'''\
+        """Create ext_widgets table."""
+
+        from alembic import op
+        import sqlalchemy as sa
+
+        revision = "{revision}"
+        down_revision = None
+        branch_labels = None
+        depends_on = None
+
+
+        def upgrade() -> None:
+            op.create_table(
+                "ext_widgets",
+                sa.Column("id", sa.String(length=64), primary_key=True),
+                sa.Column("label", sa.String(length=128), nullable=False),
+            )
+
+
+        def downgrade() -> None:
+            op.drop_table("ext_widgets")
+        '''
+    )
+    (versions_dir / f"{revision}_create_ext_widgets.py").write_text(script, encoding="utf-8")
+    ext_meta = MetaData()
+    Table(
+        "ext_widgets",
+        ext_meta,
+        Column("id", String(64), primary_key=True),
+        Column("label", String(128), nullable=False),
+    )
+    return ext_meta
+
+
+def _sqlite_tables(db_path: Path) -> set[str]:
+    if not db_path.exists():
+        return set()
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    return {str(name) for (name,) in rows}
+
+
+def _sqlite_revisions(db_path: Path, version_table: str) -> list[str]:
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(f"SELECT version_num FROM {version_table}").fetchall()
+    return [str(rev) for (rev,) in rows]
+
+
+def test_register_target_syncs_db_metadata_and_unregister_cleans_up(tmp_path: Path) -> None:
+    ext_meta = MetaData()
+    target = MigrationTarget(
+        "my_ext",
+        ext_meta,
+        version_table="alembic_version_ext",
+        version_locations=tmp_path / "versions",
+        db_section="registry",
+        version_table_schema="my_ext",
+    )
+    with _registered_target(target):
+        assert DB_TARGETS["my_ext"] == target
+        assert DB_METADATA["my_ext"] is ext_meta
+        assert list(DB_TARGETS.keys()) == ["registry", "control", "admin", "my_ext"]
+
+    assert "my_ext" not in DB_TARGETS
+    assert "my_ext" not in DB_METADATA
+
+
+@pytest.mark.parametrize("builtin", ["registry", "control", "admin"])
+def test_unregister_target_refuses_builtins(builtin: str) -> None:
+    with pytest.raises(ValueError, match="built in and cannot be unregistered"):
+        unregister_target(builtin)
+
+
+def test_external_target_upgrade_status_and_downgrade_sqlite(
+    sqlite_stack: Path, tmp_path: Path
+) -> None:
+    versions_dir = tmp_path / "ext_versions"
+    ext_meta = _write_ext_migration(versions_dir, revision="ext0001a")
+    target = MigrationTarget(
+        "my_ext",
+        ext_meta,
+        version_table="alembic_version_ext",
+        version_locations=versions_dir,
+        db_section="registry",
+    )
+    registry_db = sqlite_stack / "registry.db"
+
+    with _registered_target(target):
+        state, current, heads = run_mod.status("my_ext")
+        assert state == run_mod.STATE_UNINITIALIZED
+        assert current == []
+        assert heads == ["ext0001a"]
+        assert _sqlite_tables(registry_db) == set()
+
+        # Migrate both registry and my_ext into the shared registry SQLite DB.
+        run_mod.upgrade("registry")
+        run_mod.upgrade("my_ext")
+
+        ext_state, ext_current, ext_heads = run_mod.status("my_ext")
+        assert ext_state == run_mod.STATE_CURRENT
+        assert ext_current == ["ext0001a"]
+        assert ext_heads == ["ext0001a"]
+
+        reg_state, reg_current, reg_heads = run_mod.status("registry")
+        assert reg_state == run_mod.STATE_CURRENT
+        assert reg_current == reg_heads
+
+        tables = _sqlite_tables(registry_db)
+        assert {"ext_widgets", "alembic_version", "alembic_version_ext"} <= tables
+        assert _sqlite_revisions(registry_db, "alembic_version_ext") == ["ext0001a"]
+
+        # Downgrading my_ext to base drops its table and clears its version row
+        # while leaving the built-in registry target untouched at head.
+        run_mod.downgrade("my_ext", "base")
+
+        ext_after, ext_cur_after, _ = run_mod.status("my_ext")
+        assert ext_after == run_mod.STATE_UNINITIALIZED
+        assert ext_cur_after == []
+        assert "ext_widgets" not in _sqlite_tables(registry_db)
+        assert _sqlite_revisions(registry_db, "alembic_version_ext") == []
+
+        reg_after, reg_cur_after, reg_heads_after = run_mod.status("registry")
+        assert reg_after == run_mod.STATE_CURRENT
+        assert reg_cur_after == reg_heads_after
+
+
+def test_external_target_participates_in_full_upgrade_and_check(
+    sqlite_stack: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    versions_dir = tmp_path / "ext_versions"
+    ext_meta = _write_ext_migration(versions_dir, revision="ext0001b")
+    target = MigrationTarget(
+        "my_ext",
+        ext_meta,
+        version_table="alembic_version_ext",
+        version_locations=str(versions_dir),
+        db_section="registry",
+    )
+
+    with _registered_target(target):
+        assert run_mod.main(["--skip-upgrade-steps"]) == 0
+        capsys.readouterr()
+
+        # All four targets are at head, and --check still evaluates upgrade steps
+        # because _UPGRADE_STEP_DBS (admin, control, registry) is a subset of order.
+        assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_NEEDS_MIGRATION
+        check_out = capsys.readouterr().out
+        for name in ("registry", "control", "admin", "my_ext"):
+            assert f"STATUS {name} current" in check_out
+        assert f"STATUS upgrade-step:{steps_mod.RULE_SETS_MARK_CURATED} pending" in check_out
+
+        # Full run executes upgrade steps and brings --check to OVERALL current.
+        assert run_mod.main([]) == 0
+        capsys.readouterr()
+
+        assert run_mod.main(["--check"]) == 0
+        final_out = capsys.readouterr().out
+        assert "STATUS my_ext current" in final_out
+        assert "OVERALL current" in final_out
+
+
+def test_external_target_postgres_offline_schema_and_db_section_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    versions_dir = tmp_path / "ext_versions"
+    ext_meta = _write_ext_migration(versions_dir, revision="ext0001c")
+    pg_cfg = tmp_path / "jentic-pg.yaml"
+    pg_cfg.write_text(
+        textwrap.dedent(
+            """\
+            databases:
+              registry:
+                backend: postgres
+                host: db.internal
+                port: 5432
+                name: jentic
+                user: reg_user
+                password: reg_password  # pragma: allowlist secret
+                schema_name: registry_schema
+              control:
+                backend: postgres
+                host: db.internal
+                port: 5432
+                name: jentic
+                user: ctl_user
+                password: ctl_password  # pragma: allowlist secret
+                schema_name: control_schema
+              admin:
+                backend: postgres
+                host: db.internal
+                port: 5432
+                name: jentic
+                user: adm_user
+                password: adm_password  # pragma: allowlist secret
+                schema_name: admin_schema
+            """
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JENTIC_CONFIG_FILE", str(pg_cfg))
+
+    # 1. Default schema inherits from db_section ("registry_schema").
+    shared_schema_target = MigrationTarget(
+        "my_ext",
+        ext_meta,
+        version_table="alembic_version_my_ext",
+        version_locations=versions_dir,
+        db_section="registry",
+    )
+    with _registered_target(shared_schema_target):
+        cfg = run_mod._build_config("my_ext")
+        buf = io.StringIO()
+        cfg.output_buffer = buf
+        command.upgrade(cfg, "head", sql=True)
+        sql_out = buf.getvalue()
+        assert "registry_schema.alembic_version_my_ext" in sql_out
+        assert "CREATE TABLE ext_widgets" in sql_out
+
+    # 2. Explicit version_table_schema overrides the db_section schema on Postgres.
+    isolated_schema_target = MigrationTarget(
+        "my_ext",
+        ext_meta,
+        version_table="alembic_version_my_ext",
+        version_locations=versions_dir,
+        db_section="registry",
+        version_table_schema="my_ext_schema",
+    )
+    with _registered_target(isolated_schema_target):
+        cfg = run_mod._build_config("my_ext")
+        buf = io.StringIO()
+        cfg.output_buffer = buf
+        command.upgrade(cfg, "head", sql=True)
+        sql_out = buf.getvalue()
+        assert "my_ext_schema.alembic_version_my_ext" in sql_out
+
+    # 3. Unknown db_section fails with an actionable ValueError.
+    bad_section_target = MigrationTarget(
+        "my_ext",
+        ext_meta,
+        version_locations=versions_dir,
+        db_section="no_such_db",
+    )
+    with _registered_target(bad_section_target):
+        cfg = run_mod._build_config("my_ext")
+        cfg.output_buffer = io.StringIO()
+        with pytest.raises(ValueError, match="unknown database config section 'no_such_db'"):
+            command.upgrade(cfg, "head", sql=True)
 
 
 @pytest.mark.parametrize("db_name", ["registry", "control", "admin"])

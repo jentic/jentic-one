@@ -328,11 +328,20 @@ def test_refresh_token_without_auth_time_rejected(
 def test_refresh_non_user_token_rejected(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str
 ) -> None:
-    """Only user login JWTs are refreshable — agent tokens are refused."""
+    """Only user login JWTs are refreshable — agent tokens are refused.
+
+    The token declares ``actor_type: agent`` while its subject is a *user* id,
+    so the auth gate's per-request agent re-check finds no such active agent and
+    refuses it before the refresh service runs — the gate's uniform 401, exactly
+    as in :func:`test_refresh_unknown_user_rejected`. The service's own
+    fail-closed ``actor_type`` check still answers ``invalid_credentials``, but
+    only for a token whose subject *is* an active agent and therefore clears the
+    gate.
+    """
     token = _mint_login_jwt(web_context, sub=admin_user_id, actor_type="agent")
     resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
     assert resp.status_code == 401
-    assert resp.json()["type"] == "invalid_credentials"
+    assert resp.json()["type"] == "unauthorized"
 
 
 # ── Shared auth gate (verify_token fail-closed, #862) ───────────────────────

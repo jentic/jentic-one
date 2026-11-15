@@ -78,10 +78,10 @@ async def test_promote_draft_succeeds() -> None:
 
     with (
         patch(
-            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier",
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
             new_callable=AsyncMock,
             return_value=api,
-        ),
+        ) as mock_get_api,
         patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.get_for_api",
             new_callable=AsyncMock,
@@ -93,6 +93,10 @@ async def test_promote_draft_succeeds() -> None:
             return_value=[],
         ),
         patch(
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.archive_all_active",
+            new_callable=AsyncMock,
+        ) as mock_archive_active,
+        patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.set_state",
             new_callable=AsyncMock,
             return_value=1,
@@ -100,7 +104,7 @@ async def test_promote_draft_succeeds() -> None:
         patch(
             "jentic_one.registry.services.revision_service.ApiRepository.set_current_revision",
             new_callable=AsyncMock,
-        ),
+        ) as mock_set_current,
         patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.host_baseline_revision_id",
             new_callable=AsyncMock,
@@ -121,14 +125,14 @@ async def test_promote_draft_succeeds() -> None:
         svc = RevisionService(ctx)
         await svc.promote("acme", "widget", "1.0", str(revision.id), identity=_IDENTITY)
 
-        calls = mock_set_state.call_args_list
-        assert len(calls) == 2
-        # First call archives old published revision
-        assert calls[0].args[1] == old_pub_id
-        assert calls[0].args[2] == "archived"
-        # Second call promotes the draft
-        assert calls[1].args[1] == revision.id
-        assert calls[1].args[2] == "published"
+        mock_get_api.assert_awaited_once()
+        mock_archive_active.assert_awaited_once_with(mock_archive_active.call_args.args[0], api.id)
+        mock_set_state.assert_awaited_once()
+        assert mock_set_state.call_args.args[1] == revision.id
+        assert mock_set_state.call_args.args[2] == "published"
+        assert mock_set_state.call_args.kwargs["expected_state"] == "draft"
+        mock_set_current.assert_awaited_once()
+        assert mock_set_current.call_args.kwargs["operation_count"] == revision.operation_count
 
         # The stale, bulk-updated identity map is expired before the view is
         # re-read so _fetch_api_view can't trigger a lazy load. See #642.
@@ -138,14 +142,14 @@ async def test_promote_draft_succeeds() -> None:
 
 @pytest.mark.asyncio
 async def test_promote_archives_imported_revisions() -> None:
-    """Promoting a draft archives any active imported revisions for the same API."""
+    """Promoting a draft archives any active revisions (imported or published) for the API."""
     ctx = _make_ctx()
     api = _make_api(current_revision_id=None)
     revision = _make_revision(state="draft", api_id=api.id)
 
     with (
         patch(
-            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier",
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
             new_callable=AsyncMock,
             return_value=api,
         ),
@@ -165,9 +169,9 @@ async def test_promote_archives_imported_revisions() -> None:
             return_value=1,
         ),
         patch(
-            "jentic_one.registry.services.revision_service.ApiRevisionRepository.archive_all_active_imported",
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.archive_all_active",
             new_callable=AsyncMock,
-        ) as mock_archive_imported,
+        ) as mock_archive_active,
         patch(
             # Never-live API: no baseline, and the draft declares no servers.
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.host_baseline_revision_id",
@@ -192,9 +196,64 @@ async def test_promote_archives_imported_revisions() -> None:
         svc = RevisionService(ctx)
         await svc.promote("acme", "widget", "1.0", str(revision.id), identity=_IDENTITY)
 
-        mock_archive_imported.assert_called_once_with(
-            mock_archive_imported.call_args.args[0], api.id
-        )
+        mock_archive_active.assert_called_once_with(mock_archive_active.call_args.args[0], api.id)
+
+
+@pytest.mark.asyncio
+async def test_promote_cas_lost_race_raises_conflict() -> None:
+    """When set_state CAS returns 0, promote raises RevisionStateConflictError cleanly."""
+    ctx = _make_ctx()
+    api = _make_api(current_revision_id=None)
+    draft_rev = _make_revision(state="draft", api_id=api.id)
+    raced_rev = _make_revision(state="published", api_id=api.id)
+    raced_rev.id = draft_rev.id
+
+    with (
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[draft_rev, raced_rev],
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.UrlIndexRepository.find_live_hosts_of_other_vendors",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.archive_all_active",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.set_state",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.host_baseline_revision_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "jentic_one.registry.ingest.host_change_guard.ServerRepository.list_url_specs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRepository.set_current_revision",
+            new_callable=AsyncMock,
+        ) as mock_set_current,
+    ):
+        svc = RevisionService(ctx)
+        with pytest.raises(RevisionStateConflictError) as exc_info:
+            await svc.promote("acme", "widget", "1.0", str(draft_rev.id), identity=_IDENTITY)
+        assert exc_info.value.action == "promote"
+        assert exc_info.value.current_state == "published"
+        mock_set_current.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -244,7 +303,7 @@ async def test_promote_published_raises_409() -> None:
 
     with (
         patch(
-            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier",
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
             new_callable=AsyncMock,
             return_value=api,
         ),
@@ -269,7 +328,7 @@ async def test_promote_archived_raises_409() -> None:
 
     with (
         patch(
-            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier",
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
             new_callable=AsyncMock,
             return_value=api,
         ),
@@ -463,6 +522,11 @@ async def test_all_actions_unknown_revision_raises_404() -> None:
             return_value=api,
         ),
         patch(
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.get_for_api",
             new_callable=AsyncMock,
             return_value=None,
@@ -485,10 +549,17 @@ async def test_all_actions_unknown_revision_raises_404() -> None:
 async def test_all_actions_unknown_api_raises_404() -> None:
     ctx = _make_ctx()
 
-    with patch(
-        "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier",
-        new_callable=AsyncMock,
-        return_value=None,
+    with (
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRepository.get_by_identifier_for_update",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         svc = RevisionService(ctx)
         fake_id = str(uuid.uuid4())

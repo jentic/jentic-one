@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, exists, select, update
+from sqlalchemy import and_, exists, select, text, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -284,3 +284,34 @@ class UserRepository:
         return await UserRepository._update_live(
             session, user_id, {"active": True}, action="enable"
         )
+
+    @staticmethod
+    async def deactivate_control_resources(session: AsyncSession, *, user_id: str) -> list[str]:
+        """Deactivate ``user_id``'s control credentials, tokens, and open sessions."""
+        params = {"uid": user_id}
+        rows = await session.execute(
+            text("SELECT id FROM credentials WHERE created_by = CAST(:uid AS VARCHAR) ORDER BY id"),
+            params,
+        )
+        credential_ids = [str(row[0]) for row in rows.all()]
+        await session.execute(
+            text(
+                "DELETE FROM oauth_tokens WHERE credential_id IN "
+                "(SELECT id FROM credentials WHERE created_by = CAST(:uid AS VARCHAR))"
+            ),
+            params,
+        )
+        await session.execute(
+            text("UPDATE credentials SET active = FALSE WHERE created_by = CAST(:uid AS VARCHAR)"),
+            params,
+        )
+        await session.execute(
+            text(
+                "UPDATE connect_sessions SET state = 'failed', error_code = 'cancelled' "
+                "WHERE initiator_actor_id = CAST(:uid AS VARCHAR) "
+                "AND state IN ('created', 'awaiting_app', 'polling')"
+            ),
+            params,
+        )
+        session.expire_all()
+        return credential_ids

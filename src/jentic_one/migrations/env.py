@@ -59,6 +59,27 @@ def _resolve_db_name() -> str:
     return "registry"
 
 
+def _resolve_db_section() -> str:
+    """Resolve the ``AppConfig.databases`` section name for the active target."""
+    target = DB_TARGETS[_resolve_db_name()]
+    return target.db_section or target.name
+
+
+def _resolve_database_config() -> DatabaseConfig:
+    """Resolve the ``DatabaseConfig`` for the active migration target."""
+    app_config = load_config()
+    target_name = _resolve_db_name()
+    db_section = _resolve_db_section()
+    db_config: DatabaseConfig | None = getattr(app_config.databases, db_section, None)
+    if db_config is None:
+        raise ValueError(
+            f"Migration target {target_name!r} maps to unknown database config section "
+            f"{db_section!r}; set MigrationTarget.db_section to a configured database "
+            "(registry, control, or admin) or provide sqlalchemy.url"
+        )
+    return db_config
+
+
 def get_url() -> URL | str:
     """Resolve database URL for the active migration target.
 
@@ -69,32 +90,32 @@ def get_url() -> URL | str:
     explicit = config.get_section_option(config.config_ini_section, "sqlalchemy.url")
     if explicit:
         return explicit
-    app_config = load_config()
-    db_name = _resolve_db_name()
-    db_config = getattr(app_config.databases, db_name)
-    return get_database_url(db_config)
+    return get_database_url(_resolve_database_config())
 
 
 def get_schema() -> str:
     """Resolve the schema name for the active migration target.
 
     Honours an explicit ``schema_name`` in the active Alembic section
-    (used by tests) before falling back to the application config.
+    (used by tests), then ``MigrationTarget.version_table_schema`` when set,
+    before falling back to the application config for the target's
+    ``db_section``.
 
     The returned name is interpolated into a quoted ``CREATE SCHEMA``
     identifier below, so it is validated against a conservative identifier
     pattern at this sink (SEC-2, defense-in-depth): ``DatabaseConfig`` already
-    enforces the same pattern, but the Alembic-ini override path bypasses
-    pydantic entirely.
+    enforces the same pattern, but the Alembic-ini and target override paths
+    bypass pydantic entirely.
     """
     explicit = config.get_section_option(config.config_ini_section, "schema_name")
     if explicit:
         schema = explicit
     else:
-        app_config = load_config()
-        db_name = _resolve_db_name()
-        db_config: DatabaseConfig = getattr(app_config.databases, db_name)
-        schema = db_config.schema_name
+        target = DB_TARGETS[_resolve_db_name()]
+        if target.version_table_schema is not None:
+            schema = target.version_table_schema
+        else:
+            schema = _resolve_database_config().schema_name
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
         raise ValueError(
             f"invalid schema_name {schema!r}: must match [A-Za-z_][A-Za-z0-9_]* "
@@ -107,15 +128,13 @@ def get_dialect_name() -> str:
     """Resolve the SQLAlchemy dialect name for the active migration target.
 
     Infers the dialect from an explicit ``sqlalchemy.url`` when present
-    (tests/CI), otherwise from the configured backend.
+    (tests/CI), otherwise from the configured backend for the target's
+    ``db_section``.
     """
     explicit = config.get_section_option(config.config_ini_section, "sqlalchemy.url")
     if explicit:
         return "sqlite" if explicit.startswith("sqlite") else "postgres"
-    app_config = load_config()
-    db_name = _resolve_db_name()
-    db_config: DatabaseConfig = getattr(app_config.databases, db_name)
-    return get_backend(db_config).dialect_name
+    return get_backend(_resolve_database_config()).dialect_name
 
 
 def is_postgres() -> bool:

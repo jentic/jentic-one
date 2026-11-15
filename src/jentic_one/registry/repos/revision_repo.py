@@ -547,18 +547,20 @@ class ApiRevisionRepository:
         *,
         promoted_at: datetime | None = None,
         archived_at: datetime | None = None,
+        expected_state: ApiRevisionState | None = None,
     ) -> int:
         values: dict[str, Any] = {"state": state}
         if promoted_at is not None:
             values["promoted_at"] = promoted_at
         if archived_at is not None:
             values["archived_at"] = archived_at
+        stmt = update(ApiRevision).where(ApiRevision.id == revision_id)
+        if expected_state is not None:
+            stmt = stmt.where(ApiRevision.state == expected_state)
         result = cast(
             "CursorResult[Any]",
             await session.execute(
-                update(ApiRevision)
-                .where(ApiRevision.id == revision_id)
-                .values(**values)
+                stmt.values(**values)
                 # Keep the in-session instance consistent with the bulk UPDATE so
                 # callers that later read it don't see stale state. See #642.
                 .execution_options(synchronize_session="fetch")

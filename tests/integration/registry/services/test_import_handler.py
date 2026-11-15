@@ -978,6 +978,22 @@ async def test_rematerialize_on_edit_reapplies_over_clean_base_and_keeps_chain(
         api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
         assert api.current_revision_id == base_revision_id
 
+    # If a stale materialization job attempts to link after rollback, the deprecated
+    # overlay is left untouched (status stays deprecated, confirmed_revision_id unchanged).
+    await handler._link_overlay_revision(
+        "job_stale",
+        overlay_id,
+        str(v1_id),
+        superseded_revision_id=str(v1_id),
+    )
+    async with registry_db.session() as session:
+        overlay_after = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_after.status == "deprecated"
+        assert overlay_after.confirmed_revision_id == v2_id
+        assert overlay_after.superseded_revision_id == base_revision_id
+
 
 async def _rematerialize_via_service_first(
     handler: ImportHandler,

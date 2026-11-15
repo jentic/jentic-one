@@ -115,10 +115,16 @@ def _valid_dbs() -> tuple[str, ...]:
 
 def _build_config(db_name: str) -> Config:
     """Construct an in-memory Alembic config for a single database section."""
+    target = DB_TARGETS.get(db_name)
+    version_locations = (
+        str(target.version_locations)
+        if target is not None and target.version_locations is not None
+        else str(_MIGRATIONS_DIR / db_name / "versions")
+    )
     cfg = Config()
     cfg.config_ini_section = db_name
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
-    cfg.set_main_option("version_locations", str(_MIGRATIONS_DIR / db_name / "versions"))
+    cfg.set_main_option("version_locations", version_locations)
     cfg.set_main_option("path_separator", "os")
     return cfg
 
@@ -578,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Report each database's schema state and exit without changing "
         f"anything. Exits {CHECK_EXIT_NEEDS_MIGRATION} if any database is not at head "
-        "or, when control and admin are both checked, if an upgrade step has never run "
+        "or, when control, admin, and registry are all checked, if an upgrade step has never run "
         f"({CHECK_EXIT_UNKNOWN} with OVERALL unknown if the step ledger cannot be read).",
     )
     parser.add_argument(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -45,9 +46,11 @@ from jentic_one.shared.tracing import configure_tracing
 from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.app_factory import (
     SURFACE_MODULES,
+    _include_extra_routers,
     create_combined_app,
     install_platform_token_verifier,
 )
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
 from jentic_one.wiring import (
@@ -116,23 +119,30 @@ def _build_context(config: AppConfig, apps: list[str]) -> Context:
     )
 
 
-def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
+def _build_app(
+    ctx: Context,
+    apps: list[str],
+    *,
+    container: AppContainer | None = None,
+) -> FastAPI:
     """Build the appropriate FastAPI application based on enabled surfaces."""
     if "broker" in apps and len(apps) > 1:
         raise RuntimeError("broker must run as the sole surface; do not bundle it with others")
-    container = build_default_container(ctx)
+    if container is None:
+        container = build_default_container(ctx, apps=apps)
     if len(apps) == 1:
         surface = apps[0]
         mod = importlib.import_module(SURFACE_MODULES[surface])
-        # Standalone control carries the composition container so the /mcp
-        # mount (installer + session-manager lifespan) rides it; standalone
-        # auth carries it for the /mcp discovery-challenge placeholder (the
-        # discovery pointers it serves must not dangle) — the other surfaces
-        # keep their own default wiring.
-        if surface in ("control", "auth"):
+        # Thread the container into every standalone surface factory that
+        # accepts it (control, auth, broker); on surfaces whose factory takes
+        # only ``ctx``, mount container extra routers and installers directly.
+        if "container" in inspect.signature(mod.create_app).parameters:
             app: FastAPI = mod.create_app(ctx, container=container)
         else:
             app = mod.create_app(ctx)
+            _include_extra_routers(app, container.extra_routers)
+            for installer in container.extra_installers:
+                installer(app, ctx)
         # Safety net: create_surface_app installs the platform verifier on every
         # control-plane surface (the broker installs its own), so this only fires
         # for a factory that installs neither.

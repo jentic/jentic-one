@@ -32,7 +32,10 @@ from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.http.injection import (
     apply_injection,
     clear_upstream_cookie_scopes,
+    format_cookie_scope_key,
     record_upstream_set_cookie,
+    reset_current_cookie_scope,
+    set_current_cookie_scope,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
 
@@ -608,5 +611,61 @@ async def test_tracked_foreign_cookie_still_dropped_with_credential() -> None:
             )
 
         assert seen_cookie == "sid=S"
+    finally:
+        clear_upstream_cookie_scopes()
+
+
+@pytest.mark.asyncio
+async def test_runner_isolates_upstream_cookies_across_actor_scopes() -> None:
+    clear_upstream_cookie_scopes()
+    seen_cookies: list[str | None] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen_cookies.append(req.headers.get("cookie"))
+        if req.url.path == "/login":
+            return httpx.Response(
+                200,
+                headers=[("set-cookie", "sid=alice-only; Path=/")],
+                content=b"ok",
+            )
+        return httpx.Response(200, content=b"ok")
+
+    try:
+        async with _mock_client(httpx.MockTransport(handle)) as client:
+            runner = HttpRunner(client)
+            tok_a = set_current_cookie_scope(format_cookie_scope_key("actor-a", "cred-1"))
+            try:
+                await runner.run(RunnerRequest("GET", "https://api.example.com/login"))
+                _, headers_a = apply_injection(
+                    {},
+                    "https://api.example.com/items",
+                    InjectedAuth(headers={}, query_params={}, cookies={}),
+                    inbound_cookie="sid=alice-only",
+                    actor_id="actor-a",
+                    credential_id="cred-1",
+                )
+                await runner.run(
+                    RunnerRequest("GET", "https://api.example.com/items", headers=headers_a)
+                )
+            finally:
+                reset_current_cookie_scope(tok_a)
+
+            tok_b = set_current_cookie_scope(format_cookie_scope_key("actor-b", "cred-1"))
+            try:
+                _, headers_b = apply_injection(
+                    {},
+                    "https://api.example.com/items",
+                    InjectedAuth(headers={}, query_params={}, cookies={}),
+                    inbound_cookie="sid=alice-only",
+                    actor_id="actor-b",
+                    credential_id="cred-1",
+                )
+                await runner.run(
+                    RunnerRequest("GET", "https://api.example.com/items", headers=headers_b)
+                )
+            finally:
+                reset_current_cookie_scope(tok_b)
+
+        assert seen_cookies == [None, "sid=alice-only", None]
     finally:
         clear_upstream_cookie_scopes()

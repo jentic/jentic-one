@@ -54,6 +54,7 @@ _GOOD_DOC = {
 def _make_ctx() -> MagicMock:
     ctx = MagicMock()
     mock_session = AsyncMock()
+    mock_session.expire_all = MagicMock()
     ctx.registry_db.transaction.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.registry_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
     ctx.registry_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -387,10 +388,15 @@ async def test_update_materialized_re_materializes_over_clean_base() -> None:
             return_value=live,
         ),
         patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id_for_update",
+            new_callable=AsyncMock,
+            return_value=live,
+        ) as mock_lock_api,
+        patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
             new_callable=AsyncMock,
             side_effect=[overlay, overlay, overlay, refreshed],
-        ),
+        ) as mock_get_overlay,
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
             new_callable=AsyncMock,
@@ -422,9 +428,13 @@ async def test_update_materialized_re_materializes_over_clean_base() -> None:
             identity=_OPERATOR,
         )
 
-    # The document edit was persisted (no reset_to_pending on a re-materialize).
+    mock_lock_api.assert_awaited_once()
+    assert mock_get_overlay.call_args_list[2].kwargs.get("for_update") is True
+    # The document edit was persisted with CAS guards (no reset_to_pending on a re-materialize).
     assert mock_update.await_count == 1
     assert mock_update.call_args.kwargs.get("reset_to_pending", False) is False
+    assert mock_update.call_args.kwargs["expected_status"] == "confirmed"
+    assert mock_update.call_args.kwargs["expected_confirmed_revision_id"] == overlay_rev
     # A re-ingest was enqueued with the overlaid spec built from the CLEAN base.
     mock_enqueue.assert_awaited_once()
     payload = mock_enqueue.call_args.kwargs["payload"]
@@ -588,6 +598,11 @@ async def test_update_materialized_in_tx_race_bails_without_enqueue() -> None:
             return_value=live,
         ),
         patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id_for_update",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
             new_callable=AsyncMock,
             # routing read, short-read, in-tx re-read (raced → bail).
@@ -628,6 +643,85 @@ async def test_update_materialized_in_tx_race_bails_without_enqueue() -> None:
     mock_enqueue.assert_not_awaited()
     # Returned the current (raced) view rather than raising.
     assert view.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_update_materialized_cas_zero_rows_bails_without_enqueue() -> None:
+    """When the update_fields CAS returns 0 rows, re-materialize bails without enqueueing."""
+    ctx = _make_ctx()
+    overlay_rev = uuid.uuid4()
+    clean_base_rev = uuid.uuid4()
+    api = _make_api()
+    api.current_revision_id = overlay_rev
+
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+    overlay.superseded_revision_id = clean_base_rev
+
+    live = MagicMock()
+    live.current_revision_id = overlay_rev
+
+    base_revision = MagicMock()
+    base_revision.source_url = "https://catalog.example.com/pets.json"
+    base_revision.spec_digest = "sha256:cleanbase"
+    spec_file = MagicMock()
+    spec_file.content = _BASE_SPEC
+
+    rolled_back = _make_overlay(status="deprecated", confirmed_revision_id=overlay_rev)
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id_for_update",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[overlay, overlay, overlay, rolled_back],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRevisionRepository.get_for_api",
+            new_callable=AsyncMock,
+            return_value=base_revision,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.SpecFileRepository.get_for_revision",
+            new_callable=AsyncMock,
+            return_value=spec_file,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
+            new_callable=AsyncMock,
+            return_value=0,
+        ) as mock_update,
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        view = await svc.update(
+            "acme",
+            "pets",
+            "v1",
+            "ovr_abc123def456ghi789",
+            document=_GOOD_DOC,
+            identity=_OPERATOR,
+        )
+
+    mock_update.assert_awaited_once()
+    mock_enqueue.assert_not_awaited()
+    assert view.status == "deprecated"
 
 
 @pytest.mark.asyncio

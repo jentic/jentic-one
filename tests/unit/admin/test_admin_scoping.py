@@ -304,3 +304,16 @@ def test_held_execution_write_filter_keeps_owned_agent_axis() -> None:
     assert "held_executions.agent_id = 'usr_reviewer'" not in write_sql
     assert "held_executions.agent_id IN (SELECT agents.id" in write_sql
     assert "agents.owner_id = 'usr_reviewer'" in write_sql
+
+
+def test_oauth_client_grant_write_filter_keeps_owned_agent_axis() -> None:
+    """Human agent owners retain write scope to revoke OAuthClientGrants bound to their agents."""
+    identity = _identity(sub="usr_owner", permissions=["oauth-clients:write"])
+    write_sql = str(
+        build_access_filters(identity, OAuthClientGrant, for_write=True)[0].compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "oauth_client_grants.user_id = 'usr_owner'" in write_sql
+    assert "oauth_client_grants.agent_id IN (SELECT agents.id" in write_sql
+    assert "agents.owner_id = 'usr_owner'" in write_sql

@@ -18,13 +18,15 @@ that owns everything the platform — not the SDK — must decide:
   pinned by tests) keeps answering the framework's plain 404 in every arm
   and clients keep landing on the served RFC 8414 path-insertion documents.
 - **Strict Origin validation** (spec §security, DNS-rebinding): a request
-  carrying an ``Origin`` that is neither the config-derived canonical origin
+  carrying an ``Origin`` that is not a valid ``http``/``https`` web origin
+  matching either the config-derived canonical origin
   (``auth.canonical_base_url``, else ``server.public_base_url`` — the same
-  source the discovery documents build absolute URLs from) nor loopback is
-  refused with 403 before anything else runs. The request's own ``Host``
-  header is never trusted — in the rebinding attack it is attacker-controlled.
-  Absent ``Origin`` (non-browser clients — every real MCP client today)
-  passes.
+  source the discovery documents build absolute URLs from) or loopback is
+  refused with 403 before anything else runs. Non-HTTP(S) schemes
+  (``capacitor://``, ``tauri://``, ``ws://``, etc.) always fail. The request's
+  own ``Host`` header is never trusted — in the rebinding attack it is
+  attacker-controlled. Absent ``Origin`` (non-browser clients — every real MCP
+  client today) passes.
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
   ``verify_token`` the app factory installs (``install_platform_token_verifier``),
   which resolves ``jak_`` API keys (retired ``sak_`` ones are refused), ``at_``
@@ -249,12 +251,14 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
     """Strict ``Origin`` validation (403 on mismatch — spec DNS-rebinding rule).
 
     Absent ``Origin`` passes (non-browser clients never send one). A present
-    one must match a trusted set derived from **server config only**: the
-    canonical base URL's origin (``auth.canonical_base_url``, else
-    ``server.public_base_url`` — the same source the discovery documents
-    build their absolute URLs from), or a
-    loopback/localhost origin for local dev. ``null`` and unparseable origins
-    fail.
+    one must be a valid ``http``/``https`` web origin matching a trusted set
+    derived from **server config only**: the canonical base URL's origin
+    (``auth.canonical_base_url``, else ``server.public_base_url`` — the same
+    source the discovery documents build their absolute URLs from), or an
+    ``http``/``https`` loopback/localhost origin for local dev and local MCP
+    bridges. Non-HTTP(S) schemes (``capacitor://``, ``tauri://``, ``ionic://``,
+    ``file://``, ``ws://``), ``null``, userinfo, path/query/fragment suffixes,
+    and invalid ports fail.
 
     The request's own ``Host`` header is deliberately NOT consulted: in the
     DNS-rebinding attack this check exists to stop, the browser resolves the
@@ -269,11 +273,18 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
     if origin is None:
         return True
     parts = urlsplit(origin)
-    if not parts.scheme or not parts.netloc:
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https") or not parts.netloc:
+        return False
+    if parts.username is not None or parts.password is not None:
+        return False
+    if parts.path or parts.query or parts.fragment:
         return False
     try:
         hostname, port = (parts.hostname or "").lower(), parts.port
-    except ValueError:  # pragma: no cover - non-numeric port
+    except ValueError:
+        return False
+    if not hostname or (port is not None and not (1 <= port <= 65535)):
         return False
     if _is_loopback_origin_host(hostname):
         return True
@@ -281,12 +292,20 @@ def origin_allowed(ctx: Context, request: Request) -> bool:
     if not canonical:
         return False
     canonical_parts = urlsplit(canonical)
-    if not canonical_parts.scheme or not canonical_parts.netloc:
+    canonical_scheme = canonical_parts.scheme.lower()
+    if canonical_scheme not in ("http", "https") or not canonical_parts.netloc:
         return False
-    return _origin_key(parts.scheme.lower(), hostname, port) == _origin_key(
-        canonical_parts.scheme.lower(),
-        (canonical_parts.hostname or "").lower(),
-        canonical_parts.port,
+    try:
+        canonical_host = (canonical_parts.hostname or "").lower()
+        canonical_port = canonical_parts.port
+    except ValueError:
+        return False
+    if not canonical_host:
+        return False
+    return _origin_key(scheme, hostname, port) == _origin_key(
+        canonical_scheme,
+        canonical_host,
+        canonical_port,
     )
 
 

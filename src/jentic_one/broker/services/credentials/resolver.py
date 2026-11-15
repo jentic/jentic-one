@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
+from jentic_one.shared.auth.actor_status import read_user_status
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
@@ -169,6 +170,8 @@ class CredentialResolver:
             allowed = set(allowed_credential_ids)
             candidates = [c for c in candidates if c.id in allowed]
 
+        inactive_creators = await self._inactive_user_creators(candidates)
+
         # Coverage + specificity via the shared seam. A credential's stored
         # scope (canonicalized here so legacy '' / non-slug rows compare on
         # the same footing) covers the concrete operation when each axis is
@@ -181,7 +184,7 @@ class CredentialResolver:
         # the fact that separates "scoped elsewhere" from "none at all".
         scope_mismatched: list[Credential] = []
         for c in candidates:
-            if not c.active:
+            if not c.active or (c.created_by is not None and c.created_by in inactive_creators):
                 continue
             scope = canonical_credential_scope(
                 vendor=c.api_vendor, name=c.api_name, version=c.api_version
@@ -307,6 +310,26 @@ class CredentialResolver:
                 ),
             }
         )
+
+    async def _inactive_user_creators(self, candidates: Sequence[Credential]) -> set[str]:
+        """Return ``usr_*`` creator ids whose admin-DB user row is disabled or deleted."""
+        if self._ctx.is_db_allowed("admin") is not True:
+            return set()
+        user_creators = sorted(
+            {
+                c.created_by
+                for c in candidates
+                if c.active and c.created_by and c.created_by.startswith("usr_")
+            }
+        )
+        if not user_creators:
+            return set()
+        inactive: set[str] = set()
+        for user_id in user_creators:
+            status = await read_user_status(self._ctx.admin_db, user_id)
+            if status is not None and not status.accepts_credentials:
+                inactive.add(user_id)
+        return inactive
 
     @staticmethod
     def _to_candidate(credential: Credential, *, scoped: bool = False) -> CredentialCandidate:

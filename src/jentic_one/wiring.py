@@ -24,6 +24,7 @@ here only — the surfaces are unaffected.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 
 import structlog
@@ -183,6 +184,7 @@ class InProcessCatalogAutoImporter:
                     select(Api.version)
                     .where(Api.catalog_api_id == api_id)
                     .where(Api.current_revision_id.is_not(None))
+                    .order_by(Api.created_at, Api.id)
                     .limit(1)
                 )
                 result = await session.execute(stmt)
@@ -229,14 +231,19 @@ def install_credential_creator_lookup(app: FastAPI, ctx: Context) -> None:
     app.state.credential_creator_lookup = CredentialService(ctx)
 
 
-def build_default_container(ctx: Context) -> AppContainer:
+def build_default_container(
+    ctx: Context,
+    *,
+    apps: Sequence[str] | None = None,
+) -> AppContainer:
     """Assemble the default ``AppContainer`` for this process's surface set.
 
     The composition root's factory for the DI seam. A downstream package can
     provide its own ``build_container`` that starts here and adds its ``Broker`` /
     extra routers, then calls the same app factories with the resulting container.
+    ``apps`` selects the active surface set (defaulting to ``ctx.config.apps``).
 
-    Control-plane shapes (``"control" in ctx.config.apps``) additionally carry
+    Control-plane shapes (``"control" in active_apps``) additionally carry
     the ``/mcp`` mount's installer + session-manager lifespan
     (the mount never rides the broker). The mount itself is
     request-time gated by ``server.mcp.enabled``, so carrying it on every
@@ -254,19 +261,20 @@ def build_default_container(ctx: Context) -> AppContainer:
     A standalone admin process builds no container and has no control DB, so
     it does not carry it (see that function for the effect).
     """
+    active_apps = tuple(ctx.config.apps) if apps is None else tuple(apps)
     container = AppContainer.default(ctx)
-    if "control" in ctx.config.apps:
+    if "control" in active_apps:
         container = replace(
             container,
             extra_installers=(*container.extra_installers, install_mcp_mount),
             extra_lifespans=(*container.extra_lifespans, mcp_lifespan),
         )
-    elif "auth" in ctx.config.apps:
+    elif "auth" in active_apps:
         container = replace(
             container,
             extra_installers=(*container.extra_installers, install_mcp_challenge_placeholder),
         )
-    if "admin" in ctx.config.apps and ctx.is_db_allowed("control"):
+    if "admin" in active_apps and ctx.is_db_allowed("control"):
         container = replace(
             container,
             extra_installers=(*container.extra_installers, install_credential_creator_lookup),

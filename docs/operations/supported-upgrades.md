@@ -8,15 +8,19 @@ recorded. For the step-by-step upgrade procedure itself, see
 
 ## Support window (N-1 and N-2 minor series)
 
-Direct, single-hop upgrades to a target `0.N.x` release are supported and
-tested from the **previous two minor series (`N-1` and `N-2`)**, with each
-minor series collapsed to its **latest published patch release**:
+Direct, single-hop upgrades to a target `0.N.x` release are supported from the
+**previous two minor series (`N-1` and `N-2`)**, with each minor series
+collapsed to its **latest published patch release** (see
+[Backends and CI enforcement](#backends-and-ci-enforcement) for Phase 1 CI leg
+gating):
 
 - Operators on an older patch within a supported minor series (`0.(N-1).0` when
   `0.(N-1).2` exists) should upgrade from the latest patch of that minor series,
   or upgrade directly to the latest release following the [upgrade notes](upgrade-notes.md).
-- For the `0.45` target series, the two supported source releases are
-  `0.44.0` (`N-1`) and `0.43.0` (`N-2`).
+- For the `0.45` target series, both `0.44.0` (`N-1`) and `0.43.0` (`N-2`) are
+  registered in the supported window; during Phase 1 rollout, CI executes
+  `phase1_enabled: true` legs (`0.44.0` `N-1` on PostgreSQL) and holds `0.43.0`
+  (`N-2`, `phase1_enabled: false`) pending Phase 2 matrix expansion.
 - Downgrades are not supported. Rolling back requires restoring the
   pre-upgrade database and keyset [backup](backup-restore.md)
   (see [Upgrades → The contract](upgrades.md#the-contract)).
@@ -65,9 +69,16 @@ and [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py):
 - **Source images** are pinned by both release tag (`ghcr.io/jentic/jentic-one-app:X.Y.Z`)
   and multi-arch manifest digest (`sha256:…`) so tag re-pushes cannot silently
   alter the baseline under test.
-- **PostgreSQL** (`postgres`) is the primary production backend (`blocking: true`).
-- **SQLite** (`sqlite`, the quickstart topology) is tracked in the matrix as an
-  advisory leg (`blocking: false`) while Phase 2 coverage is rolled out.
+- **Phase 1 source gating (`phase1_enabled`)** — structural validation requires
+  both `N-1` (`0.44.0`) and `N-2` (`0.43.0`) entries in `sources`, while
+  `build_ci_matrix()` filters to `phase1_enabled: true` sources and
+  `enabled: true` backends. In Phase 1, CI executes the `0.44.0` (`N-1`) leg on
+  PostgreSQL and holds `0.43.0` (`N-2`, `phase1_enabled: false`) pending Phase 2
+  matrix expansion.
+- **PostgreSQL** (`postgres`) is the primary production backend (`blocking: true`,
+  `enabled: true`).
+- **SQLite** (`sqlite`, the quickstart topology) is declared in the matrix as an
+  advisory leg (`blocking: false`, `enabled: false`) pending Phase 2 rollout.
 
 ## Refresh-token survival policy
 
