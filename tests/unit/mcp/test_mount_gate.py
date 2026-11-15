@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -40,7 +41,12 @@ from starlette.requests import Request
 
 from jentic_one.auth.web.routers.discovery import _MCP_PRM_PATH
 from jentic_one.control.web.connect_limits import install_connect_limiters
-from jentic_one.mcp.app import CLIENT_INFO_META_KEY, MCP_PRM_PATH, request_client_info
+from jentic_one.mcp.app import (
+    CLIENT_INFO_META_KEY,
+    MCP_PRM_PATH,
+    PRE_AUTH_METHODS,
+    request_client_info,
+)
 from jentic_one.mcp.installer import install_mcp_mount, mcp_lifespan
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AuthConfig, ServerConfig
@@ -471,6 +477,80 @@ def test_origin_check_precedes_auth() -> None:
             },
         )
         assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "capacitor://localhost",
+        "tauri://localhost",
+        "ionic://localhost",
+        "file://localhost",
+        "ws://localhost",
+        "ws://localhost:8000",
+        "wss://127.0.0.1:8443",
+        "ws://[::1]:6274",
+        "ws://auth.example.com",
+    ],
+)
+@pytest.mark.parametrize("canonical_base_url", [_BASE, ""])
+def test_non_http_scheme_origin_is_403_even_for_loopback(
+    origin: str, canonical_base_url: str
+) -> None:
+    """Hybrid-webview and non-HTTP(S) schemes never qualify as trusted origins,
+    even when their host is ``localhost`` or a literal loopback IP."""
+    with make_client(canonical_base_url=canonical_base_url) as client:
+        resp = client.post(
+            "/mcp",
+            json=_rpc("tools/list"),
+            headers={**_ACCEPT, "Origin": origin},
+        )
+        assert resp.status_code == 403
+        assert resp.json() == {"detail": "Origin not allowed"}
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:0",
+        "http://localhost:65536",
+        "http://localhost:abc",
+        "http://:8080",
+        "http://evil.example@localhost",
+        "http://localhost/mcp",
+        "http://localhost?q=1",
+        "http://localhost#frag",
+    ],
+)
+def test_origin_with_invalid_port_userinfo_or_suffix_is_403(origin: str) -> None:
+    """RFC 6454 web origins carry only ``http(s)://host[:1..65535]`` — port 0,
+    out-of-range ports, userinfo, and path/query/fragment suffixes fail closed."""
+    with make_client() as client:
+        resp = client.post(
+            "/mcp",
+            json=_rpc("tools/list"),
+            headers={**_ACCEPT, "Origin": origin},
+        )
+        assert resp.status_code == 403
+
+
+def test_pre_auth_methods_match_documented_endpoint_guide() -> None:
+    """``PRE_AUTH_METHODS`` and ``docs/guides/mcp-http-endpoint.md`` stay in lockstep."""
+    expected = {
+        "initialize",
+        "notifications/initialized",
+        "ping",
+        "tools/list",
+        "resources/list",
+        "resources/read",
+        "resources/templates/list",
+    }
+    assert expected == PRE_AUTH_METHODS
+    guide = (
+        Path(__file__).resolve().parents[3] / "docs" / "guides" / "mcp-http-endpoint.md"
+    ).read_text("utf-8")
+    for method in PRE_AUTH_METHODS:
+        assert f"`{method}`" in guide
 
 
 # --- sub-path fall-through --------------------------------------------------
