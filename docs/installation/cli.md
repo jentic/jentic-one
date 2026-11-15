@@ -91,8 +91,14 @@ download, verify and install the newer package the same way. The `.apk` needs
 `--allow-untrusted` for the same reason (it carries no Alpine key); the
 checksum verification above is the check that replaces it.
 
-`jenticctl update` recognises a binary under `/usr/bin` as package-owned and
-leaves it to the package manager (`--stack-only` still refreshes the stack).
+`jenticctl update` recognises a package-owned binary and leaves it to the
+package manager (`--stack-only` still refreshes the stack). For a binary under
+`/usr/bin` it asks `dpkg -S`, `rpm -qf` or `apk info -W` (whichever is
+installed) who owns the file: an owning package means package-managed, while a
+copy no package owns (for example one placed with `JENTIC_INSTALL_DIR=/usr/bin`
+or copied into a container image) is updated in place as usual. When none of
+those tools is available or none gives a clear answer, any binary under
+`/usr/bin` is treated as package-owned.
 The [one-line installer script](#one-line-installer-script) installs under
 `~/.jentic/bin` instead; running it on a host that already has the packages
 leaves two copies, and whichever comes first on `PATH` wins.

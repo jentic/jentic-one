@@ -200,9 +200,9 @@ scoops:
 #   sudo apk add --allow-untrusted ./jentic_<ver>_linux_amd64.apk    # Alpine
 # No package repository: there is nothing to provision and nothing to skip, so
 # these ship on every release. Their hashes land in checksums.txt, which the
-# cosign signature above covers. Binaries install to /usr/bin, a location
-# `jenticctl update` treats as package-owned and never swaps in place
-# (cli/internal/update/syspkg.go).
+# cosign signature above covers. Binaries install to /usr/bin; there
+# `jenticctl update` asks dpkg / rpm / apk for the owner and never swaps a
+# package-owned binary in place (cli/internal/update/syspkg.go).
 nfpms:
   - id: jentic
     package_name: jentic
