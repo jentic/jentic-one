@@ -13,8 +13,21 @@ import {
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { useApproveAgent } from '@/modules/agents/api';
 import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
+
+function ApproveHarness({ agentId }: { agentId: string }) {
+	const approve = useApproveAgent();
+	return (
+		<>
+			<button type="button" onClick={() => approve.mutate(agentId)}>
+				Trigger approve
+			</button>
+			<Toaster />
+		</>
+	);
+}
 
 function renderCard(props: {
 	actorId: string;
@@ -243,6 +256,72 @@ describe('PermissionsCard', () => {
 		).toBeInTheDocument();
 		// Dialog stays open so the operator can adjust the selection.
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('surfaces the server detail message when the backend rejects a grant above the owner ceiling with 409', async () => {
+		const user = userEvent.setup();
+		const detail =
+			"Permission 'credentials:read' cannot be granted to this agent because its owner does not hold it";
+		worker.use(
+			http.put('/agents/:id/permissions', () =>
+				HttpResponse.json(
+					{
+						type: 'agent_permission_exceeds_owner',
+						title: 'Conflict',
+						status: 409,
+						detail,
+						instance: '/agents/agnt_active_1/permissions',
+					},
+					{
+						status: 409,
+						headers: { 'Content-Type': 'application/problem+json' },
+					},
+				),
+			),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		expect(await within(dialog).findByText(detail)).toBeInTheDocument();
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('surfaces the server detail message in an error toast when approveAgent fails with 409 agent_permission_exceeds_owner', async () => {
+		const user = userEvent.setup();
+		const detail =
+			"Permission 'agents:write' cannot be granted to this agent because its owner does not hold it";
+		worker.use(
+			http.post('/agents/:id\\:approve', () =>
+				HttpResponse.json(
+					{
+						type: 'agent_permission_exceeds_owner',
+						title: 'Conflict',
+						status: 409,
+						detail,
+						instance: '/agents/agnt_pending_1:approve',
+					},
+					{
+						status: 409,
+						headers: { 'Content-Type': 'application/problem+json' },
+					},
+				),
+			),
+		);
+
+		renderWithProviders(<ApproveHarness agentId="agnt_pending_1" />);
+		await user.click(screen.getByRole('button', { name: 'Trigger approve' }));
+
+		expect(await screen.findByText('Failed to approve the agent.')).toBeInTheDocument();
+		expect(await screen.findByText(detail)).toBeInTheDocument();
 	});
 
 	it('renders a default-granted owner permission as an editable catalogue chip', async () => {

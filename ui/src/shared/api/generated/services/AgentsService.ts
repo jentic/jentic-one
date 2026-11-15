@@ -636,6 +636,10 @@ export class AgentsService {
     /**
      * Replace an agent's permissions
      * Replace all permissions for an agent.
+     *
+     * Newly added permissions must be grantable by the caller (403
+     * `agent_permission_not_grantable`) and within the agent owner's permission
+     * ceiling (409 `agent_permission_exceeds_owner`).
      * @returns AgentPermissionsResponse Successful Response
      * @throws ApiError
      */
@@ -664,6 +668,8 @@ export class AgentsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Agent not found.`,
+                409: `Agent is archived, or a newly added permission exceeds the agent owner's permission ceiling (\`agent_permission_exceeds_owner\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -678,7 +684,9 @@ export class AgentsService {
      * (an unclaimed self-registration) can be approved only by an ``org:admin``,
      * who becomes its owner. Any other caller gets a 404, whatever the agent's
      * status, so the response does not reveal agents outside the caller's
-     * ownership.
+     * ownership. Self-requested permissions above the owner's permission ceiling
+     * are dropped on approval; an explicit grant above the owner's ceiling
+     * fails with 409 (``agent_permission_exceeds_owner``).
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -701,6 +709,7 @@ export class AgentsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `No such agent, or a caller who is neither the agent's owner nor an \`org:admin\` (and only an \`org:admin\` for an unowned agent). Returned whatever the agent's status (\`actor_not_found\`), so a 404 here can mean the agent exists but is outside the caller's ownership`,
+                409: `Agent is not pending (\`invalid_transition\`), or an explicit permission grant on the agent exceeds the agent owner's permission ceiling (\`agent_permission_exceeds_owner\`)`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -1390,6 +1390,41 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(approvalBanner()).not.toHaveTextContent('more waiting');
 	});
 
+	it('surfaces the server problem detail in an error toast when approve is rejected with 409 agent_permission_exceeds_owner', async () => {
+		const user = userEvent.setup();
+		const detail =
+			"Permission 'agents:write' cannot be granted to this agent because its owner does not hold it";
+		worker.use(
+			http.post('/agents/:id\\:approve', () =>
+				HttpResponse.json(
+					{
+						type: 'agent_permission_exceeds_owner',
+						title: 'Conflict',
+						status: 409,
+						detail,
+						instance: '/agents/agnt_pending_1:approve',
+					},
+					{
+						status: 409,
+						headers: { 'Content-Type': 'application/problem+json' },
+					},
+				),
+			),
+		);
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+
+		await user.click(
+			within(await findApprovalBanner()).getByRole('button', {
+				name: 'Approve inbox-triage-bot',
+			}),
+		);
+
+		expect(await screen.findByText('Failed to approve the agent.')).toBeInTheDocument();
+		expect(await screen.findByText(detail)).toBeInTheDocument();
+		expect(within(approvalBanner()).getByText('inbox-triage-bot')).toBeInTheDocument();
+	});
+
 	it('denies from the banner → requires a reason → banner advances', async () => {
 		const user = userEvent.setup();
 		renderPage();
