@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
+from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
+from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
 from jentic_one.control.services.credentials.connect_service import ConnectService
 from jentic_one.control.services.credentials.schemas.connect import (
@@ -35,10 +37,14 @@ from tests.integration.control.connect_sec.support import (
     AGENT,
     AGENT_ID,
     OAUTH_SCHEME,
+    OTHER_OWNER,
     OWNER,
+    OWNER_ID,
+    RULES,
     SIBLING_AGENT_ID,
     bind,
     checks,
+    client,
     connect,
     digest,
     existing_credential,
@@ -54,14 +60,22 @@ pytestmark = pytest.mark.integration
 _BINDING = new_browser_binding()
 
 
-async def _use_existing(ctx: Context, session_id: str, credential_id: str) -> Any:
+async def _use_existing(
+    ctx: Context,
+    session_id: str,
+    credential_id: str,
+    *,
+    rules: list[dict[str, object]] | None = None,
+) -> Any:
     return await svc(ctx).confirm_variant(
         session_id,
         poll_token=None,
         variant=ExistingCredentialConfirm(
             credential_id=credential_id,
             checks=checks(
-                await digest(ctx, session_id), revision_id=await revision(ctx, session_id)
+                await digest(ctx, session_id),
+                revision_id=await revision(ctx, session_id),
+                rules=rules,
             ),
         ),
         identity=OWNER,
@@ -150,6 +164,100 @@ async def test_the_session_reads_as_an_edit_while_it_awaits_the_vendor(env: Cont
     assert review.edit.current["rules"] == []
     assert review.edit.current["granted_scopes"] == ["read"]
     assert review.state == "polling"
+
+
+@pytest.mark.parametrize("requested_rules", [[], RULES], ids=["zero-rules", "with-rules"])
+async def test_edit_review_over_http_after_confirm_existing_credential(
+    env: Context, requested_rules: list[dict[str, object]]
+) -> None:
+    """HTTP review of a session confirmed onto an existing credential returns valid edit access."""
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, rules=requested_rules, requested_scopes=["write"])
+    narrow = await existing_credential(env, oauth_scope="read")
+    result = await _use_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+
+    async with client(env, OWNER) as approver:
+        approver_resp = await approver.get(f"/connect-sessions/{created.session_id}")
+    async with client(env, OTHER_OWNER) as poll_reader:
+        poll_resp = await poll_reader.get(
+            f"/connect-sessions/{created.session_id}",
+            params={"poll_token": created.poll_token},
+        )
+
+    async with env.control_db.transaction() as session:
+        await ConnectSessionRepository.transition_state(
+            session,
+            created.session_id,
+            to_state="connected",
+            from_states=("polling",),
+        )
+
+    async with client(env, OWNER) as approver:
+        terminal_resp = await approver.get(f"/connect-sessions/{created.session_id}")
+    async with client(env, OTHER_OWNER) as poll_reader:
+        terminal_poll_resp = await poll_reader.get(
+            f"/connect-sessions/{created.session_id}",
+            params={"poll_token": created.poll_token},
+        )
+
+    for resp, expected_state in (
+        (approver_resp, "polling"),
+        (poll_resp, "polling"),
+        (terminal_resp, "connected"),
+        (terminal_poll_resp, "connected"),
+    ):
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == expected_state
+        edit = body["edit"]
+        assert edit is not None
+        assert edit["widens_access"] is True
+        assert edit["needs_vendor_consent"] is True
+        access = edit["result"]
+        assert access["target"] == "binding"
+        assert access["scopes"] == ["read", "write"]
+        assert access["scope_notes"] == {}
+        assert access["suspended"] is False
+        assert len(access["rules"]) == len(requested_rules)
+        for rule in access["rules"]:
+            assert rule["id"] is None
+            assert rule["added_by"] == AGENT_ID
+
+
+async def test_binding_change_during_vendor_consent_keeps_the_confirmed_edit_review(
+    env: Context,
+) -> None:
+    """Mutating the binding during vendor consent leaves the confirmed ask intact."""
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, rules=RULES, requested_scopes=["read", "write"])
+    narrow = await existing_credential(env, oauth_scope="read")
+    result = await _use_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+
+    await bind(env, AGENT_ID, narrow)
+    async with env.control_db.transaction() as session:
+        await AgentPermissionRuleRepository.replace_user_rules(
+            session,
+            AGENT_ID,
+            narrow,
+            [{"effect": "deny", "methods": ["DELETE"], "path": "/items", "match_mode": "exact"}],
+            created_by=OWNER_ID,
+        )
+
+    async with client(env, OWNER) as approver:
+        rebased = await approver.post(f"/connect-sessions/{created.session_id}:rebase")
+        assert rebased.status_code == 409
+        review_resp = await approver.get(f"/connect-sessions/{created.session_id}")
+
+    assert review_resp.status_code == 200, review_resp.text
+    body = review_resp.json()
+    assert body["stale"] is False
+    edit = body["edit"]
+    assert edit["revision"]["number"] == 1
+    assert [r["path"] for r in edit["result"]["rules"]] == ["/items"]
+    assert [r["id"] for r in edit["result"]["rules"]] == [None]
+    assert edit["result"]["scopes"] == ["read", "write"]
 
 
 async def test_a_failed_consent_never_binds_or_widens(env: Context) -> None:

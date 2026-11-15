@@ -95,6 +95,7 @@ from jentic_one.control.services.integrations.api_targets import (
     select_scheme,
 )
 from jentic_one.control.services.integrations.dedupe import oauth_dedupe_key
+from jentic_one.control.services.integrations.edit_result import normalize_edit_result
 from jentic_one.control.services.integrations.edits import (
     EditRequest,
     added_scopes,
@@ -3486,6 +3487,7 @@ class ConnectSessionService:
         if revision is None:
             raise SessionNotFoundError(row.id)
         others, more_others = await self._affected_agents(row, row.baseline, credential, identity)
+        normalized_result = normalize_edit_result(row.baseline, revision.result)
         review = EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
@@ -3493,11 +3495,11 @@ class ConnectSessionService:
             revision_id=revision.id,
             revision_number=revision.number,
             current=dict(row.baseline),
-            result=dict(revision.result),
-            widens_access=widens_access(row.baseline, revision.result),
+            result=normalized_result,
+            widens_access=widens_access(row.baseline, normalized_result),
             other_bound_agents=others,
             other_bound_agents_truncated=more_others,
-            needs_vendor_consent=scopes_changed(row.baseline, revision.result),
+            needs_vendor_consent=scopes_changed(row.baseline, normalized_result),
             conflicts=list(revision.proposal.get("conflicts") or []),
         )
         return review, credential, revision
