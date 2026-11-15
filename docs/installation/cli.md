@@ -30,10 +30,78 @@ binary on `PATH`, and upgrade with the manager's native command (`brew
 upgrade`, `winget upgrade`, `scoop update`). `jenticctl` is not shipped for
 native Windows — use WSL ([windows.md](windows.md)).
 
-Beyond package managers: the [one-line installer script](#one-line-installer-script),
+Beyond package managers: native [Linux packages](#linux-packages-deb--rpm--apk), the
+[one-line installer script](#one-line-installer-script),
 which downloads, sha256-checks, and cosign-verifies for you, and the manual
 path: locked-down hosts, air-gapped transfer, or when you want to verify the
 supply chain yourself.
+
+## Linux packages (.deb / .rpm / .apk)
+
+From the first release after v0.44.0, every release attaches native packages
+for `linux/amd64` and `linux/arm64`, one per binary, so an agent host can
+install `jentic` alone. They are listed in the signed `checksums.txt` like the
+archives (see [Verify](#verify)), and install the binaries to `/usr/bin`.
+
+```bash
+VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest \
+  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')          # or pin a release: VER=X.Y.Z
+: "${VER:?could not resolve the latest version — set VER manually}"
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')    # amd64 | arm64
+BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
+```
+
+Pick the format your distribution uses (`jenticctl_…` instead of `jentic_…`
+for the admin host), and download it together with the signed checksums:
+
+```bash
+EXT=deb    # deb (Debian / Ubuntu) | rpm (Fedora / RHEL) | apk (Alpine)
+PKG="jentic_${VER}_linux_${ARCH}.${EXT}"
+curl -fsSLO "${BASE}/${PKG}"
+curl -fsSLO "${BASE}/checksums.txt"
+curl -fsSLO "${BASE}/checksums.txt.sig"
+curl -fsSLO "${BASE}/checksums.txt.pem"
+```
+
+The packages carry no signature of their own: the cosign signature on
+`checksums.txt` is what vouches for them. Verify before installing — the same
+two checks as in [Verify](#verify), limited to the one package:
+
+```bash
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity "https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/v${VER}" \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+grep " ${PKG}\$" checksums.txt | sha256sum --check -    # macOS: shasum -a 256 -c -
+```
+
+Then install it with the package manager:
+
+```bash
+sudo apt install "./${PKG}"                     # Debian / Ubuntu
+sudo dnf install "./${PKG}"                     # Fedora / RHEL
+sudo apk add --allow-untrusted "./${PKG}"       # Alpine
+```
+
+There is no package repository and the packages are not signed with a
+distribution key, so `apt upgrade` / `dnf upgrade` don't pick up new releases:
+download, verify and install the newer package the same way. The `.apk` needs
+`--allow-untrusted` for the same reason (it carries no Alpine key); the
+checksum verification above is the check that replaces it.
+
+`jenticctl update` recognises a package-owned binary and leaves it to the
+package manager (`--stack-only` still refreshes the stack). For a binary under
+`/usr/bin` it asks `dpkg -S`, `rpm -qf` or `apk info -W` (whichever is
+installed) who owns the file: an owning package means package-managed, while a
+copy no package owns (for example one placed with `JENTIC_INSTALL_DIR=/usr/bin`
+or copied into a container image) is updated in place as usual. When none of
+those tools is available or none gives a clear answer, any binary under
+`/usr/bin` is treated as package-owned.
+The [one-line installer script](#one-line-installer-script) installs under
+`~/.jentic/bin` instead; running it on a host that already has the packages
+leaves two copies, and whichever comes first on `PATH` wins.
 
 ## One-line installer script
 
@@ -120,7 +188,7 @@ cosign verify-blob \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
 
-# The checksum file covers the archives:
+# The checksum file covers the archives and the Linux packages:
 sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c checksums.txt --ignore-missing
 ```
 
