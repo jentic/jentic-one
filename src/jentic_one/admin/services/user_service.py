@@ -17,10 +17,7 @@ from jentic_one.admin.repos import (
     UserSecretRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.actor_jobs import (
-    cancel_queued_executions_for_actor,
-    deactivate_user_control_resources,
-)
+from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
 from jentic_one.admin.services._support.oauth_sweep import sweep_user_oauth_credentials
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
@@ -543,7 +540,7 @@ class UserService:
         if self._ctx.is_db_allowed("control") is not True:
             return []
         async with self._ctx.control_db.transaction() as session:
-            return await deactivate_user_control_resources(session, user_id=user_id)
+            return await UserRepository.deactivate_control_resources(session, user_id=user_id)
 
     def _invalidate_broker_caches(
         self,
