@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/jentic/jentic-one/compare/v0.45.0...v0.45.1) (2026-11-15)
+
+
+### CI/CD
+
+* **release:** fetch tags for the upgrade test and keep report-only jobs from blocking the release ([#2140](https://github.com/jentic/jentic-one/issues/2140)) ([42ffd41](https://github.com/jentic/jentic-one/commit/42ffd413842ceda703a3aaabda8f220e954610b9))
+
 ## [0.45.0](https://github.com/jentic/jentic-one/compare/v0.44.0...v0.45.0) (2026-11-15)
 
 
