@@ -38,6 +38,16 @@ class ApiRepository:
         return await session.get(Api, api_id)
 
     @staticmethod
+    async def get_by_id_for_update(session: AsyncSession, api_id: uuid.UUID) -> Api | None:
+        """Fetch an Api by id, row-locked (``SELECT … FOR UPDATE OF apis``) for the transaction.
+
+        Scoped ``OF apis`` so Postgres does not attempt to lock the nullable side of
+        the joined-eager ``current_revision`` outer join; SQLite ignores the lock clause.
+        """
+        result = await session.execute(select(Api).where(Api.id == api_id).with_for_update(of=Api))
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_identities(
         session: AsyncSession, ids: Collection[uuid.UUID]
     ) -> dict[uuid.UUID, tuple[str, str, str]]:
@@ -59,6 +69,18 @@ class ApiRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_identifier_for_update(
+        session: AsyncSession, vendor: str, name: str, version: str
+    ) -> Api | None:
+        """Fetch an Api by ``(vendor, name, version)``, row-locked (``FOR UPDATE OF apis``)."""
+        result = await session.execute(
+            select(Api)
+            .where(Api.vendor == vendor, Api.name == name, Api.version == version)
+            .with_for_update(of=Api)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def identity_for_catalog_api_id(
         session: AsyncSession, catalog_api_id: str
     ) -> tuple[str, str] | None:
@@ -75,6 +97,27 @@ class ApiRepository:
         )
         row = result.first()
         return (row.vendor, row.name) if row is not None else None
+
+    @staticmethod
+    async def current_version_for_catalog_api_id(
+        session: AsyncSession, catalog_api_id: str
+    ) -> str | None:
+        """The ``version`` of the local API imported from ``catalog_api_id`` with a live revision.
+
+        Uses the same deterministic ``(created_at, id)`` ordering as
+        :meth:`identity_for_catalog_api_id`, gated on ``current_revision_id`` being
+        non-null so an unfinished or unpromoted import returns ``None``.
+        """
+        result = await session.execute(
+            select(Api.version)
+            .where(
+                Api.catalog_api_id == catalog_api_id,
+                Api.current_revision_id.is_not(None),
+            )
+            .order_by(Api.created_at, Api.id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_identifier_with_current_revision(
@@ -208,18 +251,26 @@ class ApiRepository:
 
     @staticmethod
     async def set_current_revision(
-        session: AsyncSession, api_id: uuid.UUID, revision_id: uuid.UUID
+        session: AsyncSession,
+        api_id: uuid.UUID,
+        revision_id: uuid.UUID,
+        *,
+        operation_count: int | None = None,
     ) -> None:
         api = await session.get(Api, api_id)
         if api is None:
             msg = f"Api {api_id} not found"
             raise ValueError(msg)
         api.current_revision_id = revision_id
+        if operation_count is not None:
+            api.operation_count = operation_count
         await session.flush()
 
     @staticmethod
     async def clear_current_revision(session: AsyncSession, api_id: uuid.UUID) -> None:
-        await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
+        await session.execute(
+            update(Api).where(Api.id == api_id).values(current_revision_id=None, operation_count=0)
+        )
         await session.flush()
 
     @staticmethod

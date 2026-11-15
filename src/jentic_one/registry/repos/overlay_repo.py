@@ -54,11 +54,16 @@ class OverlayRepository:
 
     @staticmethod
     async def get_for_api(
-        session: AsyncSession, api_id: uuid.UUID, overlay_id: str
+        session: AsyncSession,
+        api_id: uuid.UUID,
+        overlay_id: str,
+        *,
+        for_update: bool = False,
     ) -> Overlay | None:
-        result = await session.execute(
-            select(Overlay).where(Overlay.api_id == api_id, Overlay.id == overlay_id)
-        )
+        stmt = select(Overlay).where(Overlay.api_id == api_id, Overlay.id == overlay_id)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -218,6 +223,8 @@ class OverlayRepository:
         document: dict[str, Any] | None = None,
         target_revision_id: uuid.UUID | _Unset | None = _UNSET,
         reset_to_pending: bool = False,
+        expected_status: OverlayStatus | None = None,
+        expected_confirmed_revision_id: uuid.UUID | _Unset | None = _UNSET,
     ) -> int:
         values: dict[str, Any] = {"updated_at": func.now()}
         if document is not None:
@@ -232,9 +239,18 @@ class OverlayRepository:
             values["status"] = OverlayStatus.PENDING
             values["confirmed_at"] = None
             values["confirmed_by_execution_id"] = None
+        stmt = update(Overlay).where(Overlay.id == overlay_id)
+        if expected_status is not None:
+            stmt = stmt.where(Overlay.status == expected_status)
+        if expected_confirmed_revision_id is None:
+            stmt = stmt.where(Overlay.confirmed_revision_id.is_(None))
+        elif not isinstance(expected_confirmed_revision_id, _Unset):
+            stmt = stmt.where(Overlay.confirmed_revision_id == expected_confirmed_revision_id)
         result = cast(
             "CursorResult[Any]",
-            await session.execute(update(Overlay).where(Overlay.id == overlay_id).values(**values)),
+            await session.execute(
+                stmt.values(**values).execution_options(synchronize_session="fetch")
+            ),
         )
         await session.flush()
         return result.rowcount
@@ -332,7 +348,11 @@ class OverlayRepository:
         (the API's current revision immediately before), giving a later
         un-confirm/rollback (A5b) a deterministic prior-revision target. It is only
         written when non-``None`` — a recovery/relink that doesn't know the superseded
-        revision must not overwrite a previously-captured value with ``NULL``.
+        revision must not overwrite a captured value with ``NULL``.
+
+        Guarded so a stale materialization job completing after a rollback, manual
+        deprecation, or newer active revision never relinks a ``DEPRECATED`` overlay or
+        points ``confirmed_revision_id`` at an already-inactive revision.
         """
         values: dict[str, Any] = {
             "confirmed_revision_id": confirmed_revision_id,
@@ -340,9 +360,22 @@ class OverlayRepository:
         }
         if superseded_revision_id is not None:
             values["superseded_revision_id"] = superseded_revision_id
+        stmt = (
+            update(Overlay)
+            .where(
+                Overlay.id == overlay_id,
+                Overlay.status != OverlayStatus.DEPRECATED,
+                ~exists().where(
+                    ApiRevision.id == confirmed_revision_id,
+                    ApiRevision.state.notin_(ACTIVE_REVISION_STATES),
+                ),
+            )
+            .values(**values)
+            .execution_options(synchronize_session="fetch")
+        )
         result = cast(
             "CursorResult[Any]",
-            await session.execute(update(Overlay).where(Overlay.id == overlay_id).values(**values)),
+            await session.execute(stmt),
         )
         await session.flush()
         return result.rowcount

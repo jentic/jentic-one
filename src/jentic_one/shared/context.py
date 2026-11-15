@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -75,6 +75,10 @@ class Context:
         # In-process broker cache invalidators (#1837). Populated by
         # ``install_broker_auth`` when a broker app shares this Context.
         self._broker_cache_invalidators: list[BrokerCacheInvalidatorProtocol] = []
+        # Strong references to detached background tasks (e.g. catalog update-notify
+        # sweeps) spawned against this Context so shutdown cancels and drains them
+        # before disposing database engines.
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def _is_allowed(self, name: str) -> bool:
         return self._allowed_dbs is None or name in self._allowed_dbs
@@ -367,13 +371,31 @@ class Context:
             except Exception as exc:
                 logger.warning("provider_refresh_on_boot_failed", error=str(exc))
 
+    def register_background_task(self, task: asyncio.Task[Any]) -> None:
+        """Track a detached background task so shutdown drains it before closing DBs."""
+        if task.done():
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def drain_background_tasks(self) -> None:
+        """Cancel and await all tracked in-flight background tasks."""
+        tasks = [task for task in self._background_tasks if not task.done()]
+        self._background_tasks.clear()
+        if not tasks:
+            return
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     async def shutdown(self) -> None:
-        """Close all connected databases.
+        """Drain tracked background tasks and close all connected databases.
 
         The shared-state backend is closed separately, by
         :meth:`close_state_backend`, so the app lifespan can close it after
         every surface teardown that may still touch it.
         """
+        await self.drain_background_tasks()
         for db in (self._control_db, self._admin_db, self._registry_db):
             if db is not None:
                 await db.close()

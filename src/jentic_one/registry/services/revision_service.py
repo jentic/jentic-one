@@ -239,11 +239,13 @@ class RevisionService:
             raise RevisionNotFoundError(revision_id, vendor, name, version) from None
 
         async with self._ctx.registry_db.transaction() as session:
-            api = await ApiRepository.get_by_identifier(session, vendor, name, version)
+            api = await ApiRepository.get_by_identifier_for_update(session, vendor, name, version)
             if api is None:
                 raise ApiNotFoundError(vendor, name, version)
+            api_id = api.id
+            api_vendor = api.vendor
 
-            revision = await ApiRevisionRepository.get_for_api(session, api.id, revision_uuid)
+            revision = await ApiRevisionRepository.get_for_api(session, api_id, revision_uuid)
             if revision is None:
                 raise RevisionNotFoundError(revision_id, vendor, name, version)
 
@@ -257,14 +259,14 @@ class RevisionService:
 
             if not may_approve_host_change(identity.permissions):
                 await self._require_no_host_change(
-                    session, api.id, revision_uuid, vendor, name, version
+                    session, api_id, revision_uuid, vendor, name, version
                 )
 
             # One vendor per host: the revision's URL-index rows exist from import
             # (every revision is indexed), but they only start serving once it is
             # live — refuse to go live on a host another vendor's live API serves.
             owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
-                session, revision_id=revision_uuid, vendor=api.vendor
+                session, revision_id=revision_uuid, vendor=api_vendor
             )
             if owners:
                 raise HostOwnedByOtherVendorError(revision_id, describe_live_host_owners(owners))
@@ -275,25 +277,43 @@ class RevisionService:
             revision_origin = revision.origin
             revision_spec_digest = revision.spec_digest
             revision_source_url = revision.source_url
+            revision_operation_count = revision.operation_count
             promoted_state = (
                 ApiRevisionState.IMPORTED
                 if revision_origin is not None
                 else ApiRevisionState.PUBLISHED
             )
             now = datetime.now(UTC)
-            if api.current_revision_id is not None:
-                await ApiRevisionRepository.set_state(
-                    session, api.current_revision_id, ApiRevisionState.ARCHIVED, archived_at=now
-                )
-            await ApiRevisionRepository.archive_all_active_imported(session, api.id)
+            await ApiRevisionRepository.archive_all_active(session, api_id)
 
-            await ApiRevisionRepository.set_state(
-                session, revision_uuid, promoted_state, promoted_at=now
+            transitioned = await ApiRevisionRepository.set_state(
+                session,
+                revision_uuid,
+                promoted_state,
+                promoted_at=now,
+                expected_state=ApiRevisionState.DRAFT,
             )
-            await ApiRepository.set_current_revision(session, api.id, revision_uuid)
+            if transitioned == 0:
+                session.expire_all()
+                latest = await ApiRevisionRepository.get_for_api(session, api_id, revision_uuid)
+                if latest is None:
+                    raise RevisionNotFoundError(revision_id, vendor, name, version)
+                raise RevisionStateConflictError(
+                    revision_id,
+                    latest.state,
+                    [ApiRevisionState.DRAFT],
+                    "promote",
+                )
+
+            await ApiRepository.set_current_revision(
+                session,
+                api_id,
+                revision_uuid,
+                operation_count=revision_operation_count,
+            )
             await self._resolve_catalog_update_available(
                 session,
-                api_id=api.id,
+                api_id=api_id,
                 origin=revision_origin,
                 spec_digest=revision_spec_digest,
                 source_url=revision_source_url,
@@ -318,7 +338,7 @@ class RevisionService:
             target_id=revision_id,
             actor_type=identity.actor_type,
             actor_id=identity.sub,
-            target_parent_id=str(api.id),
+            target_parent_id=str(api_id),
             after={"state": promoted_state},
             origin=identity.origin.value,
         )
@@ -394,8 +414,10 @@ class RevisionService:
             api = await ApiRepository.get_by_identifier(session, vendor, name, version)
             if api is None:
                 raise ApiNotFoundError(vendor, name, version)
+            api_id = api.id
+            current_revision_id = api.current_revision_id
 
-            revision = await ApiRevisionRepository.get_for_api(session, api.id, revision_uuid)
+            revision = await ApiRevisionRepository.get_for_api(session, api_id, revision_uuid)
             if revision is None:
                 raise RevisionNotFoundError(revision_id, vendor, name, version)
 
@@ -409,10 +431,11 @@ class RevisionService:
             await ApiRevisionRepository.set_state(
                 session, revision_uuid, ApiRevisionState.ARCHIVED, archived_at=now
             )
-            if api.current_revision_id == revision_uuid:
-                await ApiRepository.clear_current_revision(session, api.id)
+            if current_revision_id == revision_uuid:
+                await ApiRepository.clear_current_revision(session, api_id)
+            session.expire_all()
 
-            refreshed = await ApiRevisionRepository.get_for_api(session, api.id, revision_uuid)
+            refreshed = await ApiRevisionRepository.get_for_api(session, api_id, revision_uuid)
             assert refreshed is not None
 
             host: str | None = None
