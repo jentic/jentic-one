@@ -49,19 +49,53 @@ VER=$(curl -fsSL https://api.github.com/repos/jentic/jentic-one/releases/latest 
 : "${VER:?could not resolve the latest version — set VER manually}"
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')    # amd64 | arm64
 BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
-curl -fsSLO "${BASE}/jentic_${VER}_linux_${ARCH}.deb"        # or .rpm / .apk; jenticctl_… for the admin host
-
-sudo apt install "./jentic_${VER}_linux_${ARCH}.deb"                  # Debian / Ubuntu
-sudo dnf install "./jentic_${VER}_linux_${ARCH}.rpm"                  # Fedora / RHEL
-sudo apk add --allow-untrusted "./jentic_${VER}_linux_${ARCH}.apk"    # Alpine
 ```
 
-There is no package repository, so `apt upgrade` / `dnf upgrade` don't pick up
-new releases: download and install the newer package the same way.
-`jenticctl update` recognises a package install and leaves the binaries to the
-package manager (`--stack-only` still refreshes the stack). The `.apk` needs
-`--allow-untrusted` because it isn't signed with an Alpine key; the signed
-`checksums.txt` is what vouches for it.
+Pick the format your distribution uses (`jenticctl_…` instead of `jentic_…`
+for the admin host), and download it together with the signed checksums:
+
+```bash
+EXT=deb    # deb (Debian / Ubuntu) | rpm (Fedora / RHEL) | apk (Alpine)
+PKG="jentic_${VER}_linux_${ARCH}.${EXT}"
+curl -fsSLO "${BASE}/${PKG}"
+curl -fsSLO "${BASE}/checksums.txt"
+curl -fsSLO "${BASE}/checksums.txt.sig"
+curl -fsSLO "${BASE}/checksums.txt.pem"
+```
+
+The packages carry no signature of their own: the cosign signature on
+`checksums.txt` is what vouches for them. Verify before installing — the same
+two checks as in [Verify](#verify), limited to the one package:
+
+```bash
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity "https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/v${VER}" \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+grep " ${PKG}\$" checksums.txt | sha256sum --check -    # macOS: shasum -a 256 -c -
+```
+
+Then install it with the package manager:
+
+```bash
+sudo apt install "./${PKG}"                     # Debian / Ubuntu
+sudo dnf install "./${PKG}"                     # Fedora / RHEL
+sudo apk add --allow-untrusted "./${PKG}"       # Alpine
+```
+
+There is no package repository and the packages are not signed with a
+distribution key, so `apt upgrade` / `dnf upgrade` don't pick up new releases:
+download, verify and install the newer package the same way. The `.apk` needs
+`--allow-untrusted` for the same reason (it carries no Alpine key); the
+checksum verification above is the check that replaces it.
+
+`jenticctl update` recognises a binary under `/usr/bin` as package-owned and
+leaves it to the package manager (`--stack-only` still refreshes the stack).
+The [one-line installer script](#one-line-installer-script) installs under
+`~/.jentic/bin` instead; running it on a host that already has the packages
+leaves two copies, and whichever comes first on `PATH` wins.
 
 ## One-line installer script
 

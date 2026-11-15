@@ -54,7 +54,9 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      channels: the Homebrew cask, a winget manifest PR against
      `microsoft/winget-pkgs`, and the scoop bucket manifest. It also attaches
      `.deb` / `.rpm` / `.apk` packages per binary to the release (no package
-     repository, so nothing to provision). The winget/scoop
+     repository, so nothing to provision). The packages are listed in the
+     cosign-signed `checksums.txt` but are not signed individually and have no
+     SBOM of their own (the syft SBOMs cover the archives). The winget/scoop
      publishes are token-gated: with `WINGET_TOKEN` / `SCOOP_BUCKET_TOKEN`
      unset the entry is skipped (logged, never fails the release) — see the
      one-time setup below.
