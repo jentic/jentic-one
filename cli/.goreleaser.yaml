@@ -199,6 +199,9 @@ release:
   # release-please already created the GitHub Release + notes; attach artifacts
   # to it rather than letting GoReleaser generate its own notes.
   mode: append
+  # A re-run of the release job uploads the same asset names again; replace them
+  # instead of failing on the first duplicate, so "Re-run failed jobs" converges.
+  replace_existing_artifacts: true
 
 changelog:
   disable: true

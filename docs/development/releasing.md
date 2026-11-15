@@ -34,7 +34,9 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      serves every surface via `JENTIC__APPS`; this is the image self-hosters
      pull — see
      [`docs/installation/docker.md`](../installation/docker.md).
-   - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
+   - **release** — first builds the host `jentic` binary and asserts its
+     `--version` equals the tag (before anything is uploaded), then GoReleaser
+     builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and publishes the package
      channels: the Homebrew cask, a winget manifest PR against
      `microsoft/winget-pkgs`, and the scoop bucket manifest. The winget/scoop
@@ -63,6 +65,20 @@ Two states worth knowing by name:
   digest echoed by the *first* run then no longer matches the tag — anyone
   who pinned it keeps the old (still-signed) image. Prefer "Re-run failed
   jobs" precisely to avoid this.
+- **Re-running the `release` (GoReleaser) job**: the GitHub Release is created
+  by release-please before any gate runs, and GoReleaser attaches assets to it
+  (`mode: append`). `replace_existing_artifacts` is enabled, so a re-run uploads
+  the same asset names over the existing ones instead of failing on the first
+  duplicate. The binary version check now runs before GoReleaser, so a
+  mismatched binary stops the job before anything is uploaded or any package
+  channel is touched. Not covered: re-running after the Homebrew cask, scoop
+  or winget publish steps already ran has not been exercised (the cask and
+  scoop pushes are commits to separate repositories; the winget publish opens a
+  pull request and pushes a branch that already exists on a re-run). If a re-run
+  fails in one of those steps, recover with a superseding release
+  (`Release-As`, below) instead of repeating it. The Release is public from the
+  moment it is created (`draft: false`), and `jentic update` follows git tags, so
+  a failed release run is visible to users until a good one supersedes it.
 
 When the run can't be recovered in place (the workflow itself needs a fix),
 force a fresh release instead. release-please only opens a Release PR when
