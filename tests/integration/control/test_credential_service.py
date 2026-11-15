@@ -40,6 +40,7 @@ from jentic_one.control.repos import (
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
     ImmutableFieldError,
@@ -74,7 +75,7 @@ from jentic_one.shared.config import (
     EgressConfig,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.errors import DatabaseDataError
+from jentic_one.shared.db.errors import DatabaseDataError, DatabaseUnavailableError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
@@ -2380,3 +2381,183 @@ async def test_create_oauth2_supported_grants_preserve_required_fields(
         "device_authorization_credentials": 0,
         "oauth_tokens": 0,
     }
+
+
+async def test_update_oauth2_client_secret_rotation_acquires_lock_and_drops_token(
+    svc: CredentialService,
+    clean_credentials: None,
+    control_db: DatabaseSession,
+    integration_context: Context,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rotating client_secret acquires the refresh lock and drops cached oauth_tokens."""
+    created = await svc.create(_auth_code_create("Rotate secret"), identity=_ADMIN_IDENTITY)
+    cid = created.credential_id
+    await _connect(control_db, cid)
+
+    real_lock = OAuthTokenRepository.acquire_refresh_lock
+    locked_ids: list[str] = []
+
+    async def spy_lock(session: Any, credential_id: str) -> None:
+        locked_ids.append(credential_id)
+        await real_lock(session, credential_id)
+
+    monkeypatch.setattr(OAuthTokenRepository, "acquire_refresh_lock", staticmethod(spy_lock))
+
+    updated = await svc.update(
+        cid,
+        CredentialUpdate(
+            type=CredentialType.OAUTH2,
+            client_secret="ac-secret-rotated-2",  # pragma: allowlist secret
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert locked_ids == [cid]
+    assert isinstance(updated.details, OAuth2Redacted)
+    assert updated.details.connected is False
+    assert not await _has_token(control_db, cid)
+
+    async with integration_context.admin_db.session() as session:
+        entries = await AuditRepository.list_by_target(session, AuditTargetType.CREDENTIAL, cid)
+    updates = [e for e in entries if e.action == AuditAction.UPDATE]
+    assert updates[-1].after is not None
+    assert updates[-1].after.get("oauth_token_dropped") is True
+
+
+async def test_update_oauth2_scope_invalidation_across_grant_types(
+    svc: CredentialService,
+    clean_credentials: None,
+    control_db: DatabaseSession,
+) -> None:
+    """Scope narrowing drops interactive tokens; any scope edit drops client_credentials."""
+    # 1. authorization_code: widening keeps token, narrowing drops token.
+    ac = await svc.create(
+        _auth_code_create("AC scopes").model_copy(update={"scopes": ["read", "write"]}),
+        identity=_ADMIN_IDENTITY,
+    )
+    await _connect(control_db, ac.credential_id)
+    widened = await svc.update(
+        ac.credential_id,
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read", "write", "admin"]),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(widened.details, OAuth2Redacted)
+    assert widened.details.connected is True
+    assert await _has_token(control_db, ac.credential_id)
+
+    narrowed = await svc.update(
+        ac.credential_id,
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read", "admin"]),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(narrowed.details, OAuth2Redacted)
+    assert narrowed.details.connected is False
+    assert not await _has_token(control_db, ac.credential_id)
+
+    # 2. client_credentials: even widening drops cached token so next call mints fresh scopes.
+    cc = await svc.create(
+        CredentialCreate(
+            type=CredentialType.OAUTH2,
+            name="CC scopes",
+            api=_api(),
+            grant_type="client_credentials",
+            token_url="https://auth.example.com/token",
+            client_id="cc-client",
+            client_secret="cc-secret",  # pragma: allowlist secret
+            scopes=["read"],
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    await _connect(control_db, cc.credential_id)
+    await svc.update(
+        cc.credential_id,
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read", "write"]),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert not await _has_token(control_db, cc.credential_id)
+
+    # 3. device_code: widening keeps token, narrowing drops token.
+    dc = await svc.create(
+        _device_code_create("DC scopes").model_copy(update={"scopes": ["read", "write"]}),
+        identity=_ADMIN_IDENTITY,
+    )
+    await _connect(control_db, dc.credential_id)
+    dc_widened = await svc.update(
+        dc.credential_id,
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read", "write", "admin"]),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(dc_widened.details, OAuth2Redacted)
+    assert dc_widened.details.connected is True
+    assert await _has_token(control_db, dc.credential_id)
+
+    dc_narrowed = await svc.update(
+        dc.credential_id,
+        CredentialUpdate(type=CredentialType.OAUTH2, scopes=["read"]),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(dc_narrowed.details, OAuth2Redacted)
+    assert dc_narrowed.details.connected is False
+    assert not await _has_token(control_db, dc.credential_id)
+
+
+async def test_delete_propagates_admin_binding_failure_and_keeps_retry_idempotent(
+    svc: CredentialService,
+    clean_credentials: None,
+    integration_config: AppConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An admin-DB binding cleanup failure aborts before removing control.credentials."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="Retryable delete",
+            api=_api(),
+            token="tok-retry",  # pragma: allowlist secret
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    cid = created.credential_id
+
+    real_delete_bindings = EffectsRepository.delete_bindings_for_credential
+    fail_once = True
+
+    async def flaky_delete_bindings(session: Any, *, credential_id: str) -> Any:
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise DatabaseUnavailableError("admin_db unavailable")
+        return await real_delete_bindings(session, credential_id=credential_id)
+
+    monkeypatch.setattr(
+        EffectsRepository,
+        "delete_bindings_for_credential",
+        staticmethod(flaky_delete_bindings),
+    )
+
+    with pytest.raises(DatabaseUnavailableError, match="admin_db unavailable"):
+        await svc.delete(cid, identity=_ADMIN_IDENTITY)
+
+    # Credential still exists so retry converges rather than failing with 404.
+    still_there = await svc.get(cid, identity=_ADMIN_IDENTITY)
+    assert still_there.credential_id == cid
+
+    await svc.delete(cid, identity=_ADMIN_IDENTITY)
+    with pytest.raises(CredentialNotFoundError):
+        await svc.get(cid, identity=_ADMIN_IDENTITY)
+
+    # Standalone control surface without admin DB skips binding cleanup gracefully.
+    async with Context(integration_config, allowed_dbs={"control"}) as control_only_ctx:
+        control_only_svc = CredentialService(control_only_ctx)
+        standalone = await control_only_svc.create(
+            CredentialCreate(
+                type=CredentialType.BEARER_TOKEN,
+                name="Control only",
+                api=_api(),
+                token="tok-standalone",  # pragma: allowlist secret
+            ),
+            identity=_ADMIN_IDENTITY,
+        )
+        await control_only_svc.delete(standalone.credential_id, identity=_ADMIN_IDENTITY)
+        with pytest.raises(CredentialNotFoundError):
+            await control_only_svc.get(standalone.credential_id, identity=_ADMIN_IDENTITY)

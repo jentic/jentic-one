@@ -66,3 +66,44 @@ async def cancel_queued_executions_for_actor(
         cancelled_jobs=len(job_ids),
     )
     return len(job_ids)
+
+
+async def _exec_driver_uid(conn: Any, sql_template: str, user_id: str) -> Any:
+    """Execute parameterized SQL for ``user_id`` using the active driver's paramstyle."""
+    style = conn.dialect.paramstyle
+    if style == "qmark":
+        return await conn.exec_driver_sql(sql_template.format(p="?"), (user_id,))
+    if style == "named":
+        return await conn.exec_driver_sql(sql_template.format(p=":uid"), {"uid": user_id})
+    return await conn.exec_driver_sql(sql_template.format(p="%s"), (user_id,))
+
+
+async def deactivate_user_control_resources(session: Any, *, user_id: str) -> list[str]:
+    """Deactivate ``user_id``'s control-DB credentials, drop tokens, and cancel open sessions."""
+    conn = await session.connection()
+    rows = await _exec_driver_uid(
+        conn,
+        "SELECT id FROM credentials WHERE created_by = CAST({p} AS VARCHAR) ORDER BY id",
+        user_id,
+    )
+    credential_ids = [str(row[0]) for row in rows.all()]
+    await _exec_driver_uid(
+        conn,
+        "DELETE FROM oauth_tokens WHERE credential_id IN "
+        "(SELECT id FROM credentials WHERE created_by = CAST({p} AS VARCHAR))",
+        user_id,
+    )
+    await _exec_driver_uid(
+        conn,
+        "UPDATE credentials SET active = FALSE WHERE created_by = CAST({p} AS VARCHAR)",
+        user_id,
+    )
+    await _exec_driver_uid(
+        conn,
+        "UPDATE connect_sessions SET state = 'failed', error_code = 'cancelled' "
+        "WHERE initiator_actor_id = CAST({p} AS VARCHAR) "
+        "AND state IN ('created', 'awaiting_app', 'polling')",
+        user_id,
+    )
+    session.expire_all()
+    return credential_ids

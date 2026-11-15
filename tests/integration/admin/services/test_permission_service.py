@@ -32,9 +32,12 @@ from jentic_one.admin.services.errors import (
     OrgAdminGrantForbiddenError,
     PermissionNotGrantableError,
     UnknownPermissionError,
+    UserNotFoundError,
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.schemas.auth import LoginPayload
+from jentic_one.admin.services.schemas.users import UserCreatePayload
+from jentic_one.admin.services.user_service import UserService
 from jentic_one.shared.audit import AuditAction
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS, RETIRED_PERMISSIONS
@@ -400,3 +403,34 @@ async def test_replace_permissions_returns_the_replaced_grants(
         )
     assert replaced == {USERS_READ, EVENTS_READ}
     assert [g.permission for g in grants] == [USERS_WRITE]
+
+
+async def test_set_assigned_out_of_scope_user_returns_not_found_before_grant_validation(
+    integration_context: Context, admin_user: str, regular_user: str
+) -> None:
+    """Out-of-scope targets answer uniform 404 before grant validation inspects payload."""
+    caller = Identity(sub=regular_user, email="regular@local", permissions=[USERS_WRITE])
+    service = PermissionService(integration_context)
+    for requested in (["nonexistent:perm"], [ORG_ADMIN], [EVENTS_WRITE]):
+        with pytest.raises(UserNotFoundError):
+            await service.set_assigned(admin_user, requested, identity=caller)
+
+
+async def test_user_create_validates_grants_inside_transaction(
+    integration_context: Context, regular_user: str
+) -> None:
+    """UserService.create validates requested permissions inside the write transaction."""
+    caller = Identity(sub=regular_user, email="regular@local", permissions=[USERS_WRITE])
+    with pytest.raises(PermissionNotGrantableError):
+        await UserService(integration_context).create(
+            UserCreatePayload(
+                email="ungrantable-create@test.local",
+                first_name="No",
+                last_name="Grant",
+                permissions=[EVENTS_WRITE],
+            ),
+            identity=caller,
+        )
+    async with integration_context.admin_db.session() as session:
+        created = await UserRepository.get_by_email(session, "ungrantable-create@test.local")
+    assert created is None

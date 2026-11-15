@@ -18,10 +18,14 @@ import pytest
 from sqlalchemy import delete, or_, select
 
 from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import JobRepository
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import JobKind, JobStatus
@@ -250,3 +254,109 @@ async def test_reenable_does_not_resurrect_cancelled_jobs(env: _Env, lifecycle: 
 
     assert (await _statuses(env.ctx, [queued]))[queued] == (JobStatus.CANCELLED, None)
     assert len(await _cancel_audits(env.ctx, actor_id)) == 1
+
+
+@pytest.mark.parametrize("action", ["disable", "delete"])
+async def test_user_lifecycle_cascades_to_owned_agents_and_control_resources(
+    env: _Env, action: str
+) -> None:
+    """User disable/delete sweeps owned-agent jobs/holds and deactivates control resources."""
+    user_id = await _seed_user(env)
+    owned_agent_id = await seeds.seed_agent(env.ctx, owner_id=user_id, scopes=["apis:read"])
+    env.actor_ids.append(owned_agent_id)
+
+    queued_agent_job = await env.job(owned_agent_id)
+    held_agent_job = await env.job(owned_agent_id, status=JobStatus.HELD)
+
+    hold_id = f"held_cascade_{action}"[:30]
+    cred_id = f"cred_cascade_{action}"[:30]
+    session_id = f"cs_cascade_{action}"[:30]
+    try:
+        async with env.ctx.admin_db.transaction() as session:
+            session.add(
+                HeldExecution(
+                    id=hold_id,
+                    job_id=held_agent_job,
+                    agent_id=owned_agent_id,
+                    credential_id=cred_id,
+                    api_vendor="acme",
+                    api_name="widgets",
+                    api_version="v1",
+                    method="POST",
+                    path="/widgets",
+                    request_fingerprint=f"fp_cascade_{action}".ljust(64, "0"),
+                    state="pending",
+                    expires_at=datetime.now(UTC) + timedelta(minutes=30),
+                    created_by=owned_agent_id,
+                )
+            )
+        async with env.ctx.control_db.transaction() as session:
+            session.add(
+                Credential(
+                    id=cred_id,
+                    type="oauth2_authorization_code",
+                    name=f"User Cred {action}",
+                    api_vendor="acme",
+                    api_name="widgets",
+                    api_version="v1",
+                    provider="direct_oauth2",
+                    active=True,
+                    created_by=user_id,
+                )
+            )
+            await session.flush()
+            session.add(
+                OAuthToken(
+                    credential_id=cred_id,
+                    encrypted_access_token="enc-at",  # pragma: allowlist secret
+                    encrypted_refresh_token="enc-rt",  # pragma: allowlist secret
+                    created_by=user_id,
+                )
+            )
+            session.add(
+                ConnectSession(
+                    id=session_id,
+                    credential_id=cred_id,
+                    vendor="acme",
+                    agent_id=owned_agent_id,
+                    initiator_actor_id=user_id,
+                    state="created",
+                    resolved_flow="oauth2_authorization_code",
+                    poll_token_hash=f"poll_hash_{action}".ljust(64, "a"),
+                    created_by=user_id,
+                )
+            )
+
+        if action == "disable":
+            await _user_disable(env, user_id)
+        else:
+            await _user_delete(env, user_id)
+
+        statuses = await _statuses(env.ctx, [queued_agent_job, held_agent_job])
+        assert statuses[queued_agent_job] == (JobStatus.CANCELLED, None)
+        assert statuses[held_agent_job] == (JobStatus.CANCELLED, None)
+
+        async with env.ctx.admin_db.session() as session:
+            hold = await session.get(HeldExecution, hold_id)
+            assert hold is not None
+            assert hold.state == "withdrawn"
+
+        async with env.ctx.control_db.session() as session:
+            cred = await session.get(Credential, cred_id)
+            assert cred is not None
+            assert cred.active is False
+            tok = (
+                await session.execute(select(OAuthToken).where(OAuthToken.credential_id == cred_id))
+            ).scalar_one_or_none()
+            assert tok is None
+            cs = await session.get(ConnectSession, session_id)
+            assert cs is not None
+            assert cs.state == "failed"
+            assert cs.error_code == "cancelled"
+    finally:
+        async with env.ctx.admin_db.transaction() as session:
+            await session.execute(delete(HeldExecution).where(HeldExecution.id == hold_id))
+        async with env.ctx.control_db.transaction() as session:
+            await session.execute(delete(ConnectSession).where(ConnectSession.id == session_id))
+            await session.execute(delete(OAuthToken).where(OAuthToken.credential_id == cred_id))
+            await session.execute(delete(Credential).where(Credential.id == cred_id))

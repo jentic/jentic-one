@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
@@ -16,7 +17,10 @@ from jentic_one.admin.repos import (
     UserSecretRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
+from jentic_one.admin.services._support.actor_jobs import (
+    cancel_queued_executions_for_actor,
+    deactivate_user_control_resources,
+)
 from jentic_one.admin.services._support.oauth_sweep import sweep_user_oauth_credentials
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
@@ -43,6 +47,7 @@ from jentic_one.admin.services.schemas.users import (
 from jentic_one.admin.services.user_hooks import run_user_deleted_hooks
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
@@ -183,10 +188,10 @@ class UserService:
     async def create(self, payload: UserCreatePayload, *, identity: Identity) -> UserCreatedView:
         granted_by = identity.sub
         perm_service = PermissionService(self._ctx)
-        if payload.permissions:
-            await perm_service.validate_grants(granted_by, payload.permissions)
 
         async with self._ctx.admin_db.transaction() as session:
+            if payload.permissions:
+                await perm_service.validate_grants(granted_by, payload.permissions, session=session)
             existing = await UserRepository.get_by_email(session, payload.email)
             if existing is not None:
                 raise EmailAlreadyExistsError(payload.email)
@@ -394,7 +399,8 @@ class UserService:
         included: that is how an operator re-runs a hook that failed.
         """
         owned_agent_ids = await self._delete_in_transaction(user_id, identity=identity)
-        self._invalidate_broker_caches(user_id, owned_agent_ids)
+        deactivated_credential_ids = await self._sweep_control_for_user(user_id)
+        self._invalidate_broker_caches(user_id, owned_agent_ids, deactivated_credential_ids)
         await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
     async def _delete_in_transaction(self, user_id: str, *, identity: Identity) -> list[str]:
@@ -423,6 +429,22 @@ class UserService:
                 cause="was deleted",
                 identity=identity,
             )
+            for agent_id in owned_agent_ids:
+                await withdraw_pending_for_agent(
+                    session,
+                    agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                    origin=identity.origin.value,
+                    reason="agent owner was deleted",
+                )
+                await cancel_queued_executions_for_actor(
+                    session,
+                    actor_id=agent_id,
+                    target_type=AuditTargetType.AGENT,
+                    cause="owner was deleted",
+                    identity=identity,
+                )
             await AuditRepository.record(
                 session,
                 action=AuditAction.DELETE,
@@ -463,6 +485,22 @@ class UserService:
                 cause="was disabled",
                 identity=identity,
             )
+            for agent_id in owned_agent_ids:
+                await withdraw_pending_for_agent(
+                    session,
+                    agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                    origin=identity.origin.value,
+                    reason="agent owner was disabled",
+                )
+                await cancel_queued_executions_for_actor(
+                    session,
+                    actor_id=agent_id,
+                    target_type=AuditTargetType.AGENT,
+                    cause="owner was disabled",
+                    identity=identity,
+                )
             await AuditRepository.record(
                 session,
                 action=AuditAction.DISABLE,
@@ -474,7 +512,8 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DISABLE, "target_type": AuditTargetType.USER}
             )
-        self._invalidate_broker_caches(user_id, owned_agent_ids)
+        deactivated_credential_ids = await self._sweep_control_for_user(user_id)
+        self._invalidate_broker_caches(user_id, owned_agent_ids, deactivated_credential_ids)
         return True
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
@@ -499,7 +538,19 @@ class UserService:
         self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
 
-    def _invalidate_broker_caches(self, user_id: str, owned_agent_ids: list[str]) -> None:
+    async def _sweep_control_for_user(self, user_id: str) -> list[str]:
+        """Deactivate control-DB credentials and cancel open connect sessions for ``user_id``."""
+        if self._ctx.is_db_allowed("control") is not True:
+            return []
+        async with self._ctx.control_db.transaction() as session:
+            return await deactivate_user_control_resources(session, user_id=user_id)
+
+    def _invalidate_broker_caches(
+        self,
+        user_id: str,
+        owned_agent_ids: list[str],
+        credential_ids: Sequence[str] = (),
+    ) -> None:
         """Evict the broker's cached verdicts for ``user_id`` and the agents it owns.
 
         Runs after the account change commits. An owned agent's effective
@@ -513,6 +564,8 @@ class UserService:
         self._ctx.invalidate_broker_caches(user_id=user_id)
         for agent_id in owned_agent_ids:
             self._ctx.invalidate_broker_caches(agent_id=agent_id)
+        for credential_id in credential_ids:
+            self._ctx.invalidate_broker_caches(credential_id=credential_id)
 
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:
