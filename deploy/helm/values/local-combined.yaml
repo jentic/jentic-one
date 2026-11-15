@@ -23,6 +23,11 @@ app:
     # specs from in-cluster ClusterIPs (kind service CIDR is in 10/8).
     JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
     JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
+    # The smoke suite registers an agent per test from one client address, so the
+    # default per-network registration limit (10/min, burst 5) would answer 429.
+    # LOCAL/SMOKE-ONLY: never raise this for a real deployment.
+    JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM: "100000"
+    JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST: "100000"
   resources:
     requests:
       cpu: 250m
