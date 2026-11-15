@@ -18,8 +18,8 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `AppContainer` | `jentic_one.shared.web.container` | Inject a `Broker`; mount extra routers/installers after the built-in surfaces. |
 | `AppContainer.unregistered_url_handler` | `jentic_one.shared.web.container` (contract: `jentic_one.shared.web.protocols.UnregisteredUrlHandler`) | Intercept broker traffic to unregistered METHOD+URLs at the sync web edge: return a `Response` to short-circuit, or `None` for today's 404. Fires only on the standalone broker app — wire it via `jentic_one.broker.web.app.create_app`. |
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
-| `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
-| `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
+| `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target (including custom `version_locations`) to the ordered upgrade/rollback sequence. |
+| `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events (and import `EventType`) without editing the closed enum. |
 | `register_strategy` | `jentic_one.registry.repos.search.registry` | Register a `SearchStrategy` under a new `(dialect, search_mode)` pair. Declare an optional `from_config(config, *, app_config=None)` classmethod (`ConfigurableSearchStrategy`) to receive the active `SearchConfig` and the booted `AppConfig` at resolve time; raise `SearchUnsupportedError` (resolve or query time) for the 501 `search_unsupported` problem. |
 | `resolve_strategy_by_name` | `jentic_one.registry.repos.search` | Composition seam: a composite strategy (e.g. a hybrid fusing lexical + semantic) resolves its children by `(dialect, name)` instead of importing their modules, so it uses whatever is registered under that key. Raises `SearchUnsupportedError` naming the available modes when the key is unknown. |
 | `ACTIVE_REVISION_STATES` / `search_filter_clause` | `jentic_one.registry.repos.search` | The shared pin/active-state/api-filter contract every strategy applies, so composite strategies fuse filter-identical result sets. Use `search_filter_clause(api_filters=..., revision_pins=...)` on a statement that joins `ApiRevision`; hand-written SQL builds its state predicate from `ACTIVE_REVISION_STATES`. |
@@ -27,9 +27,9 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `register_state_backend` | `jentic_one.shared.state` | Register a shared-state backend (rate-limit buckets, circuit counters, `Idempotency-Key` records, auth single-use markers) under a name operators select with `state.backend`. The builder receives a `StateBackendBuildContext` (the `state:` section, whose free-form `options` mapping it validates itself, and the process's surface set) and returns a `SharedStateBackend`. The process builds one backend at app assembly, shares it across every surface it serves, and closes it once at shutdown; an unregistered name fails startup listing the registered ones. `memory` (the default) and `redis` (deprecated) are built in. Prove it with `BaseStateBackendContract`. |
 | `register_access_filter_provider` | `jentic_one.control.scoping.filters` | OR an extra read-only visibility clause into control-surface read filters (`include_shared=True` call sites only; writes stay owner-scoped). Any table the clause references must be readable by the control DB role. Inspect registered providers via `access_filter_providers()`. |
 | `register_user_deleted_hook` | `jentic_one.admin.services.user_hooks` | Run an async `fn(ctx, user_id, identity)` after a user delete commits, e.g. to clean up the extension's own per-user rows. Hooks run inside the delete request, each bounded by `USER_DELETED_HOOK_TIMEOUT_S` (10 s). Best effort, not durable: a hook that raises or times out is logged, counted (`admin.user_deleted_hook.failures`) and skipped, and nothing retries it automatically. Hooks must be idempotent: deleting an already-deleted user runs them again. |
-| `jentic_one.composition` | `jentic_one.composition` | Public composition entrypoints (`build_app`, `build_context`, `expand_allowed_dbs`) that assemble a `Context` and `FastAPI` app through the same path `jentic-one serve` uses. |
+| `jentic_one.composition` | `jentic_one.composition` | Public composition and CLI entrypoints (`build_app`, `build_context`, `build_default_container`, `expand_allowed_dbs`, `run_cli`) that assemble an `AppContainer`, `Context`, and `FastAPI` app through the same path `jentic-one serve` uses. |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
-| `jentic_one.testing.introspect` | `jentic_one.testing.introspect` | Read-only route and scoping introspection (`build_app`, `route_facts`, `scoped_tables`, `access_filter_providers`, `RouteFact`, `ScopedTable`, `INTROSPECTION_SCHEMA`) for downstream architecture and security gates. |
+| `jentic_one.testing.introspect` | `jentic_one.testing.introspect` | Read-only route, MCP tool, and scoping introspection (`build_app`, `route_facts`, `mcp_tool_facts`, `scoped_tables`, `access_filter_providers`, `RouteFact`, `McpToolFact`, `ScopedTable`, `INTROSPECTION_SCHEMA`) for downstream architecture and security gates. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
 
 All Python registries are process-global and populated **at import time** (e.g.
@@ -63,7 +63,8 @@ class MyExtConfig(BaseModel):
 register_config("my_ext", MyExtConfig)
 
 # An isolated migration target. Insertion order is the canonical UPGRADE order;
-# rollback reverses it. Register after the built-ins so it upgrades last.
+# rollback reverses it. Register after the built-ins so it upgrades last. Pass
+# version_locations=(...,) when your package ships its own Alembic revisions.
 register_target(MigrationTarget("my_ext", RegistryBase.metadata))
 
 # Forward an extra telemetry event. Wire names are lower_snake_case; collisions
@@ -150,33 +151,41 @@ every `SharedStateBackend` method atomically across processes; subclass
 
 ### 2. Build an `AppContainer` and compose the app
 
-Start from the default container and add your `Broker` and any extra
-routers/installers. Extra routers and installers run **after** all built-in
-surfaces, so they mount last and never shadow a built-in route. The exception
-is a surface's root `/{name:path}` catch-all (the standalone broker's forward
+Start from `build_default_container(ctx, apps=apps)` so built-in surface
+installers and lifespans (such as `/mcp` and the credential-creator lookup) stay
+wired, layer on your `Broker` and any extra routers/installers with
+`dataclasses.replace`, and pass `container=container` to
+`composition.build_app(ctx, apps, container=container)` (which delegates to
+`create_combined_app` on multi-surface shapes and to each surface factory on
+single-surface shapes). Extra routers and installers run **after** all built-in
+surfaces, so they mount last and never shadow a built-in route. The exception is
+a surface's root `/{name:path}` catch-all (the standalone broker's forward
 proxy), which `create_surface_app` includes after the extensions so it never
 shadows an extra router either.
 
 ```python
+from dataclasses import replace
+
 from fastapi import APIRouter
 
+from jentic_one.composition import build_app as compose_app, build_default_container
 from jentic_one.shared.context import Context
-from jentic_one.shared.web.app_factory import create_combined_app
-from jentic_one.shared.web.container import AppContainer
 
 from my_ext.broker import MyBroker
 
 my_router = APIRouter()  # your extra routes
 
 
-def build_app(ctx: Context):
-    container = AppContainer(
-        ctx=ctx,
+def build_app(ctx: Context, apps: list[str] | None = None):
+    active_apps = list(ctx.config.apps if apps is None else apps)
+    base = build_default_container(ctx, apps=active_apps)
+    container = replace(
+        base,
         broker=MyBroker(...),  # injected data-plane broker
-        extra_routers=[(my_router, "/my-ext", ["my-ext"])],
-        extra_installers=[lambda app, ctx: ...],  # runs against the root app last
+        extra_routers=(*base.extra_routers, (my_router, "/my-ext", ["my-ext"])),
+        extra_installers=(*base.extra_installers, lambda app, ctx: ...),
     )
-    return create_combined_app(ctx, ctx.config.apps, container=container)
+    return compose_app(ctx, active_apps, container=container)
 ```
 
 The container stashes your `broker` on `app.state.broker`. It is honored by
@@ -312,12 +321,14 @@ downstream architecture suite without importing private `_` symbols, use
 from jentic_one.testing.introspect import (
     access_filter_providers,
     build_app,
+    mcp_tool_facts,
     route_facts,
     scoped_tables,
 )
 
 app = build_app(["control", "admin", "auth", "registry"])
 facts = route_facts(app)
+tools = mcp_tool_facts()
 tables = scoped_tables()
 providers = access_filter_providers()
 ```

@@ -48,10 +48,12 @@ from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.testing import introspect as introspect_module
 from jentic_one.testing.introspect import (
     INTROSPECTION_SCHEMA,
+    McpToolFact,
     RouteFact,
     ScopedTable,
     access_filter_providers,
     build_app,
+    mcp_tool_facts,
     route_facts,
     scoped_tables,
 )
@@ -63,10 +65,12 @@ pytestmark = pytest.mark.arch
 
 EXPECTED_ALL = [
     "INTROSPECTION_SCHEMA",
+    "McpToolFact",
     "RouteFact",
     "ScopedTable",
     "access_filter_providers",
     "build_app",
+    "mcp_tool_facts",
     "route_facts",
     "scoped_tables",
 ]
@@ -82,6 +86,14 @@ EXPECTED_ROUTE_FACT_FIELDS = (
     "in_schema",
     "auth_via",
     "opaque",
+)
+
+EXPECTED_MCP_TOOL_FACT_FIELDS = (
+    "name",
+    "has_handler",
+    "module",
+    "permissions",
+    "scopes",
 )
 
 EXPECTED_SCOPED_TABLE_FIELDS = (
@@ -105,10 +117,12 @@ def test_introspect_all_and_schema_constant() -> None:
 
 
 def test_introspect_dataclass_fields() -> None:
-    """``RouteFact`` and ``ScopedTable`` are frozen kw-only dataclasses with pinned field order."""
+    """Introspection fact dataclasses are frozen kw-only dataclasses with pinned field order."""
     assert tuple(f.name for f in dataclasses.fields(RouteFact)) == EXPECTED_ROUTE_FACT_FIELDS
+    assert tuple(f.name for f in dataclasses.fields(McpToolFact)) == EXPECTED_MCP_TOOL_FACT_FIELDS
     assert tuple(f.name for f in dataclasses.fields(ScopedTable)) == EXPECTED_SCOPED_TABLE_FIELDS
     assert RouteFact.__dataclass_params__.frozen is True  # type: ignore[attr-defined]
+    assert McpToolFact.__dataclass_params__.frozen is True  # type: ignore[attr-defined]
     assert ScopedTable.__dataclass_params__.frozen is True  # type: ignore[attr-defined]
 
 
@@ -131,6 +145,9 @@ def test_introspect_function_signatures() -> None:
 
     providers_sig = inspect.signature(access_filter_providers)
     assert list(providers_sig.parameters) == []
+
+    mcp_tools_sig = inspect.signature(mcp_tool_facts)
+    assert list(mcp_tools_sig.parameters) == []
 
 
 def test_scoped_tables_parity_with_scoping_filters_and_children() -> None:
