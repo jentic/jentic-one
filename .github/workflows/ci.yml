@@ -1684,6 +1684,8 @@ jobs:
       matrix: ${{ fromJson(needs.upgrade-matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
 
       - name: Download candidate image artifact
         uses: actions/download-artifact@v7
