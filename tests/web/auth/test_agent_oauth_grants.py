@@ -26,6 +26,7 @@ from jentic_one.admin.repos import (
     OAuthClientRepository,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorStatus
 from tests.web.auth.conftest import _build_app, _make_agent_token, assert_same_response
 
 pytestmark = pytest.mark.integration
@@ -114,7 +115,7 @@ def test_agent_outside_caller_visibility_is_404_like_missing(
 
 @pytest.fixture()
 async def sibling_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenerator[str, None]:
-    """A second agent of the owner user, a sibling of ``test_agent_id``."""
+    """A second active agent of the owner user, a sibling of ``test_agent_id``."""
     async with web_context.admin_db.transaction() as session:
         agent = await AgentRepository.create(
             session,
@@ -122,6 +123,7 @@ async def sibling_agent_id(web_context: Context, owner_user_id: str) -> AsyncGen
             owner_id=owner_user_id,
             registered_by=owner_user_id,
             created_by="usr_test",
+            status=ActorStatus.ACTIVE,
         )
     yield agent.id
 
@@ -131,7 +133,7 @@ async def sibling_agent_id(web_context: Context, owner_user_id: str) -> AsyncGen
 
 
 @pytest.mark.parametrize("caller", ["sibling", "self"])
-def test_agent_caller_who_does_not_own_the_agent_matches_unknown_id(
+async def test_agent_caller_who_does_not_own_the_agent_matches_unknown_id(
     web_context: Context,
     owner_client: TestClient,
     owner_user_id: str,
@@ -144,6 +146,11 @@ def test_agent_caller_who_does_not_own_the_agent_matches_unknown_id(
     That covers a sibling agent reading through owner delegation and the
     agent itself. The owner still lists the agent's grants.
     """
+    if caller == "self":
+        async with web_context.admin_db.transaction() as session:
+            row = await session.get(Agent, test_agent_id)
+            assert row is not None
+            row.status = ActorStatus.ACTIVE
     caller_id = sibling_agent_id if caller == "sibling" else test_agent_id
     token = _make_agent_token(web_context, caller_id, owner_user_id, ["owner:agents:read"])
     unknown_id = "agnt_does_not_exist"
@@ -219,6 +226,10 @@ async def test_revoke_grant_by_the_bound_agent_is_403(
     oauth_client_id: str,
 ) -> None:
     """The agent a grant is bound to can see it but did not consent, so it may not revoke it."""
+    async with web_context.admin_db.transaction() as session:
+        row = await session.get(Agent, test_agent_id)
+        assert row is not None
+        row.status = ActorStatus.ACTIVE
     grant_id = await _create_grant(
         web_context, client_id=oauth_client_id, user_id=owner_user_id, agent_id=test_agent_id
     )
