@@ -1607,6 +1607,8 @@ jobs:
 
   upgrade-matrix:
     name: Upgrade test matrix
+    # Report-only: a failure here must not fail the called workflow (release.yml's `ci`).
+    continue-on-error: true
     needs: [changes]
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
     runs-on: ubuntu-latest
@@ -1630,6 +1632,8 @@ jobs:
 
   build-candidate-image:
     name: Build candidate app image
+    # Report-only: a failure here must not fail the called workflow (release.yml's `ci`).
+    continue-on-error: true
     needs: [changes]
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
     runs-on: ubuntu-latest
@@ -1676,6 +1680,8 @@ jobs:
 
   upgrade-test:
     name: Upgrade test (${{ matrix.source }} -> candidate, ${{ matrix.backend }})
+    # Report-only: a failure here must not fail the called workflow (release.yml's `ci`).
+    continue-on-error: true
     needs: [changes, upgrade-matrix, build-candidate-image]
     if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
     runs-on: ubuntu-latest
