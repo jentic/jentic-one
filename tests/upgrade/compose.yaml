@@ -9,10 +9,18 @@
 # Both the old release image and the candidate image share the same fixed test
 # encryption keyset (`JENTIC__CREDENTIALS__ENCRYPTION__*`) and platform secrets
 # so credentials encrypted before the upgrade decrypt after the upgrade.
+#
+# Image selection:
+# - `run.sh` exports `OLD_IMAGE` (ghcr.io/jentic/jentic-one-app:<OLD>) and
+#   `NEW_IMAGE` (the candidate image) and sets `APP_IMAGE="${OLD_IMAGE}"` for
+#   pre-upgrade phases (1-2) and `APP_IMAGE="${NEW_IMAGE}"` for upgrade and
+#   post-upgrade phases (4-6) so a single service definition serves both
+#   lifecycle stages. Direct `docker compose` invocations may set `APP_IMAGE`,
+#   `NEW_IMAGE`, or `OLD_IMAGE`.
 
 name: jentic-upgrade-test
 
-x-image: &image ${APP_IMAGE:-jentic-one/app:candidate}
+x-image: &image ${APP_IMAGE:-${NEW_IMAGE:-${OLD_IMAGE:-jentic-one/app:candidate}}}
 
 x-healthcheck: &healthcheck
   test:
@@ -84,7 +92,7 @@ services:
       retries: 30
 
   smoke-upstream:
-    image: ${SMOKE_UPSTREAM_IMAGE:-${APP_IMAGE:-jentic-one/app:candidate}}
+    image: ${SMOKE_UPSTREAM_IMAGE:-${NEW_IMAGE:-${APP_IMAGE:-jentic-one/app:candidate}}}
     volumes:
       - ../../tests:/work/tests:ro
     working_dir: /work

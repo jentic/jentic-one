@@ -98,7 +98,7 @@ wait_for_health() {
   return 1
 }
 
-OLD_IMAGE="ghcr.io/jentic/jentic-one-app:${OLD}"
+export OLD_IMAGE="ghcr.io/jentic/jentic-one-app:${OLD}"
 pull_with_retry "${OLD_IMAGE}"
 
 if [[ -n "${CANDIDATE}" ]]; then
@@ -115,7 +115,14 @@ else
     -t "${CANDIDATE_IMAGE}" "${REPO_ROOT}" >"${OUT_DIR}/docker-build.log" 2>&1
 fi
 
-export SMOKE_UPSTREAM_IMAGE="${CANDIDATE_IMAGE}"
+export NEW_IMAGE="${CANDIDATE_IMAGE}"
+export SMOKE_UPSTREAM_IMAGE="${NEW_IMAGE}"
+
+if [[ -n "$(git -C "${REPO_ROOT}" tag -l 'v*' 2>/dev/null || true)" ]]; then
+  (cd "${REPO_ROOT}" && uv run python -m tests.upgrade.matrix --verify-git-tags)
+else
+  (cd "${REPO_ROOT}" && uv run python -m tests.upgrade.matrix)
+fi
 
 echo "==> Resetting isolated compose stack (${PROJECT_NAME})"
 compose down -v --remove-orphans >/dev/null 2>&1 || true

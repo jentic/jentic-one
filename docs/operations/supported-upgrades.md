@@ -59,7 +59,8 @@ deployments, outside the rolling `N-1` / `N-2` CI window.
 The machine-readable source of truth for CI is
 [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
 validated on every unit-test run by
-[`tests/unit/test_supported_upgrades.py`](../../tests/unit/test_supported_upgrades.py):
+[`tests/unit/test_supported_upgrades.py`](../../tests/unit/test_supported_upgrades.py)
+and [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py):
 
 - **Source images** are pinned by both release tag (`ghcr.io/jentic/jentic-one-app:X.Y.Z`)
   and multi-arch manifest digest (`sha256:…`) so tag re-pushes cannot silently

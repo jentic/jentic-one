@@ -168,6 +168,7 @@ jobs:
               # tests/unit/test_supported_upgrades.py validates the supported
               # upgrades matrix and its upgrade-notes anchor links.
               - 'tests/upgrade/supported-upgrades.yaml'
+              - 'tests/upgrade/matrix.py'
               - 'docs/operations/upgrade-notes.md'
             integration-tests:
               - 'src/**'
@@ -1586,41 +1587,19 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Emit supported upgrade matrix
+      - name: Validate release tags and emit supported upgrade matrix
         id: set-matrix
         run: |
-          uv run --no-project --python 3.12 --with 'pyyaml>=6' python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          import yaml
-
-          data = yaml.safe_load(Path("tests/upgrade/supported-upgrades.yaml").read_text(encoding="utf-8"))
-          include = []
-          for target in data.get("targets", []):
-              sources = [s for s in target.get("sources", []) if s.get("phase1_enabled") is True]
-              backends = [b for b in target.get("backends", []) if b.get("enabled") is True]
-              for src in sources:
-                  for backend in backends:
-                      include.append(
-                          {
-                              "source": src["tag"],
-                              "digest": src["digest"],
-                              "backend": backend["name"],
-                              "blocking": bool(backend.get("blocking", False)),
-                          }
-                      )
-          if not include:
-              raise SystemExit("No enabled upgrade matrix legs found in tests/upgrade/supported-upgrades.yaml")
-          payload = json.dumps({"include": include}, separators=(",", ":"))
-          print(f"upgrade matrix: {payload}")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write(f"matrix={payload}\n")
-          PY
+          git fetch --tags --force
+          uv run --no-project --python 3.12 --with 'pyyaml>=6' \
+            python -m tests.upgrade.matrix --verify-git-tags --emit-github-matrix
 
   build-candidate-image:
     name: Build candidate app image
@@ -1662,6 +1641,11 @@ jobs:
           name: candidate-image
           path: candidate-image.tar
           retention-days: 1
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "**Candidate image (\`jentic-one/app:candidate\`):** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
 
   upgrade-test:
     name: Upgrade test (${{ matrix.source }} -> candidate, ${{ matrix.backend }})
@@ -1712,21 +1696,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "**Upgrade leg (\`${{ matrix.source }}\` -> \`candidate\` on \`${{ matrix.backend }}\`):** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, coverage, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install, upgrade-test]
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, coverage, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install, upgrade-matrix, build-candidate-image, upgrade-test]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
-        # `needs` covers every job in `needs` above; `coverage` and `upgrade-test`
-        # are report-only (non-required) and excluded from the failure gate.
-        # To make `upgrade-test` blocking after two releases, change the jq
-        # filter below from `del(.coverage, ."upgrade-test")` to `del(.coverage)`.
+        # `needs` covers every job in `needs` above; `coverage` and the three
+        # upgrade pipeline jobs (`upgrade-matrix`, `build-candidate-image`,
+        # `upgrade-test`) are report-only (non-required) during initial rollout
+        # and excluded from the failure gate while still surfaced in the summary
+        # and warnings below. To make the upgrade pipeline blocking after two
+        # releases, change the jq filter below from
+        # `del(.coverage, ."upgrade-matrix", ."build-candidate-image", ."upgrade-test")`
+        # to `del(.coverage)`.
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage, ."upgrade-test") | .[].result')
+          for job_id in upgrade-matrix build-candidate-image upgrade-test; do
+            job_res=$(echo "$NEEDS_JSON" | jq -r --arg j "$job_id" '.[$j].result // "skipped"')
+            if [[ "$job_res" == "failure" || "$job_res" == "cancelled" ]]; then
+              echo "::warning::Report-only upgrade job '$job_id' finished with result '$job_res'"
+            fi
+          done
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Report-only upgrade pipeline status"
+              echo "| Job | Result |"
+              echo "| --- | --- |"
+              for job_id in upgrade-matrix build-candidate-image upgrade-test; do
+                job_res=$(echo "$NEEDS_JSON" | jq -r --arg j "$job_id" '.[$j].result // "skipped"')
+                echo "| \`$job_id\` | \`$job_res\` |"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage, ."upgrade-matrix", ."build-candidate-image", ."upgrade-test") | .[].result')
           for r in $results; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
               echo "One or more required jobs failed or were cancelled"

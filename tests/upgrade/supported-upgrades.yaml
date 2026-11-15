@@ -1,6 +1,6 @@
 # Machine-readable supported upgrade matrix for CI and release gating.
-# Validated by tests/unit/test_supported_upgrades.py and consumed by the
-# upgrade-matrix job in .github/workflows/ci.yml.
+# Validated by tests/unit/test_supported_upgrades.py (via tests/upgrade/matrix.py)
+# and consumed by the upgrade-matrix job in .github/workflows/ci.yml.
 #
 # Policy:
 # - Support window covers the previous two minor releases (N-1 and N-2), each
