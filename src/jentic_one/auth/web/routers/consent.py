@@ -335,6 +335,18 @@ async def consent_submit(
             grant_id=approval.grant_id,
         )
     else:
+        try:
+            platform_code = await authorize_svc.issue_authorization_code(
+                user_id=user_id,
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=code_challenge,
+                scopes=scope,
+                nonce=nonce,
+            )
+        except InvalidGrantError:
+            logger.warning("oauth_consent_code_issue_refused", client_id=client_id)
+            return RedirectResponse(url="/error?error=access_denied", status_code=302)
         if not is_platform_client(client_id, ctx):
             await authorize_svc.record_consent_decision(
                 user_id=user_id,
@@ -342,15 +354,6 @@ async def consent_submit(
                 approved=True,
                 scopes=scope,
             )
-
-        platform_code = await authorize_svc.issue_authorization_code(
-            user_id=user_id,
-            client_id=client_id,
-            redirect_uri=redirect_uri,
-            code_challenge=code_challenge,
-            scopes=scope,
-            nonce=nonce,
-        )
 
     logger.info("oauth_consent_approved", client_id=client_id)
     redirect_params: dict[str, str] = {"code": platform_code}

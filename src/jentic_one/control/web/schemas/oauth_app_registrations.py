@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+    DeviceAuthorizationRegistrationCreate,
     OAuthAppRegistrationFlowKind,
+    OAuthAppRegistrationUpdate,
 )
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -234,6 +237,19 @@ class AuthorizationCodeRegistrationCreateRequest(BaseModel):
         default=None, description="Scopes requested by default.", examples=[["repo", "read:user"]]
     )
 
+    def to_service_model(self) -> AuthorizationCodeRegistrationCreate:
+        return AuthorizationCodeRegistrationCreate(
+            name=self.name,
+            api_vendor=self.api_vendor,
+            catalog_api_id=self.catalog_api_id,
+            display_name=self.display_name,
+            client_id=self.client_id,
+            client_secret=SecretStr(self.client_secret),
+            authorize_url=self.authorize_url,
+            token_url=self.token_url,
+            default_scopes=self.default_scopes,
+        )
+
 
 class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
     """Create request for a device-authorization registration."""
@@ -331,6 +347,18 @@ class DeviceAuthorizationRegistrationCreateRequest(BaseModel):
         default=None, description="Scopes requested by default.", examples=[["repo"]]
     )
 
+    def to_service_model(self) -> DeviceAuthorizationRegistrationCreate:
+        return DeviceAuthorizationRegistrationCreate(
+            name=self.name,
+            api_vendor=self.api_vendor,
+            catalog_api_id=self.catalog_api_id,
+            display_name=self.display_name,
+            client_id=self.client_id,
+            authorization_endpoint=self.authorization_endpoint,
+            token_endpoint=self.token_endpoint,
+            default_scopes=self.default_scopes,
+        )
+
 
 # Discriminated on ``flow_kind``: the spec gets a ``oneOf`` with a
 # discriminator, and a bad body fails with one error for its own flow instead
@@ -388,6 +416,18 @@ class OAuthAppRegistrationUpdateRequest(BaseModel):
         description="New token endpoint URL; device-authorization registrations only.",
         examples=["https://github.com/login/oauth/access_token"],
     )
+
+    def to_service_model(self) -> OAuthAppRegistrationUpdate:
+        return OAuthAppRegistrationUpdate(
+            name=self.name,
+            display_name=self.display_name,
+            default_scopes=self.default_scopes,
+            authorize_url=self.authorize_url,
+            token_url=self.token_url,
+            authorization_endpoint=self.authorization_endpoint,
+            token_endpoint=self.token_endpoint,
+            is_active=self.is_active,
+        )
 
 
 class OAuthAppRegistrationRotateSecretRequest(BaseModel):

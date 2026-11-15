@@ -8,7 +8,7 @@
  *   job_id        a job                                  Everything, API calls, Jobs
  *   audit_id      an audit entry                         Audit log
  *
- * On the Audit log `trace_id` is a FILTER (the trace sheet's "View in audit"
+ * On the Audit log `trace_id` is a FILTER (a `?show=audit&trace_id=…` link
  * narrows the log with it), so there only `audit_id` opens a record.
  *
  * At xl the record docks beside the list; opening one from nothing is a view

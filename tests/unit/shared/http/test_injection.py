@@ -2,16 +2,30 @@
 and the async worker share (#1957).
 
 Header creds overlay the caller's headers in any letter case, query creds join
-the URL query, and cookie creds are **appended** to the caller's own cookies —
-which always reach the upstream, in exactly one ``Cookie`` header.
+the URL query, and cookie creds are **appended** to upstream-learned cookies
+whose origin, path, and Secure scope match. Unknown cookies fail closed, and
+all retained cookies share exactly one ``Cookie`` header.
 """
 
 from __future__ import annotations
 
-from jentic_one.shared.http.injection import apply_injection
+from urllib.parse import parse_qsl, urlparse
+
+import pytest
+
+from jentic_one.shared.http.injection import (
+    apply_injection,
+    clear_upstream_cookie_scopes,
+    record_upstream_set_cookie,
+)
 from jentic_one.shared.jobs.protocols import InjectedAuth
 
 _URL = "https://api.x.com/v1"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cookie_registry() -> None:
+    clear_upstream_cookie_scopes()
 
 
 def _auth(
@@ -53,7 +67,8 @@ def test_query_creds_start_a_query_when_there_is_none() -> None:
     assert url == f"{_URL}?api_key=k"
 
 
-def test_cookie_creds_append_to_the_inbound_cookie() -> None:
+def test_cookie_creds_append_to_a_learned_inbound_cookie() -> None:
+    record_upstream_set_cookie(_URL, "forwarded=1; Path=/")
     _, headers = apply_injection(
         {}, _URL, _auth(cookies={"session": "s"}), inbound_cookie="forwarded=1"
     )
@@ -65,9 +80,10 @@ def test_cookie_creds_alone_when_there_is_no_inbound_cookie() -> None:
     assert headers == {"Cookie": "session=s"}
 
 
-def test_inbound_cookie_is_kept_without_cookie_creds() -> None:
+def test_unknown_inbound_cookie_is_dropped_without_origin_evidence() -> None:
+    clear_upstream_cookie_scopes()
     _, headers = apply_injection({}, _URL, _auth(), inbound_cookie="sid=1")
-    assert headers == {"Cookie": "sid=1"}
+    assert headers == {}
 
 
 def test_cookie_already_in_headers_is_replaced_never_sent_twice() -> None:
@@ -77,7 +93,7 @@ def test_cookie_already_in_headers_is_replaced_never_sent_twice() -> None:
         _auth(cookies={"session": "s"}),
         inbound_cookie="sid=1",
     )
-    assert headers == {"accept": "*/*", "Cookie": "sid=1; session=s"}
+    assert headers == {"accept": "*/*", "Cookie": "session=s"}
 
 
 def test_no_cookie_at_all_sends_no_cookie_header() -> None:
@@ -102,3 +118,112 @@ def test_inputs_are_not_mutated() -> None:
     apply_injection(inbound, _URL, auth, inbound_cookie="sid=1")
     assert inbound == {"cookie": "sid=1"}
     assert auth.headers == {"X-Api-Key": "k"}
+
+
+def test_duplicate_caller_query_params_are_removed_before_injection() -> None:
+    url, _ = apply_injection(
+        {},
+        f"{_URL}?api_key=caller1&page=2&%61pi_key=caller2&api%5Fkey=caller3",
+        _auth(query={"api_key": "broker"}),  # pragma: allowlist secret
+        inbound_cookie=None,
+    )
+    assert url == f"{_URL}?page=2&api_key=broker"
+    # A first-value-wins upstream parser sees only the injected credential.
+    parsed_pairs = parse_qsl(urlparse(url).query, keep_blank_values=True)
+    first_wins: dict[str, str] = {}
+    for k, v in parsed_pairs:
+        first_wins.setdefault(k, v)
+    assert first_wins["api_key"] == "broker"  # pragma: allowlist secret
+    assert [v for k, v in parsed_pairs if k == "api_key"] == ["broker"]
+
+
+def test_duplicate_caller_cookies_are_removed_before_injection() -> None:
+    _, headers = apply_injection(
+        {},
+        _URL,
+        _auth(cookies={"session": "broker"}),
+        inbound_cookie="session=caller1; theme=dark; %73ession=caller2; session=caller3",
+    )
+    assert headers == {"Cookie": "session=broker"}
+
+
+def test_duplicate_caller_cookies_in_headers_mapping_are_removed() -> None:
+    _, headers = apply_injection(
+        {"Cookie": "session=caller; sid=keep"},
+        _URL,
+        _auth(cookies={"session": "broker"}),
+        inbound_cookie=None,
+    )
+    assert headers == {"Cookie": "session=broker"}
+
+
+def test_upstream_set_cookie_is_isolated_to_issuing_origin_and_path() -> None:
+    clear_upstream_cookie_scopes()
+    try:
+        record_upstream_set_cookie(
+            "https://a.example.com/v1/login",
+            "session=alice-secret; Path=/; HttpOnly",
+        )
+        record_upstream_set_cookie(
+            "https://a.example.com/admin/login",
+            "admin_token=top-secret; Path=/admin; Secure",
+        )
+
+        # Same upstream origin receives the root-scoped cookie.
+        _, same_origin_headers = apply_injection(
+            {},
+            "https://a.example.com/v1/profile",
+            _auth(),
+            inbound_cookie="session=alice-secret; admin_token=top-secret",
+        )
+        assert same_origin_headers == {"Cookie": "session=alice-secret"}
+
+        # Same upstream origin under /admin over https receives both cookies.
+        _, admin_headers = apply_injection(
+            {},
+            "https://a.example.com/admin/users",
+            _auth(),
+            inbound_cookie="session=alice-secret; admin_token=top-secret",
+        )
+        assert admin_headers == {"Cookie": "session=alice-secret; admin_token=top-secret"}
+
+        # Insecure http on same host does not receive Secure cookie.
+        _, insecure_headers = apply_injection(
+            {},
+            "http://a.example.com:443/admin/users",
+            _auth(),
+            inbound_cookie="admin_token=top-secret",
+        )
+        assert "Cookie" not in insecure_headers
+
+        # Unrelated upstream B receives none of upstream A's cookies.
+        _, cross_origin_headers = apply_injection(
+            {},
+            "https://b.example.com/v1/items",
+            _auth(),
+            inbound_cookie="session=alice-secret; admin_token=top-secret",
+        )
+        assert "Cookie" not in cross_origin_headers
+    finally:
+        clear_upstream_cookie_scopes()
+
+
+def test_upstream_cookie_default_path_uses_the_request_directory() -> None:
+    record_upstream_set_cookie("https://a.example.com/admin/login", "sid=1; HttpOnly")
+    _, allowed = apply_injection(
+        {}, "https://a.example.com/admin/users", _auth(), inbound_cookie="sid=1"
+    )
+    _, denied = apply_injection(
+        {}, "https://a.example.com/public/users", _auth(), inbound_cookie="sid=1"
+    )
+    assert allowed == {"Cookie": "sid=1"}
+    assert denied == {}
+
+
+def test_forgetting_cookie_scopes_fails_closed_instead_of_leaking_across_origins() -> None:
+    record_upstream_set_cookie("https://a.example.com/login", "sid=1; Path=/")
+    clear_upstream_cookie_scopes()
+    _, headers = apply_injection(
+        {}, "https://b.example.com/profile", _auth(), inbound_cookie="sid=1"
+    )
+    assert headers == {}

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jentic/jentic-one/cli/internal/gitauth"
 )
 
 // releaseTag matches a canonical release tag: a `v`-prefixed three-part semver
@@ -26,8 +28,9 @@ type semver struct {
 
 // parseSemver parses a version string of the form "[v]MAJOR.MINOR.PATCH" into a
 // semver. A leading "v" is optional. Anything that is not a clean three-part
-// numeric version (a branch name, "dev", a SHA, or a pre-release) fails to
-// parse and callers treat that as "unknown".
+// numeric version (a branch name, "dev", a SHA, a mutable tag such as "latest"
+// or "canary", or a pre-release/build suffix) fails to parse and callers treat
+// that as "unknown".
 func parseSemver(s string) (semver, bool) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "v")
@@ -37,6 +40,9 @@ func parseSemver(s string) (semver, bool) {
 	}
 	nums := make([]int, 3)
 	for i, p := range parts {
+		if p == "" || strings.TrimLeft(p, "0123456789") != "" {
+			return semver{}, false
+		}
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
 			return semver{}, false
@@ -44,6 +50,25 @@ func parseSemver(s string) (semver, bool) {
 		nums[i] = n
 	}
 	return semver{major: nums[0], minor: nums[1], patch: nums[2]}, true
+}
+
+// CompareReleaseVersion compares two clean release versions ("[v]MAJOR.MINOR.PATCH")
+// and returns (-1, true), (0, true), or (1, true) as a is older than, equal to,
+// or newer than b.
+//
+// When either version is not a clean three-part numeric release — e.g. "latest",
+// "canary", a branch or SHA, or a pre-release such as "1.2.3-rc.1" — it returns
+// (0, false) so callers treat the pair as uncomparable rather than stale (#2017).
+func CompareReleaseVersion(a, b string) (int, bool) {
+	av, ok := parseSemver(a)
+	if !ok {
+		return 0, false
+	}
+	bv, ok := parseSemver(b)
+	if !ok {
+		return 0, false
+	}
+	return compareSemver(av, bv), true
 }
 
 // compareSemver returns -1, 0, or 1 as a is less than, equal to, or greater
@@ -109,13 +134,13 @@ func LatestReleaseTag(ctx context.Context, repo, token string) (string, error) {
 	}
 
 	url := "https://github.com/" + repo + ".git"
-	args := append([]string{"-c", "credential.helper="}, authArgs(token)...)
-	args = append(args, "ls-remote", "--tags", url, "v*")
+	args := []string{"-c", "credential.helper=", "ls-remote", "--tags", url, "v*"}
 
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // args are CLI-internal; repo comes from the manifest/flags.
 	// Never fall back to an interactive prompt: a missing/invalid token must
 	// fail fast rather than block waiting for a username on the terminal.
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "GCM_INTERACTIVE=never")
+	cmd.Env = append(cmd.Env, gitauth.Env(token)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote --tags failed (for a private repo, set GITHUB_TOKEN): %w", err)

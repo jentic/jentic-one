@@ -44,6 +44,7 @@ from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegis
 from jentic_one.control.core.schema.permission_rule_sets import PermissionRuleSetRule
 from jentic_one.control.repos import (
     AgentPermissionRuleRepository,
+    ConnectNonceRepository,
     CredentialRepository,
     OAuthAppRegistrationRepository,
     OAuthTokenRepository,
@@ -66,6 +67,7 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
     AgentVisibility,
+    CredentialBoundAgentRow,
     PrerequisiteRepository,
 )
 from jentic_one.control.scoping.filters import bound_agent_visibility, build_access_filters
@@ -74,7 +76,10 @@ from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
     consume_callback_state,
 )
-from jentic_one.control.services.credentials.token_endpoint import minted_at_current_origin
+from jentic_one.control.services.credentials.token_endpoint import (
+    may_carry_refresh_token,
+    minted_at_current_origin,
+)
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -90,6 +95,7 @@ from jentic_one.control.services.integrations.api_targets import (
     select_scheme,
 )
 from jentic_one.control.services.integrations.dedupe import oauth_dedupe_key
+from jentic_one.control.services.integrations.edit_result import normalize_edit_result
 from jentic_one.control.services.integrations.edits import (
     EditRequest,
     added_scopes,
@@ -199,6 +205,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.locks import lock_credential_identity_repair
 from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -211,6 +218,7 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import InvalidCursorError, decode_cursor, encode_cursor
+from jentic_one.shared.redaction import redact_value
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
@@ -673,6 +681,10 @@ class _SessionEndedError(Exception):
     """The session left its live states before its finalise write (nothing written)."""
 
 
+class _DeviceFlowSupersededError(Exception):
+    """A newer device challenge replaced the generation being finalised."""
+
+
 # Flows that live for ``_SESSION_TTL_SECONDS``. Every other flow (a session a
 # human completes by entering a credential, or one waiting for an OAuth app)
 # lives for ``control.connect.manual_flows_ttl_hours``.
@@ -733,10 +745,6 @@ class _CapScope:
     agent_id: str | None
     owner_id: str | None
     owned_agent_ids: list[str]
-
-
-def _state_secret(ctx: Context) -> str:
-    return ctx.config.credentials.connect.state_secret.get_secret_value()
 
 
 def _session_app_from_registration(ctx: Context, registration: OAuthAppRegistration) -> SessionApp:
@@ -1381,9 +1389,10 @@ class ConnectSessionService:
         can rotate the other's poll token or swap the other's request.
         """
         initiator_actor_id = identity.sub
-        view = await self._lookup_api(target.vendor, target.name, target.version)
-        if view is None:
+        initial_view = await self._lookup_api(target.vendor, target.name, target.version)
+        if initial_view is None:
             raise UnknownApiError(target.vendor, target.name, target.version)
+        view = initial_view
         scheme = select_scheme(view, auth_type)
         require_pinnable_hosts(view)
 
@@ -1464,6 +1473,11 @@ class ConnectSessionService:
         poll_token = secrets.token_urlsafe(32)
         try:
             async with self._ctx.control_db.transaction() as session:
+                await lock_credential_identity_repair(session)
+                current_view = await self._lookup_api(target.vendor, target.name, target.version)
+                if current_view is None or current_view != view:
+                    raise UnknownApiError(target.vendor, target.name, target.version)
+                view = current_view
                 await self._enforce_open_session_caps(session, cap_scope)
                 credential = await CredentialRepository.create(
                     session,
@@ -3473,6 +3487,7 @@ class ConnectSessionService:
         if revision is None:
             raise SessionNotFoundError(row.id)
         others, more_others = await self._affected_agents(row, row.baseline, credential, identity)
+        normalized_result = normalize_edit_result(row.baseline, revision.result)
         review = EditReview(
             agent_id=row.agent_id,
             credential_id=row.credential_id,
@@ -3480,11 +3495,11 @@ class ConnectSessionService:
             revision_id=revision.id,
             revision_number=revision.number,
             current=dict(row.baseline),
-            result=dict(revision.result),
-            widens_access=widens_access(row.baseline, revision.result),
+            result=normalized_result,
+            widens_access=widens_access(row.baseline, normalized_result),
             other_bound_agents=others,
             other_bound_agents_truncated=more_others,
-            needs_vendor_consent=scopes_changed(row.baseline, revision.result),
+            needs_vendor_consent=scopes_changed(row.baseline, normalized_result),
             conflicts=list(revision.proposal.get("conflicts") or []),
         )
         return review, credential, revision
@@ -3838,11 +3853,9 @@ class ConnectSessionService:
                 filters=filters,
                 account_ref_providers=self._ctx.providers.account_ref_provider_names(),
             )
-            tokens = {
-                c.id: await OAuthTokenRepository.get_by_credential(session, c.id)
-                for c in candidates
-                if _is_oauth_type(c.type)
-            }
+            tokens = await OAuthTokenRepository.get_by_credentials(
+                session, [c.id for c in candidates if _is_oauth_type(c.type)]
+            )
         requested = list(row.requested_scopes or [])
         views: list[ExistingCredentialView] = []
         for credential in candidates:
@@ -3911,10 +3924,18 @@ class ConnectSessionService:
         visible_to = bound_agent_visibility(
             credential.created_by if credential is not None else None, identity
         )
-        bound, truncated = await self._other_bound_agent_ids(
+        bound_rows, truncated = await self._other_bound_agent_rows(
             row.credential_id, row.agent_id, visible_to=visible_to
         )
-        ids = set(bound)
+        bound = {
+            r.agent_id: AgentView(
+                agent_id=r.agent_id,
+                name=r.agent_name,
+                owner_id=r.agent_owner_id,
+                status=r.agent_status,
+            )
+            for r in bound_rows
+        }
         rule_set = baseline.get("rule_set")
         reached: dict[str, AgentView] = {}
         if rule_set is not None and not rule_set.get("curated"):
@@ -3961,10 +3982,8 @@ class ConnectSessionService:
                     agent_id: reached[agent_id]
                     for agent_id in sorted(reached)[:_BOUND_AGENTS_LIMIT]
                 }
-        views: list[AgentView] = []
-        for other_id in sorted(ids | reached.keys()):
-            view = reached.get(other_id) or await self._agent_view(other_id)
-            views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
+        merged = {**bound, **reached}
+        views = [merged[other_id] for other_id in sorted(merged)]
         return views, truncated
 
     async def _readable_credential_creators(
@@ -4016,25 +4035,30 @@ class ConnectSessionService:
     ) -> tuple[list[AgentView], bool]:
         """The agents other than ``agent_id`` bound to the credential, with their names.
 
-        With whether the cap cut the list, as :meth:`_other_bound_agent_ids`
+        With whether the cap cut the list, as :meth:`_other_bound_agent_rows`
         reports it.
         """
-        ids, truncated = await self._other_bound_agent_ids(
+        rows, truncated = await self._other_bound_agent_rows(
             credential_id, agent_id, visible_to=visible_to
         )
-        views: list[AgentView] = []
-        for other_id in ids:
-            view = await self._agent_view(other_id)
-            views.append(view or AgentView(agent_id=other_id, name=None, owner_id=None, status=""))
+        views = [
+            AgentView(
+                agent_id=r.agent_id,
+                name=r.agent_name,
+                owner_id=r.agent_owner_id,
+                status=r.agent_status,
+            )
+            for r in rows
+        ]
         return views, truncated
 
-    async def _other_bound_agent_ids(
+    async def _other_bound_agent_rows(
         self,
         credential_id: str,
         agent_id: str | None,
         *,
         visible_to: AgentVisibility | None = None,
-    ) -> tuple[list[str], bool]:
+    ) -> tuple[list[CredentialBoundAgentRow], bool]:
         """The other agents bound to the credential, and whether the cap cut the list.
 
         Past the cap a caller can say the reach is wider than the names it
@@ -4053,8 +4077,22 @@ class ConnectSessionService:
                 limit=_BOUND_AGENTS_LIMIT + 2,
                 visible_to=visible_to,
             )
-        ids = sorted({r.agent_id for r in rows if r.agent_id != agent_id})
-        return ids[:_BOUND_AGENTS_LIMIT], len(ids) > _BOUND_AGENTS_LIMIT
+        by_agent = {r.agent_id: r for r in rows if r.agent_id != agent_id}
+        ordered = [by_agent[aid] for aid in sorted(by_agent)]
+        return ordered[:_BOUND_AGENTS_LIMIT], len(ordered) > _BOUND_AGENTS_LIMIT
+
+    async def _other_bound_agent_ids(
+        self,
+        credential_id: str,
+        agent_id: str | None,
+        *,
+        visible_to: AgentVisibility | None = None,
+    ) -> tuple[list[str], bool]:
+        """The other agents bound to the credential, and whether the cap cut the list."""
+        rows, truncated = await self._other_bound_agent_rows(
+            credential_id, agent_id, visible_to=visible_to
+        )
+        return [r.agent_id for r in rows], truncated
 
     async def _try_leave_awaiting_app(self, row: ConnectSession) -> ConnectSession:
         """:meth:`_leave_awaiting_app`, returning the session as it stands afterwards."""
@@ -5488,30 +5526,44 @@ class ConnectSessionService:
         report = await handler.advance(credential.id)
         if report.kind == "pending":
             return
-        if report.kind == "success":
-            assert report.tokens is not None
-            await self._finalise_credential_connected(credential, handler, report.tokens)
+        try:
+            if report.kind == "success":
+                assert report.tokens is not None
+                await self._finalise_credential_connected(
+                    credential, handler, report.tokens, flow_nonce=report.flow_nonce
+                )
+                return
+            # Terminal (failed / expired) — flip the credential row and clear
+            # the aux row so the scanner stops picking it up.
+            await self._mark_credential_terminal(
+                credential.id,
+                report.terminal_detail or report.error_code or report.kind,
+                flow_nonce=report.flow_nonce,
+            )
+        except _DeviceFlowSupersededError:
+            # A reconnect committed a newer challenge after this poll. Its
+            # transient state and eventual outcome belong to that flow.
             return
-        # Terminal (failed / expired) — flip the credential row and clear
-        # the aux row so the scanner stops picking it up.
-        await self._mark_credential_terminal(
-            credential.id,
-            report.terminal_detail or report.error_code or report.kind,
-        )
 
     async def _mark_credential_terminal(
         self,
         credential_id: str,
         detail: str,
+        flow_nonce: str | None = None,
     ) -> None:
         """Move a standalone device-flow credential to ``failed`` + clear aux.
 
-        Clears the aux row's transient state regardless of the specific
-        terminal cause so the scanner stops picking it up on the next
-        tick. ``credentials`` has no ``error_detail`` column today, so
-        detail is logged and lost after this call.
+        A polled generation must still be current before its terminal outcome
+        can clear the challenge. ``credentials`` has no ``error_detail``
+        column today, so detail is logged and lost after this call.
         """
         async with self._ctx.control_db.transaction() as session:
+            if flow_nonce is not None:
+                claimed = await DeviceAuthorizationCredentialRepository.claim_finalisation(
+                    session, credential_id, flow_nonce=flow_nonce
+                )
+                if not claimed:
+                    raise _DeviceFlowSupersededError(credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is None:
                 return
@@ -5898,6 +5950,7 @@ class ConnectSessionService:
         credential: Credential,
         handler: AuthFlowHandler,
         tokens: SuccessTokens,
+        flow_nonce: str | None = None,
     ) -> StatusResult:
         """Credential-mode finalise: shared write, no session row to close.
 
@@ -5925,6 +5978,7 @@ class ConnectSessionService:
             connected_as=None,
             created_by=credential.created_by,
             close_session_id=None,
+            flow_nonce=flow_nonce,
         )
 
         _logger.info(
@@ -5952,6 +6006,7 @@ class ConnectSessionService:
         created_by: str,
         close_session_id: str | None,
         in_session: Any | None = None,
+        flow_nonce: str | None = None,
     ) -> None:
         """Shared finalise write — vault token, cleanup aux, flip credential.
 
@@ -5972,7 +6027,9 @@ class ConnectSessionService:
         the grant and that swap in one commit.
         """
         expires_at = (
-            datetime.now(UTC) + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
+            datetime.now(UTC) + timedelta(seconds=tokens.expires_in)
+            if tokens.expires_in is not None
+            else None
         )
         encrypted_access = self._ctx.encryption.encrypt(tokens.access_token)
         encrypted_refresh = (
@@ -5989,6 +6046,12 @@ class ConnectSessionService:
         )
 
         async with self._write_transaction(in_session) as session:
+            if flow_nonce is not None:
+                claimed = await DeviceAuthorizationCredentialRepository.claim_finalisation(
+                    session, credential_id, flow_nonce=flow_nonce
+                )
+                if not claimed:
+                    raise _DeviceFlowSupersededError(credential_id)
             # Same lock as the broker refresh and a token_url edit. A
             # cross-origin edit that committed while the code was being
             # exchanged has moved the credential off the origin this grant
@@ -6028,10 +6091,10 @@ class ConnectSessionService:
                 registration_id_stamp = credential_for_stamp.oauth_app_registration_id
 
             # Upsert: a re-connect over an existing token row (same
-            # credential, fresh grant) MUST update in place rather than
+            # credential, fresh grant) MUST replace in place rather than
             # INSERT — ``oauth_tokens.credential_id`` is uniquely
             # indexed, and a plain create would trip the constraint on
-            # the second successful poll. ``update_tokens`` also clears
+            # the second successful poll. ``replace_grant`` also clears
             # ``revoked_at``, so a re-connect over a revoked row yields
             # a live token (the derived ``connected`` flag reads that
             # column).
@@ -6053,33 +6116,48 @@ class ConnectSessionService:
                     created_by=token_created_by,
                 )
             else:
-                await OAuthTokenRepository.update_tokens(
+                stored_account_ref = (
+                    credential_for_stamp.provider_account_ref
+                    if credential_for_stamp is not None
+                    else None
+                )
+                if encrypted_refresh is None and existing.encrypted_refresh_token is not None:
+                    if may_carry_refresh_token(
+                        existing,
+                        new_registration_id=registration_id_stamp,
+                        connected_as=connected_as,
+                        stored_account_ref=stored_account_ref,
+                    ):
+                        encrypted_refresh = existing.encrypted_refresh_token
+                    else:
+                        _logger.info(
+                            "oauth_reconnect_dropped_prior_refresh_token",
+                            credential_id=credential_id,
+                        )
+                await OAuthTokenRepository.replace_grant(
                     session,
                     credential_id,
                     encrypted_access_token=encrypted_access,
                     encrypted_refresh_token=encrypted_refresh,
                     expires_at=expires_at,
                     scope=scope_to_persist,
+                    app_registration_id=registration_id_stamp,
                 )
-                # Refresh the provenance columns on the existing row too so
-                # a re-connect that starts going through a shared registration
-                # (or migrates off one) is reflected on the token row.
-                if registration_id_stamp is not None:
-                    existing.app_registration_id = registration_id_stamp
-                    await session.flush()
+            if flow_nonce is not None:
+                await ConnectNonceRepository.mark_completed(
+                    session,
+                    nonce=flow_nonce,
+                    credential_id=credential_id,
+                )
             await handler.on_finalise(session, credential_id=credential_id)
             credential = await CredentialRepository.get_by_id(session, credential_id)
             if credential is not None:
                 credential.state = "connected"
                 if connected_as is not None:
                     credential.provider_account_ref = connected_as
-                # Force an ``updated_at`` bump so client-side pollers
-                # detect the transition even on a re-connect where the
-                # state was already ``"connected"``. Without this,
-                # SQLAlchemy may short-circuit the UPDATE when every
-                # assigned column matches its stored value, leaving
-                # ``updated_at`` unchanged and ``runConnectFlow`` /
-                # ``get_credential``-based watchers polling forever.
+                # Keep ordinary credential detail readers fresh on a
+                # re-connect whose state was already ``"connected"``. Exact
+                # flow completion is recorded on its nonce above.
                 credential.updated_at = datetime.now(UTC)
                 await session.flush()
             if close_session_id is not None:
@@ -6181,6 +6259,7 @@ class ConnectSessionService:
         ``oauth_app_changed``) is deliberately left system-attributed too:
         ending it is the platform's decision, not the confirming caller's.
         """
+        detail = redact_value(detail)
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
         if row is None:

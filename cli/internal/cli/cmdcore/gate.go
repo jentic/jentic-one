@@ -73,8 +73,7 @@ func migrateGateError(app *App, cmd *cobra.Command) *ux.CodedError {
 		Code: ux.CodeMigrationRequired,
 		Msg: "this machine still has a V1 profile store (" + app.Paths.ProfilesDir() + ") " +
 			"that this CLI no longer reads",
-		Actionable: "jentic migrate   (copies every profile into the V2 context model; " +
-			"add --purge-legacy afterwards to remove the old tree)",
+		Actionable: "jentic migrate",
 	}
 }
 

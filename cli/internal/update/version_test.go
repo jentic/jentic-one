@@ -1,6 +1,12 @@
 package update
 
 import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -48,6 +54,36 @@ func TestCompareSemver(t *testing.T) {
 		bv, _ := parseSemver(tc.b)
 		if got := compareSemver(av, bv); got != tc.want {
 			t.Errorf("compareSemver(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// Pins #2017: only two clean X.Y.Z release versions can be ordered; mutable
+// tags ("latest", "canary"), prereleases ("1.2.3-rc.1"), build metadata, and
+// branch refs report ok=false ("cannot compare") rather than reading as older.
+func TestCompareReleaseVersion(t *testing.T) {
+	cases := []struct {
+		a, b    string
+		wantCmp int
+		wantOK  bool
+	}{
+		{"0.43.0", "v0.44.0", -1, true},
+		{"v0.44.0", "0.44.0", 0, true},
+		{"0.45.0", "v0.44.0", 1, true},
+		{"latest", "v0.44.0", 0, false},
+		{"canary", "v0.44.0", 0, false},
+		{"1.2.3-rc.1", "v1.2.3", 0, false},
+		{"0.45.0-rc1", "v0.44.0", 0, false},
+		{"0.44.0+ci.7", "v0.44.0", 0, false},
+		{"0.43.0", "main", 0, false},
+		{"+1.2.3", "v1.2.3", 0, false},
+		{"", "v0.44.0", 0, false},
+	}
+	for _, tc := range cases {
+		cmp, ok := CompareReleaseVersion(tc.a, tc.b)
+		if ok != tc.wantOK || cmp != tc.wantCmp {
+			t.Errorf("CompareReleaseVersion(%q, %q) = (%d, %v), want (%d, %v)",
+				tc.a, tc.b, cmp, ok, tc.wantCmp, tc.wantOK)
 		}
 	}
 }
@@ -103,5 +139,55 @@ func TestHighestReleaseTagNoReleases(t *testing.T) {
 	}
 	if _, ok := highestReleaseTag(""); ok {
 		t.Errorf("highestReleaseTag(\"\") matched, want no match")
+	}
+}
+
+func TestLatestReleaseTag_TokenNotInArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub test targets unix")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "git.args")
+	envFile := filepath.Join(dir, "git.env")
+	gitStub := filepath.Join(dir, "git")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nenv > %q\nprintf 'aaaaaaa refs/tags/v0.31.0\\n'\n", argsFile, envFile)
+	if err := os.WriteFile(gitStub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const token = "ghp_test_token_value_123"
+	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+
+	tag, err := LatestReleaseTag(context.Background(), "jentic/jentic-one", token)
+	if err != nil {
+		t.Fatalf("LatestReleaseTag: %v", err)
+	}
+	if tag != "v0.31.0" {
+		t.Errorf("tag = %q, want v0.31.0", tag)
+	}
+
+	gotArgsBytes, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	gotArgs := string(gotArgsBytes)
+	if strings.Contains(gotArgs, token) || strings.Contains(gotArgs, basic) || strings.Contains(gotArgs, "http.extraheader") {
+		t.Fatalf("git argv exposed token or auth header:\n%s", gotArgs)
+	}
+
+	gotEnvBytes, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read recorded env: %v", err)
+	}
+	gotEnv := string(gotEnvBytes)
+	for _, want := range []string{
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=http.https://github.com/.extraheader",
+		"GIT_CONFIG_VALUE_0=Authorization: Basic " + basic,
+	} {
+		if !strings.Contains(gotEnv, want) {
+			t.Errorf("git env missing %q", want)
+		}
 	}
 }

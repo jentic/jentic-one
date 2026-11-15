@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -35,6 +36,18 @@ class ApiRepository:
     @staticmethod
     async def get_by_id(session: AsyncSession, api_id: uuid.UUID) -> Api | None:
         return await session.get(Api, api_id)
+
+    @staticmethod
+    async def get_identities(
+        session: AsyncSession, ids: Collection[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[str, str, str]]:
+        """Batch-load ``(vendor, name, version)`` for the given API IDs."""
+        if not ids:
+            return {}
+        result = await session.execute(
+            select(Api.id, Api.vendor, Api.name, Api.version).where(Api.id.in_(ids))
+        )
+        return {row.id: (row.vendor, row.name, row.version) for row in result}
 
     @staticmethod
     async def get_by_identifier(

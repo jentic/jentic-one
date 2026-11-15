@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from jentic_one.admin.core.schema.jobs import Job
-from jentic_one.admin.repos import AuditRepository, JobRepository
+from jentic_one.admin.repos import AuditRepository, JobRepository, JobResultRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.errors import JobAwaitingApprovalError, JobNotFoundError
 from jentic_one.admin.services.metrics import audit_events_counter
@@ -33,6 +34,10 @@ def _job_actor_type(created_by: str | None, stored: str) -> str:
         except ValueError:
             pass
     return stored
+
+
+#: Terminal job statuses that may carry a stored ``JobResult``.
+_RESULT_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.FAILED.value})
 
 
 class JobService:
@@ -68,12 +73,15 @@ class JobService:
                 until=filter.to,
                 filters=access_filters,
             )
+            has_more = len(jobs) > limit
+            if has_more:
+                jobs = jobs[:limit]
+            candidate_ids = [j.id for j in jobs if str(j.status) in _RESULT_STATUSES]
+            available_ids = await JobResultRepository.available_job_ids(
+                session, candidate_ids, now=datetime.now(UTC)
+            )
 
-        has_more = len(jobs) > limit
-        if has_more:
-            jobs = jobs[:limit]
-
-        views = [self._to_view(j) for j in jobs]
+        views = [self._to_view(j, result_available=j.id in available_ids) for j in jobs]
         next_cursor = None
         if has_more and jobs:
             next_cursor = encode_cursor(jobs[-1].created_at, jobs[-1].id)
@@ -84,9 +92,14 @@ class JobService:
         access_filters = build_access_filters(identity, Job)
         async with self._ctx.admin_db.session() as session:
             job = await JobRepository.get_by_id(session, job_id, filters=access_filters)
-        if job is None:
-            raise JobNotFoundError(job_id)
-        return self._to_view(job)
+            if job is None:
+                raise JobNotFoundError(job_id)
+            result_available = False
+            if str(job.status) in _RESULT_STATUSES:
+                result_available = job.id in await JobResultRepository.available_job_ids(
+                    session, [job.id], now=datetime.now(UTC)
+                )
+        return self._to_view(job, result_available=result_available)
 
     async def cancel(self, job_id: str, *, identity: Identity) -> JobView:
         access_filters = build_access_filters(identity, Job)
@@ -104,7 +117,12 @@ class JobService:
                 session, job_id, filters=access_filters
             )
             if cancelled is None:
-                return self._to_view(job)
+                result_available = False
+                if str(job.status) in _RESULT_STATUSES:
+                    result_available = job.id in await JobResultRepository.available_job_ids(
+                        session, [job.id], now=datetime.now(UTC)
+                    )
+                return self._to_view(job, result_available=result_available)
 
             await AuditRepository.record(
                 session,
@@ -121,7 +139,7 @@ class JobService:
         return await self.get_by_id(job_id, identity=identity)
 
     @staticmethod
-    def _to_view(job: Any) -> JobView:
+    def _to_view(job: Any, *, result_available: bool = False) -> JobView:
         return JobView(
             id=job.id,
             kind=job.kind,
@@ -129,6 +147,7 @@ class JobService:
             parent_job_id=job.parent_job_id,
             execution_id=job.execution_id,
             error=job.error,
+            result_available=result_available,
             created_at=job.created_at,
             updated_at=job.updated_at,
             actor_id=job.created_by,

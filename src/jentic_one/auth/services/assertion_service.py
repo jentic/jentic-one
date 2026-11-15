@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -18,7 +19,7 @@ from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth import resolve_agent_key
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
-from jentic_one.shared.config import resolved_auth_base_url
+from jentic_one.shared.config import bind_origin, effective_auth_base_url, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.models import ActorStatus, ActorType
@@ -214,9 +215,18 @@ class AssertionService:
     def _expected_audiences(self, request_base_url: str | None) -> list[str]:
         # Normalized like deployment_base_url so a trailing slash in a
         # configured base URL can't break assertion validation.
-        bases = [resolved_auth_base_url(self._ctx.config).rstrip("/")]
-        if request_base_url and request_base_url.rstrip("/") not in bases:
-            bases.append(request_base_url.rstrip("/"))
+        config = self._ctx.config
+        bases = [resolved_auth_base_url(config).rstrip("/")]
+        if request_base_url:
+            normalized = request_base_url.rstrip("/")
+            if normalized not in bases and (
+                (
+                    not effective_auth_base_url(config)
+                    and os.environ.get("JENTIC_ENV", "development") != "production"
+                )
+                or normalized == bind_origin(config).rstrip("/")
+            ):
+                bases.append(normalized)
         return [f"{base}/oauth/token" for base in bases]
 
     def _validate_timing(self, payload: dict[str, Any]) -> None:

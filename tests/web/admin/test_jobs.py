@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -146,3 +147,126 @@ def test_admin_sees_other_actors_jobs(
     done_id, _ = owner_job_ids
     assert authed_client.get(f"/jobs/{done_id}").status_code == 200
     assert authed_client.get(f"/jobs/{done_id}/result").status_code == 200
+
+
+@pytest.fixture()
+async def failed_job_matrix_ids(
+    web_context: Context,
+) -> AsyncGenerator[tuple[str, str, str], None]:
+    """Seed failed execution jobs: with a live result, without a result, and expired."""
+    async with web_context.admin_db.session() as session:
+        with_result = await JobRepository.create(
+            session,
+            kind=JobKind.EXECUTION,
+            status=JobStatus.FAILED,
+            error=None,
+            execution_id="exec_web_fail_ok",
+            created_by=_SCOPED_OWNER,
+        )
+        await JobResultRepository.create(
+            session,
+            job_id=with_result.id,
+            kind="execution",
+            content_type="application/json",
+            body={
+                "execution_id": "exec_web_fail_ok",
+                "status": "failed",
+                "http_status": 502,
+                "duration_ms": 14,
+                "body_b64": "eyJlcnJvciI6ImJhZF9nYXRld2F5In0=",
+            },
+            available_until=datetime.now(UTC) + timedelta(hours=1),
+            created_by=_SCOPED_OWNER,
+        )
+        without_result = await JobRepository.create(
+            session,
+            kind=JobKind.EXECUTION,
+            status=JobStatus.FAILED,
+            error="handler crashed before dispatch",
+            created_by=_SCOPED_OWNER,
+        )
+        expired_result = await JobRepository.create(
+            session,
+            kind=JobKind.EXECUTION,
+            status=JobStatus.FAILED,
+            error=None,
+            created_by=_SCOPED_OWNER,
+        )
+        await JobResultRepository.create(
+            session,
+            job_id=expired_result.id,
+            kind="execution",
+            content_type="application/json",
+            body={
+                "execution_id": "exec_web_exp",
+                "status": "failed",
+                "http_status": 500,
+                "duration_ms": 5,
+            },
+            available_until=datetime.now(UTC) - timedelta(seconds=1),
+            created_by=_SCOPED_OWNER,
+        )
+        await session.commit()
+        ids = (with_result.id, without_result.id, expired_result.id)
+    yield ids
+    async with web_context.admin_db.session() as session:
+        await session.execute(delete(JobResult).where(JobResult.job_id.in_(ids)))
+        await session.execute(delete(Job).where(Job.id.in_(ids)))
+        await session.commit()
+
+
+def test_failed_job_results_polling_retrieval_expiry_and_scoping(
+    web_context: Context,
+    owner_job_ids: tuple[str, str],
+    failed_job_matrix_ids: tuple[str, str, str],
+) -> None:
+    """Pins #2030: failed job results link/serve when live, 409 when absent, 410 when expired."""
+    done_id, _ = owner_job_ids
+    with_res_id, no_res_id, expired_id = failed_job_matrix_ids
+
+    owner = Identity(sub=_SCOPED_OWNER, permissions=["jobs:read", "jobs:write"])
+    with _scoped_client(web_context, owner) as tc:
+        # Completed job with stored result.
+        done_poll = tc.get(f"/jobs/{done_id}")
+        assert done_poll.status_code == 200
+        assert done_poll.json()["_links"]["result"].endswith(f"/jobs/{done_id}/result")
+        assert tc.get(f"/jobs/{done_id}/result").status_code == 200
+
+        # Failed job WITH stored actionable result.
+        fail_poll = tc.get(f"/jobs/{with_res_id}")
+        assert fail_poll.status_code == 200
+        assert fail_poll.json()["status"] == "failed"
+        assert fail_poll.json()["error"] is None
+        assert fail_poll.json()["_links"]["result"].endswith(f"/jobs/{with_res_id}/result")
+
+        fail_res = tc.get(f"/jobs/{with_res_id}/result")
+        assert fail_res.status_code == 200
+        assert fail_res.json()["http_status"] == 502
+        assert fail_res.json()["status"] == "failed"
+
+        # Failed job WITHOUT stored result.
+        plain_poll = tc.get(f"/jobs/{no_res_id}")
+        assert plain_poll.status_code == 200
+        assert plain_poll.json()["status"] == "failed"
+        assert plain_poll.json()["error"] == "handler crashed before dispatch"
+        assert plain_poll.json()["_links"]["result"] is None
+        assert tc.get(f"/jobs/{no_res_id}/result").status_code == 409
+
+        # Failed job with EXPIRED result.
+        exp_poll = tc.get(f"/jobs/{expired_id}")
+        assert exp_poll.status_code == 200
+        assert exp_poll.json()["_links"]["result"] is None
+        assert tc.get(f"/jobs/{expired_id}/result").status_code == 410
+
+    # Cross-user actor gets 404 anti-enumeration on both polling and result retrieval.
+    other = Identity(
+        sub=_SCOPED_OTHER,
+        permissions=["jobs:read", "jobs:write"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_webjobs_someone_else",
+    )
+    with _scoped_client(web_context, other) as tc:
+        assert tc.get(f"/jobs/{with_res_id}").status_code == 404
+        assert tc.get(f"/jobs/{with_res_id}/result").status_code == 404
+        listed = {j["job_id"] for j in tc.get("/jobs?limit=100").json()["data"]}
+        assert with_res_id not in listed

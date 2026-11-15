@@ -6,7 +6,6 @@ package update
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -15,17 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 )
-
-// authArgs returns the `git -c http.extraheader=...` prefix carrying a Basic
-// auth header for token, or nil when no token is set. It mirrors the auth
-// scheme used by tools/install.sh so private repositories resolve.
-func authArgs(token string) []string {
-	if token == "" {
-		return nil
-	}
-	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-	return []string{"-c", "http.extraheader=Authorization: Basic " + basic}
-}
 
 // FetchInstaller downloads tools/install.sh for ref from repo's raw content,
 // authenticating with a bearer token when one is given (required while the repo
@@ -62,8 +50,14 @@ func ReplaceBinary(target, staged string) (string, error) {
 		return "", err
 	}
 
-	tmp := filepath.Join(dir, ".jentic.new")
+	tmpFile, err := os.CreateTemp(dir, ".jentic.new-*")
+	if err != nil {
+		return "", fmt.Errorf("stage new binary: %w", err)
+	}
+	tmp := tmpFile.Name()
+	_ = tmpFile.Close()
 	if err := copyFile(staged, tmp, 0o755); err != nil {
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("stage new binary: %w", err)
 	}
 

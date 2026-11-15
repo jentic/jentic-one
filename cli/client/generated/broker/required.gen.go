@@ -18,4 +18,8 @@ func (HealthResponse) RequiredFields() []string      { return []string{"status"}
 func (HeldExecutionAcceptedResponse) RequiredFields() []string {
 	return []string{"_links", "agent_directive", "expires_at", "held_execution_id", "review_url", "status"}
 }
+func (JobLinksResponse) RequiredFields() []string { return []string{"self"} }
+func (JobResponse) RequiredFields() []string {
+	return []string{"_links", "actor_type", "created_at", "job_id", "kind", "status"}
+}
 func (ReadinessResponse) RequiredFields() []string { return []string{"status"} }

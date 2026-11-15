@@ -1,8 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,13 +20,14 @@ import (
 )
 
 type apiOptions struct {
-	data        string
-	dataFile    string
-	failOnError bool
-	raw         bool
-	live        bool
-	query       []string
-	headers     []string
+	data         string
+	dataFile     string
+	dataFileBody io.Reader
+	failOnError  bool
+	raw          bool
+	live         bool
+	query        []string
+	headers      []string
 }
 
 // newAPICmd is the `jentic api` passthrough: a gh-api-style authenticated escape
@@ -83,6 +84,19 @@ func runAPICall(cmd *cobra.Command, app *app, opts *apiOptions, method, path str
 		return reportCoded(aud, err)
 	}
 
+	// A selected data file is validated before a live-spec request. Stdin stays
+	// in resolveAPIBody so its explicit and implicit reads retain their ordering.
+	if opts.dataFile != "" && opts.data != "-" {
+		opts.dataFileBody, err = readDataFile(opts.dataFile)
+		if err != nil {
+			var coded *ux.CodedError
+			if errors.As(err, &coded) {
+				return reportCoded(aud, coded)
+			}
+			return reportCoded(aud, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: err.Error(), Cause: err})
+		}
+	}
+
 	// Path allowlist: unless --raw (loopback only), the path must match a spec
 	// route, so the passthrough can't be aimed at arbitrary URLs.
 	if !opts.raw {
@@ -116,7 +130,11 @@ func runAPICall(cmd *cobra.Command, app *app, opts *apiOptions, method, path str
 
 	body, berr := resolveAPIBody(opts)
 	if berr != nil {
-		return reportCoded(aud, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: berr.Error()})
+		var coded *ux.CodedError
+		if errors.As(berr, &coded) {
+			return reportCoded(aud, coded)
+		}
+		return reportCoded(aud, &ux.CodedError{Code: ux.CodeMissingArgument, Msg: berr.Error(), Cause: berr})
 	}
 
 	resp, err := client.RawControlRequest(cmd.Context(), raw, method, path, body, opts.headers...)
@@ -145,9 +163,13 @@ func runAPICall(cmd *cobra.Command, app *app, opts *apiOptions, method, path str
 // exit 0 for any transport-successful response by default, or exit 1 on non-2xx
 // when --fail-on-error is set.
 func emitAPIResponse(out io.Writer, resp *http.Response, failOnError bool) error {
-	data, err := io.ReadAll(resp.Body)
+	return emitAPIResponseLimit(out, resp, failOnError, client.MaxBodyBytes)
+}
+
+func emitAPIResponseLimit(out io.Writer, resp *http.Response, failOnError bool, limit int64) error {
+	data, err := client.ReadAllBounded(resp.Body, limit)
 	if err != nil {
-		return &ux.CodedError{Code: ux.CodeInternalError, Msg: fmt.Sprintf("reading response: %v", err)}
+		return &ux.CodedError{Code: ux.CodeInternalError, Msg: fmt.Sprintf("reading response: %v", err), Cause: err}
 	}
 	// Pass the body through the byte-level redaction backstop before printing:
 	// even raw API data must not leak a secret to a machine parser.
@@ -182,11 +204,10 @@ func resolveAPIBody(opts *apiOptions) (io.Reader, error) {
 		// `jentic api` (#1354).
 		return readStdinBody()
 	case opts.dataFile != "":
-		data, err := os.ReadFile(opts.dataFile)
-		if err != nil {
-			return nil, fmt.Errorf("reading %s: %w", opts.dataFile, err)
+		if opts.dataFileBody != nil {
+			return opts.dataFileBody, nil
 		}
-		return bytes.NewReader(data), nil
+		return readDataFile(opts.dataFile)
 	case opts.data != "":
 		return strings.NewReader(opts.data), nil
 	}
@@ -207,9 +228,9 @@ func loadAPISpec(ctx context.Context, live bool, raw *control.Client) (*apispec.
 	if resp.StatusCode != http.StatusOK {
 		return nil, &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("live spec returned status %d", resp.StatusCode)}
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := client.ReadAllBounded(resp.Body, client.MaxBodyBytes)
 	if err != nil {
-		return nil, &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("reading live spec: %v", err)}
+		return nil, &ux.CodedError{Code: ux.CodeResolveFailed, Msg: fmt.Sprintf("reading live spec: %v", err), Cause: err}
 	}
 	return apispec.Parse(data)
 }

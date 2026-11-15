@@ -10,6 +10,8 @@ caller's concern (the runner returns the verbatim upstream result).
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -18,7 +20,13 @@ import structlog
 from opentelemetry import trace
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, UpstreamRunner
-from jentic_one.broker.core.errors import BrokerError, CircuitOpenError
+from jentic_one.broker.core.errors import (
+    BrokerError,
+    CircuitOpenError,
+    RateLimitExceededError,
+    RunnerSchemeUnsupportedError,
+    RunnerUnavailableError,
+)
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.core.server_timing import ServerTimingStage, stage
@@ -41,7 +49,7 @@ from jentic_one.shared.events.repeated_failure import (
     RepeatedFailureCounter,
     maybe_emit_repeated_failure,
 )
-from jentic_one.shared.executions import record_execution
+from jentic_one.shared.executions import ExecutionRecordInput, record_execution
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import origin_or_none
@@ -67,6 +75,25 @@ _execution_duration = _meter.create_histogram(
     unit="ms",
     description="Duration of broker executions in milliseconds",
 )
+_FAILURE_REASON_MAX_LEN = 128
+
+
+@dataclass(frozen=True, slots=True)
+class UnmappedFailure:
+    """The secret-safe details needed to record a buffered unmapped failure."""
+
+    execution_id: str
+    started_at: datetime
+    duration_ms: int
+    error: str
+
+
+UnmappedFailureRecorder = Callable[[UnmappedFailure], Awaitable[None]]
+ServerErrorClassifier = Callable[[Exception], bool]
+
+
+def _elapsed_ms(t0: float) -> int:
+    return int((time.perf_counter() - t0) * 1000)
 
 
 async def emit_circuit_open_event(
@@ -78,7 +105,8 @@ async def emit_circuit_open_event(
     operator-facing event. The buffered path emits it in the request's own
     transaction; the streaming path, whose error response must not wait on the
     admin database, emits it off the request before and independently of the
-    execution record (see ``_emit_streaming_circuit_event`` in the router).
+    execution record (see ``_emit_streaming_circuit_event`` in
+    ``streaming_persistence``).
 
     The rate limit is the breaker's own per-host claim
     (``CircuitOpenError.report``), checked by the caller: of every refusal an
@@ -134,6 +162,19 @@ def _api_reference(ctx_req: ExecuteRequestContext) -> APIReference | None:
     )
 
 
+def _is_pre_send_broker_error(exc: BrokerError) -> bool:
+    """Return True when the broker error happened before any request bytes were sent upstream."""
+    return exc.pre_send or isinstance(
+        exc,
+        (
+            CircuitOpenError,
+            RateLimitExceededError,
+            RunnerSchemeUnsupportedError,
+            RunnerUnavailableError,
+        ),
+    )
+
+
 async def run_execution(
     ctx_req: ExecuteRequestContext,
     *,
@@ -151,6 +192,11 @@ async def run_execution(
     signing: SigV4Material | None = None,
     has_idempotency_key: bool = False,
     emit_lifecycle: bool = True,
+    on_dispatched: Callable[[], None] | None = None,
+    on_pre_send_error: Callable[[], None] | None = None,
+    on_outcome: Callable[[ExecutionOutcome], Awaitable[None]] | None = None,
+    on_unmapped_failure: UnmappedFailureRecorder | None = None,
+    is_server_error: ServerErrorClassifier | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -165,6 +211,14 @@ async def run_execution(
     it to problem+json. The ``broker`` (and thus the shared upstream client it
     wraps) is supplied by the caller (one client per process); the default
     builds a :class:`DefaultBroker` per request, a caller may inject its own.
+
+    A non-``BrokerError`` exception that ``is_server_error`` classifies as a 500
+    is counted once and handed to ``on_unmapped_failure`` before it propagates
+    unchanged. The recorder schedules the secret-safe FAILED record and lifecycle
+    event off the request; a recorder failure never replaces the original error.
+    Without a classifier every non-``BrokerError`` exception is treated as
+    unmapped, which preserves the worker's failed-job handling. Without a
+    recorder the failure is counted but no execution row is written.
 
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
@@ -222,10 +276,17 @@ async def run_execution(
             span.set_attribute("operation_id", operation_id or "")
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
+            if on_dispatched is not None:
+                on_dispatched()
             with jentic_tracestate(tracestate_member), stage(ServerTimingStage.UPSTREAM):
                 outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
+        if _is_pre_send_broker_error(exc) and on_pre_send_error is not None:
+            on_pre_send_error()
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
+        _executions_total.add(
+            1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED}
+        )
         # Committed before the re-raise that maps the BrokerError to HTTP.
         # ``jentic-persist`` is timed here too, so a failed call reports it.
         async with stage(ServerTimingStage.PERSIST), admin_db.transaction() as session:
@@ -236,7 +297,7 @@ async def run_execution(
                 started_at=started_at,
                 status=ExecutionStatus.FAILED,
                 http_status=None,
-                duration_ms=0,
+                duration_ms=_elapsed_ms(t0),
                 error=exc.detail[:128],
                 actor_id=actor_id,
                 actor_type=actor_type,
@@ -264,6 +325,28 @@ async def run_execution(
                     session, ctx_req, actor_id=actor_id, actor_type=actor_type
                 )
         raise
+    except Exception as exc:
+        if is_server_error is not None and not is_server_error(exc):
+            raise
+        await _settle_unmapped_failure(
+            exc,
+            operation_id=operation_id,
+            failure=UnmappedFailure(
+                execution_id=execution_id,
+                started_at=started_at,
+                duration_ms=_elapsed_ms(t0),
+                error=f"server_error: {type(exc).__name__}"[:_FAILURE_REASON_MAX_LEN],
+            ),
+            recorder=on_unmapped_failure,
+        )
+        raise
+
+    outcome_error: Exception | None = None
+    if on_outcome is not None:
+        try:
+            await on_outcome(outcome)
+        except Exception as exc:
+            outcome_error = exc
 
     result = outcome.result
     status = ExecutionStatus.FAILED if result.status_code >= 400 else ExecutionStatus.COMPLETED
@@ -290,7 +373,7 @@ async def run_execution(
             started_at=started_at,
             status=status,
             http_status=result.status_code,
-            duration_ms=result.duration_ms,
+            duration_ms=int(result.duration_ms),
             error=error_msg,
             actor_id=actor_id,
             actor_type=actor_type,
@@ -328,7 +411,83 @@ async def run_execution(
                 origin=origin,
             )
 
+    if outcome_error is not None:
+        raise outcome_error
+
     return outcome
+
+
+async def _settle_unmapped_failure(
+    exc: Exception,
+    *,
+    operation_id: str | None,
+    failure: UnmappedFailure,
+    recorder: UnmappedFailureRecorder | None,
+) -> None:
+    """Count and hand off an unmapped failure without replacing its exception."""
+    logger.error(
+        "execution_failed",
+        execution_id=failure.execution_id,
+        error=failure.error,
+    )
+    _executions_total.add(1, {"operation": operation_id or "", "status": ExecutionStatus.FAILED})
+    if recorder is None:
+        return
+    try:
+        await recorder(failure)
+    except Exception as recorder_exc:
+        logger.error(
+            "unmapped_failure_record_failed",
+            execution_id=failure.execution_id,
+            error_type=type(recorder_exc).__name__,
+            exc_info=True,
+        )
+
+
+async def persist_unmapped_failure(
+    session: Any,
+    failure: UnmappedFailure,
+    *,
+    ctx_req: ExecuteRequestContext,
+    actor_id: str,
+    actor_type: str,
+    origin: str | None = None,
+    security_config: SecurityConfig | None = None,
+    repeated_failure_counter: RepeatedFailureCounter | None = None,
+) -> None:
+    """Write one FAILED record and lifecycle event for an unmapped failure.
+
+    ``run_execution`` owns the execution metric. This path intentionally records
+    a null HTTP status and full elapsed duration without an upstream-duration
+    histogram sample, including for post-response-stage failures.
+    """
+    await _persist(
+        ctx_req,
+        session=session,
+        execution_id=failure.execution_id,
+        started_at=failure.started_at,
+        status=ExecutionStatus.FAILED,
+        http_status=None,
+        duration_ms=failure.duration_ms,
+        error=failure.error,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        origin=origin,
+    )
+    await _emit_execution_lifecycle(
+        session,
+        execution_id=failure.execution_id,
+        status=ExecutionStatus.FAILED,
+        error_msg=failure.error,
+        trace_id=ctx_req.trace_id,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        credential_id=ctx_req.credential_id,
+        operation=ctx_req.operation,
+        security_config=security_config,
+        repeated_failure_counter=repeated_failure_counter,
+        origin=origin,
+    )
 
 
 async def persist_streaming_execution(
@@ -338,7 +497,7 @@ async def persist_streaming_execution(
     started_at: datetime,
     status: ExecutionStatus,
     http_status: int | None,
-    duration_ms: int,
+    duration_ms: float,
     error: str | None,
     ctx_req: ExecuteRequestContext,
     actor_id: str,
@@ -365,40 +524,46 @@ async def persist_streaming_execution(
     ``ExecutionStatus`` has no neutral member, and a non-idempotent call may
     already have reached the upstream — but it raises no action-required event
     and feeds no repeated-failure detection.
+
+    ``duration_ms`` is fractional; the histogram records it as-is and the
+    persisted record truncates it to ``int``.
     """
     operation_id = ctx_req.operation_id
     _executions_total.add(1, {"operation": operation_id or "", "status": status})
     if http_status is not None:
         _execution_duration.record(duration_ms, {"operation": operation_id or ""})
+    persisted_ms = int(duration_ms)
 
     logger.info(
         "execution_recorded",
         execution_id=execution_id,
         status=status,
-        duration_ms=duration_ms,
+        duration_ms=persisted_ms,
         stream=True,
     )
 
     await record_execution(
         session,
-        execution_id=execution_id,
-        toolkit_id=ctx_req.toolkit_id,
-        trace_id=ctx_req.trace_id,
-        started_at=started_at,
-        status=status,
-        duration_ms=duration_ms,
-        operation=ctx_req.operation,
-        api_vendor=ctx_req.api_vendor,
-        api_name=ctx_req.api_name,
-        api_version=ctx_req.api_version,
-        http_status=http_status,
-        error=error,
-        pinned_revisions=ctx_req.pinned_revisions,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        credential_id=ctx_req.credential_id,
-        credential_name=ctx_req.credential_name,
+        ExecutionRecordInput(
+            execution_id=execution_id,
+            toolkit_id=ctx_req.toolkit_id,
+            trace_id=ctx_req.trace_id,
+            started_at=started_at,
+            status=status,
+            duration_ms=persisted_ms,
+            operation=ctx_req.operation,
+            api_vendor=ctx_req.api_vendor,
+            api_name=ctx_req.api_name,
+            api_version=ctx_req.api_version,
+            http_status=http_status,
+            error=error,
+            pinned_revisions=ctx_req.pinned_revisions,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+            credential_id=ctx_req.credential_id,
+            credential_name=ctx_req.credential_name,
+        ),
     )
 
     # Third-party auth failure on the streaming path — mirrors run_execution
@@ -444,24 +609,26 @@ async def _persist(
 ) -> None:
     await record_execution(
         session,
-        execution_id=execution_id,
-        toolkit_id=ctx_req.toolkit_id,
-        trace_id=ctx_req.trace_id,
-        started_at=started_at,
-        status=status,
-        duration_ms=duration_ms,
-        operation=ctx_req.operation,
-        api_vendor=ctx_req.api_vendor,
-        api_name=ctx_req.api_name,
-        api_version=ctx_req.api_version,
-        http_status=http_status,
-        error=error,
-        pinned_revisions=ctx_req.pinned_revisions,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        origin=origin,
-        credential_id=ctx_req.credential_id,
-        credential_name=ctx_req.credential_name,
+        ExecutionRecordInput(
+            execution_id=execution_id,
+            toolkit_id=ctx_req.toolkit_id,
+            trace_id=ctx_req.trace_id,
+            started_at=started_at,
+            status=status,
+            duration_ms=duration_ms,
+            operation=ctx_req.operation,
+            api_vendor=ctx_req.api_vendor,
+            api_name=ctx_req.api_name,
+            api_version=ctx_req.api_version,
+            http_status=http_status,
+            error=error,
+            pinned_revisions=ctx_req.pinned_revisions,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            origin=origin,
+            credential_id=ctx_req.credential_id,
+            credential_name=ctx_req.credential_name,
+        ),
     )
 
 

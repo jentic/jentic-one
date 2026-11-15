@@ -6,15 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentops"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
+
+var isTerminal = term.IsTerminal
+
+func writerIsTerminal(w io.Writer) bool {
+	f, ok := w.(interface{ Fd() uintptr })
+	return ok && isTerminal(f.Fd())
+}
 
 // executeOutput renders an ExecuteResult and maps a broker denial to its exit.
 // Classification is the extracted core's job (agentops.Classify — the old
@@ -80,7 +89,11 @@ func (a *app) renderExecuteOutput(
 		// the JSON and `jentic api` paths (SEC-2). A secret in an upstream body
 		// must not leak just because the caller asked for raw output. (The read
 		// itself was already bounded in agentops.Do.)
-		if _, err := a.Out.Write(ux.RedactBytes(res.Body)); err != nil {
+		raw := ux.RedactBytes(res.Body)
+		if writerIsTerminal(a.Out) {
+			raw = ux.TerminalSafeBytes(raw)
+		}
+		if _, err := a.Out.Write(raw); err != nil {
 			return err
 		}
 		if denial != nil {
@@ -169,7 +182,7 @@ func (a *app) executePrettyOutput(ctx context.Context, res *agentops.ExecuteResu
 
 	for k, vs := range res.Headers {
 		if strings.HasPrefix(k, "Jentic-") {
-			fmt.Fprintln(a.Out, st.Dim.Render(fmt.Sprintf("  %s: %s", k, strings.Join(vs, ", "))))
+			fmt.Fprintln(a.Out, st.Dim.Render(fmt.Sprintf("  %s: %s", ux.TerminalSafe(k), ux.TerminalSafe(strings.Join(vs, ", ")))))
 		}
 	}
 
@@ -181,7 +194,9 @@ func (a *app) executePrettyOutput(ctx context.Context, res *agentops.ExecuteResu
 		if err := json.Indent(&pretty, res.Body, "", "  "); err == nil {
 			_, _ = a.Out.Write(ux.RedactBytes(pretty.Bytes()))
 		} else {
-			_, _ = a.Out.Write(ux.RedactBytes(res.Body))
+			out := ux.RedactBytes(res.Body)
+			out = ux.TerminalSafeBytes(out)
+			_, _ = a.Out.Write(out)
 		}
 		fmt.Fprintln(a.Out)
 	}

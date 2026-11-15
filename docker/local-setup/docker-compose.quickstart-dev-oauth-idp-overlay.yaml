@@ -1,0 +1,118 @@
+# Local development overlay: the Docker quickstart signing in through a mock
+# OIDC identity provider.
+#
+#   make start-quickstart-dev
+#
+# which runs, in the foreground:
+#
+#   docker compose -p jentic-quickstart-dev \
+#     -f deploy/docker/quickstart/docker-compose.yaml \
+#     -f docker/local-setup/docker-compose.quickstart-dev-oauth-idp-overlay.yaml up
+#
+# Runs NAV's mock-oauth2-server on http://localhost:8080 and points the app's
+# `auth.idp` at it. Its login page asks for a username: enter the email of a
+# Jentic account (e.g. the admin you created on first start). The IdP signs in
+# as that email, marked verified, so Jentic links the sign-in to that account
+# and it keeps its permissions. An email with no account gets a new account
+# with no permissions. Local development only.
+#
+# The IdP shares the app container's network, as the broker does, so
+# http://localhost:8080 is the same IdP for your browser and for the app's
+# token exchange (the IdP names its issuer after the address it is reached
+# on). The app publishes its port. Stop anything else on port 8080 first.
+
+services:
+  app:
+    ports: ["127.0.0.1:8080:8080"]
+    environment:
+      # Local development: send no product telemetry.
+      JENTIC__TELEMETRY__ENABLED: "false"
+      # Lets MCP clients sign in through the browser (via this IdP) instead of
+      # using an agent API key. New clients wait for admin approval.
+      JENTIC__SERVER__MCP__OAUTH__ENABLED: "true"
+      JENTIC__AUTH__IDP__ENABLED: "true"
+      JENTIC__AUTH__IDP__PROVIDER: oidc
+      JENTIC__AUTH__IDP__ISSUER: http://localhost:8080/default
+      JENTIC__AUTH__IDP__CLIENT_ID: jentic-one
+      JENTIC__AUTH__IDP__CLIENT_SECRET: secret
+      # The mock's endpoint paths differ from the issuer-derived defaults.
+      JENTIC__AUTH__IDP__AUTHORIZATION_ENDPOINT: http://localhost:8080/default/authorize
+      JENTIC__AUTH__IDP__EXCHANGE_ENDPOINT: http://localhost:8080/default/token
+      JENTIC__AUTH__IDP__USERINFO_ENDPOINT: http://localhost:8080/default/userinfo
+      # SSO sign-in issues ID tokens, which need a signing key. This is the
+      # local-dev key from config/local.yaml; the app refuses it in production.
+      JENTIC__AUTH__ID_SIGNING__0__KID: local-dev-key
+      JENTIC__AUTH__ID_SIGNING__0__PRIVATE_KEY_PEM: |
+        -----BEGIN EC PRIVATE KEY-----
+        MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+        AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+        369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+        -----END EC PRIVATE KEY-----
+
+  mock-idp:
+    image: ghcr.io/navikt/mock-oauth2-server:6.1.4
+    network_mode: "service:app"
+    depends_on:
+      app: { condition: service_started, restart: true }
+    environment:
+      JSON_CONFIG: >-
+        {
+          "interactiveLogin": true,
+          "loginPagePath": "/login.html",
+          "tokenCallbacks": [
+            {
+              "issuerId": "default",
+              "tokenExpiry": 3600,
+              "requestMappings": [
+                {
+                  "requestParam": "subject",
+                  "match": ".*",
+                  "claims": {
+                    "sub": "$${subject}",
+                    "email": "$${subject}",
+                    "email_verified": true,
+                    "aud": ["jentic-one"]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+    configs:
+      - source: mock-idp-login
+        target: /login.html
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/default/.well-known/openid-configuration"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+configs:
+  # The mock IdP's login page, without its free-form claims box: the overlay
+  # sets each sign-in's claims from the email entered.
+  mock-idp-login:
+    content: |
+      <!doctype html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Mock IdP sign-in</title>
+        <style>
+          body { font-family: system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+          form { background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.15); width: 20rem; }
+          h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
+          p { color: #555; font-size: .9rem; margin: 0 0 1rem; }
+          input, button { width: 100%; box-sizing: border-box; padding: .6rem; font-size: 1rem; }
+          button { margin-top: .75rem; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <form method="post">
+          <h1>Mock IdP sign-in</h1>
+          <p>Enter the email of your Jentic account.</p>
+          <input type="email" name="username" placeholder="admin@local" autofocus required>
+          <button type="submit">Sign in</button>
+        </form>
+      </body>
+      </html>

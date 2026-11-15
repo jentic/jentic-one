@@ -235,10 +235,9 @@ class ErrorSource(StrEnum):
     # at different precision (401 is RFC-tight; 403 mixes auth + authorization).
     AUTH_THIRDPARTY_UNAUTHORIZED = "auth_thirdparty_unauthorized"
     AUTH_THIRDPARTY_FORBIDDEN = "auth_thirdparty_forbidden"
-    # DEFERRED (v1): the catalog-vs-imported spec-provenance split on
-    # broker_execution_failed is not wired yet — the spec's provenance is not
-    # carried on ExecuteRequestContext/ResolveResult at execution-failure time.
-    # See docs/plans/issue-446-product-telemetry.md items 14/18 (deferral note).
+    # Reserved for distinguishing catalog versus imported upstream provenance on
+    # execution failures; production failure paths do not attach them because
+    # execution context does not carry spec provenance.
     UPSTREAM_CATALOG = "upstream_catalog"
     UPSTREAM_IMPORTED = "upstream_imported"
 
@@ -266,12 +265,11 @@ def thirdparty_auth_error_tag(
 
 
 class SpecSource(StrEnum):
-    """Closed-enum tag splitting a spec import by provenance.
+    """Closed-enum tag for spec provenance on ``IMPORT_COMPLETED``.
 
-    DEFERRED (v1): declared and validated for ``IMPORT_COMPLETED`` but not yet
-    passed at the ``worker.py`` emit point — the catalog-vs-local provenance is
-    not threaded into the job result today. See
-    docs/plans/issue-446-product-telemetry.md item 18 (deferral note).
+    ``EVENT_TAGS`` validation accepts this vocabulary, while worker completion
+    emission does not supply it because catalog-versus-local provenance is not
+    threaded into the job result.
     """
 
     CATALOG = "catalog"
@@ -279,13 +277,11 @@ class SpecSource(StrEnum):
 
 
 class ImportFailReason(StrEnum):
-    """Closed-enum tag splitting a spec-import failure by phase.
+    """Closed-enum tag for import failure phase on ``IMPORT_FAILED``.
 
-    DEFERRED (v1): declared and validated for ``IMPORT_FAILED`` but not yet
-    passed at the emit point — the import handler stringifies all
-    ``IngestStageError``s uniformly, so validation-vs-fetch is indistinguishable
-    at ``_terminal_job`` without typed exceptions. See
-    docs/plans/issue-446-product-telemetry.md item 18 (deferral note).
+    ``EVENT_TAGS`` validation accepts this vocabulary, while terminal-job
+    emission does not supply it because the emit path lacks a typed
+    validation-versus-fetch distinction.
     """
 
     VALIDATION = "validation"

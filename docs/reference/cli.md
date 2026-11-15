@@ -407,7 +407,9 @@ Add a Control Plane environment. --broker-url is optional and is NEVER
 derived from --url (Control Plane and Broker often live on different
 domains). `jentic register` seeds broker_url automatically for a loopback
 install; set it explicitly here for a remote broker or to fix an existing
-environment (use --force to replace one of the same name).
+environment (use --force to replace one of the same name). Replacing an
+environment with a different Control Plane or Broker origin purges its
+cached credentials and identity registrations before saving.
 ```
 
 **Flags**
@@ -614,17 +616,18 @@ jentic migrate [flags]
 
 ```text
 migrate copies each legacy profile into an Environment + Identity +
-Context under ~/.config/jentic, and copies key/token material into the XDG
-layout. It is idempotent and non-destructive (the legacy tree survives for
-downgrade); --purge-legacy removes the old tree afterwards. Cached refresh
-tokens are intentionally dropped.
+Context under ~/.config/jentic, and copies key/token material (including
+cached access and refresh tokens) into the XDG layout. It is idempotent and
+non-destructive by default so the legacy tree remains available for recovery
+or downgrade. Verify that a migrated context authenticates (for example,
+`jentic whoami`) before passing --purge-legacy to delete the legacy tree.
 ```
 
 **Flags**
 
 | Flag | Shorthand | Type | Default | Description |
 |---|---|---|---|---|
-| `--purge-legacy` |  | `bool` | `false` | Delete the legacy ~/.jentic profile tree after a successful migration |
+| `--purge-legacy` |  | `bool` | `false` | Delete the legacy ~/.jentic profile tree (run only after verifying migrated authentication) |
 | `--yes` | `-y` | `bool` | `false` | Proceed without interactive confirmation |
 
 Also accepts the [jentic global flags](#jentic-global-flags).
@@ -2524,9 +2527,11 @@ package manager, or pass --stack-only.
 
 | Flag | Shorthand | Type | Default | Description |
 |---|---|---|---|---|
+| `--allow-unsigned` |  | `bool` | `false` | allow installing a release when its cosign signature or certificate cannot be verified |
 | `--base-url` |  | `string` |  | Jentic control-plane base URL (for the server probe) |
 | `--check` |  | `bool` | `false` | only report status; don't apply any update |
 | `--cli-only` |  | `bool` | `false` | update only the CLI binary |
+| `--from-source` |  | `bool` | `false` | build the CLI binaries from source via tools/install.sh instead of downloading prebuilt release archives |
 | `--ref` |  | `string` |  | git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag) |
 | `--stack-only` |  | `bool` | `false` | update only the stack (not the CLI binary) |
 | `--yes` | `-y` | `bool` | `false` | skip the confirmation prompt |

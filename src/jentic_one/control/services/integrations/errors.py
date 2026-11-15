@@ -55,10 +55,6 @@ class ConfirmationForbiddenError(ConnectSessionServiceError):
     """Caller is not permitted to confirm this session (e.g. agent confirming own session)."""
 
 
-class AgentRequiredError(ConnectSessionServiceError):
-    """Caller is a USER/SA but agent_id was not supplied."""
-
-
 class AgentNotFoundError(ConnectSessionServiceError):
     """The ``agent_id`` to bind does not exist in the admin DB."""
 
@@ -484,6 +480,15 @@ class SessionClosedError(PointsAtAccessError):
             f"session {session_id!r} is closed and cannot be amended; start a new request"
         )
         self.session_id = session_id
+
+
+class DeviceFlowInProgressError(ConnectSessionServiceError):
+    """A standalone device flow owns the credential's shared transient state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a standalone device connection is already in progress for this credential"
+        )
 
 
 class ConnectOpenError(ConnectSessionServiceError):

@@ -13,17 +13,25 @@ against both backends so we catch dialect drift early.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sqlite3
 import tempfile
+import uuid
 from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 from alembic import command
+from pydantic import SecretStr
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.db.session import DatabaseSession, get_database_url
 from tests.harness.event_stream import StreamProbe, install_fast_stream
 from tests.harness.postgres import (
     DB_NAMES,
@@ -125,3 +133,106 @@ def control_db(integration_context: Context) -> DatabaseSession:
 def fast_stream(integration_context: Context, monkeypatch: pytest.MonkeyPatch) -> StreamProbe:
     """``/events/stream`` re-verifying on every page and polling every 50 ms, with a probe."""
     return install_fast_stream(integration_context, monkeypatch)
+
+
+async def _drop_pg_schemas(superuser_url: Any, schemas: dict[str, str]) -> None:
+    engine = create_async_engine(superuser_url)
+    try:
+        async with engine.begin() as conn:
+            for schema in schemas.values():
+                await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    finally:
+        await engine.dispose()
+
+
+async def _pg_current_rev(superuser_url: Any, schema: str) -> str | None:
+    engine = create_async_engine(superuser_url)
+    try:
+        async with engine.connect() as conn:
+            has_table = (
+                await conn.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema = :s AND table_name = 'alembic_version'"
+                    ),
+                    {"s": schema},
+                )
+            ).first()
+            if has_table is None:
+                return None
+            row = (
+                await conn.execute(text(f'SELECT version_num FROM "{schema}".alembic_version'))
+            ).first()
+            return str(row[0]) if row is not None else None
+    finally:
+        await engine.dispose()
+
+
+def _sqlite_current_rev(db_file: Path) -> str | None:
+    if not db_file.exists():
+        return None
+    with sqlite3.connect(db_file) as conn:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'"
+        ).fetchone()
+        if has_table is None:
+            return None
+        row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+        return str(row[0]) if row is not None else None
+
+
+@pytest.fixture()
+def disposable_migration_stack(
+    integration_config: AppConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Any]:
+    """Configure ``JENTIC_CONFIG_FILE`` against fresh disposable schemas/files per test."""
+    backend = _test_backend()
+    cfg_path = tmp_path / "disposable-jentic-one.yaml"
+
+    if backend == "postgres":
+        tag = uuid.uuid4().hex[:8]
+        schemas = {surface: f"dg1304_{surface}_{tag}" for surface in DB_NAMES}
+        base_pg = integration_config.databases.registry
+        superuser_cfg = base_pg.model_copy(
+            update={"user": "postgres", "password": SecretStr("postgres")}
+        )
+        superuser_url = get_database_url(superuser_cfg)
+        raw_cfg: dict[str, Any] = {
+            "databases": {
+                surface: {
+                    "backend": "postgres",
+                    "host": base_pg.host,
+                    "port": base_pg.port,
+                    "name": base_pg.name,
+                    "user": "postgres",
+                    "password": "postgres",  # pragma: allowlist secret
+                    "schema_name": schemas[surface],
+                }
+                for surface in DB_NAMES
+            },
+            "credentials": encryption_config(),
+        }
+        cfg_path.write_text(yaml.safe_dump(raw_cfg), encoding="utf-8")
+        monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg_path))
+        try:
+            yield lambda surface: asyncio.run(_pg_current_rev(superuser_url, schemas[surface]))
+        finally:
+            asyncio.run(_drop_pg_schemas(superuser_url, schemas))
+    else:
+        files = {surface: tmp_path / f"{surface}.db" for surface in DB_NAMES}
+        raw_cfg = {
+            "databases": {
+                surface: {
+                    "backend": "sqlite",
+                    "path": str(files[surface]),
+                    "schema_name": surface,
+                }
+                for surface in DB_NAMES
+            },
+            "credentials": encryption_config(),
+        }
+        cfg_path.write_text(yaml.safe_dump(raw_cfg), encoding="utf-8")
+        monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg_path))
+        yield lambda surface: _sqlite_current_rev(files[surface])

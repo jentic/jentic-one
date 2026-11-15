@@ -35,6 +35,16 @@ import { BoundAgentsSection } from '@/shared/credentials/components/BoundAgentsS
 import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 
+const EMPTY_SECRET_FIELDS: Partial<CredentialFormState> = {
+	token: '',
+	key: '',
+	password: '',
+	clientSecret: '',
+	secretAccessKey: '',
+	sessionToken: '',
+	clearSessionToken: false,
+};
+
 interface EditCredentialSheetProps {
 	credentialId: string | null;
 	open: boolean;
@@ -82,7 +92,12 @@ export function EditCredentialSheet({
 	 */
 	const [initialState, setInitialState] = useState<CredentialFormState>(EMPTY_FORM);
 
-	const originalName = cred?.name ?? '';
+	const seedKeyRef = useRef<string | null>(null);
+	const seededCredentialIdRef = useRef<string | null>(null);
+	const initialStateRef = useRef(initialState);
+	useEffect(() => {
+		initialStateRef.current = initialState;
+	}, [initialState]);
 
 	// A name a sibling for the same API holds — including the one it was saved
 	// with, so opening a duplicate says so. A warning only; the save still goes.
@@ -105,7 +120,8 @@ export function EditCredentialSheet({
 		[cred],
 	);
 
-	// Prefill non-secret fields whenever a (different) credential loads.
+	// Seed non-secret fields from a newly loaded credential. Dismissal keeps
+	// ordinary edits but clears write-only secrets through the effect below.
 	useEffect(() => {
 		if (!cred) return;
 		const details = credentialDetails(cred);
@@ -128,10 +144,34 @@ export function EditCredentialSheet({
 			scopes: Array.isArray(details.scopes) ? details.scopes.join(' ') : '',
 			serverVars: cred.server_variables ?? {},
 		};
-		setState(seeded);
+		const seedKey = JSON.stringify([cred.credential_id, cred.type, seeded]);
+		if (seedKeyRef.current === seedKey) return;
+		const credentialChanged = seededCredentialIdRef.current !== cred.credential_id;
+		seedKeyRef.current = seedKey;
+		seededCredentialIdRef.current = cred.credential_id;
+		if (credentialChanged) {
+			setState(seeded);
+			setInitialState(seeded);
+			initialStateRef.current = seeded;
+			setErrors({});
+			updateMutation.reset();
+			return;
+		}
+		const baseline = initialStateRef.current;
+		setState((current) => mergeDraft(seeded, current, baseline));
 		setInitialState(seeded);
+		initialStateRef.current = seeded;
 		setErrors({});
 	}, [cred]);
+
+	useEffect(() => {
+		if (open) return;
+		// Preserve the ordinary draft across dismissal; write-only secrets are
+		// not a resumable draft and must never survive a close.
+		setState((prev) => ({ ...prev, ...EMPTY_SECRET_FIELDS }));
+		setErrors({});
+		updateMutation.reset();
+	}, [open]);
 
 	useEffect(() => {
 		if (open) closeButtonRef.current?.focus();
@@ -147,9 +187,14 @@ export function EditCredentialSheet({
 		}
 		setErrors({});
 		updateMutation.mutate(
-			buildUpdateBody(cred.type, state, originalName, initialState.scopes),
+			buildUpdateBody(cred.type, state, initialState.name, initialState.scopes),
 			{
 				onSuccess: () => {
+					const committed = { ...state, ...EMPTY_SECRET_FIELDS };
+					setState(committed);
+					setInitialState(committed);
+					initialStateRef.current = committed;
+					setErrors({});
 					toast({ title: 'Credential updated', variant: 'success' });
 					onClose();
 				},
@@ -275,6 +320,7 @@ export function EditCredentialSheet({
 
 							<div className="space-y-4">
 								<CredentialTypeFields
+									key={open ? 'open' : 'closed'}
 									type={cred.type}
 									state={state}
 									onChange={(p): void => setState((s) => ({ ...s, ...p }))}
@@ -342,45 +388,54 @@ export function EditCredentialSheet({
 	);
 }
 
-/**
- * Structural equality for two form snapshots — drives the edit sheet's
- * dirty-tracking. Compares every *editable* scalar field plus a shallow compare
- * of the `serverVars` record. `fieldName`/`location` are omitted: they are
- * immutable after create (#589), rendered read-only in edit mode, so they can
- * never legitimately dirty the form.
- */
-function formStatesEqual(a: CredentialFormState, b: CredentialFormState): boolean {
-	const keys: (keyof CredentialFormState)[] = [
-		'name',
-		'provider',
-		'apiVendor',
-		'apiName',
-		'apiVersion',
-		'token',
-		'key',
-		'username',
-		'password',
-		'clientId',
-		'clientSecret',
-		'tokenUrl',
-		'authorizeUrl',
-		'scopes',
-		// sigv4: access key id / region / service are editable, plus the secret,
-		// session token, and the clear-session-token flag. Omitting these left the
-		// Save button disabled after a sigv4-only edit.
-		'accessKeyId',
-		'secretAccessKey',
-		'sessionToken',
-		'clearSessionToken',
-		'awsRegion',
-		'awsService',
-	];
-	for (const k of keys) {
-		if (a[k] !== b[k]) return false;
+const EDITABLE_SCALAR_KEYS = [
+	'name',
+	'provider',
+	'apiVendor',
+	'apiName',
+	'apiVersion',
+	'token',
+	'key',
+	'username',
+	'password',
+	'clientId',
+	'clientSecret',
+	'tokenUrl',
+	'authorizeUrl',
+	'scopes',
+	'accessKeyId',
+	'secretAccessKey',
+	'sessionToken',
+	'clearSessionToken',
+	'awsRegion',
+	'awsService',
+] as const satisfies readonly (keyof CredentialFormState)[];
+
+function serverVarsEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+	const keys = Object.keys(a);
+	return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+/** Rebase a server snapshot without discarding fields the user changed. */
+function mergeDraft(
+	seeded: CredentialFormState,
+	current: CredentialFormState,
+	baseline: CredentialFormState,
+): CredentialFormState {
+	const merged = { ...seeded };
+	for (const key of EDITABLE_SCALAR_KEYS) {
+		if (current[key] !== baseline[key]) Object.assign(merged, { [key]: current[key] });
 	}
-	const av = a.serverVars;
-	const bv = b.serverVars;
-	const ak = Object.keys(av);
-	if (ak.length !== Object.keys(bv).length) return false;
-	return ak.every((k) => av[k] === bv[k]);
+	if (!serverVarsEqual(current.serverVars, baseline.serverVars)) {
+		merged.serverVars = current.serverVars;
+	}
+	return merged;
+}
+
+/** Structural equality for every editable field drives dirty-tracking. */
+function formStatesEqual(a: CredentialFormState, b: CredentialFormState): boolean {
+	for (const key of EDITABLE_SCALAR_KEYS) {
+		if (a[key] !== b[key]) return false;
+	}
+	return serverVarsEqual(a.serverVars, b.serverVars);
 }

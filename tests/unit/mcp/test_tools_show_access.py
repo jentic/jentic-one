@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from mcp.shared.exceptions import MCPError
 
+import jentic_one.mcp.access as access_mod
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
@@ -89,7 +90,7 @@ class _FakeCredentialService:
 def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeCredentialService.calls = []
     _FakeCredentialService.error = None
-    monkeypatch.setattr(tools_mod, "CredentialService", _FakeCredentialService)
+    monkeypatch.setattr(access_mod, "CredentialService", _FakeCredentialService)
 
 
 async def test_reads_the_callers_own_binding() -> None:

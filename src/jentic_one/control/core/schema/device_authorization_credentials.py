@@ -55,6 +55,7 @@ class DeviceAuthorizationCredential(AuditableMixin, ControlBase):
     poll_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_polled_at: Mapped[dt.datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     device_code_expires_at: Mapped[dt.datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    flow_nonce: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # ---- scopes (per-credential) --------------------------------------------
     # The scopes the initiator asked for at `:connect` time.

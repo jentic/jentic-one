@@ -24,10 +24,49 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 _DELAY_SECONDS = re.compile(r"([0-9]+)(?:\.([0-9]+))?")
+_TIME_OF_DAY = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2}")
+_NUMERIC_OFFSET = re.compile(r"([+-])([0-9]{2}):?([0-9]{2})")
+_YEAR_4DIGIT = re.compile(r"[0-9]{4}")
 
 #: The longest wait the parser reports; a larger delay or later date is capped.
 MAX_RETRY_AFTER_S = 86_400
 _MAX_DIGITS = len(str(MAX_RETRY_AFTER_S))
+
+
+def _normalize_http_date(raw: str) -> str | None:
+    """Validate and normalise an HTTP-date before passing to ``email.utils``.
+
+    Accepts RFC 9110 §5.6.7 dates (IMF-fixdate, RFC 850, ANSI C ``asctime``)
+    in ``GMT``/``UTC``, numeric ``±HHMM``/``±HH:MM`` offsets (``HH <= 23``,
+    ``MM <= 59``), and zone-less RFC 1123 dates. Rejects other named zones
+    (``EST``, ``PST``, ``Z``), fractional seconds, missing space after the
+    weekday comma, and out-of-range numeric offsets.
+    """
+    if "," in raw:
+        head, sep, rest = raw.partition(",")
+        if not head or not sep or not rest.startswith(" ") or "," in rest:
+            return None
+    tokens = raw.split()
+    if len(tokens) < 4:
+        return None
+    if _TIME_OF_DAY.fullmatch(tokens[-1]) is not None:
+        return raw
+    if _TIME_OF_DAY.fullmatch(tokens[-2]) is None:
+        return None
+    last = tokens[-1]
+    if "," not in raw and len(tokens) == 5 and _YEAR_4DIGIT.fullmatch(last) is not None:
+        return raw
+    if last.upper() in {"GMT", "UTC"}:
+        tokens[-1] = last.upper()
+        return " ".join(tokens)
+    offset = _NUMERIC_OFFSET.fullmatch(last)
+    if offset is None:
+        return None
+    hh, mm = int(offset.group(2)), int(offset.group(3))
+    if hh > 23 or mm > 59:
+        return None
+    tokens[-1] = f"{offset.group(1)}{offset.group(2)}{offset.group(3)}"
+    return " ".join(tokens)
 
 
 def parse_retry_after(value: str | None, *, now_epoch: float | None = None) -> int | None:
@@ -48,8 +87,11 @@ def parse_retry_after(value: str | None, *, now_epoch: float | None = None) -> i
             return MAX_RETRY_AFTER_S
         seconds = int(whole or "0") + (1 if fraction.strip("0") else 0)
         return min(seconds, MAX_RETRY_AFTER_S)
+    normalized = _normalize_http_date(raw)
+    if normalized is None:
+        return None
     try:
-        when = parsedate_to_datetime(raw)
+        when = parsedate_to_datetime(normalized)
     except (TypeError, ValueError):
         return None
     if when.tzinfo is None:

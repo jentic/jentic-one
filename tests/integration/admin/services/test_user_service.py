@@ -398,6 +398,82 @@ async def test_reissue_invite_redeemed_raises(
         await session.commit()
 
 
+async def test_reissue_invite_refused_for_idp_accepted_user(
+    integration_context: Context, admin_user: str
+) -> None:
+    ctx = integration_context
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.create(
+            session,
+            email="accepted-inv@test.local",
+            first_name="Accepted",
+            last_name="User",
+            auth_provider="oidc",
+            invite_state=InviteState.ACCEPTED,
+            created_by="self",
+        )
+        await session.commit()
+    user_id = user.id
+
+    service = UserService(ctx)
+    with pytest.raises(ConflictError, match="already signed in"):
+        await service.reissue_invite(user_id, identity=_ORG_ADMIN)
+
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(InviteToken).where(InviteToken.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+async def test_reissue_invite_allowed_for_pending_and_expired(
+    integration_context: Context, admin_user: str
+) -> None:
+    ctx = integration_context
+    service = UserService(ctx)
+    creator = Identity(sub=admin_user, email="test@local", permissions=["org:admin"])
+
+    pending = await service.create(
+        UserCreatePayload(
+            email="reissue-pending@test.local", first_name="Pending", last_name="User"
+        ),
+        identity=creator,
+    )
+    expired = await service.create(
+        UserCreatePayload(
+            email="reissue-expired@test.local", first_name="Expired", last_name="User"
+        ),
+        identity=creator,
+    )
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(InviteToken)
+            .where(InviteToken.user_id == expired.user.id)
+            .values(expires_at=datetime.now(UTC) - timedelta(hours=1))
+        )
+        await session.commit()
+
+    assert (await service.get_by_id(pending.user.id)).invite_state == InviteState.PENDING
+    assert (await service.get_by_id(expired.user.id)).invite_state == InviteState.EXPIRED
+
+    reissued_pending = await service.reissue_invite(pending.user.id, identity=_ORG_ADMIN)
+    assert reissued_pending.token.startswith("inv_")
+    assert reissued_pending.token != pending.invite_token
+
+    reissued_expired = await service.reissue_invite(expired.user.id, identity=_ORG_ADMIN)
+    assert reissued_expired.token.startswith("inv_")
+    assert reissued_expired.token != expired.invite_token
+
+    async with ctx.admin_db.session() as session:
+        for uid in (pending.user.id, expired.user.id):
+            await session.execute(delete(InviteToken).where(InviteToken.user_id == uid))
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id == uid)
+            )
+            await session.execute(delete(UserSecret).where(UserSecret.user_id == uid))
+            await session.execute(delete(User).where(User.id == uid))
+        await session.commit()
+
+
 async def test_get_by_id_derives_expired_for_lapsed_pending_invite(
     integration_context: Context, admin_user: str
 ) -> None:

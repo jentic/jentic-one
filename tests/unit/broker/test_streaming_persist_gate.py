@@ -20,7 +20,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
     _streaming_persist_gate,
@@ -115,7 +115,10 @@ def _write_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _noop(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr("jentic_one.broker.web.routers.execute.persist_streaming_execution", _noop)
+    monkeypatch.setattr(
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
+        _noop,
+    )
 
 
 @pytest.mark.asyncio
@@ -135,7 +138,7 @@ async def test_cancelled_waiter_is_counted_and_leaks_no_permit(
         with pytest.raises(asyncio.CancelledError):
             await waiter
 
-    failures.assert_called_once_with(1, {"reason": "cancelled"})
+    failures.assert_called_once_with(1, {"kind": "streaming", "reason": "cancelled"})
     abandoned = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert len(abandoned) == 1
     assert abandoned[0]["reason"] == "cancelled"
@@ -170,7 +173,7 @@ async def test_cancel_while_writing_releases_slot(
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    failures.assert_called_once_with(1, {"reason": "cancelled"})
+    failures.assert_called_once_with(1, {"kind": "streaming", "reason": "cancelled"})
     (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert abandoned["stage"] == "writing"
     assert pending == {"waiting": 0, "in_flight": 0}
@@ -191,7 +194,7 @@ async def test_slot_wait_is_bounded_by_acquire_timeout(
         async with asyncio.timeout(2.0):
             await _persist(ctx, "starved")
 
-    failures.assert_called_once_with(1, {"reason": "backlog_timeout"})
+    failures.assert_called_once_with(1, {"kind": "streaming", "reason": "backlog_timeout"})
     (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert abandoned["reason"] == "backlog_timeout"
     assert abandoned["stage"] == "waiting"
@@ -234,7 +237,7 @@ async def test_gate_setup_failure_is_best_effort(failures: MagicMock) -> None:
     with capture_logs() as logs:
         await _persist(ctx, "bad-config")
 
-    failures.assert_called_once_with(1, {"reason": "write_error"})
+    failures.assert_called_once_with(1, {"kind": "streaming", "reason": "write_error"})
     assert [e["event"] for e in logs] == ["streaming_execution_persist_failed"]
 
 

@@ -76,7 +76,6 @@ detail):
 | ------- | ---- |
 | `internal/cli` | Command trees: `api` (the `jentic` tree), `ctl`/`ctlcmd` (`jenticctl`), `cmdcore` (shared command plumbing), `binder` (flag/form building from the OpenAPI spec), `apispec` (parsing the vendored control spec), `clictx`, `prompt`, `ux`, `localagentcmd`. |
 | `internal/agentops` | The UX-free execute/inspect core both binaries share. |
-| `internal/agentkey` | The agent's Ed25519 identity key: generation, storage, assertion signing. |
 | `internal/config` | Filesystem paths (XDG layout) and default settings. |
 | `internal/install` | The `jenticctl install` onboarding wizard. |
 | `internal/localagent` | Teardown primitives `jentic reset` uses for agent accounts an earlier release created — see [its README](../../cli/internal/localagent/README.md). |

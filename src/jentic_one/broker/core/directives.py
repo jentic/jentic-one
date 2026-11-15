@@ -354,6 +354,35 @@ def credential_binding_suspended_directive(
     )
 
 
+def credential_pending_directive(
+    *, vendor: str, name: str, version: str, provisioning_url: str | None = None
+) -> AgentDirective:
+    """Directive for a bound credential whose connect flow is still pending."""
+    api = "/".join(part for part in (vendor, name) if part)
+    parameters: dict[str, Any] = {
+        "api": {"vendor": vendor, "name": name, "version": version},
+        "state": "pending",
+    }
+    if provisioning_url:
+        parameters["provisioning_url"] = provisioning_url
+        instruction = (
+            f"Your credential for '{api}' is still waiting for your human operator to "
+            f"complete sign-in. Do not start another connection: relay {provisioning_url} "
+            "to them, then check whoami for state 'connected' and retry once they confirm."
+        )
+    else:
+        instruction = (
+            f"Your credential for '{api}' is still pending. Ask your human operator to "
+            "complete the existing connection or sign-in flow; do not create a duplicate. "
+            "Check whoami for state 'connected' and retry once they confirm."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters=parameters,
+        human_readable_instruction=instruction,
+    )
+
+
 def direct_credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
     """Directive for the direct-binding ``credential_identity_mismatch`` 403.
 
@@ -492,5 +521,98 @@ def approval_pending_limit_directive(*, pending: int, limit: int) -> AgentDirect
             "This call needs human approval, but you already have the maximum number of "
             "calls waiting for review. Ask the user to review your pending approvals, then "
             "send the call again once one is decided."
+        ),
+    )
+
+
+def credential_server_variable_mismatch_directive(
+    *,
+    vendor: str,
+    requested: dict[str, str],
+    conflicting: list[str],
+    scoped_values: list[dict[str, str]],
+    unresolved: bool,
+) -> AgentDirective:
+    """Directive for a ``credential_server_variable_mismatch`` 424.
+
+    The strategy is the fixed ``prompt_human`` and no ``suggested_command`` is
+    emitted, following :func:`credential_identity_mismatch_directive`: changing
+    or re-scoping a credential is an operator action with no verbatim CLI
+    command an agent can run.
+
+    ``covered_scopes`` keeps each candidate's values grouped **per variable**,
+    restricted to the variables that disagree. Flattening them into a bare
+    value list would both name values that match and strand a value with no
+    variable to attach it to, so a reader could not tell which axis to fix.
+
+    The strategy stays ``prompt_human`` rather than ``retry`` for two reasons:
+    the identical request can never succeed, and silently retargeting a call at
+    a region the existing credential happens to cover would move data to a
+    jurisdiction nobody chose. Naming the covered scopes lets a human decide.
+    """
+    names = set(conflicting)
+    covered_scopes = [
+        scope
+        for scope in (
+            {name: value for name, value in sorted(s.items()) if not names or name in names}
+            for s in scoped_values
+        )
+        if scope
+    ]
+    if unresolved:
+        instruction = (
+            f"A credential for '{vendor}' exists but is scoped to specific server-variable "
+            "values, and this request URL does not say which values it targets. Send the "
+            "host's templated form (for example '{region}') so the credential supplies the "
+            "value, or ask your operator for a credential that is not scoped. This is not "
+            "agent-recoverable by retrying the same URL."
+        )
+    else:
+        asked = (
+            ", ".join(f"{k}={requested[k]!r}" for k in sorted(names) if k in requested)
+            or ", ".join(f"{k}={v!r}" for k, v in sorted(requested.items()))
+            or "the values this request targets"
+        )
+        rendered = sorted(
+            {", ".join(f"{k}={v!r}" for k, v in sorted(scope.items())) for scope in covered_scopes}
+        )
+        covers = f" Existing credentials cover {'; '.join(rendered)}." if rendered else ""
+        instruction = (
+            f"A credential for '{vendor}' exists, but none is scoped to {asked}.{covers} Ask "
+            "your operator to provision a credential for the value you need, or to widen the "
+            "existing one; connecting another credential only helps if they scope it to this "
+            "value or leave it unscoped. Retrying the same request will fail the same way."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "vendor": vendor,
+            "server_variables": requested,
+            "conflicting_variables": conflicting,
+            "covered_scopes": covered_scopes,
+        },
+        human_readable_instruction=instruction,
+    )
+
+
+def request_override_not_allowed_directive(*, header: str) -> AgentDirective:
+    """Directive for a ``request_override_not_allowed`` 400 — send the real method and path."""
+    return AgentDirective(
+        strategy="modify_headers",
+        parameters={"header": header},
+        human_readable_instruction=(
+            f"Remove '{header}' and resend the request using the target HTTP method "
+            "and URL path directly."
+        ),
+    )
+
+
+def insecure_upstream_scheme_directive(*, scheme: str = "https") -> AgentDirective:
+    """Directive for an ``insecure_upstream_scheme`` 400 — rewrite the URL scheme to ``https://``."""
+    return AgentDirective(
+        strategy="retry",
+        parameters={"scheme": scheme},
+        human_readable_instruction=(
+            f"Rewrite the upstream URL scheme from http:// to {scheme}:// and resend the request."
         ),
     )

@@ -92,9 +92,6 @@ func TestRetiredVarsAliasDark(t *testing.T) {
 	if Error.Render(s) != st.Error.Render(s) {
 		t.Error("theme.Error var did not alias dark Styles().Error")
 	}
-	if Info.Render(s) != st.Info.Render(s) {
-		t.Error("theme.Info var did not alias dark Styles().Info")
-	}
 	if Accent.Render(s) != st.Accent.Render(s) {
 		t.Error("theme.Accent var did not alias dark Styles().Accent")
 	}

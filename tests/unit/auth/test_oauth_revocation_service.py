@@ -85,10 +85,14 @@ _SVC = "jentic_one.auth.services.oauth_revocation_service"
 
 
 @patch(f"{_SVC}.record_audit", new_callable=AsyncMock)
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_access_token_revoke_kills_single_token_only(
-    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_audit: AsyncMock
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
+    mock_audit: AsyncMock,
 ) -> None:
     ctx, _session = _make_ctx()
     at = _access_row()
@@ -101,8 +105,7 @@ async def test_access_token_revoke_kills_single_token_only(
 
     mock_at_repo.revoke.assert_awaited_once()
     # The grant survives an access-token revoke: no family/grant sweep runs.
-    mock_at_repo.revoke_family.assert_not_called()
-    mock_rt_repo.revoke_family.assert_not_called()
+    mock_lineage_repo.revoke_family.assert_not_called()
     mock_rt_repo.get_by_hash.assert_not_called()
     assert mock_audit.await_args is not None
     assert RFC7009_CLIENT_REVOCATION_REASON in mock_audit.await_args.kwargs["reason"]
@@ -166,11 +169,13 @@ async def test_already_revoked_access_token_is_noop(
 
 @patch(f"{_SVC}.revoke_grant_and_sweep_tokens", new_callable=AsyncMock)
 @patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_refresh_token_revoke_is_full_disconnect(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_sweep: AsyncMock,
 ) -> None:
@@ -179,8 +184,7 @@ async def test_refresh_token_revoke_is_full_disconnect(
     ctx, session = _make_ctx()
     mock_at_repo.get_by_hash = AsyncMock(return_value=None)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=_refresh_row())
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
     grant = _grant_row()
     mock_grant_repo.get_by_id = AsyncMock(return_value=grant)
 
@@ -188,8 +192,7 @@ async def test_refresh_token_revoke_is_full_disconnect(
         "rt_tok", client_id=_CLIENT_ID, token_type_hint="refresh_token"
     )
 
-    mock_rt_repo.revoke_family.assert_awaited_once_with(session, "tfam_1")
-    mock_at_repo.revoke_family.assert_awaited_once_with(session, "tfam_1")
+    mock_lineage_repo.revoke_family.assert_awaited_once_with(session, "tfam_1")
     mock_sweep.assert_awaited_once()
     assert mock_sweep.await_args is not None
     assert mock_sweep.await_args.args[1] is grant
@@ -199,11 +202,13 @@ async def test_refresh_token_revoke_is_full_disconnect(
 @patch(f"{_SVC}.record_audit", new_callable=AsyncMock)
 @patch(f"{_SVC}.revoke_grant_and_sweep_tokens", new_callable=AsyncMock)
 @patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_refresh_token_without_grant_revokes_family_only(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_sweep: AsyncMock,
     mock_audit: AsyncMock,
@@ -213,13 +218,11 @@ async def test_refresh_token_without_grant_revokes_family_only(
     ctx, _session = _make_ctx()
     mock_at_repo.get_by_hash = AsyncMock(return_value=None)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=_refresh_row(oauth_grant_id=None))
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
 
     await OAuthRevocationService(ctx).revoke_client_token("rt_tok", client_id=_CLIENT_ID)
 
-    mock_rt_repo.revoke_family.assert_awaited_once()
-    mock_at_repo.revoke_family.assert_awaited_once()
+    mock_lineage_repo.revoke_family.assert_awaited_once()
     mock_sweep.assert_not_awaited()
     mock_grant_repo.get_by_id.assert_not_called()
     assert mock_audit.await_args is not None
@@ -228,24 +231,24 @@ async def test_refresh_token_without_grant_revokes_family_only(
 
 @patch(f"{_SVC}.revoke_grant_and_sweep_tokens", new_callable=AsyncMock)
 @patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_refresh_token_foreign_client_is_noop(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_sweep: AsyncMock,
 ) -> None:
     ctx, _session = _make_ctx()
     mock_at_repo.get_by_hash = AsyncMock(return_value=None)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=_refresh_row())
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
 
     await OAuthRevocationService(ctx).revoke_client_token("rt_tok", client_id="oc_other")
 
-    mock_rt_repo.revoke_family.assert_not_called()
-    mock_at_repo.revoke_family.assert_not_called()
+    mock_lineage_repo.revoke_family.assert_not_called()
     mock_sweep.assert_not_awaited()
 
 
@@ -304,11 +307,13 @@ async def test_wrong_hint_still_finds_access_token(
 
 @patch(f"{_SVC}.revoke_grant_and_sweep_tokens", new_callable=AsyncMock)
 @patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_wrong_hint_still_finds_refresh_token(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_sweep: AsyncMock,
 ) -> None:
@@ -317,8 +322,7 @@ async def test_wrong_hint_still_finds_refresh_token(
     ctx, _session = _make_ctx()
     mock_at_repo.get_by_hash = AsyncMock(return_value=None)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=_refresh_row())
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
     mock_grant_repo.get_by_id = AsyncMock(return_value=_grant_row())
 
     await OAuthRevocationService(ctx).revoke_client_token(
@@ -326,6 +330,7 @@ async def test_wrong_hint_still_finds_refresh_token(
     )
 
     mock_at_repo.get_by_hash.assert_awaited_once()
+    mock_lineage_repo.revoke_family.assert_awaited_once()
     mock_sweep.assert_awaited_once()
 
 
@@ -401,11 +406,13 @@ async def test_residual_service_account_access_token_revokes(
 
 @patch(f"{_SVC}.revoke_grant_and_sweep_tokens", new_callable=AsyncMock)
 @patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_residual_service_account_refresh_token_full_disconnect(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_sweep: AsyncMock,
 ) -> None:
@@ -414,12 +421,12 @@ async def test_residual_service_account_refresh_token_full_disconnect(
     rt.actor_type = "service_account"
     mock_at_repo.get_by_hash = AsyncMock(return_value=None)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt)
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
     mock_grant_repo.get_by_id = AsyncMock(return_value=_grant_row())
 
     await OAuthRevocationService(ctx).revoke_client_token("rt_tok", client_id=_CLIENT_ID)
 
+    mock_lineage_repo.revoke_family.assert_awaited_once()
     mock_sweep.assert_awaited_once()
     assert mock_sweep.await_args is not None
     assert mock_sweep.await_args.kwargs["actor_type"] == "service_account"
@@ -427,11 +434,13 @@ async def test_residual_service_account_refresh_token_full_disconnect(
 
 @patch(f"{_SVC}.record_audit", new_callable=AsyncMock)
 @patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.TokenLineageRepository")
 @patch(f"{_SVC}.RefreshTokenRepository")
 @patch(f"{_SVC}.AccessTokenRepository")
 async def test_residual_service_account_refresh_token_without_grant_revokes(
     mock_at_repo: MagicMock,
     mock_rt_repo: MagicMock,
+    mock_lineage_repo: MagicMock,
     mock_grant_repo: MagicMock,
     mock_audit: AsyncMock,
 ) -> None:
@@ -440,11 +449,10 @@ async def test_residual_service_account_refresh_token_without_grant_revokes(
     rt.actor_type = "service_account"
     mock_at_repo.get_by_hash = AsyncMock(return_value=None)
     mock_rt_repo.get_by_hash = AsyncMock(return_value=rt)
-    mock_rt_repo.revoke_family = AsyncMock()
-    mock_at_repo.revoke_family = AsyncMock()
+    mock_lineage_repo.revoke_family = AsyncMock()
 
     await OAuthRevocationService(ctx).revoke_client_token("rt_tok", client_id=_CLIENT_ID)
 
-    mock_rt_repo.revoke_family.assert_awaited_once()
+    mock_lineage_repo.revoke_family.assert_awaited_once()
     assert mock_audit.await_args is not None
     assert mock_audit.await_args.kwargs["actor_type"] == "service_account"

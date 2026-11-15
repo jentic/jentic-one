@@ -24,13 +24,21 @@ import {
 	useUsageWindow,
 	type UsageResponse,
 } from '@/modules/monitor/api';
+import { useActorDirectory, useFleetInitials } from '@/shared/hooks';
 import {
 	usageToEntityRows,
 	usageToOverview,
+	withActorNames,
 	type EntityUsageRow,
 	type UsageOverview,
 } from '@/modules/monitor/lib/usage';
 import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
+
+/** The actor id in an agents-lens usage key (`actor_type/actor_id`). */
+function actorIdOf(key: string): string | null {
+	const slash = key.indexOf('/');
+	return slash < 0 ? null : key.slice(slash + 1) || null;
+}
 
 /**
  * Auto-refresh cadence. Matches the backend's usage-cache TTL (30s): polling
@@ -72,7 +80,21 @@ export function useUsageOverview({ enabled }: { enabled: boolean }): UsageOvervi
 	const usage = apiUsage.data;
 	const overview = useMemo(() => (usage ? usageToOverview(usage) : null), [usage]);
 	const apis = useMemo(() => usageToEntityRows(apiUsage.data), [apiUsage.data]);
-	const agents = useMemo(() => usageToEntityRows(agentUsage.data), [agentUsage.data]);
+	const agentRows = useMemo(() => usageToEntityRows(agentUsage.data), [agentUsage.data]);
+
+	// The rollup has no names: each actor row is named from the actor directory,
+	// as `ActorLabel` names it everywhere else.
+	const directory = useActorDirectory(agentRows.map((row) => actorIdOf(row.id)));
+	const agentInitials = useFleetInitials();
+	const agents = useMemo(
+		() =>
+			withActorNames(agentRows, {
+				resolve: directory.resolve,
+				isLoading: directory.isLoading,
+				initials: agentInitials,
+			}),
+		[agentRows, directory, agentInitials],
+	);
 
 	return {
 		days,

@@ -441,7 +441,7 @@
               "path": "jentic env add",
               "use": "add \u003cname\u003e",
               "short": "Add a Control Plane environment",
-              "long": "Add a Control Plane environment. --broker-url is optional and is NEVER\nderived from --url (Control Plane and Broker often live on different\ndomains). `jentic register` seeds broker_url automatically for a loopback\ninstall; set it explicitly here for a remote broker or to fix an existing\nenvironment (use --force to replace one of the same name).",
+              "long": "Add a Control Plane environment. --broker-url is optional and is NEVER\nderived from --url (Control Plane and Broker often live on different\ndomains). `jentic register` seeds broker_url automatically for a loopback\ninstall; set it explicitly here for a remote broker or to fix an existing\nenvironment (use --force to replace one of the same name). Replacing an\nenvironment with a different Control Plane or Broker origin purges its\ncached credentials and identity registrations before saving.",
               "example": "  # Local install: point both the control plane and broker at loopback (http).\n  jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force\n  # Remote: broker on its own host.\n  jentic env add prod --url https://jentic.example.com --broker-url https://broker.example.com",
               "flags": [
                 {
@@ -756,7 +756,7 @@
           "path": "jentic migrate",
           "use": "migrate",
           "short": "Migrate legacy ~/.jentic profiles to the XDG context model",
-          "long": "migrate copies each legacy profile into an Environment + Identity +\nContext under ~/.config/jentic, and copies key/token material into the XDG\nlayout. It is idempotent and non-destructive (the legacy tree survives for\ndowngrade); --purge-legacy removes the old tree afterwards. Cached refresh\ntokens are intentionally dropped.",
+          "long": "migrate copies each legacy profile into an Environment + Identity +\nContext under ~/.config/jentic, and copies key/token material (including\ncached access and refresh tokens) into the XDG layout. It is idempotent and\nnon-destructive by default so the legacy tree remains available for recovery\nor downgrade. Verify that a migrated context authenticates (for example,\n`jentic whoami`) before passing --purge-legacy to delete the legacy tree.",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -773,7 +773,7 @@
               "name": "purge-legacy",
               "type": "bool",
               "default": "false",
-              "usage": "Delete the legacy ~/.jentic profile tree after a successful migration"
+              "usage": "Delete the legacy ~/.jentic profile tree (run only after verifying migrated authentication)"
             },
             {
               "name": "theme",
@@ -3582,6 +3582,12 @@
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
+              "name": "allow-unsigned",
+              "type": "bool",
+              "default": "false",
+              "usage": "allow installing a release when its cosign signature or certificate cannot be verified"
+            },
+            {
               "name": "base-url",
               "type": "string",
               "usage": "Jentic control-plane base URL (for the server probe)"
@@ -3597,6 +3603,12 @@
               "type": "bool",
               "default": "false",
               "usage": "update only the CLI binary"
+            },
+            {
+              "name": "from-source",
+              "type": "bool",
+              "default": "false",
+              "usage": "build the CLI binaries from source via tools/install.sh instead of downloading prebuilt release archives"
             },
             {
               "name": "ref",

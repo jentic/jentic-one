@@ -46,15 +46,21 @@ SENSITIVE_KEY_SUBSTRINGS: Final[frozenset[str]] = frozenset(
         "secret",
         "password",
         "passwd",
+        "passphrase",
         "api_key",
         "apikey",
         "api-key",
         "cookie",
         "credential",
         "private_key",
+        "private-key",
+        "privatekey",
         "encrypted_secret",
         "encrypted_password",
         "session_key",
+        "code_verifier",
+        "device_code",
+        "assertion",
     }
 )
 
@@ -65,10 +71,41 @@ _SENSITIVE_EXACT_KEYS: Final[frozenset[str]] = frozenset({"token"})
 
 # Inline auth material embedded in free-text values. The scheme/label is kept so
 # the log still reads sensibly ("Bearer ***REDACTED***"); only the secret part
-# is masked.
-_VALUE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9\-._~+/]+=*"),
-    re.compile(r"(?i)\b(Basic)\s+[A-Za-z0-9+/]+=*"),
+# is masked. Compact JWS strings are replaced wholesale with REDACTED.
+_VALUE_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9\-._~+/]+=*"), rf"\1 {REDACTED}"),
+    (re.compile(r"(?i)\b(Basic)\s+[A-Za-z0-9+/]+=*"), rf"\1 {REDACTED}"),
+    (
+        re.compile(
+            r"(?im)\b((?:proxy-)?authorization|x-api-key|api-key|x-auth-token)"
+            r"\s*:\s*(?!Bearer\b|Basic\b|\*\*\*REDACTED\*\*\*)"
+            r"(?:(?:token|apikey|digest|bot|ssws)\s+(?!\*\*\*REDACTED\*\*\*))?\S+"
+        ),
+        rf"\1: {REDACTED}",
+    ),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+"),
+        REDACTED,
+    ),
+)
+
+# JSON-encoded and form-urlencoded secret fields embedded inside ordinary strings
+# (such as raw or truncated HTTP response bodies or exception messages).
+_SENSITIVE_FIELD_NAME_PATTERN: Final[str] = (
+    r"(?:[A-Za-z0-9_.-]*(?:_token|-token|secret|password|passwd|passphrase|api_key|apikey|api-key"
+    r"|cookie|credential|private_key|private-key|privatekey|session_key|code_verifier|assertion)"
+    r"|token|authorization|device_code|code_verifier|client_assertion|assertion|code)"
+)
+_JSON_SECRET_FIELD_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?i)(?P<prefix>[\"']{_SENSITIVE_FIELD_NAME_PATTERN}[\"']\s*:\s*)"
+    rf"(?P<value_quote>[\"'])"
+    rf"(?:\\.|(?!(?P=value_quote))[^\\])*(?P<closing>(?P=value_quote)|$)"
+)
+_FORM_SECRET_FIELD_PATTERN: Final[re.Pattern[str]] = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_.-])({_SENSITIVE_FIELD_NAME_PATTERN}=)([^\s&;\"'<>]+)"
+)
+_URL_USERINFO_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?i)(\b[a-z][a-z0-9+.-]*://)([^/\s:@]+:[^/\s@]+@)"
 )
 
 
@@ -85,8 +122,13 @@ def _is_sensitive_key(key: str) -> bool:
 def _redact_str(value: str) -> str:
     """Mask any embedded auth material in a free-text string."""
     redacted = value
-    for pattern in _VALUE_PATTERNS:
-        redacted = pattern.sub(rf"\1 {REDACTED}", redacted)
+    for pattern, replacement in _VALUE_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    redacted = _URL_USERINFO_PATTERN.sub(rf"\1{REDACTED}@", redacted)
+    redacted = _JSON_SECRET_FIELD_PATTERN.sub(
+        rf"\g<prefix>\g<value_quote>{REDACTED}\g<closing>", redacted
+    )
+    redacted = _FORM_SECRET_FIELD_PATTERN.sub(rf"\g<1>{REDACTED}", redacted)
     return redacted
 
 

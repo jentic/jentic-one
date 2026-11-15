@@ -15,8 +15,10 @@ import structlog
 from sqlalchemy import Boolean, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.shared.auth.agent_permission_ceiling import cap_agent_permissions
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
 
@@ -73,10 +75,11 @@ class _InactiveAgent:
 _AGENT_CREDENTIAL_LOOKUP = text(
     "SELECT a.id AS agent_id, a.name, a.status, a.owner_id,"
     " CASE WHEN u.deleted_at IS NULL THEN u.active ELSE FALSE END AS owner_active,"
-    " g.permission"
+    " g.permission, og.permission AS owner_permission"
     " FROM agent_credentials ac"
     " JOIN agents a ON a.id = ac.agent_id"
     " LEFT JOIN users u ON u.id = a.owner_id"
+    " LEFT JOIN user_permission_grants og ON og.user_id = a.owner_id"
     " LEFT JOIN actor_permission_grants g ON g.actor_id = a.id AND g.actor_type = 'agent'"
     " WHERE ac.api_key_hash = :key_hash"
 ).columns(owner_active=Boolean)
@@ -240,7 +243,13 @@ class ApiKeyResolver:
             # fail closed.
             log_agent_owner_inactive(row.agent_id, row.owner_id)
             return _InactiveAgent(agent_id=row.agent_id, owner_inactive=True)
-        permissions = [r.permission for r in rows if r.permission is not None]
+        raw_permissions = [r.permission for r in rows if r.permission is not None]
+        owner_effective = (
+            compute_effective({r.owner_permission for r in rows if r.owner_permission is not None})
+            if row.owner_id is not None and hasattr(row, "owner_permission")
+            else None
+        )
+        permissions = cap_agent_permissions(raw_permissions, owner_effective)
         return Identity(
             sub=row.agent_id,
             actor_name=row.name or "",
@@ -248,4 +257,6 @@ class ApiKeyResolver:
             permissions=permissions,
             parent_actor_id=row.owner_id,
             active=True,
+            auth_token_sha256=hashlib.sha256(raw_key.encode()).hexdigest(),
+            auth_method="api_key",
         )

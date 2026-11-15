@@ -168,26 +168,86 @@ source lines are replaced before export. To see the full message, use the struct
 correlate with traces by `trace_id`.
 
 A few instruments are worth alerting on by name:
-`broker.streaming_execution.persist_failures` (a streaming execution's record
+`broker.streaming_execution.persist_failures` (an off-request execution record
 was not written because of a database failure, a timeout or a shutdown cut-off —
-the only signal that happened; the `reason` attribute separates `write_error`
-from `backlog_timeout`, no slot within
-`broker.streaming_persist_acquire_timeout_s`, and `cancelled`, a timeout or
-shutdown drain; the matching log lines are `streaming_execution_persist_failed`
-and `streaming_execution_persist_abandoned`, whose `stage="writing"` means the
-record may still have landed),
-`broker.streaming_execution.persist_pending` (streaming persists waiting for,
-or holding, one of the `broker.streaming_persist_max_concurrency` slots — a
-steadily rising `state="waiting"` series means admin writes can't keep up;
+the only signal that happened; `kind="streaming"` and
+`kind="unmapped_failure"` separate streamed outcomes from buffered generic
+failures, while `reason` separates `write_error` from `backlog_timeout`, no
+slot within `broker.streaming_persist_acquire_timeout_s`, and `cancelled`, a
+timeout or shutdown drain; the matching log lines are
+`streaming_execution_persist_failed` / `streaming_execution_persist_abandoned`
+or `unmapped_failure_persist_failed` / `unmapped_failure_persist_abandoned`,
+whose `stage="writing"` means the record may still have landed),
+`broker.streaming_execution.persist_pending` (persists of either `kind` waiting
+for, or holding, one of the `broker.streaming_persist_max_concurrency` slots —
+a steadily rising `state="waiting"` series means admin writes can't keep up;
 these persists run after the response is complete or the client has
 disconnected, and are not counted in `broker.admission.in_flight`),
-`app.background_tasks` with `outcome` `timed_out`, `cancelled` or `rejected`
-(work handed off after a response — today the streaming execution record —
-that hit its budget or was cut off by a shutdown drain),
+`app.background_tasks` with `outcome` `failed`, `timed_out`, `cancelled` or
+`rejected` (work handed off after a response — streaming execution records and
+buffered generic-failure records — that failed its write or acquire wait, hit
+its budget, or was cut off by a shutdown drain; in particular, an unmapped
+failure whose slot wait times out has `kind="unmapped_failure_persist"` and
+`outcome="failed"`),
 `broker.admission.in_flight` (the number the `/ready` shedding threshold is
 0.9 of), `broker.circuit.open_total`, `broker.retry.exhausted_total`,
 `broker.deadline.exceeded_total`, `broker.rate_limited_total`, and
 `audit.events`.
+
+Request-latency histograms are exported with explicit bucket boundaries, by
+default 1, 2, 5, 10, 15, 20, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000
+and 30000 ms, so `histogram_quantile` p50/p99 resolve sub-25 ms latencies and
+the tail reaches the default 30 s upstream timeout. Other histograms keep the
+OpenTelemetry default buckets. The histograms that get these buckets, with
+their Prometheus bucket series:
+
+| Instrument | Unit | Prometheus series |
+| ---------- | ---- | ----------------- |
+| `http.server.duration` | ms (whole) | `http_server_duration_milliseconds_bucket` |
+| `http.server.request.duration` | s | `http_server_request_duration_seconds_bucket` |
+| `broker.execution.duration_ms` | ms (fractional) | `broker_execution_duration_ms_milliseconds_bucket` |
+
+The inbound HTTP instrumentation emits `http.server.duration` by default,
+`http.server.request.duration` under `OTEL_SEMCONV_STABILITY_OPT_IN=http`, and
+both under `OTEL_SEMCONV_STABILITY_OPT_IN=http/dup` — each gets the buckets.
+Each view matches on the instrument's unit as well as its name, so an
+instrument with one of these names recorded in a different unit keeps the
+default buckets.
+
+Tune the boundaries with
+[`observability.metrics.latency_buckets_ms`](../reference/config.md#observability)
+(milliseconds, strictly increasing, all > 0, at most 64), or as a
+comma-separated env var:
+
+```yaml
+observability:
+  metrics:
+    latency_buckets_ms: [1, 2, 5, 10, 25, 50, 100, 500, 1000, 5000, 30000]
+```
+
+```bash
+JENTIC__OBSERVABILITY__METRICS__LATENCY_BUCKETS_MS=1,2,5,10,25,50,100,500,1000,5000,30000
+```
+
+The one list drives every latency histogram; the seconds-unit
+`http.server.request.duration` uses it divided by 1000. Things to keep in mind
+when changing it:
+
+- **Keep it identical everywhere it is aggregated.** Dashboards sum buckets
+  across instances (`sum by (le)`), so every replica and surface whose series
+  are aggregated together must use the same list. While lists differ —
+  including for the whole of a rolling deploy that changes it, or under a
+  per-surface env override — `histogram_quantile` results are wrong.
+- **Resolution differs per instrument.** The HTTP instrumentation records
+  `http.server.duration` in whole milliseconds, so non-integer boundaries
+  (such as `0.5`) only take effect on `http.server.request.duration` and
+  `broker.execution.duration_ms`, which record fractional values.
+- **Cardinality.** Each boundary adds one `_bucket` series per label set.
+  `http.server.duration` is labelled by method, status, host, port, target
+  and more; `broker.execution.duration_ms` by `operation`.
+- **Cover the upstream timeout.** The default tail stops at 30000 ms, matching
+  the default `broker.upstream_timeout_s`. If you raise that timeout, extend
+  the list to match so slow calls don't all collapse into `+Inf`.
 
 ### Per-request stage timing (`Server-Timing`)
 

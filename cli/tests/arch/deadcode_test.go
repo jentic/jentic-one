@@ -8,8 +8,9 @@ import (
 )
 
 // deadcodeRoots are the module-relative prefixes the dead-code gate covers: the
-// public SDK (client/...) and the CLI command/adapter layers (internal/cli/...).
-// We scope to unexported functions here (see below) — those have no possible
+// public SDK (client/...), all internal packages (internal/...), the public CLI
+// composition packages (pkg/...), and the binary entrypoints (cmd/...). We
+// scope to unexported functions here (see below) — those have no possible
 // out-of-package consumer, so "no in-module caller" means genuinely dead. This is
 // the anti-regression gate for ARCH-20, which removed the dead typed broker SDK
 // client (NewBroker/GetBrokerClient/brokerOptions): a future dead private helper
@@ -18,7 +19,7 @@ import (
 // Exported symbols are deliberately NOT gated: client/... is a published SDK
 // whose surface legitimately has downstream-only consumers (e.g. RequiredFields()
 // — see GEN-22), so "unused in-tree" is not "dead" for them.
-var deadcodeRoots = []string{"client", "internal/cli"}
+var deadcodeRoots = []string{"client", "internal", "pkg", "cmd"}
 
 // deadcodeAllowlist names unexported funcs that are intentionally never called
 // in-tree (e.g. referenced only by go:generate, build-tagged siblings the loader
@@ -29,8 +30,9 @@ var deadcodeAllowlist = map[string]bool{}
 // deadcodeRoots is referenced nowhere in the module. It walks every loaded
 // package's type-checker Uses map (which records every identifier resolution,
 // including calls, method values, and func-value assignments) and subtracts the
-// used set from the declared set. Methods, init, and blank funcs are exempt
-// (methods can satisfy interfaces implicitly; init/_ are never "called").
+// used set from the declared set. Methods, init, main (in package main), and
+// blank funcs are exempt (methods can satisfy interfaces implicitly;
+// init/main/_ are never "called").
 func TestNoDeadUnexportedFuncs(t *testing.T) {
 	pkgs := loadCLI(t)
 
@@ -68,7 +70,7 @@ func TestNoDeadUnexportedFuncs(t *testing.T) {
 					continue
 				}
 				name := fd.Name.Name
-				if name == "_" || name == "init" || ast.IsExported(name) {
+				if name == "_" || name == "init" || (name == "main" && p.Name == "main") || ast.IsExported(name) {
 					continue
 				}
 				if deadcodeAllowlist[name] {

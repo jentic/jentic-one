@@ -78,11 +78,11 @@ async def test_verify_token_resolves_user_permissions(ctx: Context, granter: Ide
 
     # Crucial assertion: The verifier fetched permissions dynamically
     assert ORG_ADMIN in identity.permissions
-    assert identity.parent_permissions == []
+    assert not hasattr(identity, "parent_permissions")
 
 
 @pytest.mark.asyncio
-async def test_verify_token_resolves_agent_parent_permissions(
+async def test_verify_token_agent_does_not_inherit_parent_permissions(
     ctx: Context, granter: Identity
 ) -> None:
     # 1. Assign permissions to the PARENT user
@@ -108,10 +108,8 @@ async def test_verify_token_resolves_agent_parent_permissions(
     assert identity.sub == agent_id
     assert identity.actor_type == "agent"
     assert identity.parent_actor_id == parent_id
-    assert "toolkits:read" in identity.permissions
-
-    # Crucial assertion: The verifier fetched the PARENT's permissions into parent_permissions
-    assert ORG_ADMIN in identity.parent_permissions
+    assert identity.permissions == ["toolkits:read"]
+    assert not hasattr(identity, "parent_permissions")
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,147 @@
+# Self-owned Docker Compose stack for N-1/N-2 container upgrade tests.
+#
+# Driven by tests/upgrade/run.sh (via `make test-upgrade`). Uses an isolated
+# project name (`jentic-upgrade-test`), a dedicated Postgres container + named
+# volume (`pg-data`), and dedicated loopback ports (default :18000 for app,
+# :18100 for broker, :18200 for smoke-upstream) so it never touches local dev
+# or integration fixtures on :5432 / :8000 / :8100.
+#
+# Both the old release image and the candidate image share the same fixed test
+# encryption keyset (`JENTIC__CREDENTIALS__ENCRYPTION__*`) and platform secrets
+# so credentials encrypted before the upgrade decrypt after the upgrade.
+#
+# Image selection:
+# - `run.sh` exports `OLD_IMAGE` (ghcr.io/jentic/jentic-one-app:<OLD>) and
+#   `NEW_IMAGE` (the candidate image) and sets `APP_IMAGE="${OLD_IMAGE}"` for
+#   pre-upgrade phases (1-2) and `APP_IMAGE="${NEW_IMAGE}"` for upgrade and
+#   post-upgrade phases (4-6) so a single service definition serves both
+#   lifecycle stages. Direct `docker compose` invocations may set `APP_IMAGE`,
+#   `NEW_IMAGE`, or `OLD_IMAGE`.
+
+name: jentic-upgrade-test
+
+x-image: &image ${APP_IMAGE:-${NEW_IMAGE:-${OLD_IMAGE:-jentic-one/app:candidate}}}
+
+x-healthcheck: &healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+  interval: 2s
+  timeout: 3s
+  retries: 30
+  start_period: 3s
+
+x-env: &env
+  OPENSSL_armcap: "0"
+  JENTIC__AUTH__CANONICAL_BASE_URL: http://127.0.0.1:${UPGRADE_APP_PORT:-18000}
+  JENTIC__SERVER__PUBLIC_BASE_URL: http://127.0.0.1:${UPGRADE_APP_PORT:-18000}
+  JENTIC__DATABASES__REGISTRY__BACKEND: postgres
+  JENTIC__DATABASES__REGISTRY__HOST: postgres
+  JENTIC__DATABASES__REGISTRY__PORT: "5432"
+  JENTIC__DATABASES__REGISTRY__NAME: jentic
+  JENTIC__DATABASES__REGISTRY__USER: registry_user
+  JENTIC__DATABASES__REGISTRY__PASSWORD: registry_pass  # pragma: allowlist secret
+  JENTIC__DATABASES__REGISTRY__SCHEMA_NAME: registry
+  JENTIC__DATABASES__CONTROL__BACKEND: postgres
+  JENTIC__DATABASES__CONTROL__HOST: postgres
+  JENTIC__DATABASES__CONTROL__PORT: "5432"
+  JENTIC__DATABASES__CONTROL__NAME: jentic
+  JENTIC__DATABASES__CONTROL__USER: control_user
+  JENTIC__DATABASES__CONTROL__PASSWORD: control_pass  # pragma: allowlist secret
+  JENTIC__DATABASES__CONTROL__SCHEMA_NAME: control
+  JENTIC__DATABASES__ADMIN__BACKEND: postgres
+  JENTIC__DATABASES__ADMIN__HOST: postgres
+  JENTIC__DATABASES__ADMIN__PORT: "5432"
+  JENTIC__DATABASES__ADMIN__NAME: jentic
+  JENTIC__DATABASES__ADMIN__USER: admin_user
+  JENTIC__DATABASES__ADMIN__PASSWORD: admin_pass  # pragma: allowlist secret
+  JENTIC__DATABASES__ADMIN__SCHEMA_NAME: admin
+  JENTIC__CREDENTIALS__ENCRYPTION__ACTIVE_ID: v1
+  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__ID: v1
+  JENTIC__CREDENTIALS__ENCRYPTION__ENTRIES__0__MATERIAL: "Zr8m0bF3kC2pQ1vH7wN4xY9tL6sJ5aE0uD3gR8iK2oM="  # pragma: allowlist secret
+  JENTIC__CREDENTIALS__CONNECT__STATE_SECRET: "upgrade-test-connect-state-secret-0123456789abcdef"  # pragma: allowlist secret
+  JENTIC__ADMIN__AUTH__JWT_SECRET: "upgrade-test-admin-jwt-secret-0123456789abcdef0123"  # pragma: allowlist secret
+  JENTIC__ADMIN__INVITE__PEPPER: "upgrade-test-invite-pepper-0123456789abcdef01234567"  # pragma: allowlist secret
+  JENTIC__BROKER__JOBS_API_BASE_URL: http://127.0.0.1:${UPGRADE_APP_PORT:-18000}
+  JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS: "smoke-upstream"
+  JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS: "smoke-upstream"
+  JENTIC__OBSERVABILITY__METRICS__EXPORTER: none
+  JENTIC__OBSERVABILITY__TRACING__EXPORTER: none
+  JENTIC__TELEMETRY__ENABLED: "false"
+  JENTIC__RELEASE_CHECK__ENABLED: "false"
+  JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS: "0"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: jentic
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jentic"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  smoke-upstream:
+    image: ${SMOKE_UPSTREAM_IMAGE:-${NEW_IMAGE:-${APP_IMAGE:-jentic-one/app:candidate}}}
+    volumes:
+      - ../../tests:/work/tests:ro
+    working_dir: /work
+    environment:
+      OPENSSL_armcap: "0"
+      PYTHONPATH: /work
+      PYTHONDONTWRITEBYTECODE: "1"
+      PORT: "8080"
+      TLS_PORT: "0"
+      SMOKE_UPSTREAM_PUBLIC_URL: "http://smoke-upstream:8080"
+    command: ["python", "-m", "tests.harness.smoke_upstream"]
+    ports: ["127.0.0.1:${UPGRADE_UPSTREAM_PORT:-18200}:8080"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/specs/live.json', timeout=3)"
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: *image
+    environment: *env
+    command: ["python", "-m", "jentic_one.migrations.run"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  app:
+    image: *image
+    environment:
+      <<: *env
+      JENTIC__APPS: registry,admin,control,auth
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["127.0.0.1:${UPGRADE_APP_PORT:-18000}:8000"]
+    healthcheck: *healthcheck
+
+  broker:
+    image: *image
+    environment:
+      <<: *env
+      JENTIC__APPS: broker
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["127.0.0.1:${UPGRADE_BROKER_PORT:-18100}:8000"]
+    healthcheck: *healthcheck
+
+volumes:
+  pg-data:

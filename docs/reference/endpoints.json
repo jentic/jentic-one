@@ -2220,6 +2220,30 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "getConnectFlowStatus",
+      "path": "/credentials/{credential_id}/connect/{flow_id}/status",
+      "public": false,
+      "required_permissions": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Read OAuth connect flow status",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -4884,5 +4908,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 175
+  "total": 176
 }

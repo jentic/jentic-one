@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from mcp.shared.exceptions import MCPError
 
+import jentic_one.mcp.access as access_mod
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
@@ -134,7 +135,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeConnectSessionService.seams = []
     _FakeConnectSessionService.error = None
     _FakeConnectSessionService.created = _CREATED
-    monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeConnectSessionService)
+    monkeypatch.setattr(access_mod, "ConnectSessionService", _FakeConnectSessionService)
 
 
 # ── validation arms ──────────────────────────────────────────────────────────
@@ -348,7 +349,7 @@ async def test_ambiguous_vendor_lists_candidates_and_asks_the_user(
         _vendor_entry("oar_c", "googleapis-com", "Inactive elsewhere"),
         _vendor_entry(None, "github", "GitHub"),
     ]
-    monkeypatch.setattr(tools_mod, "VendorRegistryService", _FakeVendorRegistryService)
+    monkeypatch.setattr(access_mod, "VendorRegistryService", _FakeVendorRegistryService)
     _FakeConnectSessionService.error = AmbiguousVendorError(
         "googleapis-com", None, ["oar_a", "oar_b"]
     )
@@ -379,7 +380,7 @@ async def test_ambiguous_vendor_without_capabilities_read_still_asks_the_user(
     """The candidate list rides the GET /vendors gate (capabilities:read), like
     the Go mount's read; without it the advice still routes to the user."""
     _FakeVendorRegistryService.entries = [_vendor_entry("oar_a", "googleapis-com", "Gmail")]
-    monkeypatch.setattr(tools_mod, "VendorRegistryService", _FakeVendorRegistryService)
+    monkeypatch.setattr(access_mod, "VendorRegistryService", _FakeVendorRegistryService)
     _FakeConnectSessionService.error = AmbiguousVendorError(
         "googleapis-com", None, ["oar_a", "oar_b"]
     )

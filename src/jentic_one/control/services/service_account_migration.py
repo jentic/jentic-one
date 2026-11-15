@@ -70,8 +70,11 @@ import structlog
 from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.service_account_migration_repo import (
     ADMIN_LEVEL_SCOPES,
+    AUDIT_ACTOR_ID,
+    MIGRATION_AUDIT_REASON,
     SKIPPED_STAMP,
     SYSTEM_ACTOR,
+    ExistingSuccessor,
     ServiceAccountMigrationRepository,
 )
 from jentic_one.control.services.run_lock import SA_RETIREMENT_LOCK_KEY, hold_run_lock
@@ -92,7 +95,7 @@ logger = structlog.get_logger(__name__)
 _AUDIT_ACTOR_TYPE = "system:job"
 #: Kept from the 0.40 job so every migration audit row — boot job, CLI, or
 #: this retirement — answers the same ``actor_id`` query.
-_AUDIT_ACTOR_ID = "migrate-service-accounts"
+_AUDIT_ACTOR_ID = AUDIT_ACTOR_ID
 
 #: Outcomes of :meth:`ServiceAccountMigrationService.run` that created a
 #: successor in THIS run (its copies are verified exactly, not just for gaps).
@@ -462,6 +465,10 @@ class ServiceAccountMigrationService:
                 had_client_secret=row.client_secret_hash is not None,
             )
 
+        recovered = await self._recover_existing_migration(row)
+        if recovered is not None:
+            return recovered
+
         # Control DB first (L1): pre-copy the inline rules onto the planned
         # successor id. A failure here is a row outcome with nothing written
         # on the admin side; the next run migrates the row afresh.
@@ -495,6 +502,121 @@ class ServiceAccountMigrationService:
                 await self._discard_precopied_rules(planned_id)
             return outcome
         return replace(outcome, permission_rule_count=rules_copied)
+
+    async def _recover_existing_migration(self, row: Any) -> ServiceAccountMigrationOutcome | None:
+        """Re-stamp from durable successor provenance when the stamp column was lost (#1444).
+
+        Runs before :meth:`_precopy_rules` so an already-migrated service
+        account whose ``migrated_to_actor_id`` was dropped by a downgrade past
+        ``c0d1e2f3a4b5`` neither pre-copies inline rules onto a new agent id
+        nor mints a second successor. When the database row already carries a
+        stamp (a concurrent winner since ``run()`` listed the rows), returns
+        ``None`` so :meth:`_migrate_admin`'s locked re-read handles it.
+        """
+        try:
+            async with self._ctx.admin_db.session() as session:
+                current = await ServiceAccountMigrationRepository.get_service_account(
+                    session, row.id
+                )
+                if current is None or current.migrated_to_actor_id is not None:
+                    return None
+                existing = await ServiceAccountMigrationRepository.find_existing_successor(
+                    session, service_account_id=row.id
+                )
+            if existing is None:
+                return None
+
+            async with self._ctx.admin_db.transaction() as session:
+                await ServiceAccountMigrationRepository.acquire_migration_lock(session, row.id)
+                now = dt.datetime.now(dt.UTC)
+                fresh = await ServiceAccountMigrationRepository.get_service_account(
+                    session, row.id, for_update=True
+                )
+                if fresh is None:
+                    raise _ServiceAccountVanishedError(row.id)
+                if fresh.migrated_to_actor_id is not None:
+                    raise _ConcurrentWinnerError(fresh.migrated_to_actor_id)
+                recovered = await ServiceAccountMigrationRepository.find_existing_successor(
+                    session, service_account_id=row.id
+                )
+                if recovered is None:
+                    return None
+                return await self._restamp_existing_successor(
+                    session, fresh=fresh, existing=recovered, now=now
+                )
+        except _ServiceAccountVanishedError:
+            return ServiceAccountMigrationOutcome(
+                service_account_id=row.id,
+                outcome="failed",
+                had_client_secret=row.client_secret_hash is not None,
+                reason="service_account_not_found",
+            )
+        except _ConcurrentWinnerError:
+            return ServiceAccountMigrationOutcome(
+                service_account_id=row.id,
+                outcome="already_migrated",
+                had_client_secret=row.client_secret_hash is not None,
+                reason="concurrent_run_won",
+            )
+        except Exception as exc:  # L2: per-row isolation
+            logger.warning(
+                "service_account_migration_row_failed",
+                service_account_id=row.id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return ServiceAccountMigrationOutcome(
+                service_account_id=row.id,
+                outcome="failed",
+                had_client_secret=row.client_secret_hash is not None,
+                reason=f"error:{type(exc).__name__}",
+            )
+
+    async def _restamp_existing_successor(
+        self,
+        session: Any,
+        *,
+        fresh: Any,
+        existing: ExistingSuccessor,
+        now: dt.datetime,
+    ) -> ServiceAccountMigrationOutcome:
+        (
+            access_revoked,
+            refresh_revoked,
+        ) = await ServiceAccountMigrationRepository.revoke_tokens(
+            session, service_account_id=fresh.id, now=now
+        )
+        if access_revoked or refresh_revoked:
+            await record_audit(
+                session,
+                action=AuditAction.REVOKE,
+                target_type=AuditTargetType.SERVICE_ACCOUNT,
+                target_id=fresh.id,
+                actor_type=_AUDIT_ACTOR_TYPE,
+                actor_id=_AUDIT_ACTOR_ID,
+                after={
+                    "access_tokens_revoked": access_revoked,
+                    "refresh_tokens_revoked": refresh_revoked,
+                },
+                reason="theme8_sa_migration_token_sweep",
+                origin=Origin.SYSTEM.value,
+            )
+        stamped = await ServiceAccountMigrationRepository.stamp(
+            session,
+            service_account_id=fresh.id,
+            value=existing.agent_id,
+            now=existing.migrated_at or now,
+        )
+        if not stamped:
+            raise _ConcurrentWinnerError(fresh.id)
+        return ServiceAccountMigrationOutcome(
+            service_account_id=fresh.id,
+            outcome="already_migrated",
+            successor_agent_id=existing.agent_id,
+            access_tokens_revoked=access_revoked,
+            refresh_tokens_revoked=refresh_revoked,
+            had_client_secret=fresh.client_secret_hash is not None,
+        )
 
     async def _migrate_admin(self, row: Any, planned_id: str) -> ServiceAccountMigrationOutcome:
         """Copy → revoke → stamp → audit for one SA, one admin transaction.
@@ -532,6 +654,13 @@ class ServiceAccountMigrationService:
                     raise _ServiceAccountVanishedError(row.id)
                 if fresh.migrated_to_actor_id is not None:
                     raise _ConcurrentWinnerError(fresh.migrated_to_actor_id)
+                existing = await ServiceAccountMigrationRepository.find_existing_successor(
+                    session, service_account_id=row.id
+                )
+                if existing is not None:
+                    return await self._restamp_existing_successor(
+                        session, fresh=fresh, existing=existing, now=now
+                    )
                 current = fresh
                 label, successor_status = self._disposition(current.status)
 
@@ -586,7 +715,7 @@ class ServiceAccountMigrationService:
                             "service_account_id": row.id,
                             "status": successor_status,
                         },
-                        reason="theme8_sa_migration",
+                        reason=MIGRATION_AUDIT_REASON,
                         origin=Origin.SYSTEM.value,
                     )
                     await record_audit(

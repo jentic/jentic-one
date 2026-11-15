@@ -11,9 +11,8 @@
  * scrolling document on the right + scroll-spy, so the two reference sections
  * feel like one product.
  */
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import { Filter, ChevronRight, Lock, Globe } from 'lucide-react';
+import { memo, useMemo, useState } from 'react';
+import { Filter, Lock, Globe } from 'lucide-react';
 import type {
 	OpenApiDocument,
 	ReferenceEndpoint,
@@ -25,45 +24,25 @@ import {
 	type SpecOperation,
 	type SpecBody,
 } from '@/modules/docs/lib/apiSpec';
+import { lookupKey, indexReference } from '@/modules/docs/lib/anchor';
+import { ApiOverview } from '@/modules/docs/components/ApiOverview';
 import {
-	lookupKey,
-	indexReference,
-	operationAnchorId,
-	scrollToAnchor,
-} from '@/modules/docs/lib/anchor';
+	MODELS_ANCHOR,
+	modelsAnchorId,
+	opAnchorId,
+	prefixedModelAnchorId,
+	tagAnchorId,
+	tagGroupAnchorId,
+} from '@/modules/docs/components/apiReferenceAnchors';
+import { Disclosure, SectionLabel } from '@/modules/docs/components/apiReferenceParts';
 import { PermissionPanel } from '@/modules/docs/components/PermissionPanel';
-import { SchemaView, modelAnchorId } from '@/modules/docs/components/SchemaView';
+import { ReferenceIndex } from '@/modules/docs/components/ReferenceIndex';
+import { SchemaView } from '@/modules/docs/components/SchemaView';
 import { useScrollSpy } from '@/modules/docs/lib/useScrollSpy';
 import { MethodBadge, Markdown, Input, LazyMount } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 
-/* ---- anchors ------------------------------------------------------------- */
-
-/**
- * Anchors are namespaced by an optional `prefix` so two ApiReferenceView
- * instances on the same page (the control plane + the standalone Broker) never
- * collide on the shared `MODELS_ANCHOR` constant or on like-named tag groups.
- * The control-plane instance uses the empty default (anchors unchanged), the
- * Broker passes its own prefix.
- */
-export function tagGroupAnchorId(name: string, prefix = ''): string {
-	return `${prefix}apigroup-${name}`.replace(/[^a-zA-Z0-9_-]+/g, '-');
-}
-function tagAnchorId(name: string, prefix = ''): string {
-	return `${prefix}apitag-${name}`.replace(/[^a-zA-Z0-9_-]+/g, '-');
-}
-function opAnchorId(op: SpecOperation, prefix = ''): string {
-	const base = operationAnchorId(op.method, op.path);
-	return prefix ? `${prefix}-${base}` : base;
-}
-export const MODELS_ANCHOR = 'api-models';
-function modelsAnchorId(prefix = ''): string {
-	return prefix ? `${prefix}-${MODELS_ANCHOR}` : MODELS_ANCHOR;
-}
-function prefixedModelAnchorId(name: string, prefix = ''): string {
-	const base = modelAnchorId(name);
-	return prefix ? `${prefix}-${base}` : base;
-}
+export { MODELS_ANCHOR, tagGroupAnchorId };
 
 /* ---- filtering ----------------------------------------------------------- */
 
@@ -87,185 +66,6 @@ function filterSpec(parsed: ParsedSpec, q: string): ParsedSpec {
 		.filter((g) => g.tags.length > 0);
 	const models = parsed.models.filter((m) => m.name.toLowerCase().includes(q));
 	return { ...parsed, groups, models };
-}
-
-/* ---- index --------------------------------------------------------------- */
-
-function jumpTo(id: string) {
-	scrollToAnchor(id);
-}
-
-/**
- * A single operation row in the left index. Memoized so a scroll-spy `activeId`
- * change re-renders only the two rows whose `active` flips, not all ~hundreds
- * of rows — the index is the dominant render cost on large specs.
- */
-const IndexOpRow = memo(function IndexOpRow({
-	id,
-	method,
-	path,
-	active,
-}: {
-	id: string;
-	method: string;
-	path: string;
-	active: boolean;
-}) {
-	return (
-		<li>
-			<button
-				type="button"
-				data-index-for={id}
-				aria-current={active ? 'location' : undefined}
-				onClick={() => jumpTo(id)}
-				className={cn(
-					'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left transition-colors',
-					active ? 'bg-primary/10' : 'hover:bg-muted',
-				)}
-				title={`${method} ${path}`}
-			>
-				<MethodBadge method={method} />
-				<code
-					className={cn(
-						'truncate font-mono text-[12px]',
-						active ? 'text-primary' : 'text-foreground/65',
-					)}
-				>
-					{path}
-				</code>
-			</button>
-		</li>
-	);
-});
-
-/** A single model row in the left index. Memoized for the same reason as IndexOpRow. */
-const IndexModelRow = memo(function IndexModelRow({
-	id,
-	name,
-	active,
-}: {
-	id: string;
-	name: string;
-	active: boolean;
-}) {
-	return (
-		<li>
-			<button
-				type="button"
-				data-index-for={id}
-				aria-current={active ? 'location' : undefined}
-				onClick={() => jumpTo(id)}
-				className={cn(
-					'hover:bg-muted hover:text-foreground block w-full truncate rounded px-2 py-1 text-left font-mono text-[12px]',
-					active ? 'bg-primary/10 text-primary' : 'text-foreground-sub',
-				)}
-			>
-				{name}
-			</button>
-		</li>
-	);
-});
-
-function ReferenceIndex({
-	parsed,
-	activeId,
-	showModels,
-	prefix = '',
-}: {
-	parsed: ParsedSpec;
-	activeId: string | null;
-	showModels: boolean;
-	prefix?: string;
-}) {
-	const navRef = useRef<HTMLElement | null>(null);
-
-	// Keep the highlighted operation in view as the reader scrolls the document
-	// (and after a click) — the long index otherwise leaves the active entry
-	// off-screen. Mirrors the CLI command index.
-	useEffect(() => {
-		if (!activeId) return;
-		const nav = navRef.current;
-		if (!nav) return;
-		const el = nav.querySelector<HTMLElement>(`[data-index-for="${CSS.escape(activeId)}"]`);
-		if (!el) return;
-		const navBox = nav.getBoundingClientRect();
-		const elBox = el.getBoundingClientRect();
-		if (elBox.top < navBox.top || elBox.bottom > navBox.bottom) {
-			el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-		}
-	}, [activeId]);
-
-	return (
-		<nav
-			ref={navRef}
-			aria-label="API operations"
-			className="hidden lg:sticky lg:top-24 lg:block lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-y-auto lg:pr-1"
-		>
-			<div className="space-y-5">
-				{parsed.groups.map((group) => (
-					<div key={group.name}>
-						<button
-							type="button"
-							onClick={() => jumpTo(tagGroupAnchorId(group.name, prefix))}
-							className="text-foreground-faint hover:text-foreground mb-1 px-2 text-left text-[10px] font-semibold tracking-wider uppercase"
-						>
-							{group.name}
-						</button>
-						{group.tags.map((tag) => (
-							<div key={tag.name} className="mb-2">
-								<button
-									type="button"
-									onClick={() => jumpTo(tagAnchorId(tag.name, prefix))}
-									className="text-foreground/70 hover:text-foreground mb-0.5 px-2 text-left text-[11px] font-medium"
-								>
-									{tag.name}
-								</button>
-								<ul className="space-y-0.5">
-									{tag.operations.map((op) => {
-										const id = opAnchorId(op, prefix);
-										return (
-											<IndexOpRow
-												key={id}
-												id={id}
-												method={op.method}
-												path={op.path}
-												active={id === activeId}
-											/>
-										);
-									})}
-								</ul>
-							</div>
-						))}
-					</div>
-				))}
-
-				{showModels && (
-					<div>
-						<button
-							type="button"
-							onClick={() => jumpTo(modelsAnchorId(prefix))}
-							className="text-foreground-faint hover:text-foreground mb-1 px-2 text-left text-[10px] font-semibold tracking-wider uppercase"
-						>
-							Models
-						</button>
-						<ul className="space-y-0.5">
-							{parsed.models.map((m) => {
-								const id = prefixedModelAnchorId(m.name, prefix);
-								return (
-									<IndexModelRow
-										key={m.name}
-										id={id}
-										name={m.name}
-										active={id === activeId}
-									/>
-								);
-							})}
-						</ul>
-					</div>
-				)}
-			</div>
-		</nav>
-	);
 }
 
 /* ---- bodies -------------------------------------------------------------- */
@@ -292,45 +92,6 @@ function BodySchema({
 	);
 }
 
-/* ---- disclosure ---------------------------------------------------------- */
-
-/**
- * A collapsible row whose body is only mounted while open — so the heavy schema
- * trees for request/response bodies aren't rendered until the reader asks for
- * them (keeps each operation light and scannable by default).
- */
-function Disclosure({
-	summary,
-	defaultOpen = false,
-	children,
-}: {
-	summary: ReactNode;
-	defaultOpen?: boolean;
-	children: ReactNode;
-}) {
-	const [open, setOpen] = useState(defaultOpen);
-	return (
-		<div className="border-border/40 bg-card/30 overflow-hidden rounded-lg border">
-			<button
-				type="button"
-				onClick={() => setOpen((v) => !v)}
-				aria-expanded={open}
-				className="hover:bg-muted/30 flex w-full items-start gap-2 px-3 py-2 text-left transition-colors"
-			>
-				<ChevronRight
-					className={cn(
-						'text-foreground-faint mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform',
-						open && 'rotate-90',
-					)}
-					aria-hidden="true"
-				/>
-				<span className="min-w-0 flex-1">{summary}</span>
-			</button>
-			{open && <div className="border-border/40 border-t px-3 py-3">{children}</div>}
-		</div>
-	);
-}
-
 /** Status pill, coloured by class (2xx success, 4xx/5xx danger, else neutral). */
 function StatusPill({ status }: { status: string }) {
 	return (
@@ -346,19 +107,6 @@ function StatusPill({ status }: { status: string }) {
 		>
 			{status}
 		</code>
-	);
-}
-
-function SectionLabel({ children, count }: { children: ReactNode; count?: number }) {
-	return (
-		<h4 className="text-foreground-sub mb-2 flex items-baseline gap-2 text-[11px] font-semibold tracking-wider uppercase">
-			{children}
-			{count != null && (
-				<span className="text-foreground-faint font-mono text-[10px] normal-case">
-					{count}
-				</span>
-			)}
-		</h4>
 	);
 }
 
@@ -703,229 +451,6 @@ function ModelsSection({
 					</LazyMount>
 				))}
 			</div>
-		</section>
-	);
-}
-
-/* ---- overview (servers + auth schemes) ----------------------------------- */
-
-/** Human one-liner for a security scheme object. */
-function describeScheme(s: Record<string, unknown>): string {
-	const type = typeof s.type === 'string' ? s.type : 'unknown';
-	if (type === 'http') {
-		const scheme = typeof s.scheme === 'string' ? s.scheme : '';
-		const fmt = typeof s.bearerFormat === 'string' ? ` (${s.bearerFormat})` : '';
-		return `HTTP ${scheme}${fmt}`.trim();
-	}
-	if (type === 'apiKey') {
-		const where = typeof s.in === 'string' ? s.in : '';
-		const name = typeof s.name === 'string' ? `: ${s.name}` : '';
-		return `API key in ${where}${name}`;
-	}
-	if (type === 'oauth2') return 'OAuth 2.0';
-	if (type === 'openIdConnect') return 'OpenID Connect';
-	return type;
-}
-
-/** Pull the OAuth flows from a scheme into a flat, render-ready list. */
-function oauthFlows(
-	s: Record<string, unknown>,
-): { name: string; tokenUrl?: string; authUrl?: string; scopes: [string, string][] }[] {
-	const flows = s.flows;
-	if (typeof flows !== 'object' || flows === null) return [];
-	return Object.entries(flows as Record<string, unknown>).map(([name, f]) => {
-		const flow = (typeof f === 'object' && f !== null ? f : {}) as Record<string, unknown>;
-		const scopesObj =
-			typeof flow.scopes === 'object' && flow.scopes !== null
-				? (flow.scopes as Record<string, unknown>)
-				: {};
-		return {
-			name,
-			tokenUrl: typeof flow.tokenUrl === 'string' ? flow.tokenUrl : undefined,
-			authUrl: typeof flow.authorizationUrl === 'string' ? flow.authorizationUrl : undefined,
-			scopes: Object.entries(scopesObj).map(
-				([k, v]) => [k, typeof v === 'string' ? v : ''] as [string, string],
-			),
-		};
-	});
-}
-
-/**
- * One security scheme as an expandable card. Collapsed it states the type in a
- * line; opened it shows the description (how to send the token), the OAuth
- * flow's token URL, and the scope catalogue the scheme documents — so a reader
- * can see "how it looks" and how to use it without leaving the page.
- */
-function SchemeCard({ name, scheme }: { name: string; scheme: Record<string, unknown> }) {
-	const desc = typeof scheme.description === 'string' ? scheme.description : undefined;
-	const flows = oauthFlows(scheme);
-	const hasDetail = !!desc || flows.length > 0;
-
-	const summary = (
-		<span className="flex flex-wrap items-baseline gap-2">
-			<code className="text-primary font-mono text-[13px]">{name}</code>
-			<span className="text-foreground-sub text-xs">{describeScheme(scheme)}</span>
-		</span>
-	);
-
-	if (!hasDetail) {
-		return (
-			<div className="border-border/40 bg-card/30 rounded-lg border px-3 py-2">{summary}</div>
-		);
-	}
-
-	return (
-		<Disclosure summary={summary}>
-			{desc && <Markdown source={desc} className="text-foreground/65 text-[13px]" />}
-			{flows.map((flow) => (
-				<div key={flow.name} className="mt-3 first:mt-2">
-					<p className="text-foreground-faint text-[11px] font-semibold tracking-wider uppercase">
-						{flow.name} flow
-					</p>
-					{flow.tokenUrl && (
-						<p className="text-foreground-sub mt-1 text-[12px]">
-							Token URL:{' '}
-							<code className="bg-muted/40 text-foreground rounded px-1 py-0.5 font-mono text-[11px]">
-								{flow.tokenUrl}
-							</code>
-						</p>
-					)}
-					{flow.scopes.length > 0 && (
-						<ul className="border-border/40 mt-2 space-y-1 border-l pl-3">
-							{flow.scopes.map(([scope, scopeDesc]) => (
-								<li key={scope} className="flex flex-wrap items-baseline gap-2">
-									<code className="bg-primary/15 text-primary rounded px-1.5 py-0.5 font-mono text-[11px]">
-										{scope}
-									</code>
-									{scopeDesc && (
-										<span className="text-foreground-sub text-[12px]">
-											{scopeDesc}
-										</span>
-									)}
-								</li>
-							))}
-						</ul>
-					)}
-				</div>
-			))}
-		</Disclosure>
-	);
-}
-
-/**
- * The reference overview: base server URL(s) and the security schemes the spec
- * declares. These are top-level OpenAPI fields (`servers`, `info`,
- * `components.securitySchemes`) that the per-operation view can't show — without
- * them the reader doesn't know where to send requests or how to authenticate.
- */
-function ApiOverview({ parsed }: { parsed: ParsedSpec }) {
-	const schemes = Object.entries(parsed.securitySchemes);
-	// Only invite the reader to "expand a scheme" when at least one actually has
-	// expandable detail (a description or OAuth flows/scopes) — otherwise the
-	// hint points at non-interactive cards (e.g. a bare bearer scheme).
-	const schemesHaveDetail = schemes.some(
-		([, s]) => typeof s.description === 'string' || oauthFlows(s).length > 0,
-	);
-	const { meta } = parsed;
-	const hasMeta = !!(
-		meta.contactName ||
-		meta.contactEmail ||
-		meta.contactUrl ||
-		meta.licenseName
-	);
-	if (parsed.servers.length === 0 && schemes.length === 0 && !hasMeta) return null;
-
-	return (
-		<section className="border-border bg-card/40 space-y-4 rounded-lg border p-4">
-			<div className="grid gap-4 sm:grid-cols-2">
-				{parsed.servers.length > 0 && (
-					<div>
-						<SectionLabel>Base URL</SectionLabel>
-						<ul className="space-y-1">
-							{parsed.servers.map((s) => (
-								<li key={s.url}>
-									<code className="text-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono text-[13px]">
-										{s.url}
-									</code>
-									{s.description && (
-										<span className="text-foreground-sub ml-2 text-xs">
-											{s.description}
-										</span>
-									)}
-								</li>
-							))}
-						</ul>
-					</div>
-				)}
-
-				{hasMeta && (
-					<div>
-						<SectionLabel>About</SectionLabel>
-						<div className="text-foreground-sub flex flex-wrap gap-x-4 gap-y-1 text-xs">
-							{meta.contactName && (
-								<span>
-									Contact:{' '}
-									{meta.contactEmail ? (
-										<a
-											href={`mailto:${meta.contactEmail}`}
-											className="text-primary underline"
-										>
-											{meta.contactName}
-										</a>
-									) : (
-										meta.contactName
-									)}
-								</span>
-							)}
-							{meta.contactUrl && (
-								<a
-									href={meta.contactUrl}
-									target="_blank"
-									rel="noreferrer"
-									className="text-primary underline"
-								>
-									Website
-								</a>
-							)}
-							{meta.licenseName && (
-								<span>
-									License:{' '}
-									{meta.licenseUrl ? (
-										<a
-											href={meta.licenseUrl}
-											target="_blank"
-											rel="noreferrer"
-											className="text-primary underline"
-										>
-											{meta.licenseName}
-										</a>
-									) : (
-										meta.licenseName
-									)}
-								</span>
-							)}
-						</div>
-					</div>
-				)}
-			</div>
-
-			{schemes.length > 0 && (
-				<div>
-					<SectionLabel>Authentication</SectionLabel>
-					<p className="text-foreground-sub mb-2 text-xs">
-						Every authenticated request sends{' '}
-						<code className="bg-muted/40 text-foreground/70 rounded px-1 py-0.5 font-mono text-[11px]">
-							Authorization: Bearer &lt;token&gt;
-						</code>
-						.{schemesHaveDetail ? ' Expand a scheme for details.' : ''}
-					</p>
-					<div className="space-y-1.5">
-						{schemes.map(([name, s]) => (
-							<SchemeCard key={name} name={name} scheme={s} />
-						))}
-					</div>
-				</div>
-			)}
 		</section>
 	);
 }

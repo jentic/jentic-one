@@ -19,6 +19,8 @@ from jentic_one.control.services.credentials.state import (
     encode_state,
     generate_nonce,
     new_browser_binding,
+    pkce_challenge_s256,
+    pkce_verifier_for,
 )
 
 SECRET = "test-secret-for-state-signing"
@@ -168,3 +170,37 @@ def test_browser_binding_matches_only_the_minted_value() -> None:
 def test_unbound_state_never_matches() -> None:
     """A state signed before binding existed is refused, never accepted unbound."""
     assert not browser_binding_matches(_make_state(), new_browser_binding().value)
+
+
+# --- PKCE S256 ---
+
+
+def test_pkce_verifier_is_deterministic_secret_bound_and_rfc7636_shaped() -> None:
+    unreserved = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    verifier = pkce_verifier_for(SECRET, "nonce-1")
+    assert len(verifier) == 43
+    assert set(verifier) <= unreserved
+    # Deterministic for the same (secret, nonce).
+    assert pkce_verifier_for(SECRET, "nonce-1") == verifier
+    # Bound to both secret and nonce.
+    assert pkce_verifier_for("other-secret", "nonce-1") != verifier
+    assert pkce_verifier_for(SECRET, "nonce-2") != verifier
+    # Challenge is RFC 7636 S256 (43-char base64url SHA-256 without padding).
+    challenge = pkce_challenge_s256(verifier)
+    assert len(challenge) == 43
+    assert set(challenge) <= unreserved
+
+
+def test_state_round_trips_pkce_claim() -> None:
+    state = _make_state().model_copy(update={"pkce": True})
+    token = encode_state(SECRET, state, ttl_seconds=600)
+    decoded = decode_state(SECRET, token)
+    assert decoded.pkce is True
+
+
+def test_legacy_state_without_pkc_decodes_pkce_false() -> None:
+    state = _make_state()
+    assert state.pkce is False
+    token = encode_state(SECRET, state, ttl_seconds=600)
+    decoded = decode_state(SECRET, token)
+    assert decoded.pkce is False

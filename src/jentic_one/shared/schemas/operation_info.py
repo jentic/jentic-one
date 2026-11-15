@@ -19,6 +19,11 @@ class OperationInfo(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str
+    # The OpenAPI ``operationId`` declared by the spec (``Operation.operation_id``),
+    # e.g. ``listCharges``. Permission rules match against this revision-stable
+    # identifier while retaining ``id`` (``op_…``) for compatibility (#1081).
+    # ``None`` when the spec omits ``operationId`` or on historical payloads.
+    operation_id: str | None = None
     # The operation's path template from the spec, e.g. ``/repos/{owner}/{repo}``
     # — persisted flat as the record's ``operation_path`` column/API field.
     path: str | None = None

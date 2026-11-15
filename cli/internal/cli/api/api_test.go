@@ -3,10 +3,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/client"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 // runJenticCapture runs the jentic root capturing app.Out, so passthrough tests
@@ -121,5 +126,37 @@ func TestAPIOps_RunsOfflineFromEmbeddedSpec(t *testing.T) {
 
 	if _, err := runJenticCapture(t, "api", "ops", "--filter", "credential"); err != nil {
 		t.Fatalf("api ops: %v", err)
+	}
+}
+
+type repeatByteReader byte
+
+func (r repeatByteReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(r)
+	}
+	return len(p), nil
+}
+
+func TestEmitAPIResponse_BoundsBody(t *testing.T) {
+	const testLimit int64 = 64
+	var out bytes.Buffer
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(io.LimitReader(repeatByteReader('a'), testLimit+1)),
+	}
+	err := emitAPIResponseLimit(&out, resp, false, testLimit)
+	if err == nil {
+		t.Fatal("emitAPIResponseLimit succeeded on oversized body, want error")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeInternalError {
+		t.Fatalf("err = %v, want CodedError(%s)", err, ux.CodeInternalError)
+	}
+	if !errors.Is(err, client.ErrBodyTooLarge) {
+		t.Errorf("err = %v, want wrapping ErrBodyTooLarge", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("out.Len() = %d, want 0 when body exceeds cap", out.Len())
 	}
 }

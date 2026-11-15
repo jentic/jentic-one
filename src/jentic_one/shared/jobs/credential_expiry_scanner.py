@@ -18,9 +18,8 @@ material, mirroring ``emit_credential_access``.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import structlog
 from sqlalchemy import select
@@ -30,6 +29,7 @@ from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos.oauth_token_repo import ExpiryEventKind, OAuthTokenRepository
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event, summary_label
+from jentic_one.shared.jobs.periodic import PeriodicScanner
 from jentic_one.shared.models.events import EventSeverity, EventType
 
 if TYPE_CHECKING:
@@ -41,8 +41,10 @@ _POLL_INTERVAL_SECONDS = 2.0
 _CANDIDATE_LIMIT = 100
 
 
-class CredentialExpiryScanner:
+class CredentialExpiryScanner(PeriodicScanner):
     """Periodically emits credential-expiry events from stored OAuth token expiries."""
+
+    name: ClassVar[str] = "credential_expiry_scanner"
 
     def __init__(
         self,
@@ -58,30 +60,6 @@ class CredentialExpiryScanner:
         self._poll_interval = poll_interval
         self._running = False
         self._tick_count = 0
-
-    async def run(self) -> None:
-        """Main loop — sweep periodically until cancelled.
-
-        A single tick must never kill the loop: a transient DB error during a
-        sweep is caught and logged so the scanner keeps running (mirrors
-        ``WorkerLoop.run``).
-        """
-        self._running = True
-        logger.info("credential_expiry_scanner_started")
-        try:
-            while self._running:
-                try:
-                    await self._tick()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("credential_expiry_scanner_tick_error")
-                await asyncio.sleep(self._poll_interval)
-        except asyncio.CancelledError:
-            logger.info("credential_expiry_scanner_cancelled")
-        finally:
-            self._running = False
-            logger.info("credential_expiry_scanner_stopped")
 
     async def _tick(self) -> None:
         self._tick_count += 1
@@ -200,7 +178,3 @@ class CredentialExpiryScanner:
                 "api_vendor": api_vendor,
             },
         )
-
-    def stop(self) -> None:
-        """Signal the scanner to stop after the current tick."""
-        self._running = False

@@ -78,11 +78,17 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     ]
 
 
+def install_on_app(app: FastAPI, ctx: Context) -> None:
+    """Install the process's shared state backend on the admin app."""
+    app.state.admin_state_backend = ctx.state_backend
+
+
 def create_app(ctx: Context) -> FastAPI:
     """Create the admin FastAPI application for standalone deployment."""
     app = create_surface_app(
         ctx, title="jentic-one-admin", routers=get_routers(), enabled_apps={"admin"}
     )
+    install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     # The docs SPA is served from this surface, so its endpoint reference is

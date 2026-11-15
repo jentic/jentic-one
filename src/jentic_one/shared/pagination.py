@@ -112,7 +112,7 @@ def decode_cursor(cursor: str, *, id_kind: CursorIdKind) -> Cursor:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
         if id_kind == "uuid":
-            uuid.UUID(raw_id)
+            raw_id = str(uuid.UUID(raw_id))
     except (ValueError, TypeError, KeyError) as exc:
         raise InvalidCursorError("Invalid pagination cursor") from exc
     return Cursor(timestamp=ts, id=raw_id)

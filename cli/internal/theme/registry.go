@@ -4,8 +4,8 @@ import "github.com/charmbracelet/lipgloss"
 
 // Themes is the registry of built-in palettes, keyed by the names persisted in
 // config (Context/Config theme) and accepted by --theme / JENTIC_THEME. The three
-// keys are the closed set (14 BC-9): "dark", "light", "no-color". ResolveTheme
-// falls back to "dark" for any unknown name.
+// keys are the closed set (14 BC-9): "dark", "light", "no-color".
+// ResolveThemeWithName falls back to "dark" for any unknown name.
 //
 // The "dark"/"light" accents intentionally reuse the brand tokens (theme.go) so
 // the runtime UI matches the banner; "no-color" zeroes every slot with

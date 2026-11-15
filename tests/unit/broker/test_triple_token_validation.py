@@ -5,10 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import jwt
 import pytest
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
-from jentic_one.broker.services.auth.token_validation import CompositeTokenValidator
+from jentic_one.broker.services.auth.token_validation import (
+    CompositeTokenValidator,
+    JwtTokenValidator,
+    JwtVerifier,
+)
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
@@ -165,3 +170,40 @@ async def test_unmigrated_toolkit_key_raises_typed_error(api_key_resolver: Async
     with pytest.raises(TokenValidationError, match="unknown_token"):
         await triple.validate("jntc_live_unmigrated")  # pragma: allowlist secret
     opaque_resolver.resolve_access_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_jwt_routes_through_real_async_verifier(
+    opaque_resolver: AsyncMock,
+    api_key_resolver: AsyncMock,
+) -> None:
+    """CompositeTokenValidator awaits JwtTokenValidator -> async TokenVerifier.verify."""
+    secret = "dev-test-secret-at-least-32-bytes-long"  # pragma: allowlist secret
+    verifier = JwtVerifier(secret=secret)
+    jwt_validator = JwtTokenValidator(verifier=verifier)
+    opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
+    api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
+    triple = CompositeTokenValidator(
+        opaque=opaque_cached, api_key=api_key_cached, jwt=jwt_validator
+    )
+
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = jwt.encode(
+        {
+            "sub": "agnt_real_jwt",
+            "exp": exp,
+            "actor_type": ActorType.AGENT.value,
+            "scopes": [BROKER_EXECUTE_PERMISSION],
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+    claims = await verifier.verify(token)
+    assert claims["sub"] == "agnt_real_jwt"
+
+    result = await triple.validate(token)
+    assert result.sub == "agnt_real_jwt"
+    assert result.actor_type is ActorType.AGENT
+    opaque_resolver.resolve_access_token.assert_not_called()
+    api_key_resolver.resolve_access_token.assert_not_called()

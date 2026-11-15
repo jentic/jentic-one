@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -89,6 +91,14 @@ func (a *App) maybeNudgeUpdate(cmd *cobra.Command) {
 	))
 }
 
+// stderrIsTTY is the update nudge's terminal probe; a var matching stdoutIsTTY
+// in header.go so tests can exercise maybeNudgeUpdate without a real PTY.
+var stderrIsTTY = func() bool { return term.IsTerminal(os.Stderr.Fd()) }
+
+// executablePath locates the running binary; a var so tests can drive
+// Homebrew-tree and non-Homebrew path layouts without spawning a subprocess.
+var executablePath = os.Executable
+
 // updateNudgeEnabled reports whether the update nudge should run for cmd. It
 // mirrors the banner's suppression (non-TTY, JENTIC_NO_BANNER, and the
 // help/completion/install/update/execute trees) and additionally honours the
@@ -96,7 +106,7 @@ func (a *App) maybeNudgeUpdate(cmd *cobra.Command) {
 func updateNudgeEnabled(cmd *cobra.Command) bool {
 	// stderr must be a terminal: the nudge goes to stderr, and we don't want it
 	// polluting captured logs even when stdout happens to be a TTY.
-	if !term.IsTerminal(os.Stderr.Fd()) {
+	if !stderrIsTTY() {
 		return false
 	}
 	return updateNudgeAllowed(cmd)
@@ -162,9 +172,66 @@ func resolveNudgeRepo(paths config.Paths) string {
 	return config.DefaultRepo
 }
 
-// installedCLIVersion returns the version to compare against latest: the
-// manifest's recorded CLI version when present, else the build-time version.
+// isStampedVersion reports whether v was stamped by a release/installer build
+// rather than left at a plain `go build` placeholder.
+func isStampedVersion(v string) bool {
+	return v != "" && v != "dev" && v != "none"
+}
+
+// brewTreeExecutable reports whether the running binary resolves into a
+// Homebrew-managed tree. Because the update nudge runs on every interactive
+// command, detection uses symlink resolution and path inspection only — never
+// spawning `brew --prefix`.
+func brewTreeExecutable() bool {
+	exe, err := executablePath()
+	if err != nil || exe == "" {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return brewTreePath(exe)
+}
+
+// brewTreePath reports whether a symlink-resolved executable path sits inside a
+// Homebrew install tree across macOS Apple Silicon (/opt/homebrew), Intel macOS
+// (/usr/local), Linuxbrew (/home/linuxbrew/.linuxbrew or ~/.linuxbrew), and
+// custom prefixes:
+//   - any path containing a Cellar, Caskroom, or .linuxbrew segment, or
+//   - a path under /opt/homebrew/ or Homebrew's /usr/local/opt/ link tree.
+//
+// Shared POSIX directories such as /usr/local/bin without a Cellar/Caskroom
+// target are excluded so a source/release install in /usr/local/bin (or a
+// symlink there resolving to ~/.jentic/bin) is not misclassified as Homebrew.
+func brewTreePath(resolved string) bool {
+	slash := filepath.ToSlash(filepath.Clean(resolved))
+	if hasPathSegment(slash, "Cellar") || hasPathSegment(slash, "Caskroom") || hasPathSegment(slash, ".linuxbrew") {
+		return true
+	}
+	return strings.HasPrefix(slash, "/opt/homebrew/") || strings.HasPrefix(slash, "/usr/local/opt/")
+}
+
+// hasPathSegment reports whether slashPath contains seg as a whole path segment.
+func hasPathSegment(slashPath, seg string) bool {
+	for _, part := range strings.Split(slashPath, "/") {
+		if part == seg {
+			return true
+		}
+	}
+	return false
+}
+
+// installedCLIVersion returns the version to compare against latest. A
+// Homebrew-managed binary is upgraded out-of-band (`brew upgrade jentic`), so
+// any cli_version recorded in install.json can lag the running executable; when
+// the running binary resolves into a brew tree and carries a build-stamped
+// version, that stamped version is authoritative (#1792). Otherwise the
+// manifest's recorded cli_version wins when present, falling back to the
+// build-time version.
 func installedCLIVersion(paths config.Paths) string {
+	if isStampedVersion(version) && brewTreeExecutable() {
+		return version
+	}
 	if m, _, err := config.LoadManifest(paths); err == nil {
 		return firstNonEmpty(m.CLIVersion, version)
 	}

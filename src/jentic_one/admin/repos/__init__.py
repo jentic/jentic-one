@@ -21,6 +21,7 @@ from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepos
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.repos.provider_config_repo import ProviderConfigRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
+from jentic_one.admin.repos.token_lineage_repo import TokenLineageRepository, TokenSweep
 from jentic_one.admin.repos.user_permission_grant_repo import UserPermissionGrantRepository
 from jentic_one.admin.repos.user_repo import UserRepository
 from jentic_one.admin.repos.user_secret_repo import UserSecretRepository
@@ -47,6 +48,8 @@ __all__ = [
     "OAuthClientRepository",
     "ProviderConfigRepository",
     "RefreshTokenRepository",
+    "TokenLineageRepository",
+    "TokenSweep",
     "UserPermissionGrantRepository",
     "UserRepository",
     "UserSecretRepository",

@@ -18,15 +18,22 @@ __all__ = ["InvalidTokenError", "decode_jwt", "issue_jwt"]
 def issue_jwt(claims: dict[str, Any], secret: str, ttl_seconds: int) -> str:
     """Sign a JWT with HS256 containing the given claims and expiry."""
     now = datetime.now(UTC)
-    payload = {
+    payload: dict[str, Any] = {
         **claims,
         "iat": now,
         "exp": now + timedelta(seconds=ttl_seconds),
     }
+    if "sub" not in payload and isinstance(payload.get("cid"), str):
+        payload["sub"] = payload["cid"]
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
 def decode_jwt(token: str, secret: str) -> dict[str, Any]:
     """Verify and decode a JWT. Raises jwt.ExpiredSignatureError or jwt.InvalidTokenError."""
-    result: dict[str, Any] = jwt.decode(token, secret, algorithms=["HS256"])
+    result: dict[str, Any] = jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        options={"require": ["exp", "iat", "sub"]},
+    )
     return result

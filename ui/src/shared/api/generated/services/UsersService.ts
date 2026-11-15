@@ -42,6 +42,7 @@ export class UsersService {
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
+                429: `Too many login attempts from this client network.`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
@@ -435,7 +436,7 @@ export class UsersService {
     }
     /**
      * Reissue a user's invite
-     * Reissue an invite token for a user.
+     * Reissue an invite token for a pending user.
      * @returns InviteIssuedResponse Successful Response
      * @throws ApiError
      */
@@ -458,7 +459,7 @@ export class UsersService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `The user has already redeemed an invite, or has been deleted`,
+                409: `The user has already signed in, or has been deleted`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

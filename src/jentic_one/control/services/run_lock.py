@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.locks import CREDENTIAL_IDENTITY_REPAIR_LOCK_KEY
 
 #: Advisory-lock keys (``pg_advisory_lock(bigint)``). Fixed constants rather
 #: than ``hashtext(...)`` so an operator can find the holder in ``pg_locks``
@@ -24,6 +25,8 @@ UPGRADE_STEPS_LOCK_KEY = 0x6A6F_5550_4752  # "joUPGR"
 #: The theme-8 Phase-4 service-account retirement (migrate, verify, sweep)
 #: the migration runner performs before the admin drop revision.
 SA_RETIREMENT_LOCK_KEY = 0x6A6F_5341_5254  # "joSART"
+
+IDENTITY_REPAIR_LOCK_KEY = CREDENTIAL_IDENTITY_REPAIR_LOCK_KEY
 
 
 @asynccontextmanager

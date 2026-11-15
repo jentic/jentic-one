@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -72,9 +73,10 @@ func requirementsFor(d *Draft) []Requirement {
 		// checkout (mirrors the local path).
 		if _, inRepo := RepoRoot(); !inRepo {
 			reqs = append(reqs, Requirement{
-				Name: "git",
-				Why:  "clones the source to build the image",
-				URL:  "https://git-scm.com/downloads",
+				Name:  "git",
+				Why:   "clones the source to build the image",
+				URL:   "https://git-scm.com/downloads",
+				Probe: probeGit,
 			})
 		}
 		return reqs
@@ -108,9 +110,10 @@ func requirementsFor(d *Draft) []Requirement {
 	}
 	if _, inRepo := RepoRoot(); !inRepo {
 		reqs = append(reqs, Requirement{
-			Name: "git",
-			Why:  "clones the source from GitHub",
-			URL:  "https://git-scm.com/downloads",
+			Name:  "git",
+			Why:   "clones the source from GitHub",
+			URL:   "https://git-scm.com/downloads",
+			Probe: probeGit,
 		})
 		// Cloning the (private) source needs either a local checkout via
 		// $JENTIC_SRC or a GITHUB_TOKEN. Without either, the clone dead-ends
@@ -159,6 +162,64 @@ func probeSourceAccess() ProbeResult {
 		MissingWhy: "set " + SrcEnv + "=/path/to/jentic-one to build from a local checkout, " +
 			"or GITHUB_TOKEN=ghp_xxx (repo read scope) to clone",
 	}
+}
+
+// minGitMajor / minGitMinor is the minimum git version required when
+// GITHUB_TOKEN is set: git 2.31 introduced GIT_CONFIG_COUNT / GIT_CONFIG_KEY_*
+// / GIT_CONFIG_VALUE_*, which gitauth.Env uses to supply credentials without
+// placing them in process argv.
+const (
+	minGitMajor = 2
+	minGitMinor = 31
+)
+
+func probeGit() ProbeResult {
+	path, err := exec.LookPath("git")
+	if err != nil {
+		return ProbeResult{Found: false}
+	}
+	ver := toolVersion("git")
+	if os.Getenv("GITHUB_TOKEN") != "" {
+		if major, minor, ok := parseGitVersion(ver); !ok || major < minGitMajor || (major == minGitMajor && minor < minGitMinor) {
+			found := ver
+			if found == "" {
+				found = path
+			}
+			return ProbeResult{
+				Found:      false,
+				MissingWhy: fmt.Sprintf("git >= %d.%d is required when GITHUB_TOKEN is set (found %s) — upgrade git", minGitMajor, minGitMinor, found),
+			}
+		}
+	}
+	detail := ver
+	if detail == "" {
+		detail = path
+	}
+	return ProbeResult{Found: true, Detail: detail}
+}
+
+func parseGitVersion(ver string) (int, int, bool) {
+	for _, field := range strings.Fields(ver) {
+		parts := strings.Split(field, ".")
+		if len(parts) < 2 {
+			continue
+		}
+		major, err1 := strconv.Atoi(parts[0])
+		minor, err2 := strconv.Atoi(leadingDigits(parts[1]))
+		if err1 == nil && err2 == nil && major >= 0 && minor >= 0 {
+			return major, minor, true
+		}
+	}
+	return 0, 0, false
+}
+
+func leadingDigits(s string) string {
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // Preflight probes every Requirement for the chosen path. ctx bounds the Docker

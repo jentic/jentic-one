@@ -19,6 +19,7 @@ class JobView(BaseModel):
     parent_job_id: str | None = None
     execution_id: str | None = None
     error: str | None = None
+    result_available: bool = False
     created_at: datetime
     updated_at: datetime | None = None
     # Who enqueued the job: ``actor_id`` is the row's ``created_by`` subject.
