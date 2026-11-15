@@ -8,15 +8,7 @@ applies to every one of them. The full change list is in
 [Deprecations](#deprecations).
 
 Upgrading from **0.39.x or older**: go through **0.40.x** and then **0.41.1**
-before moving on — see [0.41.0](#0410) for why. Direct, single-hop upgrades
-are tested in CI from the previous two minor series (`N-1` and `N-2`, latest
-patch each) — see [Supported upgrades](supported-upgrades.md) for the support
-window and
-[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
-for the pinned source matrix. Every entry below marked **Breaking** that
-affects an upgrade from a supported source release must also be reflected in a
-seeder/verifier update or a `known_breaks` entry in
-`tests/upgrade/supported-upgrades.yaml`.
+before moving on — see [0.41.0](#0410) for why.
 
 ## Unreleased
 
