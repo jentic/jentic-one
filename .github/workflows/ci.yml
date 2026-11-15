@@ -95,6 +95,7 @@ jobs:
       e2e-install: ${{ steps.filter.outputs.e2e-install }}
       cli-os-sensitive: ${{ steps.filter.outputs.cli-os-sensitive }}
       security-image: ${{ steps.filter.outputs.security-image }}
+      upgrade-test: ${{ steps.filter.outputs.upgrade-test == 'true' || (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--')) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -164,6 +165,11 @@ jobs:
               # inspect .github/workflows/ci.yml directly, so a workflow-only
               # edit must run the arch suite.
               - '.github/workflows/**'
+              # tests/unit/test_supported_upgrades.py validates the supported
+              # upgrades matrix and its upgrade-notes anchor links.
+              - 'tests/upgrade/supported-upgrades.yaml'
+              - 'tests/upgrade/matrix.py'
+              - 'docs/operations/upgrade-notes.md'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -279,6 +285,16 @@ jobs:
               - 'uv.lock'
               - 'ui/package-lock.json'
               - '.trivyignore'
+            upgrade-test:
+              # Inputs that affect the upgrade path from published releases to
+              # the candidate image: Alembic migrations, cross-database upgrade
+              # steps, the candidate image Dockerfile, and the upgrade harness.
+              - 'src/jentic_one/migrations/**'
+              - 'src/jentic_one/control/services/upgrade_steps.py'
+              - 'src/jentic_one/control/repos/upgrade_step_repo.py'
+              - 'alembic.ini'
+              - 'deploy/docker/app.multiarch.Dockerfile'
+              - 'tests/upgrade/**'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -1562,20 +1578,165 @@ jobs:
         if: always() && runner.os == 'Linux'
         run: docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" down -v || true
 
+  upgrade-matrix:
+    name: Upgrade test matrix
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Validate release tags and emit supported upgrade matrix
+        id: set-matrix
+        run: |
+          git fetch --tags --force
+          uv run --no-project --python 3.12 --with 'pyyaml>=6' \
+            python -m tests.upgrade.matrix --verify-git-tags --emit-github-matrix
+
+  build-candidate-image:
+    name: Build candidate app image
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space (only when short)
+        run: |
+          avail_gb=$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')
+          echo "free on /: ${avail_gb}G"
+          if [ "${avail_gb}" -lt 25 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+            df -h /
+          fi
+
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the candidate app image (layer-cached)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/docker/app.multiarch.Dockerfile
+          platforms: linux/amd64
+          tags: jentic-one/app:candidate
+          load: true
+          cache-from: type=gha,scope=app-image
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=app-image,mode=max' || '' }}
+
+      - name: Save candidate image archive
+        run: docker save jentic-one/app:candidate -o candidate-image.tar
+
+      - name: Upload candidate image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-image
+          path: candidate-image.tar
+          retention-days: 1
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "**Candidate image (\`jentic-one/app:candidate\`):** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+
+  upgrade-test:
+    name: Upgrade test (${{ matrix.source }} -> candidate, ${{ matrix.backend }})
+    needs: [changes, upgrade-matrix, build-candidate-image]
+    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.upgrade-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download candidate image artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: candidate-image
+
+      - name: Load candidate image
+        run: |
+          docker load -i candidate-image.tar
+          rm -f candidate-image.tar
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run upgrade test (${{ matrix.source }} -> candidate on ${{ matrix.backend }})
+        run: |
+          make test-upgrade \
+            OLD="${{ matrix.source }}" \
+            BACKEND="${{ matrix.backend }}" \
+            CANDIDATE="jentic-one/app:candidate" \
+            OUT_DIR="tests/upgrade/.artifacts/${{ matrix.source }}-${{ matrix.backend }}"
+
+      - name: Upload upgrade test logs and artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: upgrade-test-${{ matrix.source }}-${{ matrix.backend }}
+          path: tests/upgrade/.artifacts/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "**Upgrade leg (\`${{ matrix.source }}\` -> \`candidate\` on \`${{ matrix.backend }}\`):** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, coverage, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, score, security, security-image, test-unit, test-arch, test-integration, coverage, ui, ui-test, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install, upgrade-matrix, build-candidate-image, upgrade-test]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
-        # `needs` covers every job in `needs` above; `coverage` is report-only
-        # (non-required) and excluded from the failure gate until a baseline is
-        # established.
+        # `needs` covers every job in `needs` above; `coverage` and the three
+        # upgrade pipeline jobs (`upgrade-matrix`, `build-candidate-image`,
+        # `upgrade-test`) are report-only (non-required) during initial rollout
+        # and excluded from the failure gate while still surfaced in the summary
+        # and warnings below. To make the upgrade pipeline blocking after two
+        # releases, change the jq filter below from
+        # `del(.coverage, ."upgrade-matrix", ."build-candidate-image", ."upgrade-test")`
+        # to `del(.coverage)`.
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage) | .[].result')
+          for job_id in upgrade-matrix build-candidate-image upgrade-test; do
+            job_res=$(echo "$NEEDS_JSON" | jq -r --arg j "$job_id" '.[$j].result // "skipped"')
+            if [[ "$job_res" == "failure" || "$job_res" == "cancelled" ]]; then
+              echo "::warning::Report-only upgrade job '$job_id' finished with result '$job_res'"
+            fi
+          done
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Report-only upgrade pipeline status"
+              echo "| Job | Result |"
+              echo "| --- | --- |"
+              for job_id in upgrade-matrix build-candidate-image upgrade-test; do
+                job_res=$(echo "$NEEDS_JSON" | jq -r --arg j "$job_id" '.[$j].result // "skipped"')
+                echo "| \`$job_id\` | \`$job_res\` |"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage, ."upgrade-matrix", ."build-candidate-image", ."upgrade-test") | .[].result')
           for r in $results; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
               echo "One or more required jobs failed or were cancelled"

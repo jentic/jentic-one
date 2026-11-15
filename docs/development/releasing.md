@@ -28,6 +28,19 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      on a kind cluster, reusing `smoke-helm.yml`. Unlike the post-merge run on
      `main`, this one blocks: a release cannot ship while any deployment mode
      is red.
+   - **ci (including `upgrade-test`)** — runs the full
+     [`ci.yml`](../../.github/workflows/ci.yml) matrix (`full: true`) on the
+     tagged commit before `publish-image`. This includes
+     `build-candidate-image` and `upgrade-test`, which boots each enabled
+     published release from
+     [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
+     seeds live state, upgrades in place to the candidate image, and runs the
+     post-upgrade verifier (see
+     [Supported upgrades](../operations/supported-upgrades.md)). The same
+     `upgrade-test` job also runs pre-tag on every `release-please--*` Release
+     PR (for example `release-please--branches--main--components--jentic-one`
+     on Release PR `#2007`, matched by `startsWith(github.head_ref, 'release-please--')`)
+     so upgrade regressions are caught before a tag is cut.
    - **publish-image** — builds the `app` container image and pushes it to GHCR
      as `ghcr.io/<owner>/jentic-one-app` (tagged `X.Y.Z` — the `v` is stripped
      — and the short SHA; `latest` moves only on stable releases). One image
@@ -105,6 +118,71 @@ Operator-facing changes for each release live in
 for changes not yet released go under its `## Unreleased` heading; in the
 Release PR, rename that heading to the release version (e.g. `## 0.45.0`).
 Don't link to `#unreleased`: the anchor goes away at release.
+
+### Upgrade test gate and failing-leg runbook
+
+The `upgrade-test` job in [`ci.yml`](../../.github/workflows/ci.yml) tests
+in-place upgrades from the previous two minor series (`N-1` and `N-2`,
+collapsed to their latest patch) defined in
+[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
+and documented in [Supported upgrades](../operations/supported-upgrades.md).
+
+**Promoting `upgrade-test` from report-only to blocking:** during initial
+rollout (first two releases), `upgrade-matrix`, `build-candidate-image`, and
+`upgrade-test` are listed in `ci-status.needs` (with step summaries and
+`::warning::` annotations emitted on failure) but excluded from the failure
+check so flaky container pulls cannot burn a release tag. To make the upgrade
+pipeline a blocking gate on PRs, the Release PR, and `release.yml`, make this
+one-line change in the `ci-status` job of
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):
+
+```bash
+# Report-only (initial two releases):
+results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage, ."upgrade-matrix", ."build-candidate-image", ."upgrade-test") | .[].result')
+
+# Blocking:
+results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage) | .[].result')
+```
+
+**Rolling the support window on a new minor release:** when a new minor
+release `v0.N.0` is published to GHCR, update
+[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
+for the next target series `0.(N+1)` so `0.N.0` becomes `n-1` (pinned to its
+published multi-arch manifest digest) and `0.(N-1).x` becomes `n-2`.
+[`tests/unit/test_supported_upgrades.py`](../../tests/unit/test_supported_upgrades.py)
+and [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py) enforce that
+both `N-1` and `N-2` minor series are present with valid `sha256:` digests, and
+`python -m tests.upgrade.matrix --verify-git-tags` (run in the `upgrade-matrix`
+CI job and in `tests/upgrade/run.sh`) verifies that every source tag matches a
+real `v*` release tag.
+
+**Triaging a failing `upgrade-test` leg:**
+
+1. Download the `upgrade-test-<source>-<backend>` artifact from the workflow
+   run (contains `compose.log`, `migrate.log`, `migrate-check.log`, and
+   `seed-manifest.json`), or reproduce locally:
+   ```bash
+   make test-upgrade OLD=<source> BACKEND=<backend>
+   ```
+2. Classify the failure into one of three categories (never add blanket
+   `continue-on-error` or delete a required source minor):
+   - **(a) Real migration or upgrade-step regression:** `migrate.log` or
+     `migrate-check.log` shows a failed Alembic revision, an unapplied upgrade step
+     (exit `3`/`4`/`5`), startup `ERROR` logs, or unreadable pre-upgrade
+     data in `test_post_upgrade.py`. Fix the migration or upgrade step before
+     merging the Release PR (or recover post-tag via `Release-As` above).
+   - **(b) Intentional breaking change:** the release deliberately refuses an
+     in-place upgrade without operator action or an intermediate waypoint.
+     Document the requirement under the release heading in
+     [`docs/operations/upgrade-notes.md`](../operations/upgrade-notes.md),
+     add a `known_breaks` entry (`source`, `reason`, `upgrade_notes_link`, and
+     `expires`) to
+     [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
+     and update the harness to assert the documented refusal/route rather than
+     skipping the leg.
+   - **(c) Seeder drift against an older API shape:** the failure occurs
+     during the `seed` phase against the unmodified old container image. Fix
+     the pinned seeder for `<source>` under `tests/upgrade/seed/`.
 
 ## One-time setup (repo/org admin)
 

@@ -1,0 +1,42 @@
+# Machine-readable supported upgrade matrix for CI and release gating.
+# Validated by tests/unit/test_supported_upgrades.py (via tests/upgrade/matrix.py)
+# and consumed by the upgrade-matrix job in .github/workflows/ci.yml.
+#
+# Policy:
+# - Support window covers the previous two minor releases (N-1 and N-2), each
+#   collapsed to its latest published patch tag.
+# - Refresh tokens issued on a supported source version must either continue to
+#   refresh after upgrade or be explicitly documented as revoked in
+#   docs/operations/upgrade-notes.md.
+# - Any intentionally broken source path within the window must be recorded in
+#   known_breaks with a non-empty reason, a valid link to an existing heading
+#   in docs/operations/upgrade-notes.md, and a non-expired YYYY-MM-DD expires
+#   date.
+
+window:
+  minors_back: 2
+  collapse_patches: latest
+
+refresh_token_policy: survive_unless_documented_in_upgrade_notes
+
+targets:
+  - version_series: "0.45"
+    sources:
+      - tag: "0.44.0"
+        image: "ghcr.io/jentic/jentic-one-app:0.44.0"
+        digest: "sha256:075dae4771825300fac7bd9c7524ffe63c2e01866e91aa1ee63cc35a54bb466b"  # pragma: allowlist secret
+        role: "n-1"
+        phase1_enabled: true
+      - tag: "0.43.0"
+        image: "ghcr.io/jentic/jentic-one-app:0.43.0"
+        digest: "sha256:cc9c36eb2e6a70f15eccaaa075e07e3e65d75d22bc66d92c966b3c74048104e5"  # pragma: allowlist secret
+        role: "n-2"
+        phase1_enabled: false
+    backends:
+      - name: "postgres"
+        blocking: true
+        enabled: true
+      - name: "sqlite"
+        blocking: false
+        enabled: false
+    known_breaks: []
