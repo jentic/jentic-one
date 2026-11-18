@@ -2,6 +2,7 @@ package ctlcmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/gitauth"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -24,12 +26,27 @@ import (
 )
 
 type updateOptions struct {
-	ref       string
-	baseURL   string
-	check     bool
-	cliOnly   bool
-	stackOnly bool
-	yes       bool
+	ref           string
+	baseURL       string
+	check         bool
+	cliOnly       bool
+	stackOnly     bool
+	yes           bool
+	allowUnsigned bool
+	fromSource    bool
+}
+
+type updateOptsContextKey struct{}
+
+func withUpdateOptions(ctx context.Context, opts updateOptions) context.Context {
+	return context.WithValue(ctx, updateOptsContextKey{}, opts)
+}
+
+func updateOptionsFromContext(ctx context.Context) updateOptions {
+	if opts, ok := ctx.Value(updateOptsContextKey{}).(updateOptions); ok {
+		return opts
+	}
+	return updateOptions{}
 }
 
 func newUpdateCmd(app *app) *cobra.Command {
@@ -47,7 +64,9 @@ func newUpdateCmd(app *app) *cobra.Command {
 			"failed stack half refreshes only the stack.\n\n" +
 			"A Homebrew-installed CLI is never swapped in place: the CLI half runs\n" +
 			"`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n" +
-			"(--ref cannot pin a Homebrew-managed CLI).",
+			"(--ref cannot pin a Homebrew-managed CLI). A CLI installed from the\n" +
+			".deb / .rpm / .apk packages is not swapped either: update it with the\n" +
+			"package manager, or pass --stack-only.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.updateE(cmd.Context(), opts)
@@ -59,10 +78,13 @@ func newUpdateCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL (for the server probe)")
+	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "allow installing a release when its cosign signature or certificate cannot be verified")
+	cmd.Flags().BoolVar(&opts.fromSource, "from-source", false, "build the CLI binaries from source via tools/install.sh instead of downloading prebuilt release archives")
 	return cmd
 }
 
 func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
+	ctx = withUpdateOptions(ctx, *opts)
 	manifest, found, err := config.LoadManifest(a.Paths)
 	if err != nil {
 		return err
@@ -77,6 +99,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		return err
 	}
 	brewManaged := isBrewManaged(ctlTarget)
+	pkgManaged := isSystemPackageManaged(ctlTarget)
 	// brew upgrades the CLI out-of-band, so a recorded cli_version can lag the
 	// binary brew installed; the running binary's stamped version is the truth.
 	if brewManaged && isStampedVersion(version) {
@@ -86,17 +109,24 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	// A CLI-only install (tools/install.sh or brew, never `jenticctl install`)
 	// has no stack: no deploy mode recorded and no install config on disk.
 	stackInstalled := manifest.Mode != "" || proc.FileExists(a.Paths.InstallConfigPath())
+	stackVersion := firstNonEmpty(manifest.ResolvedStackRef(), cliVersion)
+	var stackImg dockerStackImageState
+	if stackInstalled {
+		stackImg = a.inspectDockerStackImage(manifest.Mode, stackVersion)
+	}
 
 	fmt.Fprint(a.Out, a.BrandHeader(ctx, opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
 	// Surface the stack's own recorded build separately from the CLI's. They
 	// advance independently, and a silent divergence is exactly what left users
-	// on a stale stack with no visible cause (#943).
+	// on a stale stack with no visible cause (#943). When a Docker compose stack
+	// runs a published image that differs from or cannot be compared against the
+	// manifest record, surface that deployed image too (#2017).
 	if !stackInstalled {
 		fmt.Fprintln(a.Out, theme.Field("stack", "not installed"))
-	} else if stackRef := manifest.ResolvedStackRef(); stackRef != "" {
-		fmt.Fprintln(a.Out, theme.Field("stack", stackRef))
+	} else if line := stackStatusLine(manifest.ResolvedStackRef(), stackImg); line != "" {
+		fmt.Fprintln(a.Out, theme.Field("stack", line))
 	}
 	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  (no install manifest; using build-time metadata)"))
@@ -104,12 +134,14 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	if brewManaged {
 		fmt.Fprintln(a.Out, theme.Field("managed by", "Homebrew — CLI updates delegate to `"+update.BrewUpgradeCommand+"`"))
 	}
+	if pkgManaged {
+		fmt.Fprintln(a.Out, theme.Field("managed by", "system package (.deb / .rpm / .apk) — update the CLI with your package manager"))
+	}
 
 	// Resolve the update target. By default we track the latest release tag; an
 	// explicit --ref pins a specific tag/branch/commit instead.
 	latest, latestErr := latestReleaseTag(ctx, repo, os.Getenv("GITHUB_TOKEN"))
 	latestKnown := latestErr == nil
-	stackVersion := firstNonEmpty(manifest.ResolvedStackRef(), cliVersion)
 
 	ref := opts.ref
 	pinned := ref != ""
@@ -127,7 +159,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		if !stackInstalled {
 			verdictStack = "" // no stack to be behind
 		}
-		a.printVerdict(cliVersion, verdictStack, latest)
+		a.printVerdict(cliVersion, verdictStack, latest, stackImg)
 	} else {
 		fmt.Fprintln(a.Out, theme.Field("latest", "unknown"))
 		fmt.Fprintln(a.Out, theme.Warnf("  %v", latestErr))
@@ -207,10 +239,31 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	// stack may lag behind, so the stack half must not key off the CLI binary.
 	// A --ref override always proceeds (the user asked for a specific build);
 	// re-run with --ref to force a rebuild at a pinned version.
-	if !pinned && latestKnown && !updateNeeded(doCLI, doStack, cliVersion, stackVersion, latest) {
+	//
+	// A Docker stack whose compose image carries a clean X.Y.Z release tag older
+	// than the recorded stack_ref is also behind (#2011, #2017): the manifest
+	// alone would short-circuit and leave the containers on the stale tag.
+	staleStack := doStack && stackImg.lagsTarget(ref)
+	if !pinned && latestKnown && !staleStack && !updateNeeded(doCLI, doStack, cliVersion, stackVersion, latest) {
 		fmt.Fprintln(a.Out)
+		if doStack && stackImg.uncomparable {
+			fmt.Fprintln(a.Out, theme.Warnf(
+				"Nothing to update automatically: %s (re-run with --ref %s to pull the release image).",
+				stackImg.uncomparableReason(), latest))
+			return nil
+		}
+		if doStack && stackImg.aheadRecord {
+			fmt.Fprintln(a.Out, theme.Successf("Already up to date (CLI %s; stack image %s); nothing to rebuild.", latest, stackImg.releaseTag))
+			return nil
+		}
 		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
 		return nil
+	}
+	if staleStack {
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"warning: stack manifest records %s, but compose runs %s; refreshing the stack",
+			stackVersion, stackImg.image))
 	}
 
 	if stackSkipped {
@@ -229,82 +282,32 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  CLI already at the latest release; updating the stack only."))
 	}
 
-	if !opts.yes {
-		ok, err := confirmApply(doCLI, doStack, brewManaged, repo, ref)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			fmt.Fprintln(a.Out, theme.Dim.Render("update cancelled"))
-			return nil
-		}
+	// A CLI installed by a system package is never swapped by us: overwriting
+	// /usr/bin behind dpkg/rpm/apk leaves the package database describing a file
+	// that no longer exists, and the next package upgrade clobbers the swap.
+	// There is no package repository to delegate to (unlike brew), so the CLI
+	// half is refused with the manual step; the stack half stays reachable.
+	if pkgManaged && doCLI {
+		return fmt.Errorf("the CLI at %s is installed by a system package; %s (use --stack-only to refresh just the stack)",
+			ctlTarget, update.SystemPackageUpgradeHint)
 	}
 
-	// In a *combined* docker-mode run, preflight the stack here — before
-	// updateCLI swaps the binaries — so a stopped daemon or a host port held by
-	// another container fails fast instead of leaving new binaries against an
-	// old, un-rebuilt stack (#976). Scoped to doCLI so we don't probe/announce
-	// twice on the stack-only path (updateStackDocker preflights itself); the
-	// preflighted flag then tells the stack step to skip its own checks. The
-	// daemon probe may poll (~30s) for a cold-starting daemon.
-	preflighted := false
-	if doCLI && doStack && manifest.Mode == config.ModeDocker && proc.FileExists(a.Paths.ComposePath()) {
-		if err := a.preflightDockerStack(ctx); err != nil {
-			return err
-		}
-		preflighted = true
-	}
-
-	cliUpdated := false
-	cliLanded := ""
-	if doCLI {
-		var landed config.CLIUpdate
-		if brewManaged {
-			caskVersion, err := upgradeBrewCLI(a, ctx, latest, latestKnown)
-			if err != nil {
-				return err
-			}
-			// brew is a clean no-op while the cask lags the release; only a cask
-			// that actually moved past the recorded version counts as an update.
-			// An unreadable cask version is assumed to have moved (brew succeeded).
-			cliUpdated = caskVersion == "" || update.NewerAvailable(cliVersion, caskVersion)
-			if cliUpdated && caskVersion != "" {
-				landed = config.CLIUpdate{Version: "v" + strings.TrimPrefix(caskVersion, "v")}
-			}
-		} else {
-			if landed, err = swapCLI(a, ctx, repo, ref, ctlTarget); err != nil {
-				return err
-			}
-			cliUpdated = true
-		}
-		if cliUpdated {
-			// Record what the CLI half installed before the stack half runs, so
-			// a stack failure leaves the manifest naming the new CLI and the old
-			// stack — the next run's verdict and CLI-skip read these (#976).
-			a.recordCLIUpdate(landed)
-			cliLanded = landed.Version
-			// A new CLI can ship new skill bodies, so refresh every INSTALLED
-			// skill to keep the old CLI's guidance from lingering, respecting the
-			// user-edit guard (edited blocks are skipped + warned, never
-			// clobbered without --force). Best-effort: the binaries are already
-			// swapped, so a skill-refresh failure must not fail the update — it
-			// only leaves skills a `jentic skill update` away.
-			refreshSkills(a)
-		}
-	}
-	if doStack {
-		if err := rebuildStack(a, ctx, manifest.Mode, manifest.DB, ref, pinned, preflighted); err != nil {
-			if cliUpdated {
-				return newStackDivergedError(err, cliTargetLabel(brewManaged, cliLanded), ref, stackVersion, stackRetryCommand(ref, pinned))
-			}
-			return err
-		}
-		// Only now is the stack genuinely at `ref`. Recording it earlier (or
-		// alongside the CLI half) is what let a failed/skipped stack rebuild
-		// advertise itself as current and wedge every later update (#943).
-		a.recordStackBuild(ref)
-	}
-	return nil
+	return a.applyUpdate(ctx, updatePlan{
+		manifest:     manifest,
+		repo:         repo,
+		ref:          ref,
+		latest:       latest,
+		ctlTarget:    ctlTarget,
+		cliVersion:   cliVersion,
+		stackVersion: stackVersion,
+		stackImg:     stackImg,
+		pinned:       pinned,
+		latestKnown:  latestKnown,
+		brewManaged:  brewManaged,
+		doCLI:        doCLI,
+		doStack:      doStack,
+		skipConfirm:  opts.yes,
+	})
 }
 
 // Package-level seams over update's external effects (release lookup, CLI
@@ -313,22 +316,25 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 // binaries, or a Docker daemon. Tests that swap these globals must not run
 // with t.Parallel().
 var (
-	latestReleaseTag     = update.LatestReleaseTag
-	swapCLI              = (*app).updateCLI
-	acquireCLI           = (*app).acquireCLIBinaries
-	upgradeBrewCLI       = (*app).brewUpgradeCLI
-	brewUpgrade          = update.BrewUpgrade
-	brewCaskVersion      = update.BrewCaskVersion
-	isBrewManaged        = update.BrewManaged
-	refreshSkills        = (*app).refreshSkillsAfterUpdate
-	rebuildStack         = (*app).updateStack
-	foreignPortHolders   = install.ForeignPortHolders
-	buildStackImages     = install.BuildPlan.BuildImages
-	pullAppImage         = install.PullAppImage
-	runComposeMigrations = install.RunComposeMigrations
-	ensureUv             = install.EnsureUv
-	buildLocalStack      = install.BuildPlan.Execute
-	runLocalMigrations   = install.RunMigrations
+	latestReleaseTag       = update.LatestReleaseTag
+	swapCLI                = (*app).updateCLI
+	acquireCLI             = (*app).acquireCLIBinaries
+	upgradeBrewCLI         = (*app).brewUpgradeCLI
+	brewUpgrade            = update.BrewUpgrade
+	brewCaskVersion        = update.BrewCaskVersion
+	isBrewManaged          = update.BrewManaged
+	isSystemPackageManaged = update.SystemPackageManaged
+	refreshSkills          = (*app).refreshSkillsAfterUpdate
+	rebuildStack           = (*app).updateStack
+	foreignPortHolders     = install.ForeignPortHolders
+	buildStackImages       = install.BuildPlan.BuildImages
+	pullAppImage           = install.PullAppImage
+	runComposeMigrations   = install.RunComposeMigrations
+	ensureUv               = install.EnsureUv
+	buildLocalStack        = install.BuildPlan.Execute
+	runLocalMigrations     = install.RunMigrations
+	fetchInstaller         = update.FetchInstaller
+	downloadRelease        = update.DownloadAndVerify
 )
 
 // preflightDockerStack checks what the Docker stack rebuild needs before any
@@ -716,27 +722,25 @@ func commitFromVersionLine(line string) string {
 	return m[1]
 }
 
-// acquireCLIBinaries stages the two CLI binaries for `ref`, preferring a
-// verified release download and falling back to a from-source build. It returns
-// the staged paths, a cleanup func, and whether the download path was taken.
+// acquireCLIBinaries stages the two CLI binaries for `ref`. For a release tag
+// (unless --from-source is set), it downloads and verifies the published
+// release archives and refuses to fall back to an unverified source build on
+// failure. Non-release refs (or explicit --from-source) build from source.
 func (a *app) acquireCLIBinaries(ctx context.Context, repo, ref string) (map[string]string, func(), bool, error) {
-	if tag := resolvedReleaseTag(ref); tag != "" {
-		staged, cleanup, err := a.downloadCLIBinaries(ctx, repo, tag)
-		if err == nil {
-			return staged, cleanup, true, nil
-		}
-		// A download failure that is a fail-closed VERIFICATION error must NOT
-		// silently fall back to building unverified — surface it. Any other
-		// failure (asset missing for this platform, transport) drops to source.
-		if isVerificationError(err) {
+	opts := updateOptionsFromContext(ctx)
+	if !opts.fromSource {
+		if tag := resolvedReleaseTag(ref); tag != "" {
+			staged, cleanup, err := a.downloadCLIBinaries(ctx, repo, tag)
+			if err == nil {
+				return staged, cleanup, true, nil
+			}
 			if cleanup != nil {
 				cleanup()
 			}
-			return nil, nil, false, err
-		}
-		fmt.Fprintln(a.Out, theme.Dimf("  no usable release download (%v); building from source", err))
-		if cleanup != nil {
-			cleanup()
+			if isVerificationError(err) {
+				return nil, nil, false, err
+			}
+			return nil, nil, false, fmt.Errorf("release download failed for %s: %w (pass --from-source to build %s from git)", tag, err, tag)
 		}
 	}
 	staged, cleanup, err := a.stageCLIBuild(ctx, repo, ref)
@@ -745,8 +749,7 @@ func (a *app) acquireCLIBinaries(ctx context.Context, repo, ref string) (map[str
 
 // downloadCLIBinaries downloads + verifies both binaries for tag into a staging
 // dir, returning their paths and a cleanup func. Any verification failure is
-// returned as a verificationError so the caller refuses to fall back to an
-// unverified source build.
+// returned as a verificationError so the caller surfaces it directly.
 func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[string]string, func(), error) {
 	stage, err := os.MkdirTemp("", "jentic-cli-download-*")
 	if err != nil {
@@ -754,9 +757,21 @@ func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[st
 	}
 	cleanup := func() { _ = os.RemoveAll(stage) }
 	token := os.Getenv("GITHUB_TOKEN")
+	opts := updateOptionsFromContext(ctx)
+	reqSig := manifestRequiresSignature(a.Paths.ManifestPath())
 	staged := map[string]string{}
 	for _, name := range []string{ctlBinaryName, apiBinaryName} {
-		res, derr := update.DownloadAndVerify(ctx, repo, tag, name, runtime.GOOS, runtime.GOARCH, token, stage)
+		res, derr := downloadRelease(ctx, update.DownloadRequest{
+			Repo:             repo,
+			Tag:              tag,
+			Binary:           name,
+			GOOS:             runtime.GOOS,
+			GOARCH:           runtime.GOARCH,
+			Token:            token,
+			StageDir:         stage,
+			AllowUnsigned:    opts.allowUnsigned,
+			RequireSignature: reqSig,
+		})
 		if derr != nil {
 			cleanup()
 			if update.IsVerificationError(derr) {
@@ -770,6 +785,20 @@ func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[st
 		staged[name] = res.BinaryPath
 	}
 	return staged, cleanup, nil
+}
+
+func manifestRequiresSignature(path string) bool {
+	data, err := os.ReadFile(path) //nolint:gosec // path derived from the CLI's own JENTIC_HOME, not user input.
+	if err != nil {
+		return false
+	}
+	var m struct {
+		RequireSignature bool `json:"require_signature"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	return m.RequireSignature
 }
 
 // verificationError marks a fail-closed download failure (bad checksum/sig) so
@@ -807,7 +836,7 @@ const (
 func (a *app) stageCLIBuild(ctx context.Context, repo, ref string) (map[string]string, func(), error) {
 	token := os.Getenv("GITHUB_TOKEN")
 
-	script, err := update.FetchInstaller(ctx, repo, ref, token)
+	script, err := fetchInstaller(ctx, repo, ref, token)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -831,8 +860,9 @@ func (a *app) stageCLIBuild(ctx context.Context, repo, ref string) (map[string]s
 	cmd := exec.CommandContext(ctx, "bash", scriptPath) //nolint:gosec // scriptPath is the installer we just fetched and wrote to a temp dir; running it is the point of `jenticctl update`.
 	// Install into the stage; putting stageBin on PATH makes install.sh treat its
 	// install dir as already-on-PATH, so it won't symlink the temp path into
-	// /usr/local/bin (which we're about to delete).
-	cmd.Env = append(os.Environ(),
+	// /usr/local/bin (which we're about to delete). Scrub secret env vars other
+	// than GITHUB_TOKEN before invoking the fetched script.
+	cmd.Env = append(gitauth.ScrubbedEnv("GITHUB_TOKEN"),
 		"JENTIC_INSTALL_DIR="+stageBin,
 		"JENTIC_REPO="+repo,
 		"JENTIC_REF="+ref,
@@ -1010,6 +1040,124 @@ func dockerStackRunsPublishedImage(composePath string) (image string, published 
 		return "", false, err
 	}
 	return current, current != "" && current != install.AppImageTag, nil
+}
+
+// dockerStackImageState describes the app image a Docker compose stack
+// currently runs and how that image relates to the recorded stack_ref.
+type dockerStackImageState struct {
+	image        string // deployed app image reference when published, else ""
+	tag          string // image tag from compose
+	digest       string // image digest ("sha256:...") when digest-pinned
+	releaseTag   string // clean X.Y.Z tag when comparable (never set when digest-pinned)
+	lagsRecord   bool   // releaseTag is an older release than the recorded stack version
+	aheadRecord  bool   // releaseTag is a newer release than the recorded stack version
+	uncomparable bool   // published image cannot be ordered as a clean X.Y.Z release
+	readErr      error  // compose file exists on disk and could not be parsed/read
+}
+
+// inspectDockerStackImage reads the deployed compose app image for a Docker
+// install and compares it against recorded using clean X.Y.Z release semver.
+//
+// Only a clean release tag without a digest can lag recorded (#2017):
+//   - Digest pins ("repo@sha256:..." and "repo:tag@sha256:...") resolve by
+//     digest in Docker regardless of any accompanying tag, so they are
+//     uncomparable, never stale.
+//   - Mutable channel tags ("latest", "canary"), untagged references, and
+//     prerelease tags ("1.2.3-rc.1") have no canonical release ordering, so
+//     they are uncomparable, never stale.
+//   - Local-mode installs, missing compose files, and source-built compose
+//     stacks (AppImageTag) carry no published image tag and return the zero
+//     state.
+func (a *app) inspectDockerStackImage(mode, recorded string) dockerStackImageState {
+	if mode != config.ModeDocker {
+		return dockerStackImageState{}
+	}
+	composePath := a.Paths.ComposePath()
+	if !proc.FileExists(composePath) {
+		return dockerStackImageState{}
+	}
+	current, published, err := dockerStackRunsPublishedImage(composePath)
+	if err != nil {
+		return dockerStackImageState{readErr: err}
+	}
+	if !published {
+		return dockerStackImageState{}
+	}
+	_, tag, digest := install.SplitImageRef(current)
+	st := dockerStackImageState{image: current, tag: tag, digest: digest}
+	if digest != "" || tag == "" {
+		st.uncomparable = true
+		return st
+	}
+	if _, ok := update.CompareReleaseVersion(tag, tag); !ok {
+		st.uncomparable = true
+		return st
+	}
+	st.releaseTag = tag
+	if cmp, ok := update.CompareReleaseVersion(tag, recorded); ok {
+		st.lagsRecord = cmp < 0
+		st.aheadRecord = cmp > 0
+	}
+	return st
+}
+
+// lagsTarget reports whether the deployed release tag lags both the manifest
+// record and the resolved update target ref.
+func (s dockerStackImageState) lagsTarget(ref string) bool {
+	if !s.lagsRecord {
+		return false
+	}
+	if cmp, ok := update.CompareReleaseVersion(s.releaseTag, ref); ok {
+		return cmp < 0
+	}
+	return true
+}
+
+// uncomparableReason states why a deployed compose image cannot be compared
+// against a canonical X.Y.Z release tag.
+func (s dockerStackImageState) uncomparableReason() string {
+	switch {
+	case s.readErr != nil:
+		return fmt.Sprintf("compose stack image could not be read (%v)", s.readErr)
+	case s.digest != "":
+		return fmt.Sprintf("stack image %s is pinned to a digest and cannot be compared", s.image)
+	case s.tag != "":
+		return fmt.Sprintf("stack image tag %q (%s) is not a release version and cannot be compared", s.tag, s.image)
+	default:
+		return fmt.Sprintf("stack image %s has no release tag and cannot be compared", s.image)
+	}
+}
+
+// stackStatusLine formats the header's `stack:` value, pairing the manifest's
+// recorded stack_ref with the deployed compose image whenever the two diverge
+// or cannot be compared.
+func stackStatusLine(recorded string, img dockerStackImageState) string {
+	withRecord := func(detail string) string {
+		if recorded != "" {
+			return fmt.Sprintf("%s; manifest records %s", detail, recorded)
+		}
+		return detail
+	}
+	switch {
+	case img.readErr != nil:
+		if recorded != "" {
+			return recorded + " (compose file unreadable)"
+		}
+		return "compose file unreadable"
+	case img.lagsRecord || img.aheadRecord:
+		if recorded != "" {
+			return fmt.Sprintf("%s (manifest records %s)", img.releaseTag, recorded)
+		}
+		return img.releaseTag
+	case img.uncomparable && img.digest != "":
+		return fmt.Sprintf("%s (%s)", img.image, withRecord("digest-pinned"))
+	case img.uncomparable && img.tag != "":
+		return fmt.Sprintf("%s (%s)", img.image, withRecord("non-release tag :"+img.tag))
+	case img.uncomparable:
+		return fmt.Sprintf("%s (%s)", img.image, withRecord("untagged"))
+	default:
+		return recorded
+	}
 }
 
 // dockerStackPullsOnUpdate reports whether a stack-half update to ref would
@@ -1251,50 +1399,89 @@ func applyPromptTitle(doCLI, doStack, brewCLI bool, repo, ref string) string {
 // latest release. The CLI and the stack advance independently (a stack half
 // can fail after the CLI half swapped, #976), so "up to date" requires both.
 type updateVerdict struct {
-	cliBehind, stackBehind, unknown bool
+	cliBehind, stackBehind, stackUncomparable, stackAhead, unknown bool
+	effectiveStack                                                 string
+	uncomparableReason                                             string
 }
 
 // computeVerdict compares each half against latest. stackVersion is the ref
 // the stack was last built from (the caller falls back to the CLI version for
-// manifests that predate stack tracking).
-func computeVerdict(cliVersion, stackVersion, latest string) updateVerdict {
+// manifests that predate stack tracking), and stackImg supplies the deployed
+// Docker compose image state when applicable.
+func computeVerdict(cliVersion, stackVersion, latest string, stackImg dockerStackImageState) updateVerdict {
 	if cliVersion == "" || cliVersion == "none" {
 		return updateVerdict{unknown: true}
 	}
+	cliBehind := update.NewerAvailable(cliVersion, latest)
+	if stackVersion != "" && (stackImg.uncomparable || stackImg.readErr != nil) {
+		return updateVerdict{
+			cliBehind:          cliBehind,
+			stackUncomparable:  true,
+			effectiveStack:     stackVersion,
+			uncomparableReason: stackImg.uncomparableReason(),
+		}
+	}
+	effectiveStack := stackVersion
+	if stackVersion != "" && stackImg.lagsRecord {
+		effectiveStack = stackImg.releaseTag
+	}
+	stackBehind := effectiveStack != "" && update.NewerAvailable(effectiveStack, latest)
+	stackAhead := false
+	if stackVersion != "" && !stackBehind && stackImg.aheadRecord {
+		if cmp, ok := update.CompareReleaseVersion(stackImg.releaseTag, latest); ok && cmp > 0 {
+			stackAhead = true
+			effectiveStack = stackImg.releaseTag
+		}
+	}
 	return updateVerdict{
-		cliBehind:   update.NewerAvailable(cliVersion, latest),
-		stackBehind: stackVersion != "" && update.NewerAvailable(stackVersion, latest),
+		cliBehind:      cliBehind,
+		stackBehind:    stackBehind,
+		stackAhead:     stackAhead,
+		effectiveStack: effectiveStack,
 	}
 }
 
 // message words the verdict, naming whichever half is behind.
 func (v updateVerdict) message(cliVersion, stackVersion, latest string) string {
+	sv := stackVersion
+	if v.effectiveStack != "" {
+		sv = v.effectiveStack
+	}
 	switch {
 	case v.unknown:
 		return "Installed version is unknown; cannot compare. Latest is " + latest + "."
+	case v.cliBehind && v.stackUncomparable:
+		return fmt.Sprintf("CLI update available: %s → %s (%s)", cliVersion, latest, v.uncomparableReason)
+	case v.stackUncomparable:
+		return fmt.Sprintf("CLI is at %s; %s.", latest, v.uncomparableReason)
 	case v.cliBehind && v.stackBehind:
-		if strings.TrimPrefix(cliVersion, "v") == strings.TrimPrefix(stackVersion, "v") {
+		if strings.TrimPrefix(cliVersion, "v") == strings.TrimPrefix(sv, "v") {
 			return fmt.Sprintf("Update available: %s → %s", cliVersion, latest)
 		}
-		return fmt.Sprintf("Update available: CLI %s and stack %s → %s", cliVersion, stackVersion, latest)
-	case v.cliBehind && stackVersion == "":
+		return fmt.Sprintf("Update available: CLI %s and stack %s → %s", cliVersion, sv, latest)
+	case v.cliBehind && sv == "":
 		return fmt.Sprintf("CLI update available: %s → %s", cliVersion, latest)
+	case v.cliBehind && v.stackAhead:
+		return fmt.Sprintf("CLI update available: %s → %s (stack image %s is ahead of %s)", cliVersion, latest, sv, latest)
 	case v.cliBehind:
 		return fmt.Sprintf("CLI update available: %s → %s (the stack is already at %s)", cliVersion, latest, latest)
 	case v.stackBehind:
-		return fmt.Sprintf("Stack update available: %s → %s (the CLI is already at %s)", stackVersion, latest, latest)
+		return fmt.Sprintf("Stack update available: %s → %s (the CLI is already at %s)", sv, latest, latest)
+	case v.stackAhead:
+		return fmt.Sprintf("CLI is at %s; stack image %s is ahead of the latest release (%s).", latest, sv, latest)
 	default:
 		return fmt.Sprintf("Up to date (%s).", latest)
 	}
 }
 
 // printVerdict reports up-to-date / update-available for the CLI and the stack
-// against the latest release tag, compared as semver.
-func (a *app) printVerdict(cliVersion, stackVersion, latest string) {
-	v := computeVerdict(cliVersion, stackVersion, latest)
+// against the latest release tag, accounting for the deployed Docker compose
+// image when present.
+func (a *app) printVerdict(cliVersion, stackVersion, latest string, stackImg dockerStackImageState) {
+	v := computeVerdict(cliVersion, stackVersion, latest, stackImg)
 	msg := v.message(cliVersion, stackVersion, latest)
 	switch {
-	case v.unknown:
+	case v.unknown || (v.stackUncomparable && !v.cliBehind):
 		fmt.Fprintln(a.Out, theme.Warn.Render(msg))
 	case v.cliBehind || v.stackBehind:
 		fmt.Fprintln(a.Out, theme.Accent.Render(msg))

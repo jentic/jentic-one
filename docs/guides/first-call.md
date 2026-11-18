@@ -14,15 +14,15 @@ is the fastest local trial. Everything below assumes the app
 > the same OS user can read the credential database and encryption key off disk,
 > whatever the API-level controls allow. Read the
 > [security hardening guide](../security/README.md) before pointing an instance
-> at a real credential — or use [`jentic run`](local-agent.md) to isolate a local
-> coding agent behind its own Unix user.
+> at a real credential, and the [same-host options](../security/same-host/README.md)
+> for isolating a local coding agent.
 
 ## 1. Create your admin account *(operator, one-time)*
 
 Open `/app/setup` in the web UI and create the first administrator; the page
 redirects to login once the account exists. This account is the operator: it
-imports APIs, stores credentials, and approves agents. Already created your
-admin via the README quickstart's `create-admin`? Skip to step 2.
+imports APIs, stores credentials, and approves agents. Already created it
+after the README quickstart? Skip to step 2.
 
 From the terminal instead: `jenticctl setup` creates the account;
 `jenticctl wizard` sequences this whole page into one guided flow.
@@ -40,13 +40,12 @@ jentic register
 
 On a local install, confirm the prompted `http://127.0.0.1:8000`; the broker
 URL is seeded automatically. A remote install needs `--url` and `--broker-url`
-([CLI README](../../cli/README.md#usage)). `register` generates a keypair,
+([CLI README](../../cli/README.md#local-vs-remote-installs)). `register` generates a keypair,
 files a dynamic client registration, then **waits for an operator to approve
 the agent** — approve it in the UI at `/app`. Re-running is idempotent.
 
 Setting up a local *coding* agent (Claude Code, Cursor, …)? `jentic setup` does
-identity + skills + isolation in one flow — see
-[Local coding agents](local-agent.md). All the ways an agent can connect
+identity + skills + MCP entry in one flow. All the ways an agent can connect
 (CLI + skill, MCP over stdio or HTTP, raw HTTP):
 [Connecting an agent](connecting-agents.md).
 
@@ -61,21 +60,24 @@ jentic catalog import httpbin.org/httpbin   # import it (auto-promotes to live)
 ```
 
 `jentic catalog` run bare opens an interactive browser; `jentic apis` manages
-what you've imported. You can also register your own OpenAPI description for a
-private service — same custody, permissions, and audit trail. To correct an
+what you've imported. You can also import your own OpenAPI description for a
+private service — same custody, permissions, and audit trail. Every import
+path (UI, CLI, MCP, HTTP) and the revision lifecycle: [Import APIs](importing-apis.md). To correct an
 imported description without editing the original, use [Overlays](overlays.md).
 
 The broker routes every call by its upstream host, so a relative server URL
 (`url: /api/v3`, as in the stock Petstore) must resolve to an absolute one at
-import — see [how server URLs are resolved](../agent/troubleshoot.md#import-fails-server-url-cant-be-made-absolute).
+import — see [how server URLs are resolved](importing-apis.md#server-urls).
 
 ## 4. Store a credential *(authenticated APIs only)*
 
 httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the
 operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
-the UI. It is encrypted at rest and never returned to a caller — it is
-decrypted only inside the broker, at execution time. How a stored credential
-covers an API and how the broker picks one at execution time:
+the UI. It is encrypted at rest. `POST /credentials` echoes the just-supplied
+secret once in its create response; subsequent reads return only redacted
+details. The broker decrypts the stored secret in-process at execution time
+and injects it into the upstream request without exposing it to the agent.
+How a stored credential covers an API and how the broker picks one at execution time:
 [How credential resolution works](credentials-and-toolkits.md).
 
 ## 5. Grant access
@@ -122,8 +124,10 @@ for control-plane mutations, so your call appears in Executions, not Audit).
 - **Have a coding agent do this for you.** The
   [agent runbooks](../agent/README.md) cover install through the
   discover → access → execute loop as directly executable steps.
-- **Full CLI reference.** Every `jenticctl` and `jentic` command:
-  [`cli/README.md`](../../cli/README.md).
+- **CLI.** Install, onboarding, and the command groups:
+  [`cli/README.md`](../../cli/README.md); every `jentic` and `jenticctl`
+  command, flag, and example is in the generated
+  [CLI reference](../reference/cli.md) (also served in the app at `/app/docs`).
 - **In-app API reference.** A running deployment serves its own interactive
   API reference at `/docs`, generated from code.
 - **Endpoint & permission reference.** Every HTTP route and the permission it requires:

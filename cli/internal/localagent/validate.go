@@ -8,17 +8,15 @@ import (
 	"strings"
 )
 
-// This file is the single choke point that keeps operator-editable inputs — the
-// agent account name and its home directory — from reaching a shell command,
-// sudoers line, ACL entry, or SBPL profile as anything other than a benign,
-// well-formed token. Both are threaded through `sudo -u <name>`, `setfacl -m
-// u:<name>`, macOS `chmod +a "user:<name> allow …"`, the sudoers rule
-// `<operator> ALL=(<name>) …`, and `--home <homeDir>`; a name or path carrying a
-// space, quote, newline, or shell metacharacter could break out of any of those.
-// Rather than trust per-sink quoting, we constrain the inputs at the source to a
-// shape that is safe in EVERY sink, and re-check in localagent before any command
-// is built (defence in depth: the form validates, but a hand-edited config.yaml
-// or a --agent-user flag bypasses the form).
+// This file is the single choke point that keeps the recorded, operator-editable
+// inputs — the agent account name, its home directory, and its granted
+// directories — from reaching a privileged teardown command as anything other
+// than a benign, well-formed token. They are threaded through `setfacl -x
+// u:<name>`, macOS `chmod -a "user:<name> allow …"`, the sudoers line filter
+// `(<name>)`, `dscl`/`userdel`, and `rm -rf`/`chown` of the home; a name or path
+// carrying a space, quote, newline, or shell metacharacter could break out of
+// any of those. The record is a hand-editable file, so reset re-checks every
+// value here before any command is built.
 
 // maxAgentUserLen bounds the account name. Linux useradd rejects names over 32
 // chars; we keep the same ceiling on macOS for parity so a name that validates
@@ -55,7 +53,7 @@ func ValidateAgentUser(name string) error {
 // world-traversable, root-owned directory OUTSIDE any human's home, so the
 // operator can be granted into the agent home without widening their own home and
 // the agent home can never alias a human home. macOS uses /Users/Shared, Linux
-// uses /opt — the same roots DefaultHomeDir builds under.
+// uses /opt — the roots older releases created agent homes under.
 func AgentHomeRoot() string {
 	if runtime.GOOS == "darwin" {
 		return "/Users/Shared"
@@ -68,9 +66,9 @@ func AgentHomeRoot() string {
 // no "." segments, no trailing slash, no doubled separators) that is a strict
 // descendant of AgentHomeRoot() — never the root itself, never a human home, never
 // a system tree. It must also carry no control characters (which could inject a
-// newline into an SBPL profile or a shell here-doc). Constraining the home to the
-// shared root is what lets the confinement layer trust that re-opening the agent
-// home never re-opens a human home.
+// newline into a shell script). Constraining the home to the shared root is what
+// keeps a privileged re-own or delete of the home from ever reaching a human
+// home.
 func ValidateHomeDir(homeDir string) error {
 	if homeDir == "" {
 		return errors.New("agent home directory is empty")
@@ -98,9 +96,9 @@ func ValidateHomeDir(homeDir string) error {
 	return nil
 }
 
-// ValidateAccount validates the agent account name and home directory together —
-// the single call every path builds on before it constructs a privileged command
-// from either value. Returns the first problem found.
+// ValidateAccount validates an account name and home directory together before
+// a privileged command is built from either value. Returns the first problem
+// found.
 func ValidateAccount(name, homeDir string) error {
 	if err := ValidateAgentUser(name); err != nil {
 		return err
@@ -108,18 +106,11 @@ func ValidateAccount(name, homeDir string) error {
 	return ValidateHomeDir(homeDir)
 }
 
-// ValidateConfigDir was the guard for destructive ops on the recorded legacy
-// config_dir (`rm -rf`/`chown -R` of the agent's <home>/.jentic). It is gone
-// because nothing operates on a recorded config_dir any more: new accounts don't
-// record one, and reset derives the identity dirs to remove from the (already
-// ValidateHomeDir-validated) home via AgentIdentityDirs — fixed joins that can't
-// be steered by a hand-edited record.
-
 // rejectControlChars returns an error if s contains any ASCII control character
 // (including newline, carriage return, and tab). These are the characters that
-// let a value break out of a single line — into a second SBPL rule, a second
-// sudoers line, or a new shell command — so they are refused before the value is
-// ever formatted into one of those.
+// let a value break out of a single line — into a second sudoers line or a new
+// shell command — so they are refused before the value is ever formatted into
+// one of those.
 func rejectControlChars(label, s string) error {
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f {
@@ -129,12 +120,10 @@ func rejectControlChars(label, s string) error {
 	return nil
 }
 
-// ValidateGrantPath reports whether dir is safe to interpolate into an ACL/shell
-// grant command: an absolute, cleaned path free of control characters. Grant
-// paths come from the operator (a working directory or a --grant flag) and from
-// the recorded config, and they reach setfacl/chmod/bwrap/SBPL, so they are held
-// to the same no-control-character bar as the home. (Sensitivity — which paths
-// may be granted at all — is a separate check, Classify.)
+// ValidateGrantPath reports whether a recorded grant dir is safe to interpolate
+// into an ACL revoke command: an absolute path free of control characters. The
+// paths come from the hand-editable agent record and reach setfacl/chmod, so
+// they are held to the same no-control-character bar as the home.
 func ValidateGrantPath(dir string) error {
 	if dir == "" {
 		return errors.New("grant path is empty")

@@ -32,6 +32,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 )
 
 // mcpBearerEnv is the environment variable a caller sets to hand the relay a
@@ -109,7 +111,7 @@ func newMCPRelay(opts *mcpRelayOptions, out io.Writer, logger *slog.Logger) (*mc
 					return d.DialContext(ctx, "unix", socketPath)
 				},
 			},
-			CheckRedirect: refuseRedirects,
+			CheckRedirect: clictx.NoFollowRedirects,
 		}
 	case "http", "https":
 		if target.Scheme == "http" && !hostIsLoopback(target.Hostname()) {
@@ -119,19 +121,11 @@ func newMCPRelay(opts *mcpRelayOptions, out io.Writer, logger *slog.Logger) (*mc
 			target.Path = mcpHTTPPath
 		}
 		r.endpoint = target.String()
-		r.client = &http.Client{CheckRedirect: refuseRedirects}
+		r.client = &http.Client{CheckRedirect: clictx.NoFollowRedirects}
 	default:
 		return nil, fmt.Errorf("--connect %q: unsupported scheme %q (unix://, http://<loopback>, or https://)", opts.url, target.Scheme)
 	}
 	return r, nil
-}
-
-// refuseRedirects keeps the relay on the endpoint it was pointed at: the
-// Streamable HTTP endpoint has no reason to redirect, and following one would
-// carry the frame (and the caller's bearer) to wherever the Location points.
-// The 3xx surfaces to the client as a JSON-RPC error instead.
-func refuseRedirects(*http.Request, []*http.Request) error {
-	return http.ErrUseLastResponse
 }
 
 // resolveRelayBearer picks the caller-supplied bearer: --bearer-file wins

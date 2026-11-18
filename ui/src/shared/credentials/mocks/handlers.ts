@@ -45,6 +45,7 @@ let seq = 0;
 // e2e exercise the abandoned-connect path deterministically. Defaults to true
 // so existing flows (mocked dev, other specs) still auto-complete.
 let connectAutoCompletes = true;
+const connectFlowCompletions = new Map<string, string>();
 
 /** Toggle whether the mocked connect flow auto-completes. For tests. */
 export function setConnectAutoCompletes(value: boolean): void {
@@ -105,6 +106,7 @@ export function resetCredentialsStore(seed: Credential[] = []): void {
 	store = [...seed];
 	seq = seed.length;
 	connectAutoCompletes = true;
+	connectFlowCompletions.clear();
 }
 
 /** Append credentials to the current store, keeping what is already there. */
@@ -443,6 +445,8 @@ export interface MockConnectSession {
 	revision?: { id: string; number: number };
 	/** When a human last rejected this agent's ask for the same target (the review shows it). */
 	last_rejected_at?: string | null;
+	/** The binding moved since an edit was opened; `:rebase` clears it. */
+	stale?: boolean;
 }
 
 type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected' | 'applied';
@@ -745,6 +749,7 @@ const connectSessionsHandlers = [
 			revision: gated.edit?.revision ?? createRevision(gated),
 			edit: gated.edit ?? null,
 			last_rejected_at: gated.last_rejected_at ?? null,
+			stale: gated.stale ?? false,
 			can_confirm: gated.can_confirm ?? true,
 			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,
@@ -762,6 +767,22 @@ const connectSessionsHandlers = [
 	}),
 
 	// An edit's reviewer changing the request: a new revision recorded as theirs.
+	// Bringing a stale edit up to date: a new revision, and no longer stale.
+	http.post('/connect-sessions/:sessionId\\:rebase', ({ params, request }) => {
+		const gated = gateSession(params.sessionId, request.url);
+		if (!isMockSession(gated)) return gated;
+		const edit = gated.edit;
+		if (!edit) return new HttpResponse(null, { status: 400 });
+		const number = edit.revision.number + 1;
+		gated.stale = false;
+		gated.edit = { ...edit, revision: { id: `csr_${gated.session_id}_${number}`, number } };
+		return HttpResponse.json({
+			session_id: gated.session_id,
+			revision_id: gated.edit.revision.id,
+			revision_number: number,
+		});
+	}),
+
 	http.post('/connect-sessions/:sessionId\\:amend', async ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
@@ -818,24 +839,37 @@ const connectSessionsHandlers = [
 		});
 	}),
 
+	// Paged like the route: the client asks for one page at a time and follows
+	// `next_cursor`, so a mock that always answers `has_more: false` leaves
+	// that loop unexercised — which is how the client came to discard it.
 	http.get('/connect-sessions/:sessionId/revisions', ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
 		const current = gated.edit?.revision ?? createRevision(gated);
-		return HttpResponse.json({
-			data: gated.revisions ?? [
-				{
-					id: current.id,
-					number: current.number,
-					created_by: gated.requested_by_actor_id,
-					created_at: gated.created_at,
-					proposal: {},
-					result: gated.edit?.result ?? {
-						rules: gated.requested_permission_rules,
-						scopes: gated.requested_scopes,
-					},
+		const all = gated.revisions ?? [
+			{
+				id: current.id,
+				number: current.number,
+				created_by: gated.requested_by_actor_id,
+				created_at: gated.created_at,
+				proposal: {},
+				result: gated.edit?.result ?? {
+					rules: gated.requested_permission_rules,
+					scopes: gated.requested_scopes,
 				},
-			],
+			},
+		];
+		const url = new URL(request.url);
+		const limit = Number(url.searchParams.get('limit') ?? 50);
+		const cursor = url.searchParams.get('cursor');
+		const after = cursor ? all.findIndex((r) => r.id === atob(cursor)) + 1 : 0;
+		const page = all.slice(after, after + limit);
+		const has_more = after + page.length < all.length;
+		return HttpResponse.json({
+			limit,
+			has_more,
+			next_cursor: has_more && page.length > 0 ? btoa(page[page.length - 1].id) : null,
+			data: page,
 		});
 	}),
 
@@ -971,9 +1005,29 @@ const connectSessionsHandlers = [
 	}),
 
 	http.get('/connect-sessions/:sessionId/status', ({ params, request }) => {
+		if (!connectSessionsStore.some((s) => s.session_id === String(params.sessionId))) {
+			return undefined;
+		}
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
 		return HttpResponse.json(gated.status);
+	}),
+
+	http.get('/connect-sessions/:sessionId/status', ({ params, request }) => {
+		const ended = endedConnectSessions.find((s) => s.session_id === String(params.sessionId));
+		if (!ended || new URL(request.url).searchParams.get('poll_token') !== ended.poll_token) {
+			return problem(
+				403,
+				'Forbidden',
+				'Unknown session or invalid poll token.',
+				'invalid_poll_token',
+			);
+		}
+		return HttpResponse.json(
+			ended.outcome === 'applied' || ended.outcome === 'connected'
+				? { ...ended.status, status: ended.outcome, error_code: null }
+				: { ...ended.status, status: 'failed', error_code: ended.outcome },
+		);
 	}),
 
 	http.post('/connect-sessions/:sessionId\\:cancel', ({ params, request }) => {
@@ -1100,6 +1154,14 @@ export const credentialsHandlers = [
 		});
 	}),
 
+	http.get('/credentials/:id/connect/:flowId/status', ({ params }) => {
+		const cred = store.find((c) => c.credential_id === String(params.id));
+		const completion = connectFlowCompletions.get(String(params.flowId));
+		return HttpResponse.json({
+			status: cred && completion && completion === cred.updated_at ? 'connected' : 'pending',
+		});
+	}),
+
 	http.get('/credentials/:id', ({ params }) => {
 		const cred = store.find((c) => c.credential_id === params.id);
 		if (!cred) return new HttpResponse(null, { status: 404 });
@@ -1155,6 +1217,7 @@ export const credentialsHandlers = [
 
 	http.post('/credentials/:id/connect', async ({ params }) => {
 		const id = String(params.id);
+		const flowId = `flow_${++seq}`;
 		const cred = store.find((c) => c.credential_id === id);
 		const managed = cred?.provider === 'pipedream';
 
@@ -1168,7 +1231,9 @@ export const credentialsHandlers = [
 				const target = store.find((c) => c.credential_id === id);
 				if (target) {
 					target.provider_account_ref = managed ? `apn_${seq}_mock` : 'connected';
+					target.details = { ...(target.details ?? {}), connected: true };
 					target.updated_at = new Date().toISOString();
+					connectFlowCompletions.set(flowId, target.updated_at);
 				}
 			}, 600);
 		}
@@ -1178,6 +1243,7 @@ export const credentialsHandlers = [
 			: `https://provider.example.com/oauth/authorize?credential=${id}&state=mock-state`;
 		return HttpResponse.json({
 			kind: 'authorization_code',
+			flow_id: flowId,
 			authorize_url: authorizeUrl,
 			state: 'mock-state',
 		});

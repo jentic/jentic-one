@@ -13,6 +13,7 @@ import json
 from typing import Any
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select, text
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
@@ -22,6 +23,7 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     InvalidPollTokenError,
 )
+from jentic_one.control.web.routers import credentials as credentials_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     DEFAULT_AGENT_PERMISSIONS,
@@ -44,9 +46,11 @@ from tests.integration.control.connect_sec.support import (
     RULES,
     SIBLING_AGENT_ID,
     TARGET,
+    build_app,
     client,
     connect,
     digest,
+    existing_credential,
     import_spec,
     key_variant,
     revision,
@@ -59,12 +63,11 @@ pytestmark = pytest.mark.integration
 _CANARY = "sk_authz_" + "A" * 24
 _ALL = ["org:admin", "credentials:write", "agents:write", "credentials:connect"]
 
-# An agent granted everything directly, and one inheriting it from its owner.
+# An agent granted everything directly, and one owned by the session owner.
 _ADMIN_AGENT = Identity(sub=AGENT_ID, permissions=_ALL, actor_type=ActorType.AGENT)
 _INHERITING_AGENT = Identity(
     sub=AGENT_ID,
     permissions=list(DEFAULT_AGENT_PERMISSIONS),
-    parent_permissions=_ALL,
     parent_actor_id=OWNER_ID,
     actor_type=ActorType.AGENT,
 )
@@ -419,3 +422,45 @@ async def test_owner_who_could_never_approve_cannot_start_a_session_for_their_ag
     async with client(env, OWNER_NO_AGENTS_WRITE) as http:
         unbound = await http.post("/integrations:connect", json=API_BODY)
     assert unbound.status_code == 201, unbound.text
+
+
+def _credentials_client(ctx: Context, identity: Identity) -> AsyncClient:
+    app = build_app(ctx, identity)
+    app.include_router(credentials_router.router)
+    return AsyncClient(transport=ASGITransport(app=app), base_url="https://t")
+
+
+async def test_delegated_agent_direct_credential_connect_requires_review(env: Context) -> None:
+    """An agent holding ``owner:credentials:read`` + ``credentials:write`` gets 403
+    ``connect_requires_review`` with an ``agent_directive`` when calling
+    ``POST /credentials/{id}/connect`` on its owner's credential."""
+    credential_id = await existing_credential(env, oauth_scope="read")
+    delegated_writer = Identity(
+        sub=AGENT_ID,
+        permissions=["credentials:write", OWNER_CREDENTIALS_READ],
+        parent_actor_id=OWNER_ID,
+        actor_type=ActorType.AGENT,
+    )
+    async with _credentials_client(env, delegated_writer) as http:
+        refused = await http.post(f"/credentials/{credential_id}/connect", json={})
+    assert refused.status_code == 403, refused.text
+    body = refused.json()
+    assert body["type"] == "connect_requires_review"
+    directive = body["agent_directive"]
+    assert directive["strategy"] == "prompt_human"
+    assert directive["parameters"]["credential_id"] == credential_id
+    assert "request_access_change" in directive["human_readable_instruction"]
+    assert "jentic connect" in directive["human_readable_instruction"]
+
+    # An agent of another owner (or without delegation) still gets a uniform 404.
+    foreign_delegated = Identity(
+        sub=FOREIGN_AGENT_ID,
+        permissions=["credentials:write", OWNER_CREDENTIALS_READ],
+        parent_actor_id=OTHER_OWNER_ID,
+        actor_type=ActorType.AGENT,
+    )
+    async with _credentials_client(env, foreign_delegated) as http:
+        not_found = await http.post(f"/credentials/{credential_id}/connect", json={})
+    assert not_found.status_code == 404, not_found.text
+    assert not_found.json()["type"] == "credential_not_found"
+    assert "agent_directive" not in not_found.json()

@@ -63,7 +63,7 @@ def _warn_retired_sa_sweep_age_once() -> None:
         "config_retired_setting_ignored",
         setting=f"services.{_RETIRED_SA_SWEEP_AGE_KEY}",
         detail=(
-            "removed in theme-8 Phase 4 with the automatic service-account sweep; "
+            "removed in 0.41.0 with the automatic service-account sweep; "
             "the upgrade migrates and sweeps every service account itself, and the "
             "value is ignored"
         ),
@@ -92,19 +92,42 @@ class WorkerConfig(BaseModel):
     jobs — can poll the same queue without double-claiming a job.
     """
 
-    # How long a claimed (RUNNING) job stays invisible to other workers. Size it
-    # safely above the longest expected handler runtime (upstream timeout + slack)
-    # so a healthy-but-slow job is never reclaimed mid-flight and double-processed.
-    visibility_timeout_s: float = 120.0
-    # Total claims before a repeatedly-failing job is dead-lettered.
-    max_attempts: int = 5
-    # Backoff before a failed job becomes claimable again: min(base * 2**(n-1), max).
-    retry_backoff_base_s: float = 2.0
-    retry_backoff_max_s: float = 60.0
-    # Bounded wait for in-flight jobs to finish on graceful drain; past
-    # this the worker stops claiming and lets the still-RUNNING job be reclaimed
-    # via its visibility timeout after restart (no work dropped).
-    drain_timeout_s: float = 25.0
+    visibility_timeout_s: float = Field(
+        default=120.0,
+        description=(
+            "Seconds a claimed (``RUNNING``) job stays invisible to other workers; "
+            "past it the job is reclaimed and run again. Size it safely above the "
+            "longest expected handler runtime (upstream timeout plus slack) so a "
+            "healthy but slow job is never reclaimed mid-flight and processed twice."
+        ),
+    )
+    max_attempts: int = Field(
+        default=5,
+        description=(
+            "Total claims of a repeatedly failing job before it is dead-lettered "
+            "instead of requeued."
+        ),
+    )
+    retry_backoff_base_s: float = Field(
+        default=2.0,
+        description=(
+            "Base delay (seconds) before a failed job becomes claimable again: "
+            "attempt ``n`` waits ``min(retry_backoff_base_s * 2**(n-1), "
+            "retry_backoff_max_s)``."
+        ),
+    )
+    retry_backoff_max_s: float = Field(
+        default=60.0,
+        description="Cap (seconds) on the exponential backoff between attempts of a failed job.",
+    )
+    drain_timeout_s: float = Field(
+        default=25.0,
+        description=(
+            "On graceful shutdown, how long (seconds) the worker waits for in-flight "
+            "jobs to finish. Past it the worker stops; a still-``RUNNING`` job is "
+            "reclaimed via its visibility timeout after restart, so no work is dropped."
+        ),
+    )
     reconnect_backoff_base_s: float = Field(
         default=2.0,
         gt=0,
@@ -173,8 +196,20 @@ class WorkerConfig(BaseModel):
 class RuntimeConfig(BaseModel):
     """Hot-reloadable runtime flags."""
 
-    debug: bool = False
-    log_level: str = "INFO"
+    debug: bool = Field(
+        default=False,
+        description=(
+            "Render stdout logs with the human-readable console renderer instead of "
+            "JSON lines. For local development."
+        ),
+    )
+    log_level: str = Field(
+        default="INFO",
+        description=(
+            "Root log level: an uppercase Python level name such as ``DEBUG``, "
+            "``INFO`` or ``WARNING``."
+        ),
+    )
     maintenance_mode: bool = False
 
     def reload(self, overrides: dict[str, Any]) -> RuntimeConfig:

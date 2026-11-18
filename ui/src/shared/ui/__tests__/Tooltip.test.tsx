@@ -1,6 +1,6 @@
 import { act, fireEvent, renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
-import { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
+import { Tooltip, TOOLTIP_DELAY_MS, quietHoverUntilPointerMoves } from '@/shared/ui/Tooltip';
 
 describe('Tooltip', () => {
 	it('renders its trigger children', () => {
@@ -50,6 +50,25 @@ describe('Tooltip', () => {
 		// A mouse press opens nothing: hover already owns that bubble.
 		fireEvent.pointerDown(trigger, { pointerType: 'mouse' });
 		expect(screen.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('holds a hover open after quietHoverUntilPointerMoves until the pointer moves', async () => {
+		renderWithProviders(
+			<Tooltip content="the full value" delayMs={0}>
+				<span>trigger</span>
+			</Tooltip>,
+		);
+		quietHoverUntilPointerMoves();
+		// The trigger slid under a resting pointer: an enter with no movement.
+		const trigger = screen.getByText('trigger');
+		fireEvent.mouseEnter(trigger);
+		expect(screen.queryByRole('tooltip')).toBeNull();
+		fireEvent.pointerMove(document.body);
+		expect(screen.queryByRole('tooltip')).toBeNull();
+		// The pointer moves over it: the hold is lifted, and the hover opens with
+		// no leave and re-enter needed.
+		fireEvent.pointerMove(trigger);
+		expect(await screen.findByRole('tooltip')).toHaveTextContent('the full value');
 	});
 
 	it('shows content on keyboard focus (a11y) and wires aria-describedby', async () => {

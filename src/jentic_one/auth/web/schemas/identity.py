@@ -29,6 +29,14 @@ class CredentialBindingEntry(BaseModel):
         ),
         examples=["Stripe production key"],
     )
+    state: str | None = Field(
+        default=None,
+        description=(
+            "Lifecycle state of the bound credential (`pending`, `connected` or `failed`); "
+            "null if the credential cannot be resolved."
+        ),
+        examples=["pending"],
+    )
     bound_at: datetime = Field(
         description="When the credential was bound (RFC 3339).", examples=["2026-01-15T09:30:00Z"]
     )

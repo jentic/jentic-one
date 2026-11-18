@@ -15,8 +15,15 @@ Design invariants
   ``422`` — a stored pattern that could not be compiled at save time never
   reaches the enforce path.
 * Enforce-time matching is **fail-closed**: an already-stored pattern that
-  fails to compile (a legacy row written before validation existed) yields
-  a matcher that never matches, rather than today's silent wildcard.
+  fails validation (an invalid or unsafe regex, or a row written before
+  validation existed) yields a matcher that never matches, rather than a
+  silent wildcard. ``first_matching_rule`` treats such a ``deny`` or
+  ``require-approval`` rule as deciding the request, so it cannot fall
+  through to a broader ``allow``.
+* Regex matching is linear-time safe: the validator refuses nested repeats,
+  ambiguous alternation under a repeat, back-references and lookarounds, and
+  ``PathMatcher.matches`` does not examine paths longer than
+  ``MAX_MATCH_PATH_LENGTH``.
 * Regex mode uses **full-match** semantics (``re.fullmatch``) — the
   pattern must describe the whole request path — replacing the previous
   ``re.match`` (start-anchored) behaviour, which silently over-matched.
@@ -33,7 +40,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 MatchMode = Literal["regex", "prefix", "exact"]
 """How a rule's ``path`` string is interpreted against an inbound request path."""
@@ -52,19 +59,112 @@ PathValidationCode = Literal[
     "unsafe_regex",
 ]
 
-# ReDoS guard — nested unbounded quantifiers are the classic catastrophic-
-# backtracking shape (``(a+)+``, ``(a*)*``, ``(.+)+``, ``([^/]+)+``, …).
-# Python's ``re`` engine holds the GIL and offers no per-match timeout, so
-# a well-formed but exponentially-backtracking pattern accepted at save
-# time can freeze a broker worker at enforce time. We refuse patterns
-# where an unbounded quantifier (``+`` / ``*``) directly precedes a
-# closing paren that is itself followed by another unbounded quantifier
-# or ``?`` — the shape underlying every classic ReDoS in our surface.
-# Safer patterns (``[^/]+/[^/]+``, ``/repos/.*``, ``(?:foo|bar)+``) don't
-# nest quantifiers this way and pass through unaffected. The check is
-# coarse and can false-positive on legitimate but ambiguous patterns like
-# ``(a+b)+``; users can rewrite as ``[ab]+`` or non-nested equivalents.
-_REDOS_CATASTROPHIC_RE: re.Pattern[str] = re.compile(r"[+*][^)]*\)\s*[+*?]")
+MAX_MATCH_PATH_LENGTH: int = 2048
+"""Longest request path a ``regex`` matcher examines; longer paths do not match.
+
+Bounds the polynomial cases the structural validator cannot rule out
+(``.*.*.*``) so one match stays cheap whatever the caller sends.
+"""
+
+# ReDoS guard. Python's ``re`` engine backtracks, holds the GIL and offers no
+# per-match timeout, so a pattern accepted at save time can freeze a worker at
+# enforce time. ``_unsafe_regex_reason`` walks the parsed pattern and refuses
+# the shapes that backtrack exponentially or that the engine cannot run in
+# linear time: a repeat whose body holds another repeat, an alternation under
+# a repeat whose branches can match the same text, back-references and
+# lookarounds. Single-level repeats over character classes (``[^/]+``,
+# ``.*``) and alternation outside a repeat stay legal.
+_REGEX_PARSER = getattr(re, "_parser", None)
+_UNBOUNDED_REPEAT_OPS = frozenset({"MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"})
+_UNSUPPORTED_OPS = frozenset({"GROUPREF", "GROUPREF_EXISTS", "ASSERT", "ASSERT_NOT"})
+_FALLBACK_GROUP_REPEAT_RE: re.Pattern[str] = re.compile(r"\)\s*[+*?{]")
+
+
+def _subpatterns(op: object, av: Any) -> list[Any]:
+    """Child sub-patterns of one parse-tree node."""
+    name = str(op)
+    if name in _UNBOUNDED_REPEAT_OPS:
+        return [av[2]]
+    if name == "SUBPATTERN":
+        return [av[3]]
+    if name == "BRANCH":
+        return list(av[1])
+    if name == "ATOMIC_GROUP":
+        return [av]
+    return []
+
+
+def _has_repeat_over_one(seq: Any) -> bool:
+    """True if the sequence contains a repeat that can run more than once."""
+    for op, av in seq:
+        if str(op) in _UNBOUNDED_REPEAT_OPS and av[1] > 1:
+            return True
+        if any(_has_repeat_over_one(child) for child in _subpatterns(op, av)):
+            return True
+    return False
+
+
+def _branch_is_deterministic(branches: Any) -> bool:
+    """True if at most one branch can start at any position.
+
+    Holds when every branch is a non-empty run of literals and no two
+    branches begin with the same character, so the engine never has to try a
+    second branch after the first matched.
+    """
+    firsts: set[str] = set()
+    for branch in branches:
+        items = list(branch)
+        if not items or any(str(op) != "LITERAL" for op, _ in items):
+            return False
+        first = chr(items[0][1]).casefold()
+        if first in firsts:
+            return False
+        firsts.add(first)
+    return True
+
+
+def _has_ambiguous_branch(seq: Any) -> bool:
+    for op, av in seq:
+        if str(op) == "BRANCH" and not _branch_is_deterministic(av[1]):
+            return True
+        if any(_has_ambiguous_branch(child) for child in _subpatterns(op, av)):
+            return True
+    return False
+
+
+def _walk_for_unsafe(seq: Any) -> str | None:
+    for op, av in seq:
+        name = str(op)
+        if name in _UNSUPPORTED_OPS:
+            return "back-references and lookarounds are not supported"
+        if name in _UNBOUNDED_REPEAT_OPS:
+            body = av[2]
+            if _has_repeat_over_one(body):
+                return "a repeated group contains another repeat (e.g. (x+)+, (x*)*, (x+){2,})"
+            if av[1] > 1 and _has_ambiguous_branch(body):
+                return "a repeated group contains alternation that can match the same text"
+        for child in _subpatterns(op, av):
+            reason = _walk_for_unsafe(child)
+            if reason is not None:
+                return reason
+    return None
+
+
+def _unsafe_regex_reason(pattern: str) -> str | None:
+    """Why ``pattern`` is refused as unsafe to run, or ``None`` when it is allowed.
+
+    Walks the parse tree of ``re``. Without the parser module the check
+    refuses every group followed by a quantifier.
+    """
+    if _REGEX_PARSER is None:
+        if _FALLBACK_GROUP_REPEAT_RE.search(pattern):
+            return "a group followed by a quantifier cannot be checked"
+        return None
+    try:
+        tree = _REGEX_PARSER.parse(pattern)
+    except re.error:
+        return None
+    return _walk_for_unsafe(tree)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,9 +184,9 @@ class PathMatcher:
     ``{name}`` placeholders (compiled to ``[^/]+`` per placeholder — see
     ``_template_path_to_regex`` for rationale). ``literal`` carries the
     original string for pure-literal modes (no placeholders, no regex).
-    ``never`` is the fail-closed flag: a stored pattern that failed to
-    compile at load time matches nothing (instead of today's silent
-    wildcard).
+    ``never`` is the fail-closed flag: a stored pattern that failed
+    validation at load time matches nothing (not a silent wildcard); rule
+    evaluation halts on a ``never`` deny or require-approval rule.
     """
 
     mode: MatchMode
@@ -101,6 +201,8 @@ class PathMatcher:
         if self.mode == "regex":
             # `pattern` is present unless `never` is True (guarded above).
             assert self.pattern is not None
+            if len(request_path) > MAX_MATCH_PATH_LENGTH:
+                return False
             return self.pattern.fullmatch(request_path) is not None
         # Exact/prefix — either we compiled a placeholder-aware regex or
         # we're doing a pure-literal comparison. ``pattern`` set means
@@ -158,14 +260,13 @@ def _check(path: str | None, mode: str) -> PathValidationError | None:
                 if exc.pos is not None
                 else f"invalid regex: {exc.msg}",
             )
-        if _REDOS_CATASTROPHIC_RE.search(path):
+        unsafe = _unsafe_regex_reason(path)
+        if unsafe is not None:
             return PathValidationError(
                 code="unsafe_regex",
                 reason=(
-                    "regex contains nested unbounded quantifiers "
-                    "(e.g. (x+)+, (x*)*, (x+)*) which can cause catastrophic "
-                    "backtracking; rewrite without nesting or use prefix/exact "
-                    "mode with {name} placeholders"
+                    f"regex is not accepted: {unsafe}; rewrite it without nested or "
+                    "ambiguous repeats, or use prefix/exact mode with {name} placeholders"
                 ),
             )
     return None
@@ -217,10 +318,9 @@ def compile_matcher(path: str | None, mode: str) -> PathMatcher | None:
 
     Returns ``None`` when there is no path constraint on the rule
     (``path is None``). Never raises: a stored pattern that fails to
-    compile (legacy row written before ``validate_path`` existed) returns
-    a ``PathMatcher(never=True)`` — a matcher that never matches. That is
-    the opposite of today's silent-wildcard behaviour and is enforced
-    fail-closed so legacy bad rows cannot accidentally grant access.
+    validate (legacy row written before ``validate_path`` existed) returns
+    a ``PathMatcher(never=True)`` — a matcher that never matches. It is
+    enforced fail-closed so a bad row cannot grant access.
 
     Exact / prefix paths that contain ``{name}`` placeholders are
     compiled to a regex (each ``{name}`` becomes ``[^/]+``) so users can

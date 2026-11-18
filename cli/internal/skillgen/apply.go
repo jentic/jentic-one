@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/jentic/jentic-one/cli/internal/atomicfile"
 )
 
 // Outcome describes what applying one adapter did, for user-facing messaging
@@ -507,45 +509,7 @@ func removeOwnedFile(target string, norm []byte, name string, out RemoveOutcome,
 // (SKILL.md, sidecar, references); shared files a user may symlink (AGENTS.md)
 // resolve the link first via resolveSharedTarget.
 func writeFileAtomic(target string, data []byte) error {
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(target); err == nil {
-		mode = info.Mode().Perm()
-	}
-
-	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, ".jentic-skill-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	// Best-effort cleanup if we bail before the rename succeeds. Once the rename
-	// lands, tmpName no longer exists, so skip the spurious remove.
-	renamed := false
-	defer func() {
-		if !renamed {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, mode); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, target); err != nil {
-		return err
-	}
-	renamed = true
-	return nil
+	return atomicfile.Write(target, data, atomicfile.Options{Perm: 0o644, PreserveMode: true})
 }
 
 // isSymlink reports whether path itself (not what it points to) is a symlink.

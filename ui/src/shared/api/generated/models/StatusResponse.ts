@@ -7,6 +7,10 @@ export type StatusResponse = {
     connected_as?: (string | null);
     credential_id?: (string | null);
     error_code?: (string | null);
+    /**
+     * An open edit whose binding moved since it was opened. Its ask is resolved against the binding as it is now by `POST /connect-sessions/{id}:rebase`, or by amending it.
+     */
+    stale?: boolean;
     status: StatusResponse.status;
 };
 export namespace StatusResponse {

@@ -15,16 +15,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import hashlib
 import json
-import weakref
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from jentic.problem_details import ProblemDetailException
+from starlette import exceptions as starlette_exceptions
+from starlette.applications import Starlette
 from starlette.datastructures import Headers
 
 from jentic_one.broker.adapters.runners.base import (
@@ -35,14 +38,19 @@ from jentic_one.broker.adapters.runners.base import (
 from jentic_one.broker.core.directives import (
     approval_pending_limit_directive,
     held_execution_directive,
+    insecure_upstream_scheme_directive,
+    request_override_not_allowed_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.errors import (
     ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
+    AsyncCookieEncryptionUnavailableError,
+    BrokerError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     PayloadTooLargeError,
+    RequestOverrideNotAllowedError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
 )
@@ -55,6 +63,7 @@ from jentic_one.broker.core.headers import (
     header_safe_value,
 )
 from jentic_one.broker.core.idempotency import fingerprint
+from jentic_one.broker.core.problem import discovery_error_problem, status_for_broker_error
 from jentic_one.broker.core.proxy_headers import (
     PASSTHROUGH_CACHE_CONTROL,
     forward_headers,
@@ -62,6 +71,7 @@ from jentic_one.broker.core.proxy_headers import (
     reconstruct_upstream_url,
     replay_headers,
 )
+from jentic_one.broker.core.request_overrides import find_request_override
 from jentic_one.broker.core.revisions import parse_revisions
 from jentic_one.broker.core.schemas import (
     AsyncQueuedResponse,
@@ -84,12 +94,32 @@ from jentic_one.broker.services.execution.authorization import (
 )
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
+    ServerErrorClassifier,
+    UnmappedFailure,
+    UnmappedFailureRecorder,
     default_broker,
-    emit_circuit_open_event,
-    persist_streaming_execution,
     run_execution,
 )
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _emit_streaming_circuit_event as _emit_streaming_circuit_event,
+)
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _persist_streaming_outcome as _persist_streaming_outcome,
+)
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _persist_unmapped_failure as _persist_unmapped_failure,
+)
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _streaming_persist_failures as _streaming_persist_failures,
+)
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _streaming_persist_gate as _streaming_persist_gate,
+)
+from jentic_one.broker.services.execution.streaming_persistence import (
+    _streaming_persist_pending as _streaming_persist_pending,
+)
 from jentic_one.broker.services.idempotency import (
+    IdempotencyClaimLease,
     IdempotencyState,
     SharedStateIdempotencyStore,
     StoredResponse,
@@ -102,6 +132,13 @@ from jentic_one.broker.web.deps import (
     RequireExecuteAccess,
     get_repeated_failure_counter,
 )
+from jentic_one.broker.web.errors import (
+    handle_broker_error,
+    handle_database_unavailable,
+    handle_discovery_error,
+    handle_http_exception,
+    handle_validation,
+)
 from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
@@ -112,9 +149,9 @@ from jentic_one.shared.broker.protocols import (
     ResolveResult,
     RuleVerdict,
 )
-from jentic_one.shared.config import AppConfig, UpstreamClientConfig
+from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.discovery.errors import OperationNotFoundError
+from jentic_one.shared.discovery.errors import DiscoveryError, OperationNotFoundError
 from jentic_one.shared.events import (
     emit_event_best_effort,
     mint_trace_id,
@@ -122,8 +159,11 @@ from jentic_one.shared.events import (
     summary_text,
     valid_trace_id_or_none,
 )
-from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
-from jentic_one.shared.http.injection import apply_injection
+from jentic_one.shared.http.injection import (
+    apply_injection,
+    filter_inbound_cookie,
+    get_current_reflection_guard,
+)
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
@@ -136,7 +176,6 @@ from jentic_one.shared.jobs.hold import (
 from jentic_one.shared.jobs.hold import agent_name as held_agent_name
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
-from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.permissions.evaluation import rule_request_path
@@ -149,41 +188,17 @@ from jentic_one.shared.url import has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url_async
 from jentic_one.shared.web.background_tasks import get_background_tasks
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.errors import (
+    request_validation_error_handler,
+    state_backend_capacity_error_handler,
+    unhandled_exception_handler,
+)
 from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 logger = structlog.get_logger(__name__)
 
 _meter = get_meter("broker")
-_streaming_persist_failures = _meter.create_counter(
-    "broker.streaming_execution.persist_failures",
-    unit="{persist}",
-    description=(
-        "Streaming execution records not persisted, by reason: write_error (the "
-        "write raised), backlog_timeout (no slot within "
-        "broker.streaming_persist_acquire_timeout_s) or cancelled (abandoned "
-        "while waiting or writing; a record cancelled while writing may still "
-        "have landed)"
-    ),
-)
-_streaming_persist_pending = _meter.create_up_down_counter(
-    "broker.streaming_execution.persist_pending",
-    unit="{persist}",
-    description=(
-        "Streaming execution persists in this process that have not finished, by "
-        "state: waiting (queued for a broker.streaming_persist_max_concurrency "
-        "slot) or in_flight (holding a slot and writing)"
-    ),
-)
-_PENDING_WAITING = {"state": "waiting"}
-_PENDING_IN_FLIGHT = {"state": "in_flight"}
-# The ``error`` recorded for an outcome that has no upstream status and names
-# no failure — a breach of the ``StreamingOutcome`` contract by an injected
-# broker, recorded rather than mistaken for a completed call.
-_MISSING_OUTCOME_ERROR = "server_error: missing_outcome_error"
-_REASON_WRITE_ERROR = {"reason": "write_error"}
-_REASON_BACKLOG_TIMEOUT = {"reason": "backlog_timeout"}
-_REASON_CANCELLED = {"reason": "cancelled"}
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
     description=(
@@ -197,245 +212,87 @@ router = APIRouter()
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-@dataclass(frozen=True, slots=True)
-class _StreamingPersistGate:
-    """The semaphore bounding one Context's concurrent streaming persists."""
+def _unmapped_failure_recorder(
+    request: Request, ctx: Context, ctx_req: ExecuteRequestContext, identity: Identity
+) -> UnmappedFailureRecorder:
+    """Schedule a buffered unmapped-failure write without delaying its 500."""
+    background_tasks = get_background_tasks(request.app)
+    timeout_s = ctx.config.broker.streaming_persist_timeout_s
 
-    loop: asyncio.AbstractEventLoop
-    limit: int
-    semaphore: asyncio.Semaphore
-
-
-# One gate per Context (its admin pool), so two Contexts in one process never
-# share or thrash a semaphore. A gate is rebuilt only when the running event
-# loop changes: one Semaphore must not straddle loops.
-_persist_gates: weakref.WeakKeyDictionary[Context, _StreamingPersistGate] = (
-    weakref.WeakKeyDictionary()
-)
-
-
-def _effective_persist_limit(config: AppConfig) -> int:
-    """``streaming_persist_max_concurrency`` clamped to ``admin.pool_max - 1`` (floor 1)."""
-    return min(
-        config.broker.streaming_persist_max_concurrency,
-        max(1, config.databases.admin.pool_max - 1),
-    )
-
-
-def _streaming_persist_gate(ctx: Context) -> _StreamingPersistGate:
-    """The gate bounding ``ctx``'s concurrent streaming persists on this loop.
-
-    Logs ``streaming_persist_limit_clamped`` when the gate is built with a
-    limit below the configured one, so the effective cap is never silent.
-    """
-    loop = asyncio.get_running_loop()
-    gate = _persist_gates.get(ctx)
-    if gate is None or gate.loop is not loop:
-        limit = _effective_persist_limit(ctx.config)
-        configured = ctx.config.broker.streaming_persist_max_concurrency
-        if limit < configured:
+    async def _record(failure: UnmappedFailure) -> None:
+        if background_tasks is None:
             logger.warning(
-                "streaming_persist_limit_clamped",
-                configured=configured,
-                effective=limit,
-                admin_pool_max=ctx.config.databases.admin.pool_max,
+                "unmapped_failure_record_skipped",
+                execution_id=failure.execution_id,
+                trace_id=ctx_req.trace_id,
+                reason="no_background_task_registry",
             )
-        gate = _StreamingPersistGate(loop=loop, limit=limit, semaphore=asyncio.Semaphore(limit))
-        _persist_gates[ctx] = gate
-    return gate
+            return
+        background_tasks.spawn(
+            _persist_unmapped_failure(
+                failure,
+                ctx,
+                ctx_req,
+                identity.sub,
+                identity.actor_type.value,
+                origin=identity.origin.value,
+                repeated_failure_counter=get_repeated_failure_counter(request),
+            ),
+            kind="unmapped_failure_persist",
+            timeout_s=timeout_s,
+            log_fields={"execution_id": failure.execution_id, "trace_id": ctx_req.trace_id},
+        )
+
+    return _record
 
 
-def _record_persist_failed(outcome: StreamingOutcome, ctx_req: ExecuteRequestContext) -> None:
-    """Count and log a persist whose write raised (call from an ``except``)."""
-    _streaming_persist_failures.add(1, _REASON_WRITE_ERROR)
-    logger.error(
-        "streaming_execution_persist_failed",
-        execution_id=outcome.execution_id,
-        trace_id=ctx_req.trace_id,
-        reason=_REASON_WRITE_ERROR["reason"],
-        exc_info=True,
-    )
+_FIXED_STATUS_BY_HANDLER: dict[object, int] = {
+    handle_validation: 422,
+    request_validation_error_handler: 422,
+    state_backend_capacity_error_handler: 503,
+    handle_database_unavailable: 503,
+    unhandled_exception_handler: 500,
+}
 
 
-def _record_persist_abandoned(
-    outcome: StreamingOutcome,
-    ctx_req: ExecuteRequestContext,
-    *,
-    reason: dict[str, str],
-    stage: str,
-    **fields: object,
-) -> None:
-    """Count and log a persist given up before it finished.
-
-    ``stage`` is ``waiting`` (no slot yet, so nothing was written) or
-    ``writing`` (cancelled inside the transaction, so the record may or may not
-    have landed). An expected condition, so no traceback.
-    """
-    _streaming_persist_failures.add(1, reason)
-    logger.error(
-        "streaming_execution_persist_abandoned",
-        execution_id=outcome.execution_id,
-        trace_id=ctx_req.trace_id,
-        reason=reason["reason"],
-        stage=stage,
-        **fields,
-    )
-
-
-async def _acquire_persist_slot(
-    semaphore: asyncio.Semaphore,
-    timeout_s: float,
-    outcome: StreamingOutcome,
-    ctx_req: ExecuteRequestContext,
+def _handler_maps_to_server_error(
+    handler: object, exc: Exception, *, use_declared_status: bool
 ) -> bool:
-    """Wait up to ``timeout_s`` for a persist slot; ``False`` when it timed out.
+    """Classify one selected handler using only its identity and exception metadata."""
+    if handler is handle_broker_error and isinstance(exc, BrokerError):
+        return status_for_broker_error(exc) == 500
+    if handler is handle_discovery_error and isinstance(exc, DiscoveryError):
+        return int(discovery_error_problem(exc)["status"]) == 500
+    if handler is handle_http_exception and isinstance(exc, starlette_exceptions.HTTPException):
+        return exc.status_code == 500
+    fixed_status = _FIXED_STATUS_BY_HANDLER.get(handler)
+    if fixed_status is not None:
+        return fixed_status == 500
+    status_code: object = getattr(exc, "status_code", None) if use_declared_status else None
+    return not isinstance(status_code, int) or status_code == 500
 
-    A timeout or a cancellation while waiting is counted and logged as
-    abandoned; the cancellation is re-raised. No permit is held on any path
-    that does not return ``True``.
+
+def _server_error_classifier(app: Starlette) -> ServerErrorClassifier:
+    """Match Starlette's handler precedence without invoking the selected handler.
+
+    A class-level extension handler declares a non-500 response with
+    ``exc.status_code``. A status-code registration only selects a handler; it
+    does not establish that handler's response status, so an unknown one fails
+    safe to generic 500 auditing.
     """
-    _streaming_persist_pending.add(1, _PENDING_WAITING)
-    try:
-        async with asyncio.timeout(timeout_s):
-            await semaphore.acquire()
-    except TimeoutError:
-        _record_persist_abandoned(
-            outcome,
-            ctx_req,
-            reason=_REASON_BACKLOG_TIMEOUT,
-            stage="waiting",
-            acquire_timeout_s=timeout_s,
-        )
-        return False
-    except asyncio.CancelledError:
-        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="waiting")
-        raise
-    finally:
-        _streaming_persist_pending.add(-1, _PENDING_WAITING)
-    return True
+    handlers = app.exception_handlers
 
-
-async def _emit_streaming_circuit_event(
-    outcome: StreamingOutcome,
-    ctx: Context,
-    ctx_req: ExecuteRequestContext,
-    actor_id: str,
-    actor_type: str,
-) -> None:
-    """Raise ``upstream.circuit_open`` for a streaming fast-fail, in its own transaction.
-
-    The refusal that reaches here holds the breaker's per-host report claim,
-    which is consumed on the request and good for one event per cooldown: every
-    later refusal in that cooldown carries ``report=False``, so an event lost
-    here is the operator's only notice for the whole cooldown. It therefore
-    runs before the execution record and in a transaction of its own — neither
-    a wait for a persist slot nor a failure writing the record can take it
-    down — while still off the request, so the 503 never waits on the admin
-    database. Its own failure is logged, never raised; a cancellation (the
-    task's timeout, the shutdown drain) propagates to the supervisor.
-    """
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await emit_circuit_open_event(
-                session, ctx_req, actor_id=actor_id, actor_type=actor_type
+    def _is_server_error(exc: Exception) -> bool:
+        if isinstance(exc, starlette_exceptions.HTTPException) and exc.status_code in handlers:
+            return _handler_maps_to_server_error(
+                handlers[exc.status_code], exc, use_declared_status=False
             )
-    except Exception:
-        logger.error(
-            "streaming_circuit_event_failed",
-            execution_id=outcome.execution_id,
-            trace_id=ctx_req.trace_id,
-            exc_info=True,
-        )
+        for cls in type(exc).__mro__:
+            if cls in handlers:
+                return _handler_maps_to_server_error(handlers[cls], exc, use_declared_status=True)
+        return True
 
-
-async def _persist_streaming_outcome(
-    outcome: StreamingOutcome,
-    ctx: Context,
-    ctx_req: ExecuteRequestContext,
-    started_at: datetime,
-    actor_id: str,
-    actor_type: str,
-    origin: str | None = None,
-    repeated_failure_counter: RepeatedFailureCounter | None = None,
-) -> None:
-    """Best-effort persistence of a streaming execution record.
-
-    Extracted so unit tests can exercise the real logic without invoking the full
-    handler. Runs off the request on the app's background-task registry, under
-    ``broker.streaming_persist_timeout_s``. Concurrent calls for one Context are
-    bounded by its ``_streaming_persist_gate``: an excess call waits for a slot
-    before opening the admin transaction, for at most
-    ``broker.streaming_persist_acquire_timeout_s``. Callers run it once the
-    response is complete or the client has disconnected, when the request no
-    longer holds its admission slot, so the wait delays neither the client nor
-    ``/ready``. Never raises except ``CancelledError``: a write error, a slot
-    timeout and a cancellation (its timeout or the shutdown drain) are each
-    logged and counted on ``broker.streaming_execution.persist_failures`` by
-    ``reason``.
-    It runs after the streamed body has been sent, or after a call that ended
-    before any response existed, so its write is never part of the response's
-    ``Server-Timing`` field. An outcome with no ``http_status`` (the stream
-    never opened, or was cancelled first) records as FAILED, whether or not it
-    named the failure; a circuit fast-fail's ``upstream.circuit_open`` event is
-    written first, ahead of the slot wait.
-    """
-    error_msg = outcome.error
-    if error_msg is None and outcome.http_status is None:
-        # The seam's invariant: an outcome with no upstream status names the
-        # failure that ended the call before a response existed. An outcome
-        # that breaks it still describes a call that reached no upstream, so it
-        # records FAILED under a placeholder — never COMPLETED — and the breach
-        # is logged where the injected broker that caused it can be found.
-        logger.error(
-            "streaming_outcome_missing_error",
-            execution_id=outcome.execution_id,
-            trace_id=ctx_req.trace_id,
-        )
-        error_msg = _MISSING_OUTCOME_ERROR
-    status = (
-        ExecutionStatus.FAILED
-        if error_msg or (outcome.http_status is not None and outcome.http_status >= 400)
-        else ExecutionStatus.COMPLETED
-    )
-    if status is ExecutionStatus.FAILED and error_msg is None:
-        error_msg = f"Upstream returned {outcome.http_status}"
-    if outcome.circuit_open:
-        await _emit_streaming_circuit_event(outcome, ctx, ctx_req, actor_id, actor_type)
-    try:
-        semaphore = _streaming_persist_gate(ctx).semaphore
-        acquire_timeout_s = ctx.config.broker.streaming_persist_acquire_timeout_s
-    except Exception:
-        _record_persist_failed(outcome, ctx_req)
-        return
-    if not await _acquire_persist_slot(semaphore, acquire_timeout_s, outcome, ctx_req):
-        return
-    _streaming_persist_pending.add(1, _PENDING_IN_FLIGHT)
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await persist_streaming_execution(
-                session,
-                execution_id=outcome.execution_id,
-                started_at=started_at,
-                status=status,
-                http_status=outcome.http_status,
-                duration_ms=outcome.duration_ms,
-                error=error_msg,
-                ctx_req=ctx_req,
-                actor_id=actor_id,
-                actor_type=actor_type,
-                origin=origin,
-                security_config=ctx.config.security,
-                repeated_failure_counter=repeated_failure_counter,
-                cancelled=outcome.cancelled,
-            )
-    except asyncio.CancelledError:
-        _record_persist_abandoned(outcome, ctx_req, reason=_REASON_CANCELLED, stage="writing")
-        raise
-    except Exception:
-        _record_persist_failed(outcome, ctx_req)
-    finally:
-        semaphore.release()
-        _streaming_persist_pending.add(-1, _PENDING_IN_FLIGHT)
+    return _is_server_error
 
 
 def _resolve_body_cap(content_type: str | None, cfg: UpstreamClientConfig) -> int:
@@ -758,6 +615,20 @@ async def _handle(
         )
 
     raw_url = reconstruct_upstream_url(request.scope)
+    override = find_request_override(method, request.headers, raw_url)
+    if override is not None:
+        raise RequestOverrideNotAllowedError(
+            detail=(
+                f"Request override '{override}' is not allowed; send the target HTTP "
+                "method and URL directly."
+            ),
+            type="request_override_not_allowed",
+            extra={"header": override},
+            directive=request_override_not_allowed_directive(header=override),
+            instance=request.url.path,
+            pre_send=True,
+        )
+
     upstream_url = await _check_egress(raw_url, ctx)
 
     resolver: RegistryResolverProtocol = request.app.state.broker_registry_resolver
@@ -812,6 +683,15 @@ async def _handle(
                     )
                 }
 
+    if urlsplit(upstream_url).scheme == "http" and not resolved.plaintext_http_allowed:
+        raise UpstreamUrlNotAllowedError(
+            detail="This API is only served over HTTPS; call it with https://.",
+            type="insecure_upstream_scheme",
+            directive=insecure_upstream_scheme_directive(),
+            instance=request.url.path,
+            pre_send=True,
+        )
+
     ctx_req = _context_from_discovery(
         upstream_url=upstream_url, method=method, request=request, resolved=resolved
     )
@@ -843,6 +723,7 @@ async def _handle(
             server_variables_unresolved=ctx_req.server_variables_unresolved,
             trace_id=ctx_req.trace_id,
             operation_path=resolved.operation.path,
+            spec_operation_id=resolved.operation.operation_id,
         )
     selected_credential = authorization.selected_credential
     allowed_credential_ids = authorization.allowed_credential_ids
@@ -899,6 +780,7 @@ async def _handle(
     # Claim/replay on Idempotency-Key. Async same-job_id replay is future
     # work — only the sync path is idempotent here.
     fp: str | None = None
+    claim_lease: IdempotencyClaimLease | None = None
     if idempotency is not None and idem_key:
         # The fingerprint's consumer scope is the selected credential
         # (historically the toolkit on the pre-6b legacy path — same slot,
@@ -908,6 +790,9 @@ async def _handle(
             ctx_req.upstream_url,
             ctx_req.credential_id or "",
             body,
+            headers=request.headers,
+            cookie=_inbound_cookie(request),
+            server_variables=ctx_req.server_variables,
         )
         with stage(ServerTimingStage.IDEMPOTENCY):
             outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
@@ -924,30 +809,53 @@ async def _handle(
             )
         if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
             return _replay_response(outcome_idem.stored)
+        claim_lease = idempotency.lease(
+            identity.sub,
+            idem_key,
+            fp,
+            outcome_idem.claim_id,
+        )
 
-    outcome = await _execute_buffered(
-        request,
-        ctx_req,
-        ctx,
-        identity,
-        runner,
-        body,
-        selected_credential=selected_credential,
-        allowed_credential_ids=allowed_credential_ids,
+    assembled_response: Response | None = None
+
+    async def _complete_idempotency(outcome_exec: ExecutionOutcome) -> None:
+        nonlocal assembled_response
+        assembled_response = _assemble_response(outcome_exec, ctx_req)
+        if claim_lease is not None:
+            raw_pairs = [
+                (k.decode("latin-1"), v.decode("latin-1"))
+                for k, v in assembled_response.raw_headers
+                if k.decode("latin-1").lower() != "content-length"
+            ]
+            with stage(ServerTimingStage.IDEMPOTENCY):
+                await claim_lease.complete(
+                    status_code=assembled_response.status_code,
+                    headers=raw_pairs,
+                    body=bytes(assembled_response.body),
+                )
+
+    async with claim_lease if claim_lease is not None else contextlib.nullcontext():
+        outcome = await _execute_buffered(
+            request,
+            ctx_req,
+            ctx,
+            identity,
+            runner,
+            body,
+            selected_credential=selected_credential,
+            allowed_credential_ids=allowed_credential_ids,
+            on_dispatched=claim_lease.mark_dispatched if claim_lease is not None else None,
+            on_pre_send_error=(
+                claim_lease.mark_pre_send_failure if claim_lease is not None else None
+            ),
+            on_outcome=_complete_idempotency if claim_lease is not None else None,
+        )
+
+    return (
+        assembled_response
+        if assembled_response is not None
+        else _assemble_response(outcome, ctx_req)
     )
-
-    response = _assemble_response(outcome, ctx_req)
-    if idempotency is not None and idem_key and fp is not None:
-        with stage(ServerTimingStage.IDEMPOTENCY):
-            await idempotency.complete(
-                identity.sub,
-                idem_key,
-                fp,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                body=outcome.result.body,
-            )
-    return response
 
 
 async def _execute_buffered(
@@ -960,6 +868,9 @@ async def _execute_buffered(
     *,
     selected_credential: ResolvedCredential | None = None,
     allowed_credential_ids: list[str] | None = None,
+    on_dispatched: Callable[[], None] | None = None,
+    on_pre_send_error: Callable[[], None] | None = None,
+    on_outcome: Callable[[ExecutionOutcome], Awaitable[None]] | None = None,
 ) -> ExecutionOutcome:
     """Inject credentials, run the buffered upstream call, and persist its record.
 
@@ -1002,6 +913,11 @@ async def _execute_buffered(
         security_config=ctx.config.security,
         repeated_failure_counter=get_repeated_failure_counter(request),
         signing=injection.signing,
+        on_dispatched=on_dispatched,
+        on_pre_send_error=on_pre_send_error,
+        on_outcome=on_outcome,
+        on_unmapped_failure=_unmapped_failure_recorder(request, ctx, ctx_req, identity),
+        is_server_error=_server_error_classifier(request.app),
     )
 
 
@@ -1133,6 +1049,27 @@ def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> s
     return None
 
 
+def _set_raw_response_headers(
+    response: Response, header_items: Sequence[tuple[str, str]]
+) -> Response:
+    """Populate ``response.raw_headers`` preserving repeated fields and ``content-length``."""
+    encoded: list[tuple[bytes, bytes]] = []
+    has_content_type = any(k.lower() == "content-type" for k, _ in header_items)
+    has_content_length = any(k.lower() == "content-length" for k, _ in header_items)
+    for raw_k, raw_v in response.raw_headers:
+        lower_k = raw_k.lower()
+        if (lower_k == b"content-type" and not has_content_type) or (
+            lower_k == b"content-length" and not has_content_length
+        ):
+            encoded.append((raw_k, raw_v))
+    for k, v in header_items:
+        encoded.append((k.lower().encode("latin-1"), v.encode("latin-1")))
+    response.raw_headers = encoded
+    if hasattr(response, "_headers"):
+        delattr(response, "_headers")
+    return response
+
+
 def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext) -> Response:
     result = outcome.result
     metadata = _metadata_headers(ctx_req, outcome.context.execution_id)
@@ -1143,13 +1080,22 @@ def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext
     if hint is not None:
         metadata[JenticHeader.HINT.value] = hint
 
-    passthrough = passthrough_response_headers(result.headers)
-    return Response(
-        content=result.body,
+    passthrough = passthrough_response_headers(result.headers, upstream_url=ctx_req.upstream_url)
+    meta_lower = {k.lower() for k in metadata}
+    guard = get_current_reflection_guard()
+    suppress_body = bool(guard is not None and guard.secrets and 300 <= result.status_code < 400)
+    suppressed_headers = {"content-encoding", "content-type"} if suppress_body else set()
+    raw_items = [
+        (k, v)
+        for k, v in passthrough.raw_headers
+        if k.lower() not in meta_lower and k.lower() not in suppressed_headers
+    ] + list(metadata.items())
+    response = Response(
+        content=b"" if suppress_body else result.body,
         status_code=result.status_code,
-        media_type=result.content_type,
-        headers={**passthrough, **metadata},
+        media_type=None if suppress_body else result.content_type,
     )
+    return _set_raw_response_headers(response, raw_items)
 
 
 def _replay_response(stored: StoredResponse) -> Response:
@@ -1163,19 +1109,42 @@ def _replay_response(stored: StoredResponse) -> Response:
     """
     # A replay re-emits a passthrough body, so it carries the passthrough
     # Cache-Control whatever the stored record holds (#1835).
-    headers = {k: v for k, v in stored.headers.items() if k.lower() != "cache-control"}
-    headers[JenticHeader.IDEMPOTENT_REPLAYED.value] = "true"
-    headers["cache-control"] = PASSTHROUGH_CACHE_CONTROL
+    source_items = (
+        list(stored.header_items) if stored.header_items else list(stored.headers.items())
+    )
+    dropped = {"cache-control"}
     if stored.body_omitted:
-        headers[JenticHeader.IDEMPOTENCY_BODY_OMITTED.value] = "true"
-        # The stored content-length described the original (uncached) body; drop
-        # it so the ASGI server recomputes it for the empty replay body.
-        headers.pop("content-length", None)
-    return Response(
+        dropped.add("content-length")
+        dropped.add("content-encoding")
+    raw_items = [(k, v) for k, v in source_items if k.lower() not in dropped]
+    raw_items.append((JenticHeader.IDEMPOTENT_REPLAYED.value, "true"))
+    raw_items.append(("cache-control", PASSTHROUGH_CACHE_CONTROL))
+    if stored.body_omitted:
+        raw_items.append((JenticHeader.IDEMPOTENCY_BODY_OMITTED.value, "true"))
+    response = Response(
         content=stored.body,
         status_code=stored.status_code,
-        headers=headers,
     )
+    return _set_raw_response_headers(response, raw_items)
+
+
+def _extract_request_auth_lineage(
+    request: Request, identity: Identity
+) -> tuple[str | None, str | None]:
+    """Derive ``(auth_token_sha256, auth_method)`` from ``identity`` or raw request headers."""
+    if identity.auth_token_sha256 is not None:
+        return identity.auth_token_sha256, identity.auth_method
+    raw = request.headers.get("x-jentic-api-key")
+    if not raw:
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.startswith("Bearer "):
+            raw = auth_header.removeprefix("Bearer ")
+    if raw:
+        if raw.startswith("at_"):
+            return hashlib.sha256(raw.encode()).hexdigest(), "access_token"
+        if raw.startswith(("jak_", "jntc_live_")):
+            return hashlib.sha256(raw.encode()).hexdigest(), "api_key"
+    return None, identity.auth_method
 
 
 def _async_job_payload(
@@ -1188,6 +1157,12 @@ def _async_job_payload(
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
     inbound_cookie_enc: str | None = None,
+    identity: Identity | None = None,
+    auth_token_sha256: str | None = None,
+    auth_method: str | None = None,
+    oauth_client_id: str | None = None,
+    oauth_grant_id: str | None = None,
+    session_generation: int | None = None,
 ) -> dict[str, Any]:
     """Build the job payload for an async (202) execution.
 
@@ -1230,24 +1205,89 @@ def _async_job_payload(
         payload["headers"] = dict(headers)
     if inbound_cookie_enc:
         payload[INBOUND_COOKIE_PAYLOAD_KEY] = inbound_cookie_enc
+        if not ctx_req.server_variables_unresolved:
+            payload["inbound_cookie_scoped"] = True
+    effective_token_sha = (
+        auth_token_sha256
+        if auth_token_sha256 is not None
+        else (identity.auth_token_sha256 if identity is not None else None)
+    )
+    effective_auth_method = (
+        auth_method
+        if auth_method is not None
+        else (identity.auth_method if identity is not None else None)
+    )
+    effective_client_id = (
+        oauth_client_id
+        if oauth_client_id is not None
+        else (identity.oauth_client_id if identity is not None else None)
+    )
+    effective_grant_id = (
+        oauth_grant_id
+        if oauth_grant_id is not None
+        else (identity.oauth_grant_id if identity is not None else None)
+    )
+    effective_sgen = (
+        session_generation
+        if session_generation is not None
+        else (identity.session_generation if identity is not None else None)
+    )
+    if effective_token_sha is not None:
+        payload["auth_token_sha256"] = effective_token_sha
+    if effective_auth_method is not None:
+        payload["auth_method"] = effective_auth_method
+    if effective_client_id is not None:
+        payload["oauth_client_id"] = effective_client_id
+    if effective_grant_id is not None:
+        payload["oauth_grant_id"] = effective_grant_id
+    if effective_sgen is not None:
+        payload["session_generation"] = effective_sgen
+    if identity is not None and identity.expires_at is not None:
+        payload["auth_expires_at"] = identity.expires_at.isoformat()
     return payload
 
 
-def _captured_cookie(request: Request, ctx: Context) -> str | None:
+def _captured_cookie(
+    request: Request,
+    ctx: Context,
+    *,
+    upstream_url: str | None = None,
+    server_variables_unresolved: bool = False,
+) -> str | None:
     """The caller's ``Cookie`` encrypted for an async or held job payload.
 
     The job sits in the admin DB until a worker claims it, so the cookie is
-    kept only as platform-key ciphertext. Without an encryption keyset there
-    is nowhere safe to keep it: the run is still queued, without the caller's
-    cookies, and the drop is logged.
+    kept only as platform-key ciphertext. Without an encryption keyset or when
+    encryption fails, the request is refused (503) rather than queued without
+    the caller's cookies. When the target URL is already resolved, foreign or
+    unscoped cookie pairs are filtered at the web edge before encryption.
     """
     cookie = _inbound_cookie(request)
     if cookie is None:
         return None
-    if not ctx.has_encryption_keyset:
-        logger.warning("async_execution_cookie_not_kept", reason="no_encryption_keyset")
-        return None
-    return ctx.encryption.encrypt(cookie)
+    if not ctx.has_encryption_keyset or getattr(ctx, "encryption", None) is None:
+        logger.error("async_execution_cookie_not_kept", reason="no_encryption_keyset")
+        raise AsyncCookieEncryptionUnavailableError(
+            "This call carries a Cookie header, but the deployment has no credentials "
+            "encryption keyset to keep it at rest (credentials.encryption)",
+            type="async_cookie_encryption_unavailable",
+            instance=request.url.path,
+            pre_send=True,
+        )
+    if upstream_url and not server_variables_unresolved:
+        cookie = filter_inbound_cookie(cookie, upstream_url)
+        if cookie is None:
+            return None
+    try:
+        return ctx.encryption.encrypt(cookie)
+    except Exception as exc:
+        logger.error("async_execution_cookie_not_kept", reason="encryption_failed")
+        raise AsyncCookieEncryptionUnavailableError(
+            "This call carries a Cookie header that could not be encrypted at rest",
+            type="async_cookie_encryption_unavailable",
+            instance=request.url.path,
+            pre_send=True,
+        ) from exc
 
 
 def _review_url(ctx: Context, request: Request, approval_id: str) -> str:
@@ -1279,9 +1319,9 @@ async def _handle_hold(
     claim. Filing, the approval row and ``execution.approval_requested`` share
     one admin-DB transaction; an identical pending request joins its existing
     hold (even at the cap), and an agent at its pending cap is otherwise denied
-    before anything is written. The fingerprint a join matches on leaves out the
-    ``Cookie``, so a joined hold runs with the first request's captured cookie
-    and the joining request's cookie is not kept.
+    before anything is written. The fingerprint a join matches on includes the
+    inbound ``Cookie`` and semantic headers so only semantically identical
+    requests join an existing hold.
     """
     if not ctx.has_encryption_keyset:
         raise ApprovalHoldUnavailableError(
@@ -1297,6 +1337,7 @@ async def _handle_hold(
     execution_id = mint_execution_id()
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
+    token_sha256, auth_method = _extract_request_auth_lineage(request, identity)
     raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1305,7 +1346,15 @@ async def _handle_hold(
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
-        inbound_cookie_enc=_captured_cookie(request, ctx),
+        inbound_cookie_enc=_captured_cookie(
+            request,
+            ctx,
+            upstream_url=ctx_req.upstream_url,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+        ),
+        identity=identity,
+        auth_token_sha256=token_sha256,
+        auth_method=auth_method,
     )
     payload: dict[str, object] = {
         ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(raw_payload))
@@ -1326,7 +1375,10 @@ async def _handle_hold(
                 method=ctx_req.method,
                 path=path,
                 query=parsed_url.query,
+                upstream_url=ctx_req.upstream_url,
                 body=body,
+                headers=request.headers,
+                cookie=_inbound_cookie(request),
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,
                 payload=payload,
@@ -1426,6 +1478,7 @@ async def _handle_async(
     with stage(ServerTimingStage.BODY):
         body = await _read_request_body(request, ctx_req.method, ctx)
 
+    token_sha256, auth_method = _extract_request_auth_lineage(request, identity)
     payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
@@ -1434,7 +1487,15 @@ async def _handle_async(
         allowed_credential_ids=allowed_credential_ids,
         body=body,
         headers=replay_headers(request.headers),
-        inbound_cookie_enc=_captured_cookie(request, ctx),
+        inbound_cookie_enc=_captured_cookie(
+            request,
+            ctx,
+            upstream_url=ctx_req.upstream_url,
+            server_variables_unresolved=ctx_req.server_variables_unresolved,
+        ),
+        identity=identity,
+        auth_token_sha256=token_sha256,
+        auth_method=auth_method,
     )
 
     async with stage(ServerTimingStage.PERSIST), ctx.admin_db.transaction() as session:
@@ -1448,8 +1509,7 @@ async def _handle_async(
         )
 
     metadata = _metadata_headers(ctx_req, execution_id)
-    base = ctx.config.broker.jobs_api_base_url
-    job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
+    job_url = build_link(request, f"/jobs/{job_id}")
 
     resp_body = AsyncQueuedResponse(
         job_id=job_id,

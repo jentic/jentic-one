@@ -19,6 +19,7 @@ covered the day its ``versions/`` directory appears.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -26,8 +27,12 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from tests.arch.conftest import SRC_ROOT
+from tests.harness.schema_snapshot import IRREVERSIBLE
 
 MIGRATIONS_ROOT = SRC_ROOT / "migrations"
+
+
+pytestmark = pytest.mark.arch
 
 
 def _migration_trees() -> list[Path]:
@@ -50,4 +55,56 @@ def test_single_alembic_head(tree: Path) -> None:
         "Two branches added migrations off the same parent revision; reparent "
         "one file's down_revision onto the other's revision id so the tree is "
         "linear again (see the #1211 incident)."
+    )
+
+
+def _extract_revision_id(module_tree: ast.Module, path: Path) -> str:
+    for node in module_tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "revision"
+                    and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                ):
+                    return node.value.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "revision"
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            return node.value.value
+    raise AssertionError(f"Could not find module-level `revision` string in {path}")
+
+
+def _downgrade_raises(module_tree: ast.Module, path: Path) -> bool:
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
+            return any(isinstance(child, ast.Raise) for child in ast.walk(node))
+    raise AssertionError(f"Could not find top-level `def downgrade()` in {path}")
+
+
+def test_irreversible_set_is_complete() -> None:
+    """Every revision whose ``downgrade()`` raises is in ``IRREVERSIBLE``, and nothing else is."""
+    observed: dict[str, set[str]] = {}
+    for tree in _migration_trees():
+        raising_revs: set[str] = set()
+        for script_path in sorted((tree / "versions").glob("*.py")):
+            if script_path.name == "__init__.py":
+                continue
+            parsed = ast.parse(script_path.read_text(encoding="utf-8"), filename=str(script_path))
+            rev_id = _extract_revision_id(parsed, script_path)
+            if _downgrade_raises(parsed, script_path):
+                raising_revs.add(rev_id)
+        if raising_revs:
+            observed[tree.name] = raising_revs
+
+    expected = {surface: set(revs) for surface, revs in IRREVERSIBLE.items() if revs}
+    assert observed == expected, (
+        "Mismatch between migrations whose downgrade() raises and IRREVERSIBLE:\n"
+        f"  observed in migrations/*/versions/*.py: {observed}\n"
+        f"  declared in IRREVERSIBLE:               {expected}"
     )

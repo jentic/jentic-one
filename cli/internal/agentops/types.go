@@ -120,15 +120,30 @@ type ExecuteResult struct {
 // (ux.ExecuteEnvelope, schema version stamped): single-value headers, the body
 // parsed as JSON when it decodes (else the raw string).
 func (r *ExecuteResult) Envelope() ux.ExecuteEnvelope {
-	headers := make(map[string]string, len(r.Headers))
-	for k := range r.Headers {
-		headers[k] = r.Headers.Get(k)
-	}
 	var parsedBody any
 	if err := json.Unmarshal(r.Body, &parsedBody); err != nil {
 		parsedBody = string(r.Body)
 	}
-	return ux.NewExecuteEnvelope(r.Status, headers, parsedBody, r.ExecutionID)
+	return ux.NewExecuteEnvelope(r.Status, r.envelopeHeaders(), parsedBody, r.ExecutionID)
+}
+
+// EnvelopeWithin projects the result onto the shared success envelope when the
+// body fits within limit bytes. When limit > 0 and len(r.Body) exceeds limit,
+// it returns the envelope with Body: nil and oversize: true without unmarshaling
+// the body.
+func (r *ExecuteResult) EnvelopeWithin(limit int64) (env ux.ExecuteEnvelope, oversize bool) {
+	if limit > 0 && int64(len(r.Body)) > limit {
+		return ux.NewExecuteEnvelope(r.Status, r.envelopeHeaders(), nil, r.ExecutionID), true
+	}
+	return r.Envelope(), false
+}
+
+func (r *ExecuteResult) envelopeHeaders() map[string]string {
+	headers := make(map[string]string, len(r.Headers))
+	for k := range r.Headers {
+		headers[k] = r.Headers.Get(k)
+	}
+	return headers
 }
 
 // Denial is the classification of a broker-denied call (classify.go): the

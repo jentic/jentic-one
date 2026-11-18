@@ -121,3 +121,7 @@ cli/AGENTS.md
 # Broker perf suite output (result JSON, Locust CSV, report.html, provisioned
 # tokens in .perf-env.json). Local artefacts only — never committed.
 /tests/perf/results/
+
+# Container upgrade test harness artifacts (logs and seed manifests).
+/tests/upgrade/.artifacts/
+

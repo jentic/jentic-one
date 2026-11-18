@@ -31,7 +31,7 @@ from jentic_one.broker.services.idempotency import SharedStateIdempotencyStore
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.middleware import AdmissionControlMiddleware, _AdmissionGate
 from jentic_one.broker.web.readiness import make_readiness_router
-from jentic_one.broker.web.routers import execute
+from jentic_one.broker.web.routers import execute, jobs
 from jentic_one.broker.web.server_timing import ServerTimingMiddleware
 from jentic_one.shared.broker.execution import UpstreamRunner
 from jentic_one.shared.context import Context
@@ -55,6 +55,7 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
             "",
             ["broker"],
         ),
+        (jobs.router, "", ["broker"]),
         (execute.router, "", ["broker"]),
     ]
 

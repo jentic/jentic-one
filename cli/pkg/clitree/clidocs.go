@@ -6,7 +6,9 @@
 // definitions the CLI ships with — it can never drift from `--help`.
 //
 // A tiny generator binary (cli/cmd/clidocs) calls BuildCLIReference and writes
-// ui/public/cli-reference.json; a make target regenerates it.
+// ui/public/cli-reference.json plus its Markdown rendering,
+// docs/reference/cli.md (see RenderMarkdown); `make cli-reference` regenerates
+// both.
 
 package clitree
 
@@ -56,6 +58,14 @@ type BinaryDoc struct {
 	Short    string       `json:"short"`
 	Long     string       `json:"long,omitempty"`
 	Commands []CommandDoc `json:"commands"`
+
+	// GroupTitles lists the root's command-group titles in declaration order
+	// (the order `--help` prints them). Markdown-only: the JSON carries each
+	// command's GroupTitle instead.
+	GroupTitles []string `json:"-"`
+	// GlobalFlags are the root's persistent flags, which every command
+	// inherits. Markdown-only: the JSON repeats them on each command.
+	GlobalFlags []FlagDoc `json:"-"`
 }
 
 // CLIReference is the full payload the docs SPA consumes.
@@ -79,6 +89,10 @@ func BuildCLIReference() CLIReference {
 
 func binaryDoc(root *cobra.Command) BinaryDoc {
 	groupTitle := groupTitles(root)
+	titles := make([]string, 0, len(root.Groups()))
+	for _, g := range root.Groups() {
+		titles = append(titles, g.Title)
+	}
 	cmds := make([]CommandDoc, 0, len(root.Commands()))
 	for _, child := range root.Commands() {
 		if skip(child) {
@@ -92,7 +106,29 @@ func binaryDoc(root *cobra.Command) BinaryDoc {
 		Short:    root.Short,
 		Long:     root.Long,
 		Commands: cmds,
+
+		GroupTitles: titles,
+		GlobalFlags: globalFlagDocs(root),
 	}
+}
+
+// globalFlagDocs collects the root's visible persistent flags, sorted by name.
+func globalFlagDocs(root *cobra.Command) []FlagDoc {
+	var out []FlagDoc
+	root.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Hidden || f.Name == "help" {
+			return
+		}
+		out = append(out, FlagDoc{
+			Name:      f.Name,
+			Shorthand: f.Shorthand,
+			Type:      f.Value.Type(),
+			Default:   f.DefValue,
+			Usage:     f.Usage,
+		})
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // groupTitles maps a command's GroupID to its human title for one parent.

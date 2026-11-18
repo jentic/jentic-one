@@ -112,7 +112,8 @@ func (CatalogRefreshResponse) RequiredFields() []string { return []string{"count
 func (ChangePasswordRequest) RequiredFields() []string {
 	return []string{"current_password", "new_password"}
 }
-func (ClaimRequest) RequiredFields() []string { return []string{"token"} }
+func (ClaimRequest) RequiredFields() []string              { return []string{"token"} }
+func (ConnectFlowStatusResponse) RequiredFields() []string { return []string{"status"} }
 func (ConnectOptionsResponse) RequiredFields() []string {
 	return []string{"api_target_supported", "name", "schemes", "vendor", "version"}
 }
@@ -154,7 +155,7 @@ func (DeviceAuthorizationConfirmSessionResponse) RequiredFields() []string {
 	return []string{"user_code", "verification_uri"}
 }
 func (DeviceAuthorizationConnectChallengeResponse) RequiredFields() []string {
-	return []string{"user_code", "verification_uri"}
+	return []string{"flow_id", "user_code", "verification_uri"}
 }
 func (DeviceAuthorizationRegistrationCreateRequest) RequiredFields() []string {
 	return []string{"api_vendor", "authorization_endpoint", "catalog_api_id", "client_id", "display_name", "flow_kind", "name", "token_endpoint"}
@@ -385,8 +386,10 @@ func (ServedApiRef) RequiredFields() []string               { return []string{"a
 func (SessionApiReferenceResponse) RequiredFields() []string {
 	return []string{"name", "vendor", "version"}
 }
-func (SessionRevisionListResponse) RequiredFields() []string { return []string{"data"} }
-func (SessionRevisionRef) RequiredFields() []string          { return []string{"id", "number"} }
+func (SessionRevisionListResponse) RequiredFields() []string {
+	return []string{"data", "has_more", "limit"}
+}
+func (SessionRevisionRef) RequiredFields() []string { return []string{"id", "number"} }
 func (SessionRevisionResponse) RequiredFields() []string {
 	return []string{"created_at", "id", "number", "proposal", "result"}
 }

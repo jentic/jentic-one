@@ -33,7 +33,7 @@ func Ctl() core.TreeBuilder { return ctlcmd.TreeBuilder() }
 // other doc (plan Phase 3 item 5, 07 §2, impl/1.3 §3, rules/01 §4, rules/03 §4)
 // defers to this list; if a doc and this list disagree, this list wins. The rule:
 // a command is fenced iff it (a) mutates host-level management state (contexts,
-// environments, identities, local-agent lifecycle), or (b) reveals/switches to
+// environments, identities, local-agent teardown), or (b) reveals/switches to
 // contexts other than the active one.
 //
 // Deliberate carve-outs, NOT fenced:
@@ -51,7 +51,6 @@ func Ctl() core.TreeBuilder { return ctlcmd.TreeBuilder() }
 //
 // Paths are space-separated ("context use" -> ["context","use"]) for root.Find.
 var MustBeFenced = []string{
-	"run",
 	"reset",
 	"setup",
 	"bootstrap", // hidden compatibility alias for `setup` — same command, must stay fenced

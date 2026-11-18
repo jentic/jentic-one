@@ -39,6 +39,14 @@ def test_sensitive_key_value_is_masked() -> None:
         "refresh_token",
         "Set-Cookie",
         "encrypted_secret",
+        "code_verifier",
+        "pkce_code_verifier",
+        "device_code",
+        "client_assertion",
+        "assertion",
+        "passphrase",
+        "private-key",
+        "privatekey",
     ],
 )
 def test_sensitive_key_matching_is_case_insensitive_and_substring(key: str) -> None:
@@ -70,6 +78,45 @@ def test_basic_value_pattern_redacted_in_free_text() -> None:
     out = redact_value({"detail": "auth header was Basic dXNlcjpwYXNzd29yZA=="})
     assert "dXNlcjpwYXNzd29yZA==" not in out["detail"]
     assert "Basic" in out["detail"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "secret", "expected"),
+    [
+        (
+            '{"access_token":"abc\'def","safe":"ok"}',
+            "abc'def",
+            '{"access_token":"***REDACTED***","safe":"ok"}',
+        ),
+        (
+            "{'access_token':'abc\"def','safe':'ok'}",
+            'abc"def',
+            "{'access_token':'***REDACTED***','safe':'ok'}",
+        ),
+        (
+            r'{"access_token":"abc\"def","safe":"ok"}',
+            r"abc\"def",
+            r'{"access_token":"***REDACTED***","safe":"ok"}',
+        ),
+        (
+            r"{'access_token':'abc\'def','safe':'ok'}",
+            r"abc\'def",
+            r"{'access_token':'***REDACTED***','safe':'ok'}",
+        ),
+        (
+            '{"access_token":"unterminated\'value',
+            "unterminated'value",
+            '{"access_token":"***REDACTED***',
+        ),
+    ],
+)
+def test_embedded_json_secret_redaction_respects_value_delimiter(
+    raw: str, secret: str, expected: str
+) -> None:
+    out = redact_value({"detail": raw})["detail"]
+
+    assert out == expected
+    assert secret not in out
 
 
 def test_non_sensitive_values_untouched() -> None:
@@ -199,3 +246,57 @@ def test_redact_url_query_masks_values_keeps_host_and_path(url: str, expected: s
 )
 def test_redact_query_string_masks_values_keeps_names(query: str, expected: str) -> None:
     assert redact_query_string(query) == expected
+
+
+def test_free_text_header_and_bare_jwt_are_masked() -> None:
+    jwt_token = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."  # pragma: allowlist secret
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0."  # pragma: allowlist secret
+        "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"  # pragma: allowlist secret
+    )
+    samples = [
+        (
+            "Authorization: Token abcdef123456",
+            "abcdef123456",  # pragma: allowlist secret
+            "Authorization",
+        ),
+        ("Proxy-Authorization: Token proxysecret99", "proxysecret99", "Proxy-Authorization"),
+        ("X-Api-Key: keysecret123", "keysecret123", "X-Api-Key"),
+        ("Api-Key: barekeysecret456", "barekeysecret456", "Api-Key"),
+        ("X-Auth-Token: authtokensecret789", "authtokensecret789", "X-Auth-Token"),
+        (f"upstream returned {jwt_token} in error", jwt_token, "upstream returned"),
+    ]
+    for raw, secret, kept in samples:
+        out = redact_value(raw)
+        assert secret not in out, (raw, out)
+        assert kept in out
+        assert REDACTED in out
+        assert redact_value(out) == out
+
+
+def test_code_verifier_in_query_is_masked() -> None:
+    raw = (
+        "?code=AUTHCODE&code_verifier=VERIFIER_SECRET"
+        "&client_assertion=CLIENT_ASSERTION_SECRET&assertion=ASSERTION_SECRET"
+    )
+    out = redact_value(raw)
+    assert "AUTHCODE" not in out
+    assert "VERIFIER_SECRET" not in out
+    assert "CLIENT_ASSERTION_SECRET" not in out
+    assert "ASSERTION_SECRET" not in out
+    assert f"code_verifier={REDACTED}" in out
+    assert f"client_assertion={REDACTED}" in out
+    assert f"assertion={REDACTED}" in out
+
+
+def test_error_code_and_state_and_user_code_not_redacted() -> None:
+    payload = {
+        "error_code": "invalid_request",
+        "state": "polling",
+        "user_code": "WDJB-MJHT",
+    }
+    assert redact_value(payload) == payload
+
+
+def test_status_code_key_not_redacted() -> None:
+    assert redact_value({"code": 404}) == {"code": 404}

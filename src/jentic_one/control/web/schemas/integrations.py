@@ -355,6 +355,12 @@ class EditRulesRequest(BaseModel):
         return self
 
 
+#: Characters in one scope's reason. A reviewer-facing field, and the MCP
+#: mount applies the same bound to the arguments it coerces, so the two read
+#: it from here rather than carrying a literal each.
+SCOPE_COMMENT_MAX = 500
+
+
 class EditScopesRequest(BaseModel):
     """A change to the binding's OAuth credential scopes: `add`/`remove`, or the full list in `set`.
 
@@ -401,8 +407,8 @@ class EditScopesRequest(BaseModel):
             raise ValueError("pass either add/remove or set, not both")
         if set(self.add) & set(self.remove):
             raise ValueError("a scope can't be both added and removed")
-        if any(len(reason) > 500 for reason in self.comments.values()):
-            raise ValueError("a scope's comment must be at most 500 characters")
+        if any(len(reason) > SCOPE_COMMENT_MAX for reason in self.comments.values()):
+            raise ValueError(f"a scope's comment must be at most {SCOPE_COMMENT_MAX} characters")
         return self
 
 
@@ -554,6 +560,10 @@ class AmendSessionRequest(BaseModel):
     def _changes_something(self) -> AmendSessionRequest:
         if not self.model_fields_set:
             raise ValueError("an amend must carry at least one field")
+        if all(getattr(self, field) is None for field in self.model_fields_set):
+            # ``{"reason": null}`` carried a field but asked for nothing, and
+            # every such call appended a revision.
+            raise ValueError("an amend must carry at least one field with a value")
         return self
 
 
@@ -794,6 +804,14 @@ class ExistingCredentialResponse(BaseModel):
         default_factory=list,
         description="Other agents bound to the credential; added scopes reach them too.",
     )
+    other_bound_agents_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when more agents are bound than the list names: it is capped, and no "
+            "cursor continues it."
+        ),
+        examples=[False],
+    )
     can_bind: bool = Field(
         description=(
             "Whether this viewer may use it: its grant covers the request, or the missing "
@@ -911,9 +929,17 @@ class ReviewEditResponse(BaseModel):
     other_bound_agents: list[EditAgentRef] = Field(
         default_factory=list,
         description=(
-            "Other agents bound to the credential; added scopes and a shared rule set change "
-            "reach them."
+            "Other agents this change reaches: those bound to the credential, which added "
+            "scopes reach, and those bound through a shared rule set the change rewrites."
         ),
+    )
+    other_bound_agents_truncated: bool = Field(
+        default=False,
+        description=(
+            "True when the change reaches more agents than the list names: it is capped, "
+            "and no cursor continues it."
+        ),
+        examples=[False],
     )
     needs_vendor_consent: bool = Field(
         default=False,
@@ -962,6 +988,15 @@ class ReviewSessionResponse(BaseModel):
     revision: SessionRevisionRef | None = None
     # Edit sessions only.
     edit: ReviewEditResponse | None = None
+    stale: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "The binding moved since this edit was opened, so the diff below is "
+            "against the access as it was. `POST /connect-sessions/{id}:rebase` "
+            "resolves the ask against the binding as it is now."
+        ),
+    )
     last_rejected_at: datetime | None = Field(
         default=None,
         description=(
@@ -1018,10 +1053,29 @@ class SessionRevisionResponse(BaseModel):
     )
 
 
+#: A cursor of this route's own shape: the shared example's id is a UUID.
+_REVISION_CURSOR = (
+    "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAi"  # pragma: allowlist secret
+    "Y3NyXzY5NjhiMzk4NGQxYzIzOGRiZTdlMmUyOSJ9"  # pragma: allowlist secret
+)
+
+
 class SessionRevisionListResponse(BaseModel):
-    """A session's revisions, oldest first."""
+    """A session's revisions, oldest first, one page at a time."""
 
     data: list[SessionRevisionResponse]
+    limit: int = Field(description="The page size the request was served at.", examples=[50])
+    has_more: bool = Field(
+        description="Whether the session holds revisions beyond this page.", examples=[False]
+    )
+    next_cursor: str | None = Field(
+        default=None,
+        description="Opaque cursor for the next page; null when this is the last one.",
+        # Not the shared example: that one carries a UUID, while this route's
+        # cursor always names a revision (``csr_``), and the sample ships
+        # verbatim into the generated clients and the rendered reference.
+        examples=[_REVISION_CURSOR],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1381,3 +1435,12 @@ class StatusResponse(BaseModel):
     credential_id: str | None = Field(default=None, examples=[ex.CREDENTIAL_ID])
     bound_scopes: list[str] | None = Field(default=None, examples=[["repo", "read:user"]])
     error_code: str | None = Field(default=None, examples=["access_denied"])
+    stale: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "An open edit whose binding moved since it was opened. Its ask is "
+            "resolved against the binding as it is now by `POST "
+            "/connect-sessions/{id}:rebase`, or by amending it."
+        ),
+    )

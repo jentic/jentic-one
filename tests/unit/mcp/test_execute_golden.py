@@ -286,6 +286,28 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
             "whoami",
         ),
         (403, {"type": "action_denied", "detail": "a permission rule forbids this"}, "whoami"),
+        (
+            # A rules denial is change-shaped: the directive carries the edit
+            # to ask for, so the pointer names the tool that asks.
+            403,
+            {
+                "type": "action_denied",
+                "agent_directive": {
+                    "instruction": "Ask for the rule with request_access_change.",
+                    "parameters": {
+                        # As the broker builds it (``action_denied_directive``).
+                        "edit": {
+                            "credential_id": "cred_1",
+                            "suggested_rules": [
+                                {"effect": "allow", "methods": ["POST"], "path": "/v1/pets"}
+                            ],
+                        },
+                        "suggested_command": "jentic access edit cred_1",
+                    },
+                },
+            },
+            "request_access_change",
+        ),
         (403, {"type": "credential_identity_mismatch", "detail": "denied"}, "whoami"),
         (
             # A suspended binding is the operator's to lift: never a connect pointer.

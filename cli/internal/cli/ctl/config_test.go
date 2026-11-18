@@ -10,53 +10,35 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestResolveSettings_PopulatesNestedSectionLeaves(t *testing.T) {
-	got, err := ResolveSettings("", nil)
+func TestPresetSettings_OverridesOnlyNamedKeys(t *testing.T) {
+	got := Settings{
+		"server": Settings{"port": float64(8000)},
+	}
+	p, err := PresetSettings("production")
 	if err != nil {
-		t.Fatalf("ResolveSettings: %v", err)
+		t.Fatalf("PresetSettings(production): %v", err)
 	}
-	// A scalar leaf inside a default_factory section must be present — the point
-	// of the recursive $ref walk (a shallow read of root defaults would leave
-	// every section empty).
-	server, ok := asSettings(got["server"])
-	if !ok {
-		t.Fatalf("expected a server section in resolved defaults, got %v", got["server"])
-	}
-	if server["port"] == nil {
-		t.Errorf("expected server.port to be defaulted from the schema, got %v", server)
-	}
-}
+	MergeSettings(got, p)
 
-func TestResolveSettings_PresetOverridesOnlyNamedKeys(t *testing.T) {
-	base, err := ResolveSettings("", nil)
-	if err != nil {
-		t.Fatalf("ResolveSettings(base): %v", err)
-	}
-	baseServer, _ := asSettings(base["server"])
-	basePort := baseServer["port"]
-
-	got, err := ResolveSettings("production", nil)
-	if err != nil {
-		t.Fatalf("ResolveSettings(production): %v", err)
-	}
 	runtime, ok := asSettings(got["runtime"])
 	if !ok || runtime["debug"] != false {
 		t.Errorf("production preset should set runtime.debug=false, got %v", got["runtime"])
 	}
 	// The preset names only runtime/server.reload; it must not wipe server.port.
 	server, _ := asSettings(got["server"])
-	if server["port"] != basePort {
-		t.Errorf("preset clobbered an unrelated default: server.port = %v, want %v", server["port"], basePort)
+	if server["port"] != float64(8000) {
+		t.Errorf("preset clobbered an unrelated key: server.port = %v, want 8000", server["port"])
 	}
 }
 
-func TestResolveSettings_FlagOverridesWinOverPreset(t *testing.T) {
-	got, err := ResolveSettings("production", Settings{
+func TestMergeSettings_FlagOverridesWinOverPreset(t *testing.T) {
+	got, err := PresetSettings("production")
+	if err != nil {
+		t.Fatalf("PresetSettings(production): %v", err)
+	}
+	MergeSettings(got, Settings{
 		"server": Settings{"port": float64(9999)},
 	})
-	if err != nil {
-		t.Fatalf("ResolveSettings: %v", err)
-	}
 	server, _ := asSettings(got["server"])
 	if server["port"] != float64(9999) {
 		t.Errorf("flag override should win: server.port = %v, want 9999", server["port"])
@@ -68,8 +50,8 @@ func TestResolveSettings_FlagOverridesWinOverPreset(t *testing.T) {
 	}
 }
 
-func TestResolveSettings_UnknownPresetFailsLoud(t *testing.T) {
-	if _, err := ResolveSettings("does-not-exist", nil); err == nil {
+func TestPresetSettings_UnknownPresetFailsLoud(t *testing.T) {
+	if _, err := PresetSettings("does-not-exist"); err == nil {
 		t.Error("unknown preset must be a loud error")
 	}
 }

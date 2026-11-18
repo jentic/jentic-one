@@ -60,6 +60,29 @@ interface TooltipProps {
  * `delayMs` (focus opens it at once). */
 export const TOOLTIP_DELAY_MS = 400;
 
+/**
+ * Hover opens are held while the pointer rests after {@link
+ * quietHoverUntilPointerMoves}: a trigger that slides under a resting pointer
+ * (a strip tab mid-switch) is being hovered by accident, and a bubble over it
+ * would be noise. Hover already opens only on a pointer MOVING over the
+ * trigger; the hold adds the same rule for a pointer that moved onto it just
+ * before the switch. Keyboard focus is never held. Module-level, as the
+ * pointer is: one signal for every tooltip, with no trigger re-rendered to
+ * carry it.
+ */
+let hoverQuiet = false;
+const rearmHover = () => {
+	hoverQuiet = false;
+};
+
+/** Hold hover-opened tooltips until the pointer next moves. */
+export function quietHoverUntilPointerMoves(): void {
+	if (typeof window === 'undefined') return;
+	hoverQuiet = true;
+	window.removeEventListener('pointermove', rearmHover, true);
+	window.addEventListener('pointermove', rearmHover, { capture: true, once: true });
+}
+
 export function Tooltip({
 	content,
 	children,
@@ -114,10 +137,12 @@ export function Tooltip({
 	 *  browser also reports an enter when the trigger appears under a pointer
 	 *  that is resting still (a sheet opening its footer where the click
 	 *  landed), and that must not open a bubble. Once armed, further moves
-	 *  don't restart the wait; leaving disarms it. */
+	 *  don't restart the wait; leaving disarms it. A move while hover is held
+	 *  ({@link quietHoverUntilPointerMoves}) rearms it first, in the capture
+	 *  phase, so it still opens. */
 	const armedRef = useRef(false);
 	const openDelayed = useCallback(() => {
-		if (armedRef.current) return;
+		if (armedRef.current || hoverQuiet) return;
 		armedRef.current = true;
 		clearTimer();
 		if (delayMs <= 0) {

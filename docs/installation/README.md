@@ -2,8 +2,8 @@
 
 Production installs run from released artifacts only: the published container image and the two Go CLI binaries. Nothing is built from source on the target hosts. Outbound internet access is needed to fetch and verify the artifacts; at runtime the defaults make two low-volume outbound calls, each with a disable knob (see the table below) — with those off, an install inside your network needs no outbound access.
 
-> Evaluating first? The five-minute SQLite trial — no Postgres, four
-> `docker run`s — is the [README quickstart](../../README.md#quickstart).
+> Evaluating first? The five-minute SQLite trial — no Postgres, one compose
+> file — is the [README quickstart](../../README.md#quickstart).
 > This section is the production path.
 
 ## Outbound connections
@@ -73,7 +73,7 @@ the verify commands linked above need nothing but the downloaded files and
 ## After installing
 
 Register each agent host against the instance (`jentic register --url … --broker-url …`,
-see the [CLI README](../../cli/README.md#usage)), then make the
+see the [CLI README](../../cli/README.md#local-vs-remote-installs)), then make the
 [first brokered call](../guides/first-call.md). Before pointing anything at a real
 credential, read the [security hardening guide](../security/README.md). Day-2
 (monitoring, upgrades, backups) lives in [operations](../operations/README.md).

@@ -293,3 +293,30 @@ func TestApisBrowserActionForbiddenHint(t *testing.T) {
 		t.Errorf("status should hint permission, got %q", m.status)
 	}
 }
+
+func TestApisBrowser_SearchSubmitSetsVendor(t *testing.T) {
+	m := &apisBrowser{vendor: "initial"}
+	m.onKey(keyMsg("/"))
+	m.onSearchKey(tea.KeyMsg{Type: tea.KeyEscape})
+	if m.vendor != "initial" {
+		t.Fatalf("esc should preserve vendor, got %q", m.vendor)
+	}
+
+	m.onKey(keyMsg("/"))
+	for range len("initial") {
+		m.onSearchKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	m.onSearchKey(keyMsg("  日本 "))
+	m.onSearchKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	m.onSearchKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	_, cmd := m.onSearchKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.vendor != "日" {
+		t.Errorf("vendor = %q, want %q", m.vendor, "日")
+	}
+	if !m.loading {
+		t.Error("expected loading=true after search submit")
+	}
+	if cmd == nil {
+		t.Error("expected a loadPage command on search submit")
+	}
+}

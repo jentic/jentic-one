@@ -17,6 +17,7 @@ import structlog
 from jentic_one.admin.repos import AuditRepository
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.redaction import redact_value
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,7 +72,7 @@ async def record_audit(
         request_id=request_id,
         trace_id=trace_id,
         job_id=job_id,
-        reason=reason,
+        reason=redact_value(reason) if reason is not None else None,
         ip_address=ip_address,
         user_agent=user_agent,
         origin=origin,

@@ -27,6 +27,7 @@ import structlog
 from jentic_one.broker.core.errors import BrokerError
 from jentic_one.broker.core.problem import broker_error_problem, discovery_error_problem
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
+from jentic_one.broker.repos.operation_scope_repo import OperationScopeRepository
 from jentic_one.broker.services.execution.authorization import authorize_execution
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
@@ -38,14 +39,18 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.discovery.errors import OperationNotFoundError
 from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
-from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
+from jentic_one.shared.jobs.protocols import (
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
+    auth_lineage_is_current,
+)
 from jentic_one.shared.jobs.queued_denials import (
     inactive_actor_problem,
     insufficient_scope_problem,
     queued_execution_instance,
 )
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.permissions.evaluation import rule_request_path
+from jentic_one.shared.permissions.evaluation import is_registry_operation_id, rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
@@ -74,10 +79,25 @@ class QueuedExecutionAuthorizer:
 
         # One read answers both gates (liveness, then the execute permission),
         # in the sync edge's order: authentication before scope.
+        if not auth_lineage_is_current(
+            request.auth_token_sha256, request.auth_method, request.auth_expires_at
+        ):
+            logger.info(
+                "queued_execution_denied",
+                reason="auth_lineage_missing_or_expired",
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+            )
+            return QueuedExecutionVerdict(allowed=False, problem=inactive_actor_problem(instance))
         authority = await self._actor_status.authority(
             actor_id=request.actor_id,
             actor_type=request.actor_type,
             permission=BROKER_EXECUTE_PERMISSION,
+            auth_token_sha256=request.auth_token_sha256,
+            auth_method=request.auth_method,
+            oauth_client_id=request.oauth_client_id,
+            oauth_grant_id=request.oauth_grant_id,
+            session_generation=request.session_generation,
         )
         if not authority.active:
             logger.info(
@@ -120,6 +140,16 @@ class QueuedExecutionAuthorizer:
             expires_at=None,
             active=True,
         )
+        spec_operation_id = request.spec_operation_id
+        if (
+            spec_operation_id is None
+            and request.operation_id is not None
+            and is_registry_operation_id(request.operation_id)
+            and self._ctx.has_db("registry")
+        ):
+            spec_operation_id = await OperationScopeRepository.spec_operation_id_for_pk(
+                self._ctx.registry_db, operation_pk=request.operation_id
+            )
         try:
             authorization = await authorize_execution(
                 ctx=self._ctx,
@@ -130,6 +160,7 @@ class QueuedExecutionAuthorizer:
                     version=request.api_version,
                 ),
                 operation_id=request.operation_id,
+                spec_operation_id=spec_operation_id,
                 method=request.method,
                 path=rule_request_path(
                     request.relative_path,

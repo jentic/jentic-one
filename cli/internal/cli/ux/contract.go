@@ -19,18 +19,17 @@ const (
 // INTERNAL_ERROR-like ("stop and report"). New codes are additive; add them here
 // AND to errorCodeExit.
 const (
-	CodeMissingArgument    = "MISSING_ARGUMENT"
-	CodeConfirmBlocked     = "INTERACTIVE_CONFIRM_BLOCKED"
-	CodeFenced             = "FENCED_COMMAND"
-	CodeNotAuthenticated   = "NOT_AUTHENTICATED"
-	CodePendingApproval    = "PENDING_APPROVAL"
-	CodeResolveFailed      = "RESOLVE_FAILED"
-	CodeBrokerDenied       = "BROKER_DENIED"
-	CodeTimeoutPending     = "TIMEOUT_PENDING"
-	CodePartialApproval    = "PARTIAL_APPROVAL"
-	CodeConfinementMissing = "CONFINEMENT_UNAVAILABLE"
-	CodeTransportError     = "TRANSPORT_ERROR"
-	CodeInternalError      = "INTERNAL_ERROR"
+	CodeMissingArgument  = "MISSING_ARGUMENT"
+	CodeConfirmBlocked   = "INTERACTIVE_CONFIRM_BLOCKED"
+	CodeFenced           = "FENCED_COMMAND"
+	CodeNotAuthenticated = "NOT_AUTHENTICATED"
+	CodePendingApproval  = "PENDING_APPROVAL"
+	CodeResolveFailed    = "RESOLVE_FAILED"
+	CodeBrokerDenied     = "BROKER_DENIED"
+	CodeTimeoutPending   = "TIMEOUT_PENDING"
+	CodePartialApproval  = "PARTIAL_APPROVAL"
+	CodeTransportError   = "TRANSPORT_ERROR"
+	CodeInternalError    = "INTERNAL_ERROR"
 	// CodeMigrationRequired gates every command on an unmigrated V1 machine
 	// (legacy ~/.jentic profiles, no MIGRATED marker): the V2 CLI no longer
 	// reads the legacy store, so nothing can run until `jentic migrate` copies
@@ -55,7 +54,6 @@ var errorCodeExit = map[string]int{
 	CodeBrokerDenied:       ExitDenied,
 	CodeTimeoutPending:     ExitTimeoutPending,
 	CodePartialApproval:    ExitPartial,
-	CodeConfinementMissing: ExitError,
 	CodeTransportError:     ExitError,
 	CodeInternalError:      ExitError,
 	CodeMigrationRequired:  ExitError,

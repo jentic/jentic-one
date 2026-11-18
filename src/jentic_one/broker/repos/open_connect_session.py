@@ -36,13 +36,16 @@ _OPEN_SESSION_FOR_API = text(
 )
 
 
-# An agent's open edit of one binding (at most one: the open-edit index).
+# An open edit of one binding, whoever opened it: a human opening a
+# reviewable edit for the agent is exactly the review the denial should
+# relay, so the directive points at it rather than telling the agent to file
+# a second request for the same change. The API-target query carries no
+# initiator clause either.
 _OPEN_EDIT_FOR_BINDING = text(
     "SELECT cs.id FROM connect_sessions cs "
     "WHERE cs.agent_id = :agent_id AND cs.credential_id = :credential_id "
-    "AND cs.initiator_actor_id = :agent_id "
     "AND cs.intent = 'edit' AND cs.state IN ('created', 'awaiting_app', 'polling') "
-    "ORDER BY cs.created_at DESC LIMIT 1"
+    "ORDER BY cs.created_at DESC, cs.id DESC LIMIT 1"
 )
 
 
@@ -66,7 +69,14 @@ class OpenConnectSessionReader:
         return str(row[0]) if row is not None else None
 
     async def find_open_edit_id(self, *, agent_id: str, credential_id: str) -> str | None:
-        """Return the agent's own newest open edit of one binding, or ``None``."""
+        """Return the newest open edit of one binding, whoever opened it, or ``None``.
+
+        Read from the primary, where :meth:`find_session_id` reads a replica.
+        The edit this relays is often seconds old (a human opening a review
+        for the agent that was just denied), and a replica that has not caught
+        up would answer "none", sending the agent to file a second request for
+        a change already waiting.
+        """
         async with self._control_db.session() as session:
             row = (
                 await session.execute(

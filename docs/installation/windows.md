@@ -49,16 +49,17 @@ run as-is. Two things Docker Desktop does for you:
 `jentic.exe` ships natively (amd64 + arm64):
 
 ```powershell
-winget install Jentic.Jentic
-
-# or, via our Scoop bucket (carries brand-new releases before winget review completes):
 scoop bucket add jentic https://github.com/jentic/scoop-bucket
 scoop install jentic
+
+# or winget, once Microsoft has merged the manifest for the release:
+winget install Jentic.Jentic
 ```
 
-`winget` resolves the package only after Microsoft accepts the manifest
-submission for a release — "No package found matching input criteria" means
-use the Scoop bucket above instead. Either way, **open a new terminal
+Scoop carries a release as soon as it is cut. `winget` resolves it only after
+Microsoft accepts the manifest submission — "No package found matching input
+criteria" means use Scoop instead. Both channels publish from the first release after v0.44.0 on; for
+v0.44.0 and earlier, use the manual `.zip` download in [cli.md](cli.md#manual-download). Either way, **open a new terminal
 afterwards**: the install edits `PATH`, and the shell you ran it in doesn't
 see the change.
 
@@ -76,9 +77,8 @@ forwarding above — no WSL needed on the agent side.
 
 ## Caveats
 
-- **`jentic run` (local-agent confinement) is unavailable** on Windows —
-  the confinement layer needs macOS `sandbox-exec` or Linux `bwrap`. Run
-  coding agents on a separate machine from the instance, or accept the
+- Run coding agents on a separate machine from the instance (or in a
+  container), or accept the
   [same-host risks](../security/same-host/README.md).
 - Windows **arm64** binaries are built but not smoke-tested in CI.
 - The full support matrix, including what CI actually tests, is in

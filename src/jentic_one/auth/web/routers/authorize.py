@@ -57,7 +57,10 @@ from jentic_one.auth.web.flow import (
     write_local_consent_handle,
 )
 from jentic_one.auth.web.flow_pages import mint_and_render_approval_pending_page
-from jentic_one.shared.auth.permission_catalog import OIDC_PASSTHROUGH_SCOPES
+from jentic_one.shared.auth.permission_catalog import (
+    ALL_PERMISSIONS,
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+)
 from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus
@@ -92,9 +95,9 @@ async def _is_allowed_redirect_uri(
 async def _get_client_allowed_scopes(
     request: Request, client_id: str, ctx: Context
 ) -> frozenset[str] | None:
-    """Return allowed scopes for a registered client, or None for platform clients."""
+    """Return allowed scopes for a registered client, or catalogue ceiling for platform clients."""
     if is_platform_client(client_id, ctx):
-        return None
+        return frozenset(ALL_PERMISSIONS) | USER_OAUTH_PASSTHROUGH_SCOPES
     client = await get_cached_oauth_client(request, client_id, ctx)
     if client is None or client.allowed_scopes is None:
         return None
@@ -235,7 +238,7 @@ async def authorize_endpoint(
     allowed_scopes = await _get_client_allowed_scopes(request, client_id, ctx)
     if allowed_scopes is not None:
         requested = set(scope.split())
-        excess = requested - allowed_scopes - OIDC_PASSTHROUGH_SCOPES
+        excess = requested - allowed_scopes - USER_OAUTH_PASSTHROUGH_SCOPES
         if excess:
             logger.warning(
                 "oauth_scope_exceeds_client_allowlist",

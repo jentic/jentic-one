@@ -111,6 +111,50 @@ func TestGetControlClient_BuildsWithState(t *testing.T) {
 	if c == nil {
 		t.Fatal("nil control client")
 	}
+	rc, err := GetControlRawClient(ctx)
+	if err != nil {
+		t.Fatalf("GetControlRawClient: %v", err)
+	}
+	if rc == nil {
+		t.Fatal("nil raw control client")
+	}
+}
+
+// TestConfigFromState_SharesPinnedTransport verifies that repeated configFromState
+// calls for the same CA bundle reuse the underlying *http.Transport while still
+// returning distinct *http.Client instances.
+func TestConfigFromState_SharesPinnedTransport(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	pemPath := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(pemPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write ca bundle: %v", err)
+	}
+	state := &ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			BaseURL:    srv.URL,
+			CACertPath: pemPath,
+		},
+		Mode: ModeAgent,
+	}
+	cfg1, err := configFromState(state)
+	if err != nil {
+		t.Fatalf("first configFromState: %v", err)
+	}
+	cfg2, err := configFromState(state)
+	if err != nil {
+		t.Fatalf("second configFromState: %v", err)
+	}
+	if cfg1.HTTPClient == nil || cfg2.HTTPClient == nil {
+		t.Fatal("expected non-nil HTTPClient when CACertPath is set")
+	}
+	if cfg1.HTTPClient == cfg2.HTTPClient {
+		t.Fatal("expected distinct *http.Client wrappers per call")
+	}
+	if cfg1.HTTPClient.Transport != cfg2.HTTPClient.Transport {
+		t.Fatalf("Transport pointers differ across configFromState calls: %p vs %p", cfg1.HTTPClient.Transport, cfg2.HTTPClient.Transport)
+	}
 }
 
 // markerTransport tags a wrapped RoundTripper so tests can prove the hook

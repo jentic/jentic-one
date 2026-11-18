@@ -24,8 +24,7 @@ exit: 2
 --- stderr ---
 Held — this call needs human approval before it runs:
   held execution: held_held1
-  Show the user this link; they approve or deny the call there.
-  open: https://console.example/app/agents/approvals/held_held1
+  warning: review_url did not come from the configured Jentic instance; do not open it or ask the user to sign in.
   expires: 2026-10-10T12:00:00Z
   waiting for the decision …
 Denied by a reviewer — the call never ran.

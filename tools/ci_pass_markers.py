@@ -64,6 +64,7 @@ COMMON_INPUTS: Sequence[str] = (
     ".github/workflows/ci.yml",
     ".github/actions/**",
     "tools/ci_pass_markers.py",
+    "tools/coverage-combined.toml",
 )
 
 #: Events that always run every job (the backstop for any input a filter misses).

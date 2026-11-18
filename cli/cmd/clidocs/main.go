@@ -1,15 +1,17 @@
-// Command clidocs writes the machine-readable CLI reference consumed by the
-// docs SPA. It serialises the cobra command tree of both binaries (jentic and
-// jenticctl) to JSON.
+// Command clidocs writes the CLI reference generated from the cobra command
+// tree of both binaries (jentic and jenticctl): machine-readable JSON consumed
+// by the docs SPA, and a Markdown rendering of the same model for readers on
+// GitHub.
 //
-// Regenerate with `make cli-reference` (writes ui/public/cli-reference.json).
-// The output is committed so the SPA can render the CLI docs without a Go
-// toolchain at build time, and a drift test keeps it honest.
+// Regenerate with `make cli-reference` (writes ui/public/cli-reference.json
+// and docs/reference/cli.md). Both outputs are committed so neither the SPA nor
+// GitHub readers need a Go toolchain, and drift tests keep them honest.
 //
 // Usage:
 //
-//	go run ./cmd/clidocs            # print JSON to stdout
-//	go run ./cmd/clidocs -o out.json
+//	go run ./cmd/clidocs                        # print JSON to stdout
+//	go run ./cmd/clidocs -o out.json            # write JSON to a file
+//	go run ./cmd/clidocs -o out.json -md cli.md # also write the Markdown
 package main
 
 import (
@@ -23,26 +25,36 @@ import (
 
 func main() {
 	out := flag.String("o", "", "write JSON to this file instead of stdout")
+	md := flag.String("md", "", "also write the Markdown reference to this file")
 	flag.Parse()
 
 	ref := clitree.BuildCLIReference()
 	data, err := json.MarshalIndent(ref, "", "  ")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fail(err)
 	}
 	data = append(data, '\n')
 
 	if *out == "" {
 		if _, err := os.Stdout.Write(data); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			fail(err)
 		}
-		return
+	} else {
+		writeFile(*out, data)
 	}
-	if err := os.WriteFile(*out, data, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+	if *md != "" {
+		writeFile(*md, clitree.RenderMarkdown(ref))
 	}
-	fmt.Fprintf(os.Stderr, "Wrote %s\n", *out)
+}
+
+func writeFile(path string, data []byte) {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		fail(err)
+	}
+	fmt.Fprintf(os.Stderr, "Wrote %s\n", path)
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "error:", err)
+	os.Exit(1)
 }

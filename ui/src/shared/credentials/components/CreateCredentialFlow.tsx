@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, ChevronDown, Download, Info, Loader2, Upload, Users, X } from 'lucide-react';
 import {
@@ -1181,8 +1181,25 @@ export function CreateCredentialFlow({
 		</div>
 	);
 
+	const editScopesDismissRef = useRef<(() => void) | null>(null);
+	const handleSurfaceDismiss = useCallback((): void => {
+		if (editScopesDismissRef.current) {
+			editScopesDismissRef.current();
+			return;
+		}
+		onClose();
+	}, [onClose]);
+
 	const body = editScopes ? (
-		<VendorConnectFlow mode="edit-scopes" {...editScopes} onBack={onClose} onDone={onClose} />
+		<VendorConnectFlow
+			mode="edit-scopes"
+			{...editScopes}
+			onRegisterDismiss={(handler): void => {
+				editScopesDismissRef.current = handler;
+			}}
+			onBack={onClose}
+			onDone={onClose}
+		/>
 	) : approvalSession ? (
 		<VendorConnectFlow
 			mode="approve"
@@ -1646,7 +1663,7 @@ export function CreateCredentialFlow({
 		return (
 			<Dialog
 				open={open}
-				onClose={onClose}
+				onClose={handleSurfaceDismiss}
 				title={title}
 				subtitle={subtitle}
 				size={editScopes || approvalSession || step !== 'form' ? 'lg' : 'xl'}
@@ -1661,7 +1678,7 @@ export function CreateCredentialFlow({
 	return (
 		<SheetPrimitive
 			open={open}
-			onClose={onClose}
+			onClose={handleSurfaceDismiss}
 			ariaLabelledBy={headingId}
 			// Same close as Escape / X (see the doc comment); inert only while a
 			// vendor / approval connect session is live.
@@ -1683,7 +1700,7 @@ export function CreateCredentialFlow({
 						variant="ghost"
 						size="icon"
 						aria-label="Close"
-						onClick={onClose}
+						onClick={handleSurfaceDismiss}
 						className="-mt-1 -mr-1.5 shrink-0"
 					>
 						<X className="h-4 w-4" />

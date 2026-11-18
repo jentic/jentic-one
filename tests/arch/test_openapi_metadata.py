@@ -29,6 +29,8 @@ import pytest
 from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS, OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.web.openapi_meta import OPENAPI_TAGS
 
+pytestmark = pytest.mark.arch
+
 _HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
 
 # Health/liveness probes are dependency-free and intentionally bare; they do not

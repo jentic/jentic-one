@@ -8,16 +8,43 @@ resolved in UTC, and a past date resolving to zero.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from jentic_one.shared.http.retry_after import MAX_RETRY_AFTER_S, parse_retry_after
 
+_PARITY_FIXTURE = Path(__file__).resolve().parents[3] / "fixtures" / "retry-after-parity.json"
+
+
+def _load_parity_cases(key: str = "cases") -> list[dict[str, Any]]:
+    data = json.loads(_PARITY_FIXTURE.read_text(encoding="utf-8"))
+    cases = list(data[key])
+    assert cases
+    return cases
+
+
 # A fixed "now" (2021-01-01T00:00:00Z) so date math is deterministic.
 _NOW = 1_609_459_200.0
 _NOW_DT = datetime.fromtimestamp(_NOW, tz=UTC)
+
+
+@pytest.mark.parametrize("case", _load_parity_cases(), ids=lambda c: c["name"])
+def test_shared_delay_seconds_parity_vectors(case: dict[str, Any]) -> None:
+    """Pins #1991: shared delay-seconds vectors across Python, MCP, and Go CLI."""
+    assert parse_retry_after(case["header"], now_epoch=_NOW) == case["seconds"]
+
+
+@pytest.mark.parametrize("case", _load_parity_cases("http_date_cases"), ids=lambda c: c["name"])
+def test_shared_http_date_parity_vectors(case: dict[str, Any]) -> None:
+    """Pins #1991: fixed-clock HTTP-date vectors across Python, MCP, and Go CLI."""
+    data = json.loads(_PARITY_FIXTURE.read_text(encoding="utf-8"))
+    assert data["http_date_now_epoch"] == _NOW
+    assert parse_retry_after(case["header"], now_epoch=_NOW) == case["seconds"]
 
 
 def test_integer_seconds() -> None:

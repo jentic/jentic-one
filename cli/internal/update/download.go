@@ -19,10 +19,13 @@ import (
 	"github.com/jentic/jentic-one/cli/client"
 )
 
-// cosignCertIdentityRegexp / cosignOIDCIssuer pin the keyless-signing identity
-// the release job uses (docs/development/releasing.md). Shared by the installer shell copy;
-// keep the two in lockstep. The identity is the release workflow's OIDC subject.
+// cosignCertIdentityPrefix / cosignCertIdentityRegexp / cosignOIDCIssuer pin
+// the keyless-signing identity the release job uses (docs/development/releasing.md).
+// Shared by the installer shell copy; keep the two in lockstep. The identity is
+// the release workflow's OIDC subject, bound to the exact release tag when tag
+// is a canonical vX.Y.Z release tag.
 const (
+	cosignCertIdentityPrefix = "https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/"
 	cosignCertIdentityRegexp = `^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v`
 	cosignOIDCIssuer         = "https://token.actions.githubusercontent.com"
 )
@@ -131,14 +134,16 @@ func verifyCosign(ctx context.Context, tag string, checksums, sig, cert []byte, 
 	if err != nil {
 		return "", err
 	}
-	// The certificate identity embeds the release tag; the regexp pins the
-	// workflow path and requires a version tag (refs/tags/v...) without
-	// binding to one release, matching docs/development/releasing.md's runbook.
-	_ = tag
+	// Bind the certificate identity to the exact release tag when tag is a
+	// canonical release tag, falling back to the prefix regexp otherwise.
+	identityFlag, identityVal := "--certificate-identity-regexp", cosignCertIdentityRegexp
+	if IsReleaseTag(tag) {
+		identityFlag, identityVal = "--certificate-identity", cosignCertIdentityPrefix+tag
+	}
 	cmd := exec.CommandContext(ctx, "cosign", "verify-blob", //nolint:gosec // fixed argv; only file paths (under our stageDir) and pinned identity flags vary.
 		"--certificate", certPath,
 		"--signature", sigPath,
-		"--certificate-identity-regexp", cosignCertIdentityRegexp,
+		identityFlag, identityVal,
 		"--certificate-oidc-issuer", cosignOIDCIssuer,
 		cksPath,
 	)
@@ -154,6 +159,29 @@ func cosignAvailable() bool {
 	return err == nil
 }
 
+func requireSignatureEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("JENTIC_REQUIRE_SIGNATURE"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// DownloadRequest identifies a release binary artifact and its verification
+// and staging context.
+type DownloadRequest struct {
+	Repo             string
+	Tag              string
+	Binary           string
+	GOOS             string
+	GOARCH           string
+	Token            string
+	StageDir         string
+	AllowUnsigned    bool
+	RequireSignature bool
+}
+
 // DownloadResult is the outcome of a verified download: the extracted binary
 // path in stageDir and any non-fatal warning (e.g. cosign absent).
 type DownloadResult struct {
@@ -161,19 +189,21 @@ type DownloadResult struct {
 	Warning    string
 }
 
-// DownloadAndVerify fetches the release archive for `binary` at `tag`, enforces
-// the sha256 gate against the release checksums.txt (fail-closed), verifies the
-// cosign signature when cosign is present (a bad signature aborts; absence
-// warns), extracts the archive into stageDir, and returns the path to the
-// extracted binary. It is the runtime analogue of the installer's download mode
-// and shares the AssetName construction so the two never diverge.
-func DownloadAndVerify(ctx context.Context, repo, tag, binary, goos, goarch, token, stageDir string) (*DownloadResult, error) {
-	asset := AssetName(binary, tag, goos, goarch)
-	archive, err := httpGet(ctx, releaseAssetURL(repo, tag, asset), token)
+// DownloadAndVerify fetches the release archive described by req, enforces the
+// sha256 gate against the release checksums.txt (fail-closed), verifies the
+// cosign signature when cosign is present (a missing or bad signature aborts
+// unless AllowUnsigned is set; cosign absence warns unless RequireSignature or
+// JENTIC_REQUIRE_SIGNATURE=1 is set), extracts the archive into req.StageDir,
+// and returns the path to the extracted binary. It is the runtime analogue of
+// the installer's download mode and shares the AssetName construction so the
+// two never diverge.
+func DownloadAndVerify(ctx context.Context, req DownloadRequest) (*DownloadResult, error) {
+	asset := AssetName(req.Binary, req.Tag, req.GOOS, req.GOARCH)
+	archive, err := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, asset), req.Token)
 	if err != nil {
 		return nil, err
 	}
-	checksums, err := httpGet(ctx, releaseAssetURL(repo, tag, "checksums.txt"), token)
+	checksums, err := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, "checksums.txt"), req.Token)
 	if err != nil {
 		return nil, err
 	}
@@ -181,23 +211,30 @@ func DownloadAndVerify(ctx context.Context, repo, tag, binary, goos, goarch, tok
 		return nil, err
 	}
 
-	// cosign is best-effort-present: fetch the sig/cert and verify when cosign
-	// exists. A fetch failure here is non-fatal (the sha256 gate already passed),
-	// but a PRESENT-cosign verification failure is hard.
 	var warn string
-	if cosignAvailable() {
-		sig, sigErr := httpGet(ctx, releaseAssetURL(repo, tag, "checksums.txt.sig"), token)
-		cert, certErr := httpGet(ctx, releaseAssetURL(repo, tag, "checksums.txt.pem"), token)
+	switch {
+	case req.AllowUnsigned:
+		warn = "signature verification skipped (--allow-unsigned); verified sha256 only"
+	case cosignAvailable():
+		sig, sigErr := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, "checksums.txt.sig"), req.Token)
+		cert, certErr := httpGet(ctx, releaseAssetURL(req.Repo, req.Tag, "checksums.txt.pem"), req.Token)
 		if sigErr != nil || certErr != nil {
-			warn = "cosign is installed but the release signature/cert could not be fetched; verified sha256 only"
-		} else if _, verr := verifyCosign(ctx, tag, checksums, sig, cert, stageDir); verr != nil {
+			fetchErr := sigErr
+			if fetchErr == nil {
+				fetchErr = certErr
+			}
+			return nil, verifyError{fmt.Errorf("cosign is installed but the release signature/cert could not be fetched (pass --allow-unsigned to skip signature verification): %w", fetchErr)}
+		}
+		if _, verr := verifyCosign(ctx, req.Tag, checksums, sig, cert, req.StageDir); verr != nil {
 			return nil, verr
 		}
-	} else {
+	case req.RequireSignature || requireSignatureEnv():
+		return nil, verifyError{errors.New("cosign is required to verify the release signature (JENTIC_REQUIRE_SIGNATURE=1 or require_signature in manifest) but was not found on PATH — install cosign or pass --allow-unsigned")}
+	default:
 		warn = "signature not verified (install cosign to verify the release signature)"
 	}
 
-	binPath, err := extractBinary(asset, archive, binary, goos, stageDir)
+	binPath, err := extractBinary(asset, archive, req.Binary, req.GOOS, req.StageDir)
 	if err != nil {
 		return nil, err
 	}

@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +20,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	legacyconfig "github.com/jentic/jentic-one/cli/internal/config"
 )
 
@@ -53,9 +58,9 @@ func seedLegacyDCRProfile(t *testing.T, paths legacyconfig.Paths, name, baseURL 
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 	toks, err := json.Marshal(&legacyTokens{
-		AccessToken:     "access-" + name,
-		RefreshToken:    "refresh-should-be-dropped",
-		AccessExpiresAt: time.Now().Add(time.Hour),
+		AccessToken:     "at-test-synthetic-" + name,
+		RefreshToken:    "rt-test-synthetic-" + name,
+		AccessExpiresAt: time.Now().Add(time.Hour).UTC().Round(time.Second),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +106,9 @@ func TestMigrate_CopiesProfilesToXDG(t *testing.T) {
 	if _, ok := cfg.Identities["work"]; !ok {
 		t.Error("identity work not created")
 	}
+	if gotID := cfg.Identities["work"].Environments["api-jentic-com"].ClientID; gotID != "agnt_work" {
+		t.Errorf("migrated work client_id = %q, want agnt_work", gotID)
+	}
 	if _, ok := cfg.Environments["api-jentic-com"]; !ok {
 		t.Errorf("environment api-jentic-com not created; envs=%v", cfg.Environments)
 	}
@@ -131,29 +139,178 @@ func TestMigrate_CopiesProfilesToXDG(t *testing.T) {
 	}
 }
 
-func TestMigrate_DropsRefreshToken(t *testing.T) {
-	withXDG(t)
-	app := testApp(t)
-	seedLegacyDCRProfile(t, app.Paths, "work", "https://api.jentic.com")
-
-	if _, err := runMigrate(app, false); err != nil {
+func mustJSONBytes(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
 		t.Fatal(err)
 	}
+	return b
+}
 
-	ref := auth.IdentityRef{Identity: "work", Environment: "api-jentic-com"}
-	toks, err := auth.ReadTokens(ref)
-	if err != nil {
-		t.Fatalf("reading migrated tokens: %v", err)
+// TestMigrate_PreservesRefreshTokenAndExpiryMapping pins #1384: V1->V2 token
+// migration preserves present refresh tokens alongside access_token and the
+// access_expires_at -> expires_at mapping, while treating absent, empty, and
+// whitespace-only refresh tokens cleanly without emitting empty fields.
+func TestMigrate_PreservesRefreshTokenAndExpiryMapping(t *testing.T) {
+	exp := time.Date(2026, 9, 14, 13, 26, 0, 0, time.UTC)
+	const expStr = "2026-09-14T13:26:00Z"
+
+	cases := []struct {
+		name           string
+		doc            map[string]any
+		omitTokensFile bool
+		wantFile       bool
+		wantAccess     string
+		wantRefresh    string
+		wantRefreshKey bool
+	}{
+		{
+			name: "present_refresh_token",
+			doc: map[string]any{
+				"access_token":      "at_syn_1",
+				"refresh_token":     "rt_syn_1",
+				"access_expires_at": expStr,
+			},
+			wantFile:       true,
+			wantAccess:     "at_syn_1",
+			wantRefresh:    "rt_syn_1",
+			wantRefreshKey: true,
+		},
+		{
+			name: "padded_refresh_token_trimmed",
+			doc: map[string]any{
+				"access_token":      "at_syn_2",
+				"refresh_token":     "  rt_syn_2\n",
+				"access_expires_at": expStr,
+			},
+			wantFile:       true,
+			wantAccess:     "at_syn_2",
+			wantRefresh:    "rt_syn_2",
+			wantRefreshKey: true,
+		},
+		{
+			name: "absent_refresh_token",
+			doc: map[string]any{
+				"access_token":      "at_syn_3",
+				"access_expires_at": expStr,
+			},
+			wantFile:       true,
+			wantAccess:     "at_syn_3",
+			wantRefresh:    "",
+			wantRefreshKey: false,
+		},
+		{
+			name: "empty_refresh_token",
+			doc: map[string]any{
+				"access_token":      "at_syn_4",
+				"refresh_token":     "",
+				"access_expires_at": expStr,
+			},
+			wantFile:       true,
+			wantAccess:     "at_syn_4",
+			wantRefresh:    "",
+			wantRefreshKey: false,
+		},
+		{
+			name: "whitespace_refresh_token",
+			doc: map[string]any{
+				"access_token":      "at_syn_5",
+				"refresh_token":     "   \x09\n ",
+				"access_expires_at": expStr,
+			},
+			wantFile:       true,
+			wantAccess:     "at_syn_5",
+			wantRefresh:    "",
+			wantRefreshKey: false,
+		},
+		{
+			name:           "absent_tokens_file",
+			omitTokensFile: true,
+			wantFile:       false,
+		},
+		{
+			name: "both_tokens_whitespace_only",
+			doc: map[string]any{
+				"access_token":      "  ",
+				"refresh_token":     "\x09\n",
+				"access_expires_at": expStr,
+			},
+			wantFile: false,
+		},
 	}
-	if toks.AccessToken != "access-work" {
-		t.Errorf("access token = %q, want access-work", toks.AccessToken)
-	}
-	// The V2 TokenSet has no refresh field at all — the refresh token is dropped
-	// by construction (BC-6). Assert the persisted file carries no refresh value.
-	stateDir, _ := sdkconfig.StateDir()
-	data, _ := os.ReadFile(filepath.Join(stateDir, "work_api-jentic-com_tokens.json"))
-	if containsRefresh(string(data)) {
-		t.Errorf("migrated token state must not contain a refresh token: %s", data)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withXDG(t)
+			app := testApp(t)
+			_, priv, _ := ed25519.GenerateKey(rand.Reader)
+			der, _ := x509.MarshalPKCS8PrivateKey(priv)
+			pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+			files := map[string][]byte{legacyKeyFile: pemBytes}
+			if !tc.omitTokensFile {
+				files[legacyTokensFile] = mustJSONBytes(t, tc.doc)
+			}
+			writeLegacyProfileFiles(t, app.Paths, "work", &legacyMeta{
+				BaseURL: "https://api.jentic.com",
+				AgentID: "agnt_work",
+			}, files)
+
+			if _, err := runMigrate(app, false); err != nil {
+				t.Fatalf("runMigrate: %v", err)
+			}
+
+			stateDir, err := sdkconfig.StateDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokPath := filepath.Join(stateDir, "work_api-jentic-com_tokens.json")
+			if !tc.wantFile {
+				if _, serr := os.Stat(tokPath); !os.IsNotExist(serr) {
+					t.Fatalf("expected no migrated token file for %s, stat err = %v", tc.name, serr)
+				}
+				return
+			}
+
+			info, serr := os.Stat(tokPath)
+			if serr != nil {
+				t.Fatalf("stat migrated token file: %v", serr)
+			}
+			if perm := info.Mode().Perm(); perm != 0o600 {
+				t.Errorf("token file perms = %o, want 0600", perm)
+			}
+
+			rawDisk, rerr := os.ReadFile(tokPath)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			var diskMap map[string]any
+			if uerr := json.Unmarshal(rawDisk, &diskMap); uerr != nil {
+				t.Fatalf("unmarshal migrated token file: %v", uerr)
+			}
+			_, hasRefreshKey := diskMap["refresh_token"]
+			if hasRefreshKey != tc.wantRefreshKey {
+				t.Errorf("disk refresh_token key present = %v, want %v; raw=%s", hasRefreshKey, tc.wantRefreshKey, rawDisk)
+			}
+
+			ref := auth.IdentityRef{Identity: "work", Environment: "api-jentic-com"}
+			toks, err := auth.ReadTokens(ref)
+			if err != nil {
+				t.Fatalf("ReadTokens: %v", err)
+			}
+			if toks.AccessToken != tc.wantAccess {
+				t.Errorf("AccessToken = %q, want %q", toks.AccessToken, tc.wantAccess)
+			}
+			if toks.RefreshToken != tc.wantRefresh {
+				t.Errorf("RefreshToken = %q, want %q", toks.RefreshToken, tc.wantRefresh)
+			}
+			if !toks.ExpiresAt.Equal(exp) {
+				t.Errorf("ExpiresAt = %v, want %v", toks.ExpiresAt, exp)
+			}
+			if toks.Origin != "https://api.jentic.com" {
+				t.Errorf("Origin = %q, want https://api.jentic.com", toks.Origin)
+			}
+		})
 	}
 }
 
@@ -198,6 +355,318 @@ func TestMigrate_Idempotent(t *testing.T) {
 	if len(first.contexts) != len(second.contexts) {
 		t.Errorf("migrate not idempotent: first=%v second=%v", first.contexts, second.contexts)
 	}
+}
+
+// TestMigrate_ReRunPreservesRotatedV2TokensAndRepairsMissingRefresh pins #1384
+// idempotency: re-running migrate (including with --purge-legacy) must never
+// overwrite a newer rotated V2 token pair or V2 config state with stale legacy
+// credentials, while still repairing an unrotated token file whose refresh
+// token is missing.
+func TestMigrate_ReRunPreservesRotatedV2TokensAndRepairsMissingRefresh(t *testing.T) {
+	t.Run("preserves_rotated_v2_token_pair_and_state", func(t *testing.T) {
+		withXDG(t)
+		app := testApp(t)
+		seedLegacyDCRProfile(t, app.Paths, "work", "https://api.jentic.com")
+
+		if _, err := runMigrate(app, false); err != nil {
+			t.Fatalf("first migrate: %v", err)
+		}
+
+		ref := auth.IdentityRef{Identity: "work", Environment: "api-jentic-com"}
+		rotatedExp := time.Now().Add(2 * time.Hour).UTC().Round(time.Second)
+		if err := auth.SaveTokens(ref, &auth.TokenSet{
+			AccessToken:  "at-test-rotated-2",
+			RefreshToken: "rt-test-rotated-2",
+			ExpiresAt:    rotatedExp,
+		}); err != nil {
+			t.Fatalf("SaveTokens rotated: %v", err)
+		}
+		if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
+			ctx := cfg.Contexts["work"]
+			ctx.Mode = "agent"
+			cfg.Contexts["work"] = ctx
+			ident := cfg.Identities["work"]
+			ident.Environments["api-jentic-com"] = sdkconfig.EnvRegState{
+				ClientID: "agnt_v2_rotated",
+				Status:   "approved",
+			}
+			cfg.Identities["work"] = ident
+			return nil
+		}); err != nil {
+			t.Fatalf("MutateConfig: %v", err)
+		}
+
+		if _, err := runMigrate(app, false); err != nil {
+			t.Fatalf("second migrate: %v", err)
+		}
+		if _, err := runMigrate(app, true); err != nil {
+			t.Fatalf("third migrate --purge-legacy: %v", err)
+		}
+
+		got, err := auth.ReadTokens(ref)
+		if err != nil {
+			t.Fatalf("ReadTokens after re-migrate: %v", err)
+		}
+		if got.AccessToken != "at-test-rotated-2" || got.RefreshToken != "rt-test-rotated-2" || !got.ExpiresAt.Equal(rotatedExp) {
+			t.Errorf("re-running migrate clobbered rotated V2 tokens: got %+v", got)
+		}
+
+		cfg, err := sdkconfig.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Contexts["work"].Mode != "agent" {
+			t.Errorf("context mode = %q, want agent preserved", cfg.Contexts["work"].Mode)
+		}
+		if gotID := cfg.Identities["work"].Environments["api-jentic-com"].ClientID; gotID != "agnt_v2_rotated" {
+			t.Errorf("client_id = %q, want agnt_v2_rotated preserved", gotID)
+		}
+	})
+
+	t.Run("preserves_rotated_access_only_v2_token", func(t *testing.T) {
+		withXDG(t)
+		app := testApp(t)
+		seedLegacyDCRProfile(t, app.Paths, "work", "https://api.jentic.com")
+
+		if _, err := runMigrate(app, false); err != nil {
+			t.Fatal(err)
+		}
+		ref := auth.IdentityRef{Identity: "work", Environment: "api-jentic-com"}
+		if err := auth.SaveTokens(ref, &auth.TokenSet{
+			AccessToken: "at-test-rotated-3",
+			ExpiresAt:   time.Now().Add(2 * time.Hour).UTC().Round(time.Second),
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := runMigrate(app, false); err != nil {
+			t.Fatalf("re-migrate: %v", err)
+		}
+		got, err := auth.ReadTokens(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.AccessToken != "at-test-rotated-3" || got.RefreshToken != "" {
+			t.Errorf("access-only V2 token altered by re-migrate: %+v", got)
+		}
+	})
+
+	t.Run("repairs_unrotated_migrated_token_missing_refresh", func(t *testing.T) {
+		withXDG(t)
+		app := testApp(t)
+		seedLegacyDCRProfile(t, app.Paths, "work", "https://api.jentic.com")
+		legToks, err := viewLegacyProfile(app.Paths, "work").loadTokens()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ref := auth.IdentityRef{Identity: "work", Environment: "api-jentic-com"}
+		if err := auth.SaveTokens(ref, &auth.TokenSet{
+			AccessToken: legToks.AccessToken,
+			ExpiresAt:   legToks.AccessExpiresAt,
+			Origin:      "https://api.jentic.com",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := runMigrate(app, false); err != nil {
+			t.Fatalf("repair migrate: %v", err)
+		}
+		got, err := auth.ReadTokens(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.AccessToken != legToks.AccessToken || got.RefreshToken != "rt-test-synthetic-work" {
+			t.Errorf("expected missing refresh token to be backfilled onto unrotated token, got %+v", got)
+		}
+	})
+}
+
+// TestMigrate_CLIOutputRedactsSecretsAndAvoidsUnsafePurgeNudge proves that
+// `jentic migrate` retains the refresh token on disk without printing secret
+// values in human or agent mode, does not push `--purge-legacy` before an
+// authenticated call succeeds, and keeps TokenSet fail-closed under ux
+// marshaling (#1384).
+func TestMigrate_CLIOutputRedactsSecretsAndAvoidsUnsafePurgeNudge(t *testing.T) {
+	for _, mode := range []string{"human", "agent"} {
+		t.Run(mode, func(t *testing.T) {
+			withXDG(t)
+			t.Setenv("JENTIC_MODE", mode)
+			app := testApp(t)
+			t.Setenv("JENTIC_HOME", app.Paths.Root)
+
+			const (
+				synAT = "at_syn_omit"
+				synRT = "rt_syn_omit"
+			)
+			_, priv, _ := ed25519.GenerateKey(rand.Reader)
+			der, _ := x509.MarshalPKCS8PrivateKey(priv)
+			pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+			tokBytes, _ := json.Marshal(&legacyTokens{
+				AccessToken:     synAT,
+				RefreshToken:    synRT,
+				AccessExpiresAt: time.Now().Add(-24 * time.Hour).UTC().Round(time.Second),
+			})
+			writeLegacyProfileFiles(t, app.Paths, "default", &legacyMeta{
+				BaseURL: "https://api.jentic.com",
+				AgentID: "agnt_default",
+			}, map[string][]byte{
+				legacyKeyFile:    pemBytes,
+				legacyTokensFile: tokBytes,
+			})
+
+			stdout, stderr, runErr := captureCLIStreams(t, func() error {
+				root := newAPIRootCmd(app.App)
+				root.SetOut(app.Out)
+				root.SetErr(app.Err)
+				root.SetArgs([]string{"migrate"})
+				return root.Execute()
+			})
+			if runErr != nil {
+				t.Fatalf("jentic migrate (%s): %v", mode, runErr)
+			}
+			combined := stdout + "\n" + stderr + "\n" + app.Out.(*bytes.Buffer).String() + "\n" + app.Err.(*bytes.Buffer).String()
+			for _, candidate := range []string{synAT, synRT} {
+				if strings.Contains(combined, candidate) {
+					t.Fatalf("CLI output leaked token material in %s mode", mode)
+				}
+			}
+			if strings.Contains(combined, "--purge-legacy") {
+				t.Errorf("migrate output in %s mode must not recommend --purge-legacy before verifying authentication: %q", mode, combined)
+			}
+			if !strings.Contains(combined, "jentic whoami") {
+				t.Errorf("migrate output in %s mode should advise verifying authentication first: %q", mode, combined)
+			}
+
+			ref := auth.IdentityRef{Identity: "default", Environment: "api-jentic-com"}
+			loaded, err := auth.ReadTokens(ref)
+			if err != nil {
+				t.Fatalf("ReadTokens: %v", err)
+			}
+			if loaded.RefreshToken != synRT {
+				t.Errorf("loaded RefreshToken = %q, want synthetic token", loaded.RefreshToken)
+			}
+
+			redactedJSON := string(ux.MarshalForFile(loaded))
+			if strings.Contains(redactedJSON, synAT) || strings.Contains(redactedJSON, synRT) {
+				t.Fatalf("ux.MarshalForFile failed to redact TokenSet: %s", redactedJSON)
+			}
+			if strings.Count(redactedJSON, "[REDACTED]") != 2 {
+				t.Errorf("expected both access_token and refresh_token redacted, got: %s", redactedJSON)
+			}
+		})
+	}
+}
+
+// TestMigrate_ExpiredLegacyAccessTokenAuthenticatesViaRefreshToken reproduces
+// the #1384 end-to-end continuity scenario: a legacy profile whose access_token
+// expired days ago but holds a valid refresh_token migrates cleanly and
+// completes an authenticated call (`jentic api GET /me`), rotating the stored
+// token pair in XDG.
+func TestMigrate_ExpiredLegacyAccessTokenAuthenticatesViaRefreshToken(t *testing.T) {
+	withXDG(t)
+
+	var sawGrantType, sawRefreshToken, sawMeAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/token":
+			var req struct {
+				GrantType    string `json:"grant_type"`
+				RefreshToken string `json:"refresh_token"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			sawGrantType = req.GrantType
+			sawRefreshToken = req.RefreshToken
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(struct {
+				AccessToken  string `json:"access_token"`
+				RefreshToken string `json:"refresh_token"`
+				TokenType    string `json:"token_type"`
+				ExpiresIn    int    `json:"expires_in"`
+			}{
+				AccessToken:  "at-test-fresh-2",
+				RefreshToken: "rt-test-fresh-2",
+				TokenType:    "bearer",
+				ExpiresIn:    1800,
+			})
+		case "/me":
+			sawMeAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_default","name":"jentic-cli-default","status":"active"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	t.Setenv("JENTIC_HOME", app.Paths.Root)
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	der, _ := x509.MarshalPKCS8PrivateKey(priv)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	tokBytes, _ := json.Marshal(&legacyTokens{
+		AccessToken:     "at-test-expired-1",
+		RefreshToken:    "rt-test-synthetic-1",
+		AccessExpiresAt: time.Now().Add(-48 * time.Hour).UTC().Round(time.Second),
+	})
+	writeLegacyProfileFiles(t, app.Paths, "default", &legacyMeta{
+		BaseURL: srv.URL,
+		AgentID: "agnt_default",
+	}, map[string][]byte{
+		legacyKeyFile:    pemBytes,
+		legacyTokensFile: tokBytes,
+	})
+
+	if _, err := runMigrate(app, false); err != nil {
+		t.Fatalf("runMigrate: %v", err)
+	}
+
+	if _, _, err := captureCLIStreams(t, func() error {
+		return runJentic(t, "api", "GET", "/me")
+	}); err != nil {
+		t.Fatalf("authenticated call after migrate failed: %v", err)
+	}
+	if sawGrantType != "refresh_token" || sawRefreshToken != "rt-test-synthetic-1" {
+		t.Errorf("refresh exchange got grant_type=%q refresh_token=%q", sawGrantType, sawRefreshToken)
+	}
+	if sawMeAuth != "Bearer at-test-fresh-2" {
+		t.Errorf("/me Authorization = %q, want Bearer at-test-fresh-2", sawMeAuth)
+	}
+
+	ref := auth.IdentityRef{Identity: "default", Environment: envNameFromURL(srv.URL)}
+	rotated, err := auth.ReadTokens(ref)
+	if err != nil {
+		t.Fatalf("ReadTokens after rotation: %v", err)
+	}
+	if rotated.AccessToken != "at-test-fresh-2" || rotated.RefreshToken != "rt-test-fresh-2" {
+		t.Errorf("rotated XDG tokens = %+v, want fresh pair", rotated)
+	}
+}
+
+func captureCLIStreams(t *testing.T, fn func() error) (stdout, stderr string, err error) {
+	t.Helper()
+	oldOut, oldErr := os.Stdout, os.Stderr
+	rOut, wOut, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	rErr, wErr, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	os.Stdout, os.Stderr = wOut, wErr
+	defer func() {
+		os.Stdout, os.Stderr = oldOut, oldErr
+	}()
+
+	err = fn()
+	_ = wOut.Close()
+	_ = wErr.Close()
+
+	var bOut, bErr bytes.Buffer
+	_, _ = io.Copy(&bOut, rOut)
+	_, _ = io.Copy(&bErr, rErr)
+	return bOut.String(), bErr.String(), err
 }
 
 func TestMigrate_NoProfilesIsNoOp(t *testing.T) {
@@ -263,9 +732,4 @@ func TestEnvNameFromURL(t *testing.T) {
 			t.Errorf("envNameFromURL(%q) = %q, want %q", in, got, want)
 		}
 	}
-}
-
-// containsRefresh reports whether s mentions a refresh token key or value.
-func containsRefresh(s string) bool {
-	return strings.Contains(s, "refresh_token") || strings.Contains(s, "refresh-should-be-dropped")
 }

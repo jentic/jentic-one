@@ -175,12 +175,24 @@ async def test_grouped_totals_honour_filters_and_limit(
         limit=100,
         filters=UsageFilters(status="failed"),
     )
-    # agt_a and agt_c tie on one failure each, so only the leader's position is fixed.
-    assert failed_by_agent[0].key == "agent/agt_b"
-    assert sorted((t.key, t.total, t.failed, t.success) for t in failed_by_agent) == [
-        ("agent/agt_a", 1, 1, 0),
+    # agt_a and agt_c tie on one failure each; deterministic tie-break (#1801) orders agt_a first.
+    assert [(t.key, t.total, t.failed, t.success) for t in failed_by_agent] == [
         ("agent/agt_b", 2, 2, 0),
+        ("agent/agt_a", 1, 1, 0),
         ("agent/agt_c", 1, 1, 0),
+    ]
+
+    # Straddling the tie at limit=2 selects agt_a deterministically over agt_c.
+    failed_by_agent_top2 = await svc.get_grouped_totals(
+        since=since,
+        until=until,
+        group_by=GroupBy.AGENT,
+        limit=2,
+        filters=UsageFilters(status="failed"),
+    )
+    assert [(t.key, t.total) for t in failed_by_agent_top2] == [
+        ("agent/agt_b", 2),
+        ("agent/agt_a", 1),
     ]
 
     top_one = await svc.get_grouped_totals(

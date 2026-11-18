@@ -305,3 +305,154 @@ func TestRedactBytesNonJSONFallsBackToByteBackstop(t *testing.T) {
 		t.Errorf("non-JSON body was mangled: %s", got)
 	}
 }
+
+func TestRedactBytes_HeaderStyleSensitiveKey(t *testing.T) {
+	body := strings.Join([]string{
+		"HTTP/1.1 401 Unauthorized",
+		"X-Api-Key: key_header_secret_123",            // pragma: allowlist secret
+		"Set-Cookie: sid=cookie_secret_456; HttpOnly", // pragma: allowlist secret
+		"Note: the token expired",
+	}, "\n")
+	got := string(RedactBytes([]byte(body)))
+	for _, secret := range []string{"key_header_secret_123", "cookie_secret_456"} { // pragma: allowlist secret
+		if strings.Contains(got, secret) {
+			t.Errorf("header secret %q leaked through RedactBytes: %s", secret, got)
+		}
+	}
+	for _, want := range []string{
+		"X-Api-Key: [REDACTED]",
+		"Set-Cookie: [REDACTED]",
+		"Note: the token expired",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRedactBytes_YAMLSensitiveKey(t *testing.T) {
+	body := strings.Join([]string{
+		"service: demo",
+		"credentials:",
+		"  api_key: key_yaml_secret_456",      // pragma: allowlist secret
+		"  client_secret: cs_yaml_secret_789", // pragma: allowlist secret
+		"  next_token: abc",
+		"  token_count: 5",
+		"  public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5",
+		"  key_id: kid_01HXYZ",
+		"Note: the token expired",
+	}, "\n")
+	got := string(RedactBytes([]byte(body)))
+	for _, secret := range []string{"key_yaml_secret_456", "cs_yaml_secret_789"} { // pragma: allowlist secret
+		if strings.Contains(got, secret) {
+			t.Errorf("YAML secret %q leaked through RedactBytes: %s", secret, got)
+		}
+	}
+	for _, want := range []string{
+		"  api_key: [REDACTED]",
+		"  client_secret: [REDACTED]",
+		"  next_token: abc",
+		"  token_count: 5",
+		"  public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5",
+		"  key_id: kid_01HXYZ",
+		"Note: the token expired",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRedactBytes_AnyAuthScheme(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     string
+		secret string
+		isJSON bool
+	}{
+		{
+			name:   "Token scheme header",
+			in:     "Authorization: Token tok_scheme_secret_111", // pragma: allowlist secret
+			secret: "tok_scheme_secret_111",                      // pragma: allowlist secret
+		},
+		{
+			name:   "Digest scheme",
+			in:     "upstream error: Authorization: Digest dXNlcjpkigest_secret_222", // pragma: allowlist secret
+			secret: "dXNlcjpkigest_secret_222",                                       // pragma: allowlist secret
+		},
+		{
+			name:   "ApiKey scheme",
+			in:     "upstream error: Authorization: ApiKey ak_custom_scheme_333", // pragma: allowlist secret
+			secret: "ak_custom_scheme_333",                                       // pragma: allowlist secret
+		},
+		{
+			name:   "AWS4-HMAC-SHA256 scheme",
+			in:     "upstream error: Authorization: AWS4-HMAC-SHA256 sigv4_cred_secret_444", // pragma: allowlist secret
+			secret: "sigv4_cred_secret_444",                                                 // pragma: allowlist secret
+		},
+		{
+			name:   "Proxy-Authorization header",
+			in:     "Proxy-Authorization: Token pk_proxy_scheme_555", // pragma: allowlist secret
+			secret: "pk_proxy_scheme_555",                            // pragma: allowlist secret
+		},
+		{
+			name:   "inline in JSON string",
+			in:     `{"detail":"upstream rejected Authorization: Token tok_inline_secret_666"}`, // pragma: allowlist secret
+			secret: "tok_inline_secret_666",                                                     // pragma: allowlist secret
+			isJSON: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := RedactBytes([]byte(tc.in))
+			got := string(out)
+			if strings.Contains(got, tc.secret) {
+				t.Errorf("auth scheme secret %q leaked: %s", tc.secret, got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Errorf("expected [REDACTED] in output: %s", got)
+			}
+			if tc.isJSON && !json.Valid(out) {
+				t.Errorf("redacted JSON is invalid: %s", got)
+			}
+		})
+	}
+}
+
+func TestRedactBytes_JAKValue(t *testing.T) {
+	jsonBody := []byte(`{"key":"jak_live_secret_key_123456","name":"prod"}`) // pragma: allowlist secret
+	gotJSON := string(RedactBytes(jsonBody))
+	if strings.Contains(gotJSON, "jak_live_secret_key_123456") { // pragma: allowlist secret
+		t.Errorf("jak_ key in JSON value leaked: %s", gotJSON)
+	}
+	if !strings.Contains(gotJSON, `"key":"jak_[REDACTED]"`) {
+		t.Errorf("expected jak_[REDACTED] in JSON output, got: %s", gotJSON)
+	}
+	if !strings.Contains(gotJSON, `"name":"prod"`) {
+		t.Errorf("non-sensitive field mangled: %s", gotJSON)
+	}
+
+	textBody := []byte("failed to authenticate using jak_free_text_secret_987654 against upstream") // pragma: allowlist secret
+	gotText := string(RedactBytes(textBody))
+	if strings.Contains(gotText, "jak_free_text_secret_987654") { // pragma: allowlist secret
+		t.Errorf("jak_ key in free text leaked: %s", gotText)
+	}
+	if !strings.Contains(gotText, "jak_[REDACTED]") {
+		t.Errorf("expected jak_[REDACTED] in text output, got: %s", gotText)
+	}
+}
+
+func TestRedactBytes_EscapedQuoteJSONFragment(t *testing.T) {
+	// Non-JSON text embedding a JSON fragment whose sensitive value contains an escaped quote.
+	body := []byte(`upstream error body: {"password":"ab\"cd_secret_tail","user":"alice"`) // pragma: allowlist secret
+	got := string(RedactBytes(body))
+	if strings.Contains(got, "cd_secret_tail") || strings.Contains(got, `ab\"cd`) { // pragma: allowlist secret
+		t.Errorf("escaped-quote password tail leaked: %s", got)
+	}
+	if !strings.Contains(got, `"password":"[REDACTED]"`) {
+		t.Errorf("expected redacted password key-value, got: %s", got)
+	}
+	if !strings.Contains(got, `"user":"alice"`) {
+		t.Errorf("non-sensitive field in fragment mangled: %s", got)
+	}
+}

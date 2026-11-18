@@ -105,6 +105,8 @@ from jentic_one.shared.config.mcp import (
     McpOAuthConfig,
 )
 from jentic_one.shared.config.observability import (
+    DEFAULT_LATENCY_BUCKETS_MS,
+    MAX_LATENCY_BUCKETS,
     LoggingConfig,
     MetricsConfig,
     ObservabilityConfig,
@@ -129,7 +131,9 @@ from jentic_one.shared.config.runtime import (
 )
 
 __all__ = [
+    "DEFAULT_LATENCY_BUCKETS_MS",
     "GUARDED_FIELD_SURFACES",
+    "MAX_LATENCY_BUCKETS",
     "MEMORY_IDEMPOTENCY_TTL_S",
     "POOL_PRE_PING_IDLE_S",
     "POOL_RECYCLE_S",

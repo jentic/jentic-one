@@ -72,6 +72,7 @@ export type { CatalogSnoozeRequest } from './models/CatalogSnoozeRequest';
 export type { ChangePasswordRequest } from './models/ChangePasswordRequest';
 export type { ClaimRequest } from './models/ClaimRequest';
 export type { ConnectedConfirmSessionResponse } from './models/ConnectedConfirmSessionResponse';
+export { ConnectFlowStatusResponse } from './models/ConnectFlowStatusResponse';
 export type { ConnectOptionsResponse } from './models/ConnectOptionsResponse';
 export type { ConnectRequestBody } from './models/ConnectRequestBody';
 export type { ConnectSchemeOptionResponse } from './models/ConnectSchemeOptionResponse';

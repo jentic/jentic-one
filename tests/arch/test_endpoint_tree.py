@@ -56,6 +56,8 @@ from jentic_one.shared.web.endpoint_reference import (
     collect_endpoints,
 )
 
+pytestmark = pytest.mark.arch
+
 #: Dependency-free config for building apps (no DB connection is opened).
 DEFAULT_CONFIG = Path(__file__).resolve().parent.parent.parent / "config" / "local-sqlite.yaml"
 

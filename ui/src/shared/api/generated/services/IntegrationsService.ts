@@ -129,17 +129,19 @@ export class IntegrationsService {
     }
     /**
      * List a connect session's revisions
-     * Every version of what the session asks for, oldest first.
+     * One page of what the session has asked for, oldest first.
      *
      * The review shows the current revision against today's access; this is the
      * history behind it, one entry per ask and amend. Gated like the review
-     * read.
+     * read, and bounded like the session list.
      * @returns SessionRevisionListResponse Successful Response
      * @throws ApiError
      */
     public static listConnectSessionRevisions({
         sessionId,
         pollToken,
+        cursor,
+        limit = 50,
     }: {
         /**
          * ID of the connect session.
@@ -149,6 +151,14 @@ export class IntegrationsService {
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
          */
         pollToken?: (string | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`.
+         */
+        cursor?: (string | null),
+        /**
+         * Maximum number of revisions to return (1-200, default 50).
+         */
+        limit?: number,
     }): CancelablePromise<SessionRevisionListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -158,6 +168,8 @@ export class IntegrationsService {
             },
             query: {
                 'poll_token': pollToken,
+                'cursor': cursor,
+                'limit': limit,
             },
             errors: {
                 400: `Bad Request`,
@@ -261,8 +273,10 @@ export class IntegrationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
-                409: `The session is closed: confirmed or ended`,
+                404: `Not Found`,
+                409: `The session is closed (\`session_closed\`), holds every revision it may (\`too_many_revisions\`), moved since it was read (\`revision_changed\`), or the agent already has an open request for this target (\`connect_open\`)`,
                 422: `Unprocessable Entity`,
+                429: `Rate limit`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
@@ -383,6 +397,57 @@ export class IntegrationsService {
                 404: `Not Found`,
                 409: `Session not awaiting confirmation, its OAuth app, scheme or hosts changed, the review is stale, or the agent's binding for the API is suspended`,
                 422: `Unprocessable Entity`,
+                429: `Rate limit`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Resolve an open edit against the binding as it is now
+     * Bring an open edit up to date with its binding, as a new revision.
+     *
+     * What a reader asks for when the review or the status reports the session
+     * `stale`: the ask is re-resolved against the binding as it is now, and any
+     * part of it the binding no longer fits comes back as a conflict on that
+     * revision. Reads never do this themselves, so a GET appends nothing.
+     *
+     * Idempotent: a session already current answers with the revision it
+     * already had. Its initiator, or a human who may confirm it, as an amend
+     * takes; a closed session is 409 `session_closed`.
+     * @returns AmendSessionResponse Successful Response
+     * @throws ApiError
+     */
+    public static rebaseConnectSession({
+        sessionId,
+        pollToken,
+    }: {
+        /**
+         * ID of the connect session.
+         */
+        sessionId: string,
+        /**
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
+         */
+        pollToken?: (string | null),
+    }): CancelablePromise<AmendSessionResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/connect-sessions/{session_id}:rebase',
+            path: {
+                'session_id': sessionId,
+            },
+            query: {
+                'poll_token': pollToken,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                409: `The session is closed (\`session_closed\`), or holds every revision it may, so it cannot be brought up to date (\`too_many_revisions\`)`,
+                422: `Unprocessable Entity`,
+                429: `Rate limit`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

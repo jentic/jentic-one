@@ -3,7 +3,8 @@
 Minimal, always-on OpenTelemetry counters so operators can tell whether the update
 loop actually *works*: how often the badge is raised (emit), re-imported to adopt
 upstream (reimport), quieted (snooze), and — for the conflict half — how often an authorized
-re-import auto-deprecates an overlay. Metrics go through the sanctioned facade in
+re-import auto-deprecates an overlay, or leaves it in place because it did not supersede the
+overlay's served revision (#1078). Metrics go through the sanctioned facade in
 ``shared/metrics.py`` (``get_meter``); never import the OTel/Prometheus exporters
 directly (arch-test enforced).
 
@@ -30,6 +31,7 @@ _emit_counter: Counter | None = None
 _snooze_counter: Counter | None = None
 _reimport_counter: Counter | None = None
 _deprecate_counter: Counter | None = None
+_supersede_skipped_counter: Counter | None = None
 
 
 def record_update_notified(event_class: str) -> None:
@@ -75,3 +77,21 @@ def record_overlay_auto_deprecated() -> None:
             description="Confirmed overlays auto-deprecated by an authorized catalog re-import.",
         )
     _deprecate_counter.add(1)
+
+
+def record_overlay_supersede_skipped(reason: str) -> None:
+    """An authorized re-import left a confirmed overlay in place (#1078).
+
+    ``reason`` is a ``SupersedeSkipReason`` value (``api_mismatch`` |
+    ``revision_still_served``), so the label stays bounded.
+    """
+    global _supersede_skipped_counter
+    if _supersede_skipped_counter is None:
+        _supersede_skipped_counter = get_meter(_METER_NAME).create_counter(
+            "jentic_one.flow3.overlay_supersede_skipped",
+            description=(
+                "Authorized catalog re-imports that skipped auto-deprecating a confirmed "
+                "overlay because they did not supersede its served revision."
+            ),
+        )
+    _supersede_skipped_counter.add(1, {"reason": reason})

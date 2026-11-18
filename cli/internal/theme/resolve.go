@@ -13,25 +13,19 @@ import (
 // redirecting a real fd. Production always uses the real os.Stdout.
 var stdoutIsTTY = func() bool { return term.IsTerminal(os.Stdout.Fd()) }
 
-// ResolveTheme applies the HUMAN-mode precedence ladder and returns the resolved
-// Palette. The Stage-0 Mode gate (agent -> no-color) is applied by
-// the root interceptor (impl/3.2 §2) BEFORE this function and overrides everything
-// here; this function only owns the human-mode ladder (impl/1.4 §3):
+// ResolveThemeWithName applies the HUMAN-mode precedence ladder and returns the
+// resolved Palette and theme NAME ("dark"/"light"/"no-color"). The Stage-0 Mode
+// gate (agent -> no-color) is applied by the root interceptor (impl/3.2 §2)
+// BEFORE this function and overrides everything here; this function only owns
+// the human-mode ladder (impl/1.4 §3):
 //
 //	--theme  >  NO_COLOR / non-TTY stdout  >  JENTIC_THEME  >  config theme  >  dark
 //
+// The name is needed for surfaces whose tint isn't a single palette slot —
+// notably the logo's 6-row gradient — so they can look up a per-theme gradient.
 // flagOverride is the --theme value (may be ""); configTheme is
-// ActiveState.ThemeName (the persisted config `theme`).
-func ResolveTheme(flagOverride, configTheme string) Palette {
-	p, _ := ResolveThemeWithName(flagOverride, configTheme)
-	return p
-}
-
-// ResolveThemeWithName is ResolveTheme that also returns the resolved theme
-// NAME ("dark"/"light"/"no-color"). The name is needed for surfaces whose tint
-// isn't a single palette slot — notably the logo's 6-row gradient — so they can
-// look up a per-theme gradient. The precedence ladder is identical to
-// ResolveTheme; an explicit --theme still wins over the auto no-color rungs.
+// ActiveState.ThemeName (the persisted config `theme`). An explicit --theme
+// still wins over the auto no-color rungs.
 func ResolveThemeWithName(flagOverride, configTheme string) (Palette, string) {
 	if flagOverride == "" {
 		if _, noColor := os.LookupEnv("NO_COLOR"); noColor || !stdoutIsTTY() {

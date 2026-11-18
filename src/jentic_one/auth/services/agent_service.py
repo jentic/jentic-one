@@ -21,6 +21,8 @@ from jentic_one.admin.repos import (
     JobRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
+    TokenLineageRepository,
+    UserPermissionGrantRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.actor_jobs import cancel_queued_executions_for_actor
@@ -55,6 +57,10 @@ from jentic_one.auth.services.schemas.agents import (
     CredentialBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import (
+    ADMIN_ONLY_AGENT_PERMISSIONS,
+    cap_agent_permissions,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_READ,
@@ -240,8 +246,10 @@ class AgentService:
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
-        access_filters = build_access_filters(identity, Agent)
+    async def get_agent(
+        self, agent_id: str, *, identity: Identity, for_write: bool = False
+    ) -> AgentView:
+        access_filters = build_access_filters(identity, Agent, for_write=for_write)
         async with self._ctx.admin_db.session() as session:
             agent = await AgentRepository.get_by_id(session, agent_id, filters=access_filters)
             if agent is None:
@@ -278,17 +286,85 @@ class AgentService:
         its owner. Anyone else gets ``ActorNotFoundError``.
         """
         async with self._ctx.admin_db.transaction() as session:
-            await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
+            agent = await self._check_transition(
+                session, agent_id, ActorVerb.APPROVE, identity=identity
+            )
+            effective_owner_id = agent.owner_id if agent.owner_id is not None else identity.sub
+            owner_effective = await self._owner_effective(session, effective_owner_id)
             existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
+            dropped_self_admin = [
+                g.permission
+                for g in existing_grants
+                if g.granted_by is None and g.permission in ADMIN_ONLY_AGENT_PERMISSIONS
+            ]
+            if dropped_self_admin:
+                before_permissions = [g.permission for g in existing_grants]
+                for permission in dropped_self_admin:
+                    await ActorPermissionGrantRepository.revoke(
+                        session, actor_id=agent_id, permission=permission
+                    )
+                existing_grants = [
+                    g
+                    for g in existing_grants
+                    if not (g.granted_by is None and g.permission in ADMIN_ONLY_AGENT_PERMISSIONS)
+                ]
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"permissions": before_permissions},
+                    after={"permissions": [g.permission for g in existing_grants]},
+                    reason="self_requested_admin_permission_dropped",
+                    origin=identity.origin.value,
+                )
+            self_requested_catalogue = [
+                g.permission
+                for g in existing_grants
+                if g.granted_by is None and g.permission in ALL_PERMISSIONS
+            ]
+            kept_self_requested = set(
+                cap_agent_permissions(self_requested_catalogue, owner_effective)
+            )
+            dropped_self_over_owner = [
+                p for p in self_requested_catalogue if p not in kept_self_requested
+            ]
+            if dropped_self_over_owner:
+                before_permissions = [g.permission for g in existing_grants]
+                for permission in dropped_self_over_owner:
+                    await ActorPermissionGrantRepository.revoke(
+                        session, actor_id=agent_id, permission=permission
+                    )
+                dropped_set = set(dropped_self_over_owner)
+                existing_grants = [
+                    g
+                    for g in existing_grants
+                    if not (g.granted_by is None and g.permission in dropped_set)
+                ]
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"permissions": before_permissions},
+                    after={"permissions": [g.permission for g in existing_grants]},
+                    reason="self_requested_permission_above_owner_dropped",
+                    origin=identity.origin.value,
+                )
             # Permissions a self-registration requested become live on approval, so
-            # the approver's ceiling applies to them. Requested strings outside
-            # the catalogue grant nothing and are left as-is (not a 422: the
+            # the approver's and owner's ceilings apply to them. Requested strings
+            # outside the catalogue grant nothing and are left as-is (not a 422: the
             # registrant, not the approver, chose them).
             check_agent_permission_grant(
                 [g.permission for g in existing_grants if g.permission in ALL_PERMISSIONS],
                 identity=identity,
+                owner_effective=owner_effective,
             )
             agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             if not existing_grants:
@@ -591,10 +667,7 @@ class AgentService:
             jobs = await JobRepository.cancel_active_for_actor(session, agent_id)
             grant_ids = await OAuthClientGrantRepository.delete_for_agent(session, agent_id)
             codes = await AuthorizationCodeRepository.delete_by_grant_ids(session, grant_ids)
-            access = await AccessTokenRepository.delete_for_actor(
-                session, agent_id, grant_ids=grant_ids
-            )
-            refresh = await RefreshTokenRepository.delete_for_actor(
+            tokens = await TokenLineageRepository.delete_for_actor(
                 session, agent_id, grant_ids=grant_ids
             )
             await AgentRepository.delete(session, agent_id)
@@ -621,8 +694,8 @@ class AgentService:
             prior_status=str(prior_status),
             oauth_grants=len(grant_ids),
             authorization_codes=codes,
-            access_tokens=access,
-            refresh_tokens=refresh,
+            access_tokens=tokens.access,
+            refresh_tokens=tokens.refresh,
             cancelled_jobs=jobs,
             pending_credentials=control.pending_credentials,
             connect_sessions=control.connect_sessions,
@@ -767,9 +840,10 @@ class AgentService:
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
         views = [CredentialBindingView.model_validate(b) for b in bindings]
-        # Enrich from the control DB with the credential's human-readable name
-        # and the API it serves (issue #686). The bindings above are already
-        # scoped to this agent. Failure to reach the control DB is non-fatal.
+        # Enrich from the control DB with the credential's human-readable name,
+        # lifecycle state and the API it serves (issue #686). The bindings above
+        # are already scoped to this agent. Failure to reach the control DB is
+        # non-fatal.
         credential_ids = [v.credential_id for v in views]
         if credential_ids and self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
@@ -779,6 +853,7 @@ class AgentService:
                 if ref is None:
                     continue
                 view.name = ref.name
+                view.state = ref.state
                 view.serves = [
                     ServedApiRef(
                         api_vendor=ref.api_vendor,
@@ -799,7 +874,7 @@ class AgentService:
         or foreign agent raises ``ActorNotFoundError``.
         """
         if agent_id == identity.sub:
-            return await self.get_agent(agent_id, identity=identity)
+            return await self.get_agent(agent_id, identity=identity, for_write=True)
         async with self._ctx.admin_db.session() as session:
             agent = await self._load_owned_agent(session, agent_id, identity=identity)
             return await self._view(session, agent)
@@ -872,66 +947,72 @@ class AgentService:
         ``purge=True`` deletes the row outright — the explicit destructive
         path — together with the pair's inline permission rules, so a later
         re-bind starts from default deny instead of resurrecting rules that
-        were dormant under an attached rule set. The rules go first: if the
-        admin-side delete then fails, the surviving binding has no inline
-        rules and denies (fail-closed) rather than the other way round.
+        were dormant under an attached rule set. A purge commits suspension of
+        the binding row first, then deletes its inline rules in the control DB,
+        and finally deletes the binding row in the admin DB, invalidating
+        broker caches in a ``finally`` block so any partial failure leaves the
+        binding suspended and uncached (fail-closed) for both inline rules and
+        attached shared rule sets, while a retry completes the purge.
         """
         agent = await self._load_binding_agent(agent_id, identity=identity)
         if purge and self._is_own_binding(agent_id, identity):
             # A purge followed by a re-bind would drop a suspension the owner
             # set, so an agent may suspend its own binding but not purge it.
             raise CredentialBindingNotFoundError(agent_id, credential_id)
-        if purge and self._ctx.is_db_allowed("control"):
-            async with self._ctx.admin_db.session() as session:
-                existing = await AgentCredentialBindingRepository.get(
-                    session, agent_id=agent_id, credential_id=credential_id
+        try:
+            if purge and self._ctx.is_db_allowed("control"):
+                async with self._ctx.admin_db.transaction() as session:
+                    suspended = await AgentCredentialBindingRepository.set_suspended(
+                        session, agent_id=agent_id, credential_id=credential_id, suspended=True
+                    )
+                if not suspended:
+                    raise CredentialBindingNotFoundError(agent_id, credential_id)
+                async with self._ctx.control_db.transaction() as session:
+                    await BindingRuleRepository.delete_for_binding(
+                        session, agent_id=agent_id, credential_id=credential_id
+                    )
+            credential_name = await self._credential_name(credential_id)
+            async with self._ctx.admin_db.transaction() as session:
+                if purge:
+                    removed = await AgentCredentialBindingRepository.purge(
+                        session, agent_id=agent_id, credential_id=credential_id
+                    )
+                else:
+                    removed = await AgentCredentialBindingRepository.set_suspended(
+                        session, agent_id=agent_id, credential_id=credential_id, suspended=True
+                    )
+                if not removed:
+                    raise CredentialBindingNotFoundError(agent_id, credential_id)
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE if purge else AuditAction.DISABLE,
+                    target_type=AuditTargetType.CREDENTIAL_BINDING,
+                    target_id=credential_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    target_parent_id=agent_id,
+                    reason="purge_credential_binding" if purge else "suspend_credential_binding",
+                    origin=identity.origin.value,
                 )
-            if existing is None:
-                raise CredentialBindingNotFoundError(agent_id, credential_id)
-            async with self._ctx.control_db.transaction() as session:
-                await BindingRuleRepository.delete_for_binding(
-                    session, agent_id=agent_id, credential_id=credential_id
+                verb = "unbound (purged) from" if purge else "suspended for"
+                credential = summary_label(credential_name, credential_id)
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"Credential {credential} {verb} agent "
+                        f"{summary_label(agent.name, agent_id)}"
+                    ),
+                    data={"agent_id": agent_id, "credential_id": credential_id},
+                    # The binding's subject is the agent, so its owner sees the
+                    # event; ``actor_id`` records who changed the binding.
+                    created_by=agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
                 )
-        credential_name = await self._credential_name(credential_id)
-        async with self._ctx.admin_db.transaction() as session:
-            if purge:
-                removed = await AgentCredentialBindingRepository.purge(
-                    session, agent_id=agent_id, credential_id=credential_id
-                )
-            else:
-                removed = await AgentCredentialBindingRepository.set_suspended(
-                    session, agent_id=agent_id, credential_id=credential_id, suspended=True
-                )
-            if not removed:
-                raise CredentialBindingNotFoundError(agent_id, credential_id)
-            await record_audit(
-                session,
-                action=AuditAction.REVOKE if purge else AuditAction.DISABLE,
-                target_type=AuditTargetType.CREDENTIAL_BINDING,
-                target_id=credential_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                target_parent_id=agent_id,
-                reason="purge_credential_binding" if purge else "suspend_credential_binding",
-                origin=identity.origin.value,
-            )
-            verb = "unbound (purged) from" if purge else "suspended for"
-            credential = summary_label(credential_name, credential_id)
-            await emit_event_best_effort(
-                session,
-                type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
-                severity=EventSeverity.INFO,
-                summary=(
-                    f"Credential {credential} {verb} agent {summary_label(agent.name, agent_id)}"
-                ),
-                data={"agent_id": agent_id, "credential_id": credential_id},
-                # The binding's subject is the agent, so its owner sees the
-                # event; ``actor_id`` records who changed the binding.
-                created_by=agent_id,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-            )
-        self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
+        finally:
+            self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
 
     async def _credential_name(self, credential_id: str) -> str | None:
         """Best-effort display name for a credential, for an event summary.
@@ -1025,12 +1106,15 @@ class AgentService:
         """Replace the agent's permission grants (owner or ``org:admin`` only).
 
         Newly added permissions are subject to the agent permission ceiling
-        (``check_agent_permission_grant``); permissions the agent already holds may be
-        kept, so an owner can narrow a set an admin widened.
+        (``check_agent_permission_grant``), including the agent owner's
+        effective permission ceiling; permissions the agent already holds may
+        be kept, so an owner can narrow a set an admin widened.
         """
         permissions = list(dict.fromkeys(permissions))
         async with self._ctx.admin_db.transaction() as session:
-            agent = await self._load_owned_agent(session, agent_id, identity=identity)
+            agent = await self._load_owned_agent(
+                session, agent_id, identity=identity, for_update=True
+            )
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_permissions")
             existing = [
@@ -1039,7 +1123,13 @@ class AgentService:
                     session, agent_id, actor_type=ActorType.AGENT
                 )
             ]
-            check_agent_permission_grant(permissions, identity=identity, already_held=existing)
+            owner_effective = await self._owner_effective(session, agent.owner_id)
+            check_agent_permission_grant(
+                permissions,
+                identity=identity,
+                already_held=existing,
+                owner_effective=owner_effective,
+            )
             await ActorPermissionGrantRepository.revoke_all(session, agent_id)
             for permission in permissions:
                 await ActorPermissionGrantRepository.grant(
@@ -1083,10 +1173,10 @@ class AgentService:
         self-serve. Fail-safe posture — if the sweep fails, the transfer rolls
         back; the new owner re-consents through the normal flow if the
         connection is still wanted. Active credential bindings to credentials
-        outside the new owner's ownership are suspended in the same
-        transaction, so the new owner does not inherit active access to the
-        previous owner's credentials; the agent's API key and scopes are
-        untouched.
+        outside the new owner's ownership are suspended and permission grants
+        above the new owner's ceiling are revoked in the same transaction, so
+        the new owner does not inherit active access to the previous owner's
+        credentials or permissions; the agent's API key is untouched.
 
         Only the owner or an ``org:admin`` caller may update the agent (others
         get a uniform 404); changing ``owner_id`` is ``org:admin``-only. An
@@ -1120,6 +1210,7 @@ class AgentService:
                     await self._suspend_foreign_bindings_on_transfer(
                         session, agent, identity=identity
                     )
+                    await self._recap_permissions_on_transfer(session, agent, identity=identity)
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -1217,6 +1308,52 @@ class AgentService:
             )
         return suspended_count
 
+    async def _owner_effective(
+        self, session: AsyncSession, owner_id: str | None
+    ) -> set[str] | None:
+        """Effective permission set of ``owner_id``; ``None`` when ownerless."""
+        if owner_id is None:
+            return None
+        owner_grants = await UserPermissionGrantRepository.get_grants_for_user(session, owner_id)
+        return compute_effective({g.permission for g in owner_grants})
+
+    async def _recap_permissions_on_transfer(
+        self,
+        session: AsyncSession,
+        agent: Agent,
+        *,
+        identity: Identity,
+    ) -> None:
+        """Revoke grants on ``agent`` that exceed the new owner's permission ceiling."""
+        existing_grants = await ActorPermissionGrantRepository.list_for_actor(
+            session, agent.id, actor_type=ActorType.AGENT
+        )
+        if not existing_grants:
+            return
+        before_permissions = [g.permission for g in existing_grants]
+        owner_effective = await self._owner_effective(session, agent.owner_id)
+        allowed = set(cap_agent_permissions(before_permissions, owner_effective))
+        revoked = [p for p in before_permissions if p not in allowed]
+        if not revoked:
+            return
+        for permission in revoked:
+            await ActorPermissionGrantRepository.revoke(
+                session, actor_id=agent.id, permission=permission
+            )
+        after_permissions = [p for p in before_permissions if p in allowed]
+        await record_audit(
+            session,
+            action=AuditAction.REVOKE,
+            target_type=AuditTargetType.AGENT,
+            target_id=agent.id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            before={"permissions": before_permissions},
+            after={"permissions": after_permissions},
+            reason="agent ownership transferred: permissions above new owner",
+            origin=identity.origin.value,
+        )
+
     async def update_jwks(
         self,
         agent_id: str,
@@ -1228,7 +1365,9 @@ class AgentService:
 
         The agent must be active (not pending, disabled, or archived). The JWKS
         is validated to ensure it contains at least one Ed25519 public key and
-        no private key material.
+        no private key material. Replacing the key set revokes the agent's
+        key-channel OAuth token families (``oauth_grant_id IS NULL``) and evicts
+        warm in-process broker caches so clients authenticate with the new key.
         """
         validate_jwks(jwks)
         async with self._ctx.admin_db.transaction() as session:
@@ -1240,6 +1379,12 @@ class AgentService:
             before_jwks = agent.jwks
             agent.jwks = jwks
             await session.flush()
+            revoked_access = await AccessTokenRepository.revoke_key_channel_for_agent(
+                session, agent_id
+            )
+            revoked_refresh = await RefreshTokenRepository.revoke_key_channel_for_agent(
+                session, agent_id
+            )
             await record_audit(
                 session,
                 action=AuditAction.UPDATE,
@@ -1248,10 +1393,16 @@ class AgentService:
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
                 before={"jwks": "[redacted]" if before_jwks else None},
-                after={"jwks": "[redacted]"},
+                after={
+                    "jwks": "[redacted]",
+                    "revoked_key_channel_access_tokens": revoked_access,
+                    "revoked_key_channel_refresh_tokens": revoked_refresh,
+                },
                 origin=identity.origin.value,
             )
-            return await self._view(session, agent)
+            view = await self._view(session, agent)
+        self._ctx.invalidate_broker_caches(agent_id=agent_id)
+        return view
 
     @staticmethod
     async def _view(session: AsyncSession, agent: Agent) -> AgentView:
@@ -1286,7 +1437,7 @@ class AgentService:
 
     async def _check_transition(
         self, session: AsyncSession, agent_id: str, verb: ActorVerb, *, identity: Identity
-    ) -> None:
+    ) -> Agent:
         """Authorize ``verb`` on the agent, then validate the state transition.
 
         Every verb, approve/deny included, is owner-or-``org:admin``: an agent
@@ -1304,3 +1455,4 @@ class AgentService:
         allowed_from = _VALID_TRANSITIONS[verb]
         if agent.status not in allowed_from:
             raise InvalidTransitionError(agent_id, agent.status, verb)
+        return agent

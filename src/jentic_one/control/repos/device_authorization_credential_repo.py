@@ -41,11 +41,13 @@ class DeviceAuthorizationCredentialRepository:
 
     @staticmethod
     async def get_by_credential(
-        session: AsyncSession, credential_id: str
+        session: AsyncSession, credential_id: str, *, for_update: bool = False
     ) -> DeviceAuthorizationCredential | None:
         stmt = select(DeviceAuthorizationCredential).where(
             DeviceAuthorizationCredential.id == credential_id
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -61,6 +63,7 @@ class DeviceAuthorizationCredentialRepository:
         poll_interval_seconds: int,
         device_code_expires_at: dt.datetime,
         granted_scopes: list[str],
+        flow_nonce: str | None = None,
     ) -> DeviceAuthorizationCredential | None:
         """Populate transient polling state after the vendor returns the device code."""
         row = await DeviceAuthorizationCredentialRepository.get_by_credential(
@@ -74,9 +77,29 @@ class DeviceAuthorizationCredentialRepository:
         row.verification_uri_complete = verification_uri_complete
         row.poll_interval_seconds = poll_interval_seconds
         row.device_code_expires_at = device_code_expires_at
+        row.flow_nonce = flow_nonce
+        row.last_polled_at = None
         row.granted_scopes = granted_scopes
         await session.flush()
         return row
+
+    @staticmethod
+    async def claim_finalisation(
+        session: AsyncSession, credential_id: str, *, flow_nonce: str
+    ) -> bool:
+        """Lock and verify the device-flow generation being finalised."""
+        result = await session.execute(
+            update(DeviceAuthorizationCredential)
+            .where(
+                and_(
+                    DeviceAuthorizationCredential.id == credential_id,
+                    DeviceAuthorizationCredential.flow_nonce == flow_nonce,
+                )
+            )
+            .values(flow_nonce=flow_nonce)
+        )
+        rowcount: int = getattr(result, "rowcount", 0) or 0
+        return rowcount == 1
 
     @staticmethod
     async def try_claim_poll_slot(
@@ -85,6 +108,7 @@ class DeviceAuthorizationCredentialRepository:
         *,
         now: dt.datetime,
         min_last_polled_at: dt.datetime,
+        flow_nonce: str | None = None,
     ) -> bool:
         """Atomic RFC 8628 poll-interval lease.
 
@@ -113,6 +137,7 @@ class DeviceAuthorizationCredentialRepository:
                     DeviceAuthorizationCredential.id == credential_id,
                     DeviceAuthorizationCredential.encrypted_device_code.is_not(None),
                     DeviceAuthorizationCredential.poll_interval_seconds.is_not(None),
+                    DeviceAuthorizationCredential.flow_nonce == flow_nonce,
                     or_(
                         DeviceAuthorizationCredential.last_polled_at.is_(None),
                         DeviceAuthorizationCredential.last_polled_at <= min_last_polled_at,

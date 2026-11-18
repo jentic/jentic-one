@@ -271,6 +271,7 @@ def _make_cred_ref(credential_id: str, *, created_by: str | None) -> CredentialR
         name=f"name-{credential_id}",
         created_by=created_by,
         active=True,
+        state="connected",
         api_vendor="vendor",
         api_name="api",
         api_version="v1",

@@ -2,19 +2,44 @@
 
 from __future__ import annotations
 
-from typing import Literal
+import itertools
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
+
+from jentic_one.shared.config._common import _csv_to_list
 
 
 class LoggingConfig(BaseModel):
     """File logging sink (in addition to stdout)."""
 
-    file_enabled: bool = False
-    file_dir: str = ".jentic/logs"
-    file_name: str = "app.log"
-    file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
-    file_backup_count: int = 5
+    file_enabled: bool = Field(
+        default=False,
+        description=(
+            "Also write logs to a size-rotated file. The file is always JSON lines, "
+            "whatever ``runtime.debug`` selects for stdout."
+        ),
+    )
+    file_dir: str = Field(
+        default=".jentic/logs",
+        description=(
+            "Directory for the log file (relative paths resolve against the working "
+            "directory); created at startup if missing."
+        ),
+    )
+    file_name: str = Field(default="app.log", description="Log file name inside ``file_dir``.")
+    file_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        description=(
+            "Size in bytes at which the log file is rotated (default 10 MiB); 0 never rotates."
+        ),
+    )
+    file_backup_count: int = Field(
+        default=5,
+        description=(
+            "Number of rotated log files kept beside the active one; older ones are deleted."
+        ),
+    )
     http_wire_trace: bool = Field(
         default=False,
         description=(
@@ -27,11 +52,71 @@ class LoggingConfig(BaseModel):
     )
 
 
+#: Default ``observability.metrics.latency_buckets_ms``: dense below 25 ms (the
+#: OTel defaults 0, 5, 10, 25, … can't resolve broker overhead) with a tail up
+#: to the default 30 s upstream timeout.
+DEFAULT_LATENCY_BUCKETS_MS: tuple[float, ...] = (
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0,
+    50.0,
+    100.0,
+    250.0,
+    500.0,
+    1000.0,
+    2500.0,
+    5000.0,
+    10000.0,
+    30000.0,
+)
+
+#: Upper bound on ``latency_buckets_ms`` length — each boundary is one exported
+#: series per histogram label set, so an unbounded list is a cardinality risk.
+MAX_LATENCY_BUCKETS = 64
+
+
 class MetricsConfig(BaseModel):
     """Metrics exporter configuration."""
 
-    exporter: Literal["otlp", "prometheus", "none"] = "otlp"
-    export_interval_seconds: int = 15
+    exporter: Literal["otlp", "prometheus", "none"] = Field(
+        default="otlp",
+        description=(
+            "Where metrics go: ``otlp`` pushes to the OTLP endpoint named by the "
+            "standard ``OTEL_EXPORTER_OTLP_*`` environment variables, "
+            "``prometheus`` serves a scrape endpoint at ``/metrics``, and ``none`` "
+            "records nothing."
+        ),
+    )
+    export_interval_seconds: int = Field(
+        default=15,
+        description="Seconds between OTLP metric pushes. Ignored unless ``exporter`` is ``otlp``.",
+    )
+    latency_buckets_ms: Annotated[
+        list[Annotated[float, Field(gt=0, allow_inf_nan=False)]],
+        BeforeValidator(_csv_to_list),
+    ] = Field(
+        default=list(DEFAULT_LATENCY_BUCKETS_MS),
+        min_length=1,
+        max_length=MAX_LATENCY_BUCKETS,
+        description=(
+            "Explicit histogram bucket boundaries (milliseconds, strictly increasing, "
+            "all > 0) for the request-latency histograms listed in "
+            "docs/operations/monitoring.md; seconds-unit histograms get the list "
+            "divided by 1000. Must be identical on every process whose series are "
+            "aggregated together. As an env var, a comma-separated list."
+        ),
+    )
+
+    @field_validator("latency_buckets_ms", mode="after")
+    @classmethod
+    def _strictly_increasing(cls, value: list[float]) -> list[float]:
+        if any(later <= earlier for earlier, later in itertools.pairwise(value)):
+            raise ValueError("latency_buckets_ms must be strictly increasing")
+        return value
 
 
 class TracingConfig(BaseModel):

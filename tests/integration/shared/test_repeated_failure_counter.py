@@ -30,7 +30,7 @@ from jentic_one.shared.events.repeated_failure import (
     RepeatedFailureCounter,
     maybe_emit_repeated_failure,
 )
-from jentic_one.shared.executions import record_execution
+from jentic_one.shared.executions import ExecutionRecordInput, record_execution
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
@@ -103,15 +103,17 @@ class _Failures:
         async with self._db.transaction() as session:
             await record_execution(
                 session,
-                execution_id=f"{_PREFIX}{self._seq}",
-                toolkit_id=toolkit_id,
-                trace_id="a" * 32,
-                started_at=datetime.now(UTC),
-                status=ExecutionStatus.FAILED,
-                operation=operation,
-                actor_id=_ACTOR,
-                actor_type="agent",
-                credential_id=credential_id,
+                ExecutionRecordInput(
+                    execution_id=f"{_PREFIX}{self._seq}",
+                    toolkit_id=toolkit_id,
+                    trace_id="a" * 32,
+                    started_at=datetime.now(UTC),
+                    status=ExecutionStatus.FAILED,
+                    operation=operation,
+                    actor_id=_ACTOR,
+                    actor_type="agent",
+                    credential_id=credential_id,
+                ),
             )
             self._seq += 1
             with _statements(self._db) as captured:
@@ -291,15 +293,17 @@ async def test_sustained_critical_outage_keeps_the_gate_closed(
         async with admin_db.transaction() as session:
             await record_execution(
                 session,
-                execution_id=f"{_PREFIX}outage-{i}",
-                toolkit_id=_TOOLKIT,
-                credential_id=_CREDENTIAL,
-                trace_id="a" * 32,
-                started_at=virtual_now,
-                status=ExecutionStatus.FAILED,
-                operation=_OPERATION,
-                actor_id=_ACTOR,
-                actor_type="agent",
+                ExecutionRecordInput(
+                    execution_id=f"{_PREFIX}outage-{i}",
+                    toolkit_id=_TOOLKIT,
+                    credential_id=_CREDENTIAL,
+                    trace_id="a" * 32,
+                    started_at=virtual_now,
+                    status=ExecutionStatus.FAILED,
+                    operation=_OPERATION,
+                    actor_id=_ACTOR,
+                    actor_type="agent",
+                ),
             )
             with _statements(admin_db) as captured:
                 await maybe_emit_repeated_failure(
@@ -423,15 +427,17 @@ async def test_gate_matches_ungated_detector(admin_db: DatabaseSession, seed: in
             async with admin_db.transaction() as session:
                 await record_execution(
                     session,
-                    execution_id=f"{_PREFIX}{tag}{i}",  # ids are varchar(30)
-                    toolkit_id=toolkit_id,
-                    trace_id="a" * 32,
-                    started_at=virtual_now,
-                    status=ExecutionStatus.FAILED,
-                    operation=_OPERATION,
-                    actor_id=actor,
-                    actor_type="agent",
-                    credential_id=_CREDENTIAL,
+                    ExecutionRecordInput(
+                        execution_id=f"{_PREFIX}{tag}{i}",  # ids are varchar(30)
+                        toolkit_id=toolkit_id,
+                        trace_id="a" * 32,
+                        started_at=virtual_now,
+                        status=ExecutionStatus.FAILED,
+                        operation=_OPERATION,
+                        actor_id=actor,
+                        actor_type="agent",
+                        credential_id=_CREDENTIAL,
+                    ),
                 )
                 with _statements(admin_db) as captured:
                     await maybe_emit_repeated_failure(

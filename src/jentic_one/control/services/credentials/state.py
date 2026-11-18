@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Final
 
 import jwt as pyjwt
 
@@ -126,6 +128,21 @@ def browser_binding_matches(state: ConnectState, cookie_value: str | None) -> bo
     return hmac.compare_digest(hash_browser_binding(cookie_value), state.browser_binding_hash)
 
 
+_PKCE_INFO: Final = b"jentic-connect-pkce:v1:"
+
+
+def pkce_verifier_for(state_secret: str, nonce: str) -> str:
+    """Derive a deterministic 43-char RFC 7636 PKCE verifier from secret + nonce."""
+    mac = hmac.new(state_secret.encode(), _PKCE_INFO + nonce.encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(mac).rstrip(b"=").decode("ascii")
+
+
+def pkce_challenge_s256(verifier: str) -> str:
+    """Derive the S256 code_challenge from a PKCE verifier (RFC 7636 §4.2)."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
 def generate_nonce() -> str:
     """Generate a cryptographically random nonce for state binding."""
     return secrets.token_urlsafe(24)
@@ -157,6 +174,8 @@ def encode_state(secret: str, state: ConnectState, ttl_seconds: int) -> str:
         claims["bnd"] = state.browser_binding_hash
     if state.browser_host is not None:
         claims["bho"] = state.browser_host
+    if state.pkce:
+        claims["pkc"] = 1
     return issue_jwt(claims, secret, ttl_seconds)
 
 
@@ -180,6 +199,7 @@ def decode_state(secret: str, raw: str) -> ConnectState:
         redirect_uri=claims.get("ruri"),
         browser_binding_hash=claims.get("bnd"),
         browser_host=claims.get("bho"),
+        pkce=claims.get("pkc") == 1,
     )
 
 
@@ -188,12 +208,13 @@ async def consume_callback_state(
 ) -> ConnectState:
     """Decode + verify + one-shot-consume a callback state JWT.
 
-    This is the shared prologue for every OAuth callback path — the
-    standalone-credential ``ConnectService.complete`` and the
-    connect-session ``ConnectSessionService.complete_from_callback``
-    both call through here so replay protection stays in one place.
-    Introducing a second callback path without this helper is how the
-    session-mode nonce-consume was originally missed.
+    Every OAuth callback path must invoke this helper before acting on
+    callback data — currently ``ConnectService.complete``,
+    ``ConnectSessionService.complete_from_callback``, and
+    ``ConnectSessionService.mark_terminal_from_callback``. Shared
+    signature and browser-binding checks plus atomic one-shot nonce
+    consumption prevent a callback path from bypassing replay
+    protection.
 
     ``browser_binding`` is the value of the browser-binding cookie the
     callback request carried (``None`` when absent).
@@ -211,10 +232,11 @@ async def consume_callback_state(
         claim is refused. Runs before the nonce is consumed, so a refused
         callback writes nothing and the flow stays completable from the
         right browser.
-      * Nonce not previously consumed → ``StateReplayedError``. Atomic
-        via ``ConnectNonceRepository.consume`` (Postgres
+      * Nonce already consumed → ``StateReplayedError``. Atomic via
+        ``ConnectNonceRepository.consume`` (Postgres
         ``ON CONFLICT DO NOTHING`` on the ``nonce`` unique index) —
-        two concurrent callbacks race on the DB, only one wins.
+        two concurrent callbacks race on the DB, only one wins, and the
+        first successful consumption returns the decoded state.
     """
     state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
     state = decode_state(state_secret, raw_state)

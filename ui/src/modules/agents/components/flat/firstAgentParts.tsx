@@ -5,7 +5,15 @@
  * install hint, and the arrived agent's details with its next action
  * (Approve / Deny, then its first API).
  */
-import { useEffect, useId, useReducer, useState, type ReactNode, type RefObject } from 'react';
+import {
+	useEffect,
+	useId,
+	useMemo,
+	useReducer,
+	useState,
+	type ReactNode,
+	type RefObject,
+} from 'react';
 import { AnimatePresence, motion, useReducedMotionConfig, type Transition } from 'framer-motion';
 import {
 	Award,
@@ -40,7 +48,7 @@ import {
 } from '@/shared/ui';
 import { useCopyToClipboard } from '@/shared/lib/useCopyToClipboard';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
-import { smartInitials } from '@/shared/lib/smartInitials';
+import { useFleetInitials } from '@/shared/hooks';
 import { ROUTES } from '@/shared/app/routes';
 import { AGENTS_WRITE, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import {
@@ -850,7 +858,8 @@ export function AgentDetails({
 
 	// The initials the fleet's strip and card will give it, so the avatar here
 	// is the one it keeps.
-	const initials = smartInitials([agent]).get(agent.id);
+	const roster = useMemo(() => [agent], [agent]);
+	const initials = useFleetInitials(roster).get(agent.id);
 
 	return (
 		<div data-testid="arrival-card">

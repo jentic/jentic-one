@@ -7,12 +7,8 @@ package clictx
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
@@ -56,17 +52,11 @@ func caCertHTTPClient(path string) (*http.Client, error) {
 	if path == "" {
 		return nil, nil
 	}
-	pem, err := os.ReadFile(path) //nolint:gosec // path is the operator-configured ca_cert_path from their own config.
+	tr, err := planeTransport(path)
 	if err != nil {
-		return nil, fmt.Errorf("ca_cert_path %q is set but could not be read: %w", path, err)
+		return nil, err
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("ca_cert_path %q contains no usable PEM certificate", path)
-	}
-	return &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
-	}, nil
+	return &http.Client{Transport: tr}, nil
 }
 
 // ErrNoConfig is returned by the client constructors when the machine has no
@@ -144,7 +134,7 @@ func AuthHTTPClient(ctx context.Context, caCertPath string) (*http.Client, error
 	// to point the CLI (headers attached) somewhere else. Surface it as the
 	// final response; each call site classifies it (the mint's classifier, the
 	// broker leg's coded error, the skills fetch's bundled fallback).
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	hc.CheckRedirect = NoFollowRedirects
 	if hook := transportHookFrom(ctx); hook != nil {
 		base := hc.Transport
 		if base == nil {
@@ -169,20 +159,28 @@ func hookedPlaneHTTPClient(ctx context.Context) (*http.Client, error) {
 	return AuthHTTPClient(ctx, state.CACertPath)
 }
 
+func controlConfig(ctx context.Context) (client.Config, error) {
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return client.Config{}, err
+	}
+	cfg, err := configFromState(state)
+	if err != nil {
+		return client.Config{}, err
+	}
+	applyTransportHook(ctx, &cfg)
+	return cfg, nil
+}
+
 // GetControlClient is the single constructor every Control Plane command uses. It
 // pulls the ActiveState the root interceptor injected and delegates to the SDK, so
 // token state, API-key credentials, and the file-less override are all handled
 // transparently and identically to a third-party SDK consumer.
 func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error) {
-	state, err := stateForClient(FromContext(ctx))
+	cfg, err := controlConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := configFromState(state)
-	if err != nil {
-		return nil, err
-	}
-	applyTransportHook(ctx, &cfg)
 	return client.NewControl(cfg)
 }
 
@@ -191,14 +189,9 @@ func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error)
 // chain as GetControlClient, so the passthrough inherits auth, session, retry, and
 // the transport guard from the SDK rather than re-implementing them.
 func GetControlRawClient(ctx context.Context) (*control.Client, error) {
-	state, err := stateForClient(FromContext(ctx))
+	cfg, err := controlConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := configFromState(state)
-	if err != nil {
-		return nil, err
-	}
-	applyTransportHook(ctx, &cfg)
 	return client.NewControlRaw(cfg)
 }

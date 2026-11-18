@@ -92,14 +92,6 @@ class UserNotAdmittedError(AuthServiceError):
         self.reason = reason
 
 
-class TokenExpiredError(AuthServiceError):
-    """Raised when a token has expired."""
-
-    def __init__(self, token_id: str) -> None:
-        super().__init__(f"Token '{token_id}' has expired")
-        self.token_id = token_id
-
-
 class RegistrationAccessDeniedError(AuthServiceError):
     """Raised when a registration access token is invalid or expired."""
 
@@ -149,6 +141,17 @@ class PermissionNotGrantableError(AuthServiceError):
 
     def __init__(self, permission: str) -> None:
         super().__init__(f"Permission '{permission}' cannot be granted by the caller")
+        self.permission = permission
+
+
+class AgentPermissionExceedsOwnerError(AuthServiceError):
+    """Raised when a permission to grant to an agent exceeds its owner's permission ceiling."""
+
+    def __init__(self, permission: str) -> None:
+        super().__init__(
+            f"Permission '{permission}' cannot be granted to this agent because "
+            "its owner does not hold it"
+        )
         self.permission = permission
 
 

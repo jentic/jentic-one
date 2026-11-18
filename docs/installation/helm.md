@@ -450,97 +450,32 @@ later rollback still decrypts what was written under the new key)
 
 ## Scaling and HA
 
-> **Warning: the default `memory` shared-state backend is bounded and fails
-> closed.**
-> `state.backend: memory` keeps `Idempotency-Key`
-> records, rate-limit buckets, circuit-breaker counters and the auth
-> surface's single-use markers in the process, with a fixed budget per key
-> namespace. It never evicts a live entry. When a namespace (or one caller's
-> share of it) is full, the request that needed the write gets a **503**
-> (`idempotency_unavailable` for an `Idempotency-Key` request) with a
-> `Retry-After` of when its earliest entry expires.
->
-> With the defaults (`broker.idempotency.ttl_s` unset, which is a 1 h replay
-> window on memory and 24 h on any other
-> backend; the `idem` budget of 128 MiB; about
-> 1.2 KiB budgeted per record with typical response headers), one broker
-> process sustains about **30 idempotent requests per second**, and about
-> **3 per second per caller**, because each caller may hold at most 10% of
-> the budget. Above that, `Idempotency-Key` requests get 503. Stored
-> response bodies have their own 32 MiB `idem-body` budget. Past about
-> 5 req/s of 1 KiB bodies, replays omit the body
-> (`Jentic-Idempotency-Body-Omitted: true`) but requests are not refused.
-> The ceiling is `min(max_entries, max_bytes / record_bytes) / ttl_s`, where
-> `record_bytes` is about 1000 bytes plus the response headers. A record keeps
-> at most 512 bytes of headers, `Content-Type`, `Location`, `ETag`,
-> `Content-Location` and `Retry-After` first, so a replay may lack the
-> others.
->
-> Every other namespace defaults to 16 MiB, and all namespaces of the
-> backend together are capped at
-> `state.memory.max_total_bytes` (192 MiB), refused the
-> same way. The budgets track real memory to within about 15% (measured
-> with `tracemalloc`), so on the defaults the broker's state stays under
-> about 192 MiB on top of a ~130 MiB process baseline, which the broker
-> chart's 512Mi memory limit holds. The broker always runs as its own
-> process. A process builds one such backend, shared by every surface it
-> serves, so in the combined app the auth and control surfaces share one
-> backend and the cap covers the whole process.
->
-> The local login page stores one CSRF nonce per page load in `login-csrf`
-> (16 MiB, about 18,600 nonces of about 900 bytes for their 5-minute TTL).
-> Each client, an IPv4 address or an IPv6 /64, may hold 2% of it, about 370
-> nonces: twice what the default authorize rate limit lets one client network
-> request in that time. A client flooding the page gets 503 with `Retry-After` while
-> other clients still sign in; a flood spread over about 50 or more networks
-> at once (one IPv6 /56 alone holds 256 /64s) can still fill it, which a
-> shared backend or a larger budget absorbs. Behind a reverse proxy, list it in
-> `auth.oauth_rate_limit.trusted_proxies`, or every client shares the
-> proxy's address and its share.
->
-> To raise it: raise `state.memory.namespaces.idem`
-> (and its `max_owner_share`) together with `max_total_bytes`, or lower
-> `broker.idempotency.ttl_s`. Raise the container memory limit by at least
-> as much as you raise the budgets.
+The general rules — one process per surface on the default `memory`
+shared-state backend, its bounded budgets, container memory and connection-pool
+sizing — are in [Scaling and tuning](../operations/scaling-and-tuning.md).
+When the memory backend's `idem` namespace is full, `Idempotency-Key` calls get
+a `503`; at the defaults one broker process sustains about 30 idempotent
+requests per second, about 3 per caller. What follows is how they map onto the
+chart.
 
-Every subchart exposes `replicas` and `resources` in its values (only the
-gateway's `replicas` may usefully go above 1 — see below). The defaults are
-sized for evaluation, not load: registry/control request 100m/128Mi with a
-500m/256Mi limit, the broker requests 100m/256Mi with a 500m/512Mi limit (its
-default `memory` shared-state budgets, above), and app/admin request 256Mi
-with a 1Gi limit. The app's floor is real, not a hint: it boots at roughly 150Mi RSS, and every concurrent password or
-OAuth client-secret hash or verification adds 64Mi (argon2id with
-`memory_cost=65536`). Concurrent argon2 operations are capped per process at
-`admin.auth.argon2_max_concurrency` (`JENTIC__ADMIN__AUTH__ARGON2_MAX_CONCURRENCY`,
-default `4`, so `4 × 64Mi = 256Mi` peak argon2 memory); callers beyond the
-cap wait up to `admin.auth.argon2_acquire_timeout_s` (default `5.0`s) for a
-slot and then get a `503` with `Retry-After` instead of allocating another
-64Mi buffer. Together with the ~150Mi process baseline and the `memory`
-shared-state backend (`state.memory.max_total_bytes`, 192Mi budgeted / ~220Mi
-real), the default concurrency of 4 fits inside the 1Gi limit with headroom.
-Do not set the app's memory limit below 512Mi, and if you raise
-`admin.auth.argon2_max_concurrency`, raise the container memory limit by at
-least `64Mi` per additional slot (`baseline + state.memory.max_total_bytes +
-64Mi × argon2_max_concurrency`).
+Every subchart exposes `replicas` and `resources` in its values. The defaults
+are sized for evaluation, not load: registry/control request 100m/128Mi with a
+500m/256Mi limit, the broker requests 100m/256Mi with a 500m/512Mi limit
+(enough for its default shared-state budgets), and app/admin request
+100m/256Mi with a 500m/1Gi limit (enough for the shared-state budgets plus the
+default four concurrent argon2 hashes). Do not set the app's memory limit below
+512Mi; raising `state.memory.*` budgets or `admin.auth.argon2_max_concurrency`
+(set through `extraEnv`) means raising the memory limit with it, by the
+amounts in [container memory](../operations/scaling-and-tuning.md#container-memory).
 
-**OSS supports one process per surface.** The app (the combined process,
-whose auth and control surfaces keep shared state), control and broker keep their rate-limit
-buckets, circuit-breaker counters, `Idempotency-Key` records and the auth
-surface's OAuth rate limiters and consent-nonce anti-replay in the process,
-on the `memory` shared-state backend. A second replica of one of them gets
-its own copy of that state, so rate limits multiply, a replay can be
-re-executed on the other replica, and a consent handle can be redeemed
-twice. Registry and admin keep no such state today, but multi-replica runs
-of them are not tested either. Keep `replicas: 1` on every surface except
-the gateway (a stateless proxy); the chart prints a warning at
-install/upgrade time when any other surface asks for more. Multi-process
-shared state comes from a backend an extension registers with
-`register_state_backend`
-([extending-jentic-one.md](../development/extending-jentic-one.md)) and
-selects with `state.backend` (`JENTIC__STATE__BACKEND` via `extraEnv`); the
-built-in `redis` backend is deprecated, needs the optional `[redis]` extra
-that the published `ghcr.io/jentic/jentic-one-app` image does **not**
-include, and will be removed.
+**Keep `replicas: 1` on every surface except the gateway** (a stateless
+proxy); the chart prints a warning at install/upgrade time when any other
+surface asks for more. Registry and admin keep no per-process state, but
+multi-replica runs of them are not tested either. A shared-state backend
+registered by an extension is selected with `state.backend`
+(`JENTIC__STATE__BACKEND` via `extraEnv`); the published
+`ghcr.io/jentic/jentic-one-app` image does **not** include the deprecated
+`redis` backend's `[redis]` extra.
 
 - **Broker** — scale up rather than out: raise the chart's `broker.resources`
   and the broker's `broker.resilience.max_in_flight` config key

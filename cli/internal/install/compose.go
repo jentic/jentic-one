@@ -799,14 +799,20 @@ func migrateArgs(composePath string) []string {
 		"python", "-m", "jentic_one.migrations.run")
 }
 
-// ComposeCreateAdmin runs the one-time first-run admin creation inside a
-// one-shot app container (`docker compose run --rm -T app python -m jentic_one
-// create-admin`). The password is passed on the child's stdin (never argv) so
-// it does not leak into the process table or shell history. -T keeps the run
-// non-interactive; the Python side reads the password from stdin when not a TTY.
-func ComposeCreateAdmin(w io.Writer, composePath, email, password string) error {
-	args := composeArgs(composePath, "run", "--rm", "-T", composeServiceApp,
-		"python", "-m", "jentic_one", "create-admin", "--email", email)
+// adminCommand builds the `python -m jentic_one <verb> --email <email>` argv
+// shared by the Docker compose and local venv admin helpers.
+func adminCommand(verb, email string) []string {
+	return []string{"-m", "jentic_one", verb, "--email", email}
+}
+
+// composeAdmin runs a one-shot `python -m jentic_one <verb>` inside the app
+// container with the password piped on stdin (never argv). It uses
+// exec.Command rather than exec.CommandContext because a SIGKILL of the
+// `docker compose run` client on ctx cancel can orphan the one-shot container;
+// letting SIGINT reach the process group is the safer teardown.
+func composeAdmin(w io.Writer, composePath, verb, email, password string) error {
+	runArgs := append([]string{"run", "--rm", "-T", composeServiceApp, "python"}, adminCommand(verb, email)...)
+	args := composeArgs(composePath, runArgs...)
 	cmd := exec.Command("docker", args...) //nolint:gosec // composePath/email are CLI-managed; password is piped via stdin.
 	cmd.Stdin = strings.NewReader(password + "\n")
 	cmd.Stdout = w
@@ -814,16 +820,31 @@ func ComposeCreateAdmin(w io.Writer, composePath, email, password string) error 
 	return cmd.Run()
 }
 
-// VenvCreateAdmin runs first-run admin creation against a local (non-Docker)
-// install by invoking the venv Python directly. The password is piped on stdin
-// for the same reasons as ComposeCreateAdmin.
-func VenvCreateAdmin(w io.Writer, venvPython, configPath, email, password string) error {
-	cmd := exec.Command(venvPython, "-m", "jentic_one", "create-admin", "--email", email) //nolint:gosec // venvPython/configPath are CLI-managed under JENTIC_HOME; password is piped via stdin.
+// venvAdmin runs `python -m jentic_one <verb>` against a local (non-Docker)
+// install with the password piped on stdin (never argv).
+func venvAdmin(w io.Writer, venvPython, configPath, verb, email, password string) error {
+	cmd := exec.Command(venvPython, adminCommand(verb, email)...) //nolint:gosec // venvPython/configPath are CLI-managed under JENTIC_HOME; password is piped via stdin.
 	cmd.Env = append(os.Environ(), "JENTIC_CONFIG_FILE="+configPath)
 	cmd.Stdin = strings.NewReader(password + "\n")
 	cmd.Stdout = w
 	cmd.Stderr = w
 	return cmd.Run()
+}
+
+// ComposeCreateAdmin runs the one-time first-run admin creation inside a
+// one-shot app container (`docker compose run --rm -T app python -m jentic_one
+// create-admin`). The password is passed on the child's stdin (never argv) so
+// it does not leak into the process table or shell history. -T keeps the run
+// non-interactive; the Python side reads the password from stdin when not a TTY.
+func ComposeCreateAdmin(w io.Writer, composePath, email, password string) error {
+	return composeAdmin(w, composePath, "create-admin", email, password)
+}
+
+// VenvCreateAdmin runs first-run admin creation against a local (non-Docker)
+// install by invoking the venv Python directly. The password is piped on stdin
+// for the same reasons as ComposeCreateAdmin.
+func VenvCreateAdmin(w io.Writer, venvPython, configPath, email, password string) error {
+	return venvAdmin(w, venvPython, configPath, "create-admin", email, password)
 }
 
 // ComposeResetPassword sets a temporary password for an existing user inside a
@@ -831,23 +852,12 @@ func VenvCreateAdmin(w io.Writer, venvPython, configPath, email, password string
 // password is piped on the child's stdin (never argv) for the same reasons as
 // ComposeCreateAdmin.
 func ComposeResetPassword(w io.Writer, composePath, email, password string) error {
-	args := composeArgs(composePath, "run", "--rm", "-T", composeServiceApp,
-		"python", "-m", "jentic_one", "reset-password", "--email", email)
-	cmd := exec.Command("docker", args...) //nolint:gosec // composePath/email are CLI-managed; password is piped via stdin.
-	cmd.Stdin = strings.NewReader(password + "\n")
-	cmd.Stdout = w
-	cmd.Stderr = w
-	return cmd.Run()
+	return composeAdmin(w, composePath, "reset-password", email, password)
 }
 
 // VenvResetPassword sets a temporary password for an existing user against a
 // local (non-Docker) install by invoking the venv Python directly. The password
 // is piped on stdin for the same reasons as ComposeResetPassword.
 func VenvResetPassword(w io.Writer, venvPython, configPath, email, password string) error {
-	cmd := exec.Command(venvPython, "-m", "jentic_one", "reset-password", "--email", email) //nolint:gosec // venvPython/configPath are CLI-managed under JENTIC_HOME; password is piped via stdin.
-	cmd.Env = append(os.Environ(), "JENTIC_CONFIG_FILE="+configPath)
-	cmd.Stdin = strings.NewReader(password + "\n")
-	cmd.Stdout = w
-	cmd.Stderr = w
-	return cmd.Run()
+	return venvAdmin(w, venvPython, configPath, "reset-password", email, password)
 }

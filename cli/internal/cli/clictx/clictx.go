@@ -48,8 +48,9 @@ type ActiveState struct {
 	// pins pretty rendering even when stdout is piped, while default-human
 	// keeps the agent-friendly non-TTY→JSON heuristic.
 	ModeExplicit bool
-	// ThemeName is the resolved config theme name fed to theme.ResolveTheme (the
-	// --theme/JENTIC_THEME overrides are applied by the theme resolver, not here).
+	// ThemeName is the resolved config theme name fed to
+	// theme.ResolveThemeWithName (the --theme/JENTIC_THEME overrides are applied
+	// by the theme resolver, not here).
 	ThemeName string
 }
 

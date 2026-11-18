@@ -1832,6 +1832,33 @@
       "authenticated": true,
       "group": "Any authenticated actor",
       "implied_permissions": {
+        "credentials:connect": [],
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rebaseConnectSession",
+      "path": "/connect-sessions/{session_id}:rebase",
+      "public": false,
+      "required_permissions": [
+        "credentials:connect",
+        "credentials:write"
+      ],
+      "summary": "Resolve an open edit against the binding as it is now",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
         "credentials:write": [
           "credentials:connect",
           "credentials:read"
@@ -2189,6 +2216,30 @@
         "credentials:write"
       ],
       "summary": "Begin OAuth connect flow",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:read": [],
+        "owner:credentials:read": []
+      },
+      "method": "GET",
+      "operation_id": "getConnectFlowStatus",
+      "path": "/credentials/{credential_id}/connect/{flow_id}/status",
+      "public": false,
+      "required_permissions": [
+        "credentials:read",
+        "owner:credentials:read"
+      ],
+      "summary": "Read OAuth connect flow status",
       "surface": "credentials",
       "typical_caller": "any"
     },
@@ -4857,5 +4908,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 174
+  "total": 176
 }

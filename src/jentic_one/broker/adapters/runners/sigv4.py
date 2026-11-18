@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 
 from jentic_one.broker.adapters.runners.base import capabilities_of
+from jentic_one.broker.core.errors import UpstreamUrlNotAllowedError
 from jentic_one.shared.aws.sigv4 import sign_request
 from jentic_one.shared.broker.execution import (
     RunnerRequest,
@@ -29,6 +30,7 @@ from jentic_one.shared.broker.execution import (
     UpstreamRunner,
 )
 from jentic_one.shared.broker.protocols import RunnerCapabilities
+from jentic_one.shared.url_validation import UpstreamUrlInvalidError, reject_url_userinfo
 
 
 class SigV4SigningRunner(UpstreamRunner):
@@ -47,6 +49,13 @@ class SigV4SigningRunner(UpstreamRunner):
 
     @staticmethod
     def _signed(request: RunnerRequest) -> RunnerRequest:
+        try:
+            reject_url_userinfo(request.url)
+        except UpstreamUrlInvalidError as exc:
+            raise UpstreamUrlNotAllowedError(
+                detail=str(exc),
+                type="invalid_upstream_url",
+            ) from exc
         if request.signing is None:
             return request
         sig_headers = sign_request(

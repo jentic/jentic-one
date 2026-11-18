@@ -19,7 +19,10 @@ class UpstreamClientConfig(BaseModel):
     deadline is owned by the response-streaming guard, not here.
     """
 
-    connect_timeout_s: float = 5.0
+    connect_timeout_s: float = Field(
+        default=5.0,
+        description="Timeout (seconds) for establishing an upstream connection.",
+    )
     read_timeout_s: float = Field(
         default=30.0,
         description=(
@@ -30,46 +33,93 @@ class UpstreamClientConfig(BaseModel):
             "deadline."
         ),
     )
-    write_timeout_s: float = 30.0
-    pool_timeout_s: float = 2.0
-    # Negotiate HTTP/2 via ALPN, falling back to 1.1 when the upstream doesn't
-    # offer it (safe default). Requires the `h2` package. Some upstreams (APNs,
-    # certain CDNs) refuse 1.1; a deployment that must pin 1.1 sets this false.
-    http2: bool = True
-    max_connections: int = 200
-    max_keepalive: int = 50
-    # httpx has no native per-host limit; enforced with a per-host semaphore
-    # bulkhead in the runner so one slow upstream can't drain the whole pool.
-    max_per_host: int = 50
-    # Global default / fallback request-body cap.
-    max_request_bytes: int = 10 * 1024 * 1024
-    # Per-Content-Type overrides, matched most-specific-first: exact
-    # ("application/json") then wildcard ("audio/*") then the global default.
-    # A missing/unknown type uses the global default (never unbounded).
+    write_timeout_s: float = Field(
+        default=30.0,
+        description="Per-write timeout (seconds) while sending a request body upstream.",
+    )
+    pool_timeout_s: float = Field(
+        default=2.0,
+        description=(
+            "How long (seconds) a call waits for a free connection from the shared "
+            "pool before failing."
+        ),
+    )
+    # Requires the ``h2`` package.
+    http2: bool = Field(
+        default=True,
+        description=(
+            "Negotiate HTTP/2 via ALPN, falling back to HTTP/1.1 when the upstream "
+            "does not offer it. Some upstreams (APNs, certain CDNs) refuse 1.1; set "
+            "false only to pin HTTP/1.1."
+        ),
+    )
+    max_connections: int = Field(
+        default=200,
+        description="Maximum open upstream connections in the shared client pool.",
+    )
+    max_keepalive: int = Field(
+        default=50,
+        description="Maximum idle keep-alive connections the shared pool retains.",
+    )
+    # httpx has no native per-host limit, so the runner enforces this with a
+    # per-host semaphore bulkhead.
+    max_per_host: int = Field(
+        default=50,
+        description=(
+            "Maximum concurrent calls to one upstream host, so one slow upstream "
+            "cannot drain the whole connection pool."
+        ),
+    )
+    max_request_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        description=(
+            "Default cap (bytes) on an execute request body, for content types "
+            "without an entry in ``max_request_bytes_by_type``; over it the broker "
+            "answers 413."
+        ),
+    )
     max_request_bytes_by_type: dict[str, int] = Field(
         default_factory=lambda: {
             "application/json": 2 * 1024 * 1024,
             "multipart/form-data": 50 * 1024 * 1024,
-        }
+        },
+        description=(
+            "Per-Content-Type request-body caps (bytes), matched most specific "
+            "first: exact type (``application/json``), then wildcard "
+            "(``audio/*``), then ``max_request_bytes``. A missing or unknown type "
+            "gets the default, never unbounded."
+        ),
     )
-    # Response-side counterpart to the request-body cap. The runner
-    # enforces this *mid-stream* while reading the upstream body, aborting the
-    # connection the moment it's exceeded so a hostile/large upstream can't OOM
-    # the instance. 0 disables the cap (unbounded — not recommended).
-    max_response_bytes: int = 10 * 1024 * 1024
-    # Stream the upstream response straight through to the client instead of
-    # whole-buffering it. On by default; applies only to the sync
-    # proxy path with no Idempotency-Key (idempotent requests + the async worker
-    # keep buffering, since replay/persistence need the full body). Disable to
-    # force the buffered path everywhere.
-    stream_passthrough_enabled: bool = True
-    # Whole-stream transfer deadline for a streamed response. Unlike
-    # ``read_timeout_s`` (a between-bytes gap), this bounds the *total* time the
-    # body may take to transfer, so a steady trickle — or a slow client draining
-    # the proxied body — can't pin the upstream connection/pool slot forever. The
-    # stream is aborted (and the upstream torn down) when it's exceeded. 0
-    # disables the deadline.
-    transfer_deadline_s: float = 300.0
+    # Enforced mid-stream so a hostile or oversized upstream cannot OOM the instance.
+    max_response_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        description=(
+            "Cap (bytes) on an upstream response body, enforced while reading: the "
+            "connection is aborted as soon as it is exceeded. 0 disables the cap "
+            "(unbounded; not recommended)."
+        ),
+    )
+    # Keyed and async executions buffer because replay and persistence need the
+    # full body.
+    stream_passthrough_enabled: bool = Field(
+        default=True,
+        description=(
+            "Stream upstream responses straight through to the client instead of "
+            "buffering them. Applies to synchronous executions only; async "
+            "executions always buffer, and so do executions with an "
+            "``Idempotency-Key`` when ``broker.idempotency.enabled`` is true. "
+            "Off forces buffering everywhere."
+        ),
+    )
+    transfer_deadline_s: float = Field(
+        default=300.0,
+        description=(
+            "Total time (seconds) a streamed response body may take to transfer, "
+            "so a steady trickle or a slow-draining client cannot hold an upstream "
+            "connection forever; the stream is aborted when it is exceeded. Unlike "
+            "``read_timeout_s`` this bounds the whole body. 0 disables the deadline."
+        ),
+    )
 
 
 class RateLimitConfig(BaseModel):
@@ -82,11 +132,25 @@ class RateLimitConfig(BaseModel):
     per-instance, with Redis it is cluster-wide — no call-site change.
     """
 
-    enabled: bool = True
-    # Sustained refill rate, requests-per-minute. ``burst`` is the bucket
-    # capacity (max instantaneous spend) and the ``RateLimit-Limit`` value.
-    default_rpm: int = 600
-    burst: int = 100
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Rate-limit broker executions per caller; over the limit the broker "
+            "answers 429 with ``RateLimit-*`` and ``Retry-After`` headers. "
+            "Per instance on the memory state backend, cluster-wide on Redis."
+        ),
+    )
+    default_rpm: int = Field(
+        default=600,
+        description="Sustained refill rate of each caller's token bucket, in requests per minute.",
+    )
+    burst: int = Field(
+        default=100,
+        description=(
+            "Token-bucket capacity: the most requests a caller can spend at once. "
+            "Also the ``RateLimit-Limit`` header value."
+        ),
+    )
 
 
 class CircuitBreakerConfig(BaseModel):
@@ -99,14 +163,40 @@ class CircuitBreakerConfig(BaseModel):
     ``would_block`` but still calls the upstream (safe-rollout dry run).
     """
 
-    enabled: bool = True
-    enforcement_mode: Literal["blocking", "observation"] = "blocking"
-    failure_ratio: float = 0.5
-    # Minimum calls in the window before the ratio can trip — avoids opening on
-    # a single early failure (1/1 = 100% ratio).
-    min_calls: int = 10
-    window_s: int = 30
-    cooldown_s: int = 15
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Track upstream failures per host and fast-fail calls to a host whose "
+            "circuit is open (5xx responses and transport errors count as failures)."
+        ),
+    )
+    enforcement_mode: Literal["blocking", "observation"] = Field(
+        default="blocking",
+        description=(
+            "``blocking`` fast-fails calls while the circuit is open; "
+            "``observation`` still calls the upstream and only counts "
+            "``circuit_would_block_total``, to validate thresholds before blocking."
+        ),
+    )
+    failure_ratio: float = Field(
+        default=0.5,
+        description="Failure fraction within ``window_s`` at which the circuit opens.",
+    )
+    min_calls: int = Field(
+        default=10,
+        description=(
+            "Minimum calls in the window before the failure ratio can open the "
+            "circuit, so a single early failure does not trip it."
+        ),
+    )
+    window_s: int = Field(
+        default=30,
+        description="Rolling window (seconds) over which failures and totals are counted.",
+    )
+    cooldown_s: int = Field(
+        default=15,
+        description="Seconds an open circuit fast-fails calls before the upstream is tried again.",
+    )
 
 
 class RetryConfig(BaseModel):
@@ -122,28 +212,54 @@ class RetryConfig(BaseModel):
     breaker *inside*); the whole loop is bounded by the request deadline.
     """
 
-    enabled: bool = False
-    # Total attempts including the first (so 3 ⇒ initial + up to 2 retries).
-    max_attempts: int = 3
-    # Exponential backoff: ``base_backoff_s * 2**(attempt-1)``, capped at
-    # ``max_backoff_s``, then jittered (full jitter) and clamped to the deadline.
-    base_backoff_s: float = 0.2
-    max_backoff_s: float = 5.0
-    # Retry these upstream status codes (transient overload / rate limit). An
-    # upstream ``Retry-After`` on these is honored (capped at the deadline).
-    retry_statuses: list[int] = Field(default_factory=lambda: [429, 502, 503, 504])
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Retry failed upstream attempts when safe: connect failures for any "
+            "method, post-send failures (read timeouts, ``retry_statuses``) only "
+            "for idempotent HTTP methods. Bounded by the request deadline. "
+            "Streamed executions are never retried, and streaming is the default "
+            "synchronous path while "
+            "``broker.resilience.upstream.stream_passthrough_enabled`` is true."
+        ),
+    )
+    max_attempts: int = Field(
+        default=3,
+        description=(
+            "Total attempts including the first (3 = the initial call plus up to 2 retries)."
+        ),
+    )
+    base_backoff_s: float = Field(
+        default=0.2,
+        description=(
+            "Base delay (seconds) of the exponential backoff "
+            "``base_backoff_s * 2**(attempt-1)``, capped at ``max_backoff_s``, "
+            "then fully jittered and clamped to the request deadline."
+        ),
+    )
+    max_backoff_s: float = Field(
+        default=5.0,
+        description="Cap (seconds) on one retry backoff before jitter.",
+    )
+    retry_statuses: list[int] = Field(
+        default_factory=lambda: [429, 502, 503, 504],
+        description=(
+            "Upstream status codes treated as transient and retried; an upstream "
+            "``Retry-After`` on them is honoured, capped at the request deadline."
+        ),
+    )
 
 
 class EgressConfig(BaseModel):
     """Outbound SSRF/egress policy for upstream calls.
 
-    Defaults are **strict** (both lists empty) — identical to the historical
-    hard-coded behaviour: every private range and the cloud-metadata host are
-    blocked. The two allowlists exist because the broker is frequently installed
-    *inside* a corporate network to bridge to internal/legacy APIs, where the
-    default block is a false positive. Both are opt-in, auditable operator
-    decisions; the cloud-metadata IP is a **hard, non-overridable** deny so a
-    credential-stealing SSRF can never be allowlisted by accident.
+    Defaults are **strict** (both lists empty): every private range and the
+    cloud-metadata host are blocked. The two allowlists exist because the
+    broker is frequently installed *inside* a corporate network to bridge to
+    internal/legacy APIs, where the default block is a false positive. Both are
+    opt-in, auditable operator decisions; the cloud-metadata IP is a **hard,
+    non-overridable** deny so a credential-stealing SSRF can never be
+    allowlisted by accident.
     """
 
     allowed_private_subnets: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(

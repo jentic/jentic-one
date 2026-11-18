@@ -191,3 +191,58 @@ func TestConfigCredentials_ThreadsHTTPClient(t *testing.T) {
 		t.Error("a nil Config.HTTPClient must stay nil (auth falls back to its default exchange client)")
 	}
 }
+
+type endlessVersionBody struct {
+	prefix []byte
+	read   int64
+	max    int64
+}
+
+func (b *endlessVersionBody) Read(p []byte) (int, error) {
+	if len(b.prefix) > 0 {
+		n := copy(p, b.prefix)
+		b.prefix = b.prefix[n:]
+		b.read += int64(n)
+		return n, nil
+	}
+	if b.read >= b.max {
+		n := copy(p, `"}`)
+		b.read += int64(n)
+		return n, io.EOF
+	}
+	for i := range p {
+		p[i] = 'a'
+	}
+	b.read += int64(len(p))
+	return len(p), nil
+}
+
+// TestProbeServerVersion_BoundedDecode verifies that ProbeServerVersion bounds
+// the decoded response body at 1 MiB rather than buffering an unbounded stream.
+func TestProbeServerVersion_BoundedDecode(t *testing.T) {
+	stream := &endlessVersionBody{
+		prefix: []byte(`{"current":"`),
+		max:    2 << 20,
+	}
+	hc := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(stream),
+			Header:     http.Header{"Content-Type": {"application/json"}},
+		}, nil
+	})}
+	raw, err := NewControlRaw(Config{
+		ControlBaseURL:      "https://control.example",
+		InjectedBearerToken: "tok",
+		HTTPClient:          hc,
+	})
+	if err != nil {
+		t.Fatalf("NewControlRaw: %v", err)
+	}
+	if got, err := ProbeServerVersion(context.Background(), raw); err == nil {
+		t.Fatalf("ProbeServerVersion succeeded on oversized stream (len=%d), want error", len(got))
+	}
+	if stream.read > (1<<20)+4096 {
+		t.Errorf("ProbeServerVersion read %d bytes, want bounded near 1 MiB", stream.read)
+	}
+}

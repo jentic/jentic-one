@@ -127,9 +127,9 @@ jentic --help
   tag, or commit that exists in the repo). If you're building from a
   **private fork**, it means no token was provided (or the token lacks access) —
   create a token with repo read scope and re-run with `GITHUB_TOKEN=...`.
-- **`Found go1.xx but Go 1.26+ is required`** — your system Go is too old. The
+- **`Found go1.xx but Go 1.25+ is required`** — your system Go is too old. The
   script downloads a newer Go automatically; if you'd rather use your own, update
-  Go to 1.26 or newer.
+  Go to 1.25 or newer.
 - **`~/.jentic/bin is not on your PATH`** — the installer appends a guarded
   `export PATH=...` block to your shell profile (`~/.zshrc`/`~/.bashrc`); restart
   your terminal (or `source` the rc file) to pick it up. To use the CLIs in the

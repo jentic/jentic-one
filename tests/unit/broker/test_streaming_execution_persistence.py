@@ -29,7 +29,7 @@ from jentic_one.broker.core.errors import (
 )
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution import service as service_module
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
 )
@@ -331,7 +331,7 @@ async def test_persist_callback_calls_persist_streaming_execution() -> None:
     started_at = datetime.now(UTC)
 
     with patch(
-        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
         await _persist_streaming_outcome(
@@ -378,7 +378,7 @@ async def test_persist_callback_sets_failed_on_upstream_error() -> None:
     started_at = datetime.now(UTC)
 
     with patch(
-        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
         await _persist_streaming_outcome(
@@ -426,7 +426,7 @@ async def test_persist_failure_is_logged_not_raised() -> None:
             actor_id="agent-1",
             actor_type="agent",
         )
-        mock_counter.assert_called_once_with(1, {"reason": "write_error"})
+        mock_counter.assert_called_once_with(1, {"kind": "streaming", "reason": "write_error"})
 
 
 async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() -> None:
@@ -460,7 +460,7 @@ async def test_abandoned_persist_is_counted_and_the_cancellation_propagates() ->
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    mock_counter.assert_called_once_with(1, {"reason": "cancelled"})
+    mock_counter.assert_called_once_with(1, {"kind": "streaming", "reason": "cancelled"})
     (abandoned,) = [e for e in logs if e["event"] == "streaming_execution_persist_abandoned"]
     assert abandoned["execution_id"] == "exec-p-4"
     assert abandoned["trace_id"] == "trace-1"
@@ -888,7 +888,7 @@ async def test_persist_outcome_without_upstream_status_records_failed(cancelled:
     started_at = datetime.now(UTC)
 
     with patch(
-        "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+        "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
         new_callable=AsyncMock,
     ) as mock_persist:
         await _persist_streaming_outcome(
@@ -1044,7 +1044,7 @@ async def test_an_outcome_with_neither_a_status_nor_an_error_records_failed() ->
     with (
         structlog.testing.capture_logs() as logs,
         patch(
-            "jentic_one.broker.web.routers.execute.persist_streaming_execution",
+            "jentic_one.broker.services.execution.streaming_persistence.persist_streaming_execution",
             new_callable=AsyncMock,
         ) as mock_persist,
     ):

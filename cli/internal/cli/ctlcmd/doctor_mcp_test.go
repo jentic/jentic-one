@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
-	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
 )
 
@@ -196,19 +195,20 @@ func TestReadMCPEntriesFindsWrittenConfigs(t *testing.T) {
 	}
 }
 
-// TestDoctorMCPIsolatedEntryMustRunRootOwnedCopy: an isolated (sudo-shim)
-// entry written by an older jentic pins the operator's own install. Even
-// when that file exists, the row warns and points at re-running the
-// isolation step; a plain entry at the same path still passes.
-func TestDoctorMCPIsolatedEntryMustRunRootOwnedCopy(t *testing.T) {
+// TestDoctorMCPSudoShimEntryWarns: a sudo-shim entry left by an older
+// release's MCP isolation step always warns with the reset + setup cleanup
+// path, even when the binary it pins exists; a plain entry at the same path
+// still passes.
+func TestDoctorMCPSudoShimEntryWarns(t *testing.T) {
 	operatorBin := filepath.Join(t.TempDir(), "jentic")
 	if err := os.WriteFile(operatorBin, []byte("#!"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	shim := mcpcfg.Entry{Command: "sudo", Args: []string{"-n", "-H", "-u", "_jentic-codex", operatorBin, "mcp", "--context", "dev"}}
 	d := &doctor{app: testApp(t), ctx: context.Background()}
 	d.checkMCPEntries(validCfg(), []mcpWrittenEntry{
 		writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry(operatorBin, "dev")),
-		writtenEntry(mcpcfg.RuntimeCodex, mcpcfg.SudoShimEntry("_jentic-codex", operatorBin, "dev")),
+		writtenEntry(mcpcfg.RuntimeCodex, shim),
 	})
 	for _, c := range d.checks {
 		switch c.name {
@@ -217,8 +217,8 @@ func TestDoctorMCPIsolatedEntryMustRunRootOwnedCopy(t *testing.T) {
 				t.Errorf("plain entry should pass, got %+v", c)
 			}
 		case "binary (codex)":
-			if c.status != statusWarn || !strings.Contains(c.hint, localagent.ServiceBinaryPath()) {
-				t.Errorf("isolated entry off the root-owned copy should warn with a pointer to it, got %+v", c)
+			if c.status != statusWarn || !strings.Contains(c.hint, "jentic reset") {
+				t.Errorf("sudo-shim entry should warn with the reset pointer, got %+v", c)
 			}
 		}
 	}

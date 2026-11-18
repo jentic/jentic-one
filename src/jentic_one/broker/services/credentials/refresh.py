@@ -14,15 +14,17 @@ expiry.
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import structlog
 
+from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.broker.services.credentials.errors import (
     RefreshInvalidGrantError,
     RefreshTransientError,
+    RefreshUndecryptableError,
 )
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
@@ -31,13 +33,27 @@ from jentic_one.control.services.credentials.providers.base import (
     UnknownProviderError,
 )
 from jentic_one.control.services.credentials.providers.direct_oauth2 import InvalidGrantError
+from jentic_one.control.services.credentials.providers.oauth2 import (
+    parse_oauth_expires_in,
+    true_oauth_expiry,
+)
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import DecryptionError
+from jentic_one.shared.http.idp_client import IDP_DEADLINE_SECONDS
 from jentic_one.shared.redaction import redact_value
+
+_true_expiry = true_oauth_expiry
+
+__all__ = [
+    "TokenRefresher",
+    "parse_oauth_expires_in",
+    "true_oauth_expiry",
+]
 
 logger = structlog.get_logger(__name__)
 
-_sqlite_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+_REFRESH_FLIGHTS: SingleFlight[str] = SingleFlight(max_in_flight=1024)
 
 _DEFAULT_EXPIRY_SKEW_SECONDS = 60
 
@@ -53,8 +69,10 @@ def _is_fresh(expires_at: datetime | None, skew: timedelta, now: datetime) -> bo
 class TokenRefresher:
     """Ensures an OAuth2 access token is fresh before injection.
 
-    Implements single-flight refresh: per-credential advisory lock (Postgres)
-    or asyncio.Lock (SQLite), with double-check after acquiring.
+    Implements single-flight refresh: in-process coalescing via
+    :class:`SingleFlight` ahead of database connection checkout, paired with a
+    per-credential non-blocking advisory lock loop on PostgreSQL (or
+    ``BEGIN IMMEDIATE`` on SQLite) and a double-check under the lock.
     """
 
     def __init__(self, ctx: Context) -> None:
@@ -67,7 +85,11 @@ class TokenRefresher:
         if self._is_valid(resolved, skew):
             return self._ctx.encryption.decrypt(resolved.encrypted_access_token)  # type: ignore[arg-type]
 
-        return await self._refresh_with_lock(resolved, skew, caller)
+        flight_key = f"{id(self._ctx)}:{resolved.credential_id}"
+        return await _REFRESH_FLIGHTS.do(
+            flight_key,
+            lambda: self._refresh_with_lock(resolved, skew, caller),
+        )
 
     def _get_expiry_skew(self, provider_name: str) -> timedelta:
         try:
@@ -94,9 +116,7 @@ class TokenRefresher:
     async def _refresh_sqlite(
         self, resolved: ResolvedCredential, skew: timedelta, caller: str
     ) -> str:
-        lock = _sqlite_locks[resolved.credential_id]
-        async with lock:
-            return await self._refresh_locked(resolved, skew, caller, advisory_lock=False)
+        return await self._refresh_locked(resolved, skew, caller, advisory_lock=False)
 
     async def _refresh_postgres(
         self, resolved: ResolvedCredential, skew: timedelta, caller: str
@@ -111,7 +131,11 @@ class TokenRefresher:
         *,
         advisory_lock: bool,
     ) -> str:
-        """Double-check and refresh while holding the single-flight lock.
+        """Acquire the grant lock, double-check freshness, and shield rotation.
+
+        On PostgreSQL, ``try_acquire_refresh_lock`` polls for the advisory lock
+        and releases the transaction (and pooled connection) before sleeping
+        between attempts, up to ``IDP_DEADLINE_SECONDS``.
 
         ``resolved`` is a snapshot read before the lock, so another holder may
         have refreshed — and rotated the refresh token — in the meantime. The
@@ -129,79 +153,149 @@ class TokenRefresher:
         (``ProviderRegistry.mints_from_account_ref``) mints with no row, from
         ``provider_account_ref``; on any other provider that column is just a
         display name and does not stand in for a grant.
+
+        The rotate-and-persist step runs inside ``asyncio.shield`` on a child
+        task created within the open transaction. If the outer caller is
+        cancelled while the vendor call is in flight, the child task is still
+        awaited before leaving the ``async with`` block so the transaction
+        commits the rotated tokens before unwinding, and ``CancelledError`` is
+        re-raised afterwards.
         """
-        async with self._ctx.control_db.transaction() as session:
-            if advisory_lock:
-                await OAuthTokenRepository.acquire_refresh_lock(session, resolved.credential_id)
-            row = await OAuthTokenRepository.get_by_credential(session, resolved.credential_id)
-            if row is None or row.revoked_at is not None:
-                mints_from_ref = (
-                    row is None
-                    and bool(resolved.provider_account_ref)
-                    and self._ctx.providers.mints_from_account_ref(resolved.provider)
-                )
-                if not mints_from_ref:
-                    logger.warning(
-                        "refresh_grant_missing",
-                        credential_id=resolved.credential_id,
-                        revoked=row is not None,
-                    )
-                    raise RefreshInvalidGrantError(resolved.credential_id)
-                resolved = resolved.model_copy(
-                    update={
-                        "encrypted_access_token": None,
-                        "encrypted_refresh_token": None,
-                        "token_expires_at": None,
-                    }
-                )
-            else:
-                now = datetime.now(UTC)
-                if row.encrypted_access_token and _is_fresh(row.expires_at, skew, now):
-                    return self._ctx.encryption.decrypt(row.encrypted_access_token)
-                # Every encryption draws a fresh nonce, so a ciphertext that
-                # differs from the snapshot's means the row was rewritten after
-                # the snapshot (another holder refreshed, or a reconnect
-                # landed). That token is the newest the vendor issued; use it
-                # until it actually expires rather than refreshing again inside
-                # the skew window, which would burn another rotation (and loop
-                # for tokens whose lifetime is shorter than the skew).
-                if (
-                    row.encrypted_access_token
-                    and row.encrypted_access_token != resolved.encrypted_access_token
-                    and (row.expires_at is None or row.expires_at > now)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + IDP_DEADLINE_SECONDS
+        attempt = 0
+
+        while True:
+            cancelled: asyncio.CancelledError | None = None
+            async with self._ctx.control_db.transaction() as session:
+                if not advisory_lock or await OAuthTokenRepository.try_acquire_refresh_lock(
+                    session, resolved.credential_id
                 ):
-                    return self._ctx.encryption.decrypt(row.encrypted_access_token)
-                resolved = resolved.model_copy(
-                    update={
-                        "encrypted_access_token": row.encrypted_access_token,
-                        "encrypted_refresh_token": row.encrypted_refresh_token,
-                        "token_expires_at": row.expires_at,
-                    }
-                )
+                    row = await OAuthTokenRepository.get_by_credential(
+                        session, resolved.credential_id
+                    )
+                    has_account_ref = bool(resolved.provider_account_ref) and (
+                        self._ctx.providers.mints_from_account_ref(resolved.provider)
+                    )
+                    mints_without_row = False
+                    if row is None or row.revoked_at is not None:
+                        if not (row is None and has_account_ref):
+                            logger.warning(
+                                "refresh_grant_missing",
+                                credential_id=resolved.credential_id,
+                                revoked=row is not None,
+                            )
+                            raise RefreshInvalidGrantError(resolved.credential_id)
+                        mints_without_row = True
+                        resolved = resolved.model_copy(
+                            update={
+                                "encrypted_access_token": None,
+                                "encrypted_refresh_token": None,
+                                "token_expires_at": None,
+                            }
+                        )
+                    else:
+                        now = datetime.now(UTC)
+                        if row.encrypted_access_token and _is_fresh(row.expires_at, skew, now):
+                            return self._ctx.encryption.decrypt(row.encrypted_access_token)
+                        # Every encryption draws a fresh nonce, so a ciphertext that
+                        # differs from the snapshot's means the row was rewritten after
+                        # the snapshot (another holder refreshed, or a reconnect
+                        # landed). That token is the newest the vendor issued; use it
+                        # until it actually expires rather than refreshing again inside
+                        # the skew window, which would burn another rotation (and loop
+                        # for tokens whose lifetime is shorter than the skew).
+                        if (
+                            row.encrypted_access_token
+                            and row.encrypted_access_token != resolved.encrypted_access_token
+                            and (row.expires_at is None or row.expires_at > now)
+                        ):
+                            return self._ctx.encryption.decrypt(row.encrypted_access_token)
+                        if not has_account_ref and (
+                            row.encrypted_refresh_token is None
+                            or not row.encrypted_refresh_token.strip()
+                        ):
+                            logger.warning(
+                                "refresh_grant_missing",
+                                credential_id=resolved.credential_id,
+                                revoked=False,
+                            )
+                            raise RefreshInvalidGrantError(resolved.credential_id)
+                        resolved = resolved.model_copy(
+                            update={
+                                "encrypted_access_token": row.encrypted_access_token,
+                                "encrypted_refresh_token": row.encrypted_refresh_token,
+                                "token_expires_at": row.expires_at,
+                            }
+                        )
 
-            fresh_token = await self._do_refresh(resolved, caller)
+                    task = asyncio.create_task(
+                        self._rotate_and_persist(
+                            session,
+                            resolved,
+                            caller,
+                            mints_without_row=mints_without_row,
+                        )
+                    )
+                    try:
+                        while True:
+                            try:
+                                token = await asyncio.shield(task)
+                                break
+                            except asyncio.CancelledError as exc:
+                                cancelled = exc
+                    except BaseException:
+                        if cancelled is not None:
+                            raise cancelled from None
+                        raise
+                    break
 
-            encrypted_access = self._ctx.encryption.encrypt(fresh_token.access_token)
-            encrypted_refresh = (
-                self._ctx.encryption.encrypt(fresh_token.refresh_token)
-                if fresh_token.refresh_token
-                else None
-            )
-            updated = await OAuthTokenRepository.update_tokens(
-                session,
-                resolved.credential_id,
-                encrypted_access_token=encrypted_access,
-                encrypted_refresh_token=encrypted_refresh,
-                expires_at=fresh_token.expires_at,
-                scope=fresh_token.scope,
-            )
-            if updated is None:
-                logger.error(
-                    "refresh_token_row_missing",
-                    credential_id=resolved.credential_id,
-                )
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise RefreshTransientError(resolved.credential_id, "refresh_lock_timeout")
+            delay = min(0.05 * (2**attempt), remaining)
+            attempt += 1
+            await asyncio.sleep(delay)
 
+        if cancelled is not None:
+            raise cancelled
+        return token
+
+    async def _rotate_and_persist(
+        self,
+        session: Any,
+        resolved: ResolvedCredential,
+        caller: str,
+        *,
+        mints_without_row: bool = False,
+    ) -> str:
+        fresh_token = await self._do_refresh(resolved, caller)
+
+        if mints_without_row:
             return fresh_token.access_token
+
+        encrypted_access = self._ctx.encryption.encrypt(fresh_token.access_token)
+        encrypted_refresh = (
+            self._ctx.encryption.encrypt(fresh_token.refresh_token)
+            if fresh_token.refresh_token
+            else None
+        )
+        updated = await OAuthTokenRepository.update_tokens(
+            session,
+            resolved.credential_id,
+            encrypted_access_token=encrypted_access,
+            encrypted_refresh_token=encrypted_refresh,
+            expires_at=fresh_token.expires_at,
+            scope=fresh_token.scope,
+        )
+        if updated is None:
+            logger.error(
+                "refresh_token_row_missing",
+                credential_id=resolved.credential_id,
+            )
+            raise RefreshInvalidGrantError(resolved.credential_id)
+
+        return fresh_token.access_token
 
     async def _do_refresh(self, resolved: ResolvedCredential, caller: str) -> _RefreshOutcome:
         try:
@@ -212,9 +306,18 @@ class TokenRefresher:
             ) from exc
 
         async def _decrypt_refresh_token() -> str:
-            if resolved.encrypted_refresh_token is None:
-                raise ProviderError("No refresh token available")
-            return self._ctx.encryption.decrypt(resolved.encrypted_refresh_token)
+            if (
+                resolved.encrypted_refresh_token is None
+                or not resolved.encrypted_refresh_token.strip()
+            ):
+                raise InvalidGrantError("No refresh token available")
+            try:
+                plaintext = self._ctx.encryption.decrypt(resolved.encrypted_refresh_token)
+            except DecryptionError as exc:
+                raise RefreshUndecryptableError(resolved.credential_id) from exc
+            if not plaintext or not plaintext.strip():
+                raise InvalidGrantError("No refresh token available")
+            return plaintext
 
         token_view = OAuthTokenView(
             credential_id=resolved.credential_id,
@@ -226,6 +329,8 @@ class TokenRefresher:
 
         try:
             result = await provider.refresh(self._ctx, token=token_view)
+            if not isinstance(result.access_token, str) or not result.access_token.strip():
+                raise ProviderError("Provider refresh returned no access_token")
         except InvalidGrantError as exc:
             logger.warning(
                 "refresh_invalid_grant",
@@ -233,7 +338,7 @@ class TokenRefresher:
                 provider=resolved.provider,
             )
             raise RefreshInvalidGrantError(resolved.credential_id) from exc
-        except (httpx.TimeoutException, httpx.ConnectError, ProviderError) as exc:
+        except (httpx.HTTPError, httpx.InvalidURL, ProviderError) as exc:
             # The exception text (httpx transport message, IdP error body) can
             # quote request material, so only its class reaches the caller; the
             # server-side log keeps a redacted copy for diagnosis. ``from None``

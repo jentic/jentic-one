@@ -79,34 +79,61 @@ export function TruncateWithTooltip({
 	const [pos, setPos] = useState<{ top: number; left: number; host: Element } | null>(null);
 	const tooltipId = useId();
 
-	const open = useCallback(() => {
-		if (!overflows || !ref.current) return;
-		const rect = ref.current.getBoundingClientRect();
+	/** Place the bubble under the trigger, where the trigger is now. */
+	const place = useCallback(() => {
+		const el = ref.current;
+		if (!el) return;
+		const rect = el.getBoundingClientRect();
 		// Keep the 320px bubble on screen near the right edge.
 		const left = Math.max(8, Math.min(rect.left, window.innerWidth - 328));
+		const top = rect.bottom + 4;
 		// Inside a modal `<dialog>` the bubble must join it in the top layer, or
-		// it renders beneath the dialog and its backdrop.
-		setPos({
-			top: rect.bottom + 4,
-			left,
-			host: ref.current.closest('dialog') ?? document.body,
-		});
+		// it renders beneath the dialog and its backdrop. An unmoved trigger
+		// keeps the same state, so a scroll that doesn't shift it re-renders nothing.
+		setPos((prev) =>
+			prev && prev.top === top && prev.left === left
+				? prev
+				: { top, left, host: el.closest('dialog') ?? document.body },
+		);
+	}, []);
+
+	const open = useCallback(() => {
+		if (!overflows || !ref.current) return;
+		place();
 		setShow(true);
-	}, [overflows]);
+	}, [overflows, place]);
 
 	const close = useCallback(() => {
 		setShow(false);
 	}, []);
 
-	// Escape dismisses an open bubble (WCAG 1.4.13), as the shared Tooltip does.
+	// While open, the fixed-position bubble follows its trigger: a scroll of
+	// any ancestor (the detail sheet's own scroller, not just the window — so
+	// the capture phase) or a resize re-places it, one measurement per frame.
+	// Escape dismisses it (WCAG 1.4.13), as the shared Tooltip does.
 	useEffect(() => {
 		if (!show) return undefined;
+		let raf: number | null = null;
+		const onReflow = () => {
+			if (raf !== null) return;
+			raf = window.requestAnimationFrame(() => {
+				raf = null;
+				place();
+			});
+		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') close();
 		};
+		window.addEventListener('scroll', onReflow, true);
+		window.addEventListener('resize', onReflow);
 		document.addEventListener('keydown', onKeyDown);
-		return () => document.removeEventListener('keydown', onKeyDown);
-	}, [show, close]);
+		return () => {
+			if (raf !== null) window.cancelAnimationFrame(raf);
+			window.removeEventListener('scroll', onReflow, true);
+			window.removeEventListener('resize', onReflow);
+			document.removeEventListener('keydown', onKeyDown);
+		};
+	}, [show, place, close]);
 
 	return (
 		<span

@@ -169,7 +169,7 @@ export type { ExpandRevealProps } from '@/shared/ui/ExpandReveal';
 export { DetailsLine } from '@/shared/ui/DetailsLine';
 export type { DetailsLineProps } from '@/shared/ui/DetailsLine';
 
-export { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
+export { Tooltip, TOOLTIP_DELAY_MS, quietHoverUntilPointerMoves } from '@/shared/ui/Tooltip';
 
 export { OperationDetail } from '@/shared/ui/OperationDetail';
 export type {

@@ -50,42 +50,6 @@ func SchemaBytes() ([]byte, error) {
 // flags (a zero value suffices there), never as the merge currency.
 type Settings map[string]any
 
-// ResolveSettings applies the precedence ladder (schema defaults < preset <
-// explicit flag overrides, impl/6.0 §3.5) entirely in map space and returns the
-// merged nested settings, ready to overlay onto the generated jentic-one.yaml.
-// flagOverrides is the nested map the binder produced from the operator's
-// explicitly-set --section-field flags (only set leaves; may be nil).
-func ResolveSettings(preset string, flagOverrides Settings) (Settings, error) {
-	merged, err := defaultSettings()
-	if err != nil {
-		return nil, err
-	}
-	if preset != "" {
-		p, err := PresetSettings(preset)
-		if err != nil {
-			return nil, err
-		}
-		MergeSettings(merged, p)
-	}
-	if flagOverrides != nil {
-		MergeSettings(merged, flagOverrides)
-	}
-	return merged, nil
-}
-
-// defaultSettings returns the schema-declared defaults as a nested map.
-func defaultSettings() (Settings, error) {
-	raw, err := SchemaBytes()
-	if err != nil {
-		return nil, err
-	}
-	var doc schemaDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("parse embedded config schema: %w", err)
-	}
-	return doc.buildDefaults(doc.Properties), nil
-}
-
 // PresetSettings returns the named embedded preset as a nested map. Unknown
 // preset => loud error.
 func PresetSettings(name string) (Settings, error) {
@@ -287,7 +251,7 @@ func Presets() []string {
 	return names
 }
 
-// schemaDoc is the minimal slice of JSON Schema buildDefaults needs: the root
+// schemaDoc is the minimal slice of JSON Schema SensitivePaths needs: the root
 // properties, and the $defs it resolves $refs into. Everything else is ignored.
 type schemaDoc struct {
 	Properties map[string]schemaNode `json:"properties"`
@@ -295,8 +259,6 @@ type schemaDoc struct {
 }
 
 type schemaNode struct {
-	Type       string                `json:"type"`
-	Default    json.RawMessage       `json:"default"`
 	Ref        string                `json:"$ref"`
 	Format     string                `json:"format"`
 	WriteOnly  bool                  `json:"writeOnly"`
@@ -305,32 +267,6 @@ type schemaNode struct {
 	// default_factory (Pydantic emits {"allOf":[{"$ref":...}], "default":...} or
 	// just {"$ref":...} depending on version); we resolve either.
 	AllOf []schemaNode `json:"allOf"`
-}
-
-// buildDefaults walks the given property set and assembles a nested map of the
-// declared defaults, resolving $ref/allOf into $defs so section leaf-defaults are
-// included (a section with a default_factory carries no top-level "default", so
-// reading only root "properties" defaults would silently skip every section).
-func (d schemaDoc) buildDefaults(props map[string]schemaNode) map[string]any {
-	out := map[string]any{}
-	for name, node := range props {
-		resolved := d.resolve(node)
-		if len(resolved.Properties) > 0 {
-			// A sub-object section: recurse into its leaves.
-			if sub := d.buildDefaults(resolved.Properties); len(sub) > 0 {
-				out[name] = sub
-			}
-			continue
-		}
-		// A scalar leaf: take its declared default if present.
-		if len(node.Default) > 0 {
-			var v any
-			if err := json.Unmarshal(node.Default, &v); err == nil && v != nil {
-				out[name] = v
-			}
-		}
-	}
-	return out
 }
 
 // resolve follows a $ref (or a single-element allOf $ref) into $defs, returning

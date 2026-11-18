@@ -16,11 +16,32 @@ from jentic_one.control.core.schema.permission_rule_sets import (
 )
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.pagination import Cursor
 
 
 class PermissionRuleSetRepository:
     """Data access layer for PermissionRuleSet / PermissionRuleSetRule entities."""
+
+    @staticmethod
+    async def acquire_rules_lock(session: AsyncSession, rule_set_id: str) -> None:
+        """Serialise the writers that replace one set's rules.
+
+        :meth:`replace_user_rules` deletes and re-inserts rows every binding
+        pointing at the set reads, so two writers that each checked the rules
+        before writing would both pass and the later one would silently revert
+        the earlier. A binding lock cannot serialise them: the bindings are
+        different rows, the set is the one they share.
+
+        Held with the caller's transaction, and paired with a re-read of the
+        set's rules inside it. On PostgreSQL this is
+        ``pg_advisory_xact_lock``; on SQLite it is a no-op, since every write
+        transaction opens with ``BEGIN IMMEDIATE``.
+        """
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"permission_rule_sets:{rule_set_id}",
+        )
 
     @staticmethod
     async def create(

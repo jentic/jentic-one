@@ -217,6 +217,13 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami",
 		},
 		{
+			// A rules denial is change-shaped: the directive carries the edit
+			// to ask for, so the pointer names the tool that asks instead of
+			// dead-ending on an identity the agent already knows.
+			"action_denied_with_edit", http.StatusForbidden,
+			`{"type":"action_denied","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"edit":{"credential_id":"cred_1","suggested_rules":[{"effect":"allow","methods":["POST"],"path":"/v1/pets","match_mode":"exact"}]},"suggested_command":"jentic access edit cred_1"},"human_readable_instruction":"Ask for the rule with request_access_change."}}`, "request_access_change",
+		},
+		{
 			"credential_identity_mismatch", http.StatusForbidden,
 			`{"type":"credential_identity_mismatch","detail":"denied"}`, "whoami",
 		},
@@ -1405,6 +1412,26 @@ func TestMCPExecute_UpstreamOrigin5xxPassesThrough(t *testing.T) {
 			}
 			if payload := decodeToolJSON(t, res); payload["status"] != float64(tc.status) {
 				t.Errorf("status = %v, want %d", payload["status"], tc.status)
+			}
+		})
+	}
+}
+
+func TestExecute_DotSegmentInputIsInvalidParams(t *testing.T) {
+	for _, val := range []string{".", ".."} {
+		t.Run(val, func(t *testing.T) {
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", "http://127.0.0.1:8100"),
+				callToolRequest("execute", `{"operation_id":"GET:/v1/users/{id}/profile","inputs":{"id":"`+val+`"}}`))
+			if res != nil {
+				t.Fatalf("want a protocol error for dot-segment path parameter %q, got result: %v", val, res)
+			}
+			var wireErr *jsonrpc.Error
+			if !errors.As(err, &wireErr) || wireErr.Code != jsonrpc.CodeInvalidParams {
+				t.Fatalf("err = %v, want a JSON-RPC invalid-params error", err)
+			}
+			if !strings.Contains(wireErr.Message, `path parameter "id" has a dot-segment value`) {
+				t.Errorf("wireErr.Message = %q, want dot-segment path parameter message", wireErr.Message)
 			}
 		})
 	}

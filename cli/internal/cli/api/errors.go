@@ -40,7 +40,7 @@ func asCoded(err error) *ux.CodedError {
 	if errors.As(err, &coded) {
 		return coded
 	}
-	if errors.Is(err, auth.ErrNotRegistered) {
+	if errors.Is(err, auth.ErrNotRegistered) || errors.Is(err, auth.ErrOriginMismatch) {
 		return &ux.CodedError{
 			Code:       ux.CodeNotAuthenticated,
 			Msg:        err.Error(),

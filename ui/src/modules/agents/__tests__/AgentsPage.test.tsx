@@ -350,6 +350,21 @@ describe('AgentsPage — flat agents surface', () => {
 		);
 	});
 
+	it('resumes the agent last shown here on a bare landing, over the first tab', async () => {
+		// The strip's history: the selection writes it, newest first. Its first
+		// id still in the fleet is what a return to Agents shows again.
+		window.localStorage.setItem(
+			'agents.stripRecent',
+			JSON.stringify(['agnt_gone', 'agnt_active_1', 'agnt_pending_2']),
+		);
+		renderPage('/');
+		await screen.findAllByText('inbox-triage-bot');
+		expect(stripTab('support-agent')).toHaveAttribute('aria-selected', 'true');
+		await waitFor(() =>
+			expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_active_1'),
+		);
+	});
+
 	it('a fallback write-back landing mid-navigation does not undo the navigation', async () => {
 		// React Router commits a navigation as a transition, so the Agents page
 		// stays mounted on its old location until the destination has rendered.
@@ -1402,6 +1417,41 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(approvalBanner()).not.toHaveTextContent('more waiting');
 	});
 
+	it('surfaces the server problem detail in an error toast when approve is rejected with 409 agent_permission_exceeds_owner', async () => {
+		const user = userEvent.setup();
+		const detail =
+			"Permission 'agents:write' cannot be granted to this agent because its owner does not hold it";
+		worker.use(
+			http.post('/agents/:id\\:approve', () =>
+				HttpResponse.json(
+					{
+						type: 'agent_permission_exceeds_owner',
+						title: 'Conflict',
+						status: 409,
+						detail,
+						instance: '/agents/agnt_pending_1:approve',
+					},
+					{
+						status: 409,
+						headers: { 'Content-Type': 'application/problem+json' },
+					},
+				),
+			),
+		);
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+
+		await user.click(
+			within(await findApprovalBanner()).getByRole('button', {
+				name: 'Approve inbox-triage-bot',
+			}),
+		);
+
+		expect(await screen.findByText('Failed to approve the agent.')).toBeInTheDocument();
+		expect(await screen.findByText(detail)).toBeInTheDocument();
+		expect(within(approvalBanner()).getByText('inbox-triage-bot')).toBeInTheDocument();
+	});
+
 	it('denies from the banner → requires a reason → banner advances', async () => {
 		const user = userEvent.setup();
 		renderPage();
@@ -1730,9 +1780,9 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	it('connecting from the inventory sheet clears the dashed tile and gap hint', async () => {
-		// The mocked backend flips a mutable fixture once the connect starts, like
-		// the provider callback. The cleared hint proves the DRAINED join was
-		// invalidated, not just the sheet's.
+		// The mocked backend completes this exact flow after the connect starts,
+		// like the provider callback. The cleared hint proves the DRAINED join
+		// was invalidated, not just the sheet's.
 		let connectRequested = false;
 		let connected = false;
 		const stripeCred = (): Credential =>
@@ -1779,19 +1829,26 @@ describe('AgentsPage — flat agents surface', () => {
 			http.get('/credentials/:id', ({ params }) => {
 				if (params.id !== 'cred_stripe_oauth') return undefined;
 				const response = HttpResponse.json(stripeCred());
-				// The first read after the connect POST is the flow's baseline. The
-				// user "completes" the hosted sign-in once it is served, so the
-				// baseline sees the unconnected credential and the next poll the
-				// connected one — however late the baseline read lands.
+				// The first read after the connect POST captures the pending credential.
+				// The hosted sign-in then completes both this flow and the credential, so
+				// a later poll must observe the flow status and usable credential together.
 				if (connectRequested) connected = true;
 				return response;
 			}),
 			http.post('/credentials/:id/connect', () => {
 				connectRequested = true;
 				return HttpResponse.json({
+					kind: 'authorization_code',
+					flow_id: 'flow_mock',
 					authorize_url: 'https://provider.example.com/oauth/authorize?state=mock',
 					state: 'mock',
 				});
+			}),
+			http.get('/credentials/:id/connect/:flowId/status', ({ params }) => {
+				if (params.id !== 'cred_stripe_oauth' || params.flowId !== 'flow_mock') {
+					return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
+				}
+				return HttpResponse.json({ status: connected ? 'connected' : 'pending' });
 			}),
 		);
 		seedCredentialBindings([

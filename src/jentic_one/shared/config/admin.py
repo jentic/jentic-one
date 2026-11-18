@@ -91,8 +91,19 @@ class AdminAuthConfig(BaseModel):
 class AdminInviteConfig(BaseModel):
     """Admin invite token settings."""
 
-    ttl_days: int = 7
-    pepper: SecretStr = SecretStr("")
+    ttl_days: int = Field(
+        default=7,
+        description="Days an admin invite token stays redeemable after it is issued.",
+    )
+    pepper: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "HMAC key for stored invite-token hashes. Required in production (empty "
+            "or placeholder values are rejected at startup); in development an "
+            "ephemeral per-process value is generated when empty. Changing it "
+            "invalidates every outstanding invite."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_or_generate_secret_in_dev(self) -> AdminInviteConfig:

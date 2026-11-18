@@ -30,6 +30,9 @@ class DenialReason(StrEnum):
     CREDENTIAL_BINDING_SUSPENDED = "credential_binding_suspended"
     """The agent's binding to a credential covering the API is suspended (403)."""
 
+    CREDENTIAL_PENDING = "credential_pending"
+    """A bound credential covering the API is waiting for connect completion (403)."""
+
     # --- rule evaluation (what the binding may do) ------------------------
     NO_RULES_LOADED = "no_rules_loaded"
     """The binding's rule list is empty — nothing to match (403, default deny)."""

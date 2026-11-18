@@ -438,16 +438,15 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "Dashboard-oriented aggregation endpoints — execution volume, success/failure "
             "ratios, and top operations over a bounded time window. Results are cached "
-            "in-process (TTL ~120 s) so concurrent dashboard viewers never stampede the "
-            "database."
+            "in-process for up to 30 seconds, and per-process locks coalesce concurrent "
+            "recomputation."
         ),
     },
     {
         "name": "Configuration",
         "description": (
             "Runtime, DB-backed platform configuration. Lets an operator set, read, and list "
-            "configuration that previously required hand-editing backend YAML and restarting "
-            "the server — starting with credential provider configs (e.g. Pipedream). A "
+            "credential provider configs (e.g. Pipedream) through the API. A "
             "successful write rebuilds the in-process provider registry so the change takes "
             "effect without a restart. Secret fields (e.g. `client_secret`) are encrypted at "
             "rest and redacted on read. **Topology note:** in the combined (single-process) "

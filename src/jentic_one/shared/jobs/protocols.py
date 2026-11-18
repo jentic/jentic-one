@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
@@ -83,6 +83,20 @@ class CredentialInjector(Protocol):
         ...
 
 
+def auth_lineage_is_current(
+    token_sha256: str | None, method: str | None, expires_at: datetime | None
+) -> bool:
+    """Whether deferred work carries a complete, unexpired caller credential."""
+    if not token_sha256 or not method:
+        return False
+    if method == "jwt" and expires_at is None:
+        return False
+    if expires_at is None:
+        return True
+    aware = expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
+    return aware > datetime.now(UTC)
+
+
 @dataclass(frozen=True, slots=True)
 class QueuedExecutionRequest:
     """What the worker knows about a queued execution when it re-authorizes it.
@@ -101,6 +115,7 @@ class QueuedExecutionRequest:
     api_name: str
     api_version: str
     operation_id: str | None = None
+    spec_operation_id: str | None = None
     # The enqueue-time operation's server-relative path
     # (``OperationInfo.relative_path``) — the path the binding rules are
     # re-evaluated on, so enqueue and run time judge the same path. ``None``
@@ -121,6 +136,15 @@ class QueuedExecutionRequest:
     # the request and names what was denied without the concrete request path.
     trace_id: str | None = None
     operation_path: str | None = None
+    # Optional authentication-channel lineage captured at enqueue or hold filing
+    # so the worker revalidates the submitting token, API key, OAuth client/grant,
+    # or login session generation before running the execution.
+    auth_token_sha256: str | None = None
+    auth_method: str | None = None
+    oauth_client_id: str | None = None
+    oauth_grant_id: str | None = None
+    session_generation: int | None = None
+    auth_expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +203,16 @@ class ActorStatusReader(Protocol):
     """
 
     async def authority(
-        self, *, actor_id: str, actor_type: str, permission: str
+        self,
+        *,
+        actor_id: str,
+        actor_type: str,
+        permission: str,
+        auth_token_sha256: str | None = None,
+        auth_method: str | None = None,
+        oauth_client_id: str | None = None,
+        oauth_grant_id: str | None = None,
+        session_generation: int | None = None,
     ) -> ActorAuthority: ...
 
 
@@ -283,49 +316,3 @@ class JobRecord(Protocol):
     id: str
     kind: str
     status: str
-
-
-class JobRepoProtocol(Protocol):
-    """Protocol for job repository operations used by the worker."""
-
-    async def create(
-        self,
-        session: Any,
-        *,
-        kind: Any,
-        status: Any,
-        parent_job_id: str | None = None,
-        execution_id: str | None = None,
-        error: str | None = None,
-    ) -> JobRecord: ...
-
-    async def get_by_id(self, session: Any, job_id: str) -> JobRecord | None: ...
-
-    async def update(
-        self,
-        session: Any,
-        job_id: str,
-        *,
-        status: Any | None = None,
-        error: str | None = None,
-        execution_id: str | None = None,
-    ) -> JobRecord: ...
-
-    async def claim_next_queued(self, session: Any) -> JobRecord | None: ...
-
-
-class JobResultRepoProtocol(Protocol):
-    """Protocol for job result repository operations used by the worker."""
-
-    async def create(
-        self,
-        session: Any,
-        *,
-        job_id: str,
-        kind: str,
-        body: dict[str, Any],
-        content_type: str | None = None,
-        available_until: datetime | None = None,
-    ) -> Any: ...
-
-    async def delete_expired(self, session: Any) -> int: ...
