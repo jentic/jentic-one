@@ -47,6 +47,7 @@ func (ApiKeyHistoryResponse) RequiredFields() []string { return []string{"data"}
 func (ApiKeyInfoResponse) RequiredFields() []string    { return []string{"created_at", "id", "status"} }
 func (ApiKeyResponse) RequiredFields() []string        { return []string{"key"} }
 func (ApiKeyUpdateRequest) RequiredFields() []string   { return []string{"type"} }
+func (ApiLastUseResponse) RequiredFields() []string    { return []string{"api_vendor", "last_used_at"} }
 func (ApiLinksResponse) RequiredFields() []string      { return []string{"revisions", "self"} }
 func (ApiListResponse) RequiredFields() []string       { return []string{"data", "has_more"} }
 func (ApiReferenceResponse) RequiredFields() []string {
