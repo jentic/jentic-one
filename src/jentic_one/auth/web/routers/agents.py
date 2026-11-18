@@ -25,6 +25,7 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyHistoryResponse,
     ApiKeyInfoResponse,
     ApiKeyResponse,
+    ApiLastUseResponse,
     ClaimRequest,
     CredentialBindingListResponse,
     CredentialBindingResponse,
@@ -427,6 +428,13 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
         suspended_reason=view.suspended_reason,
         rule_set_id=view.rule_set_id,
         serves=view.serves,
+        last_used_at=view.last_used_at,
+        last_used_by_api=[
+            ApiLastUseResponse(
+                api_vendor=u.api_vendor, api_name=u.api_name, last_used_at=u.last_used_at
+            )
+            for u in view.last_used_by_api
+        ],
     )
 
 
@@ -451,8 +459,9 @@ async def list_credentials(
     """List the credentials bound directly to an agent.
 
     Each binding names the credential, the API it serves, when it was bound,
-    whether it is `suspended` (and why), and any attached permission
-    `rule_set_id`. Credential secrets are never returned. Readable like
+    whether it is `suspended` (and why), any attached permission
+    `rule_set_id`, and `last_used_at`: when the agent last made a call through
+    the credential (null if never). Credential secrets are never returned. Readable like
     `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
     caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
     The list is not paginated.

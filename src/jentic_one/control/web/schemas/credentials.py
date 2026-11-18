@@ -1030,6 +1030,14 @@ class CredentialAgentResponse(BaseModel):
             "policy; null means the binding's inline rules apply."
         ),
     )
+    last_used_at: datetime | None = Field(
+        default=None,
+        examples=["2026-02-03T14:05:00Z"],
+        description=(
+            "When the agent last made a call through this credential, whatever "
+            "its outcome (RFC 3339); null if it never has."
+        ),
+    )
 
 
 class CredentialAgentListResponse(BaseModel):

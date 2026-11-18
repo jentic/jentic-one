@@ -120,6 +120,21 @@ class ClaimRequest(BaseModel):
     )
 
 
+class ApiLastUseResponse(BaseModel):
+    """When an agent last called one API through a bound credential."""
+
+    api_vendor: str = Field(description="Vendor of the API called.", examples=["github.com"])
+    api_name: str | None = Field(
+        default=None,
+        description="Name of the API called; null when the recorded calls carry none.",
+        examples=["github"],
+    )
+    last_used_at: datetime = Field(
+        description="When the agent last called this API through the credential (RFC 3339).",
+        examples=["2026-02-03T14:05:00Z"],
+    )
+
+
 class CredentialBindingResponse(BaseModel):
     """Direct agent↔credential binding representation in API responses."""
 
@@ -162,6 +177,21 @@ class CredentialBindingResponse(BaseModel):
     )
     serves: list[ServedApiRef] = Field(
         default=[], description="The APIs the bound credential serves; empty if unresolvable."
+    )
+    last_used_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the agent last made a call through this credential, whatever its outcome"
+            " (RFC 3339); null if it never has."
+        ),
+        examples=["2026-02-03T14:05:00Z"],
+    )
+    last_used_by_api: list[ApiLastUseResponse] = Field(
+        default=[],
+        description=(
+            "`last_used_at` per API the agent called through this credential, most recent"
+            " first; a vendor-wide credential has one entry per API used."
+        ),
     )
 
 

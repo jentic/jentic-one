@@ -17,7 +17,9 @@ from jentic_one.admin.repos import (
     AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
+    ApiLastUseRow,
     AuthorizationCodeRepository,
+    ExecutionRecordRepository,
     JobRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
@@ -54,6 +56,7 @@ from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
+    ApiLastUseView,
     CredentialBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
@@ -839,7 +842,12 @@ class AgentService:
         await self.get_readable_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
+            last_uses = await ExecutionRecordRepository.last_used_by_api(
+                session, actor_id=agent_id, credential_ids=[b.credential_id for b in bindings]
+            )
         views = [CredentialBindingView.model_validate(b) for b in bindings]
+        for view in views:
+            _apply_last_use(view, last_uses)
         # Enrich from the control DB with the credential's human-readable name,
         # lifecycle state and the API it serves (issue #686). The bindings above
         # are already scoped to this agent. Failure to reach the control DB is
@@ -1090,7 +1098,13 @@ class AgentService:
                 actor_type=identity.actor_type.value,
             )
         self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
-        return CredentialBindingView.model_validate(binding)
+        view = CredentialBindingView.model_validate(binding)
+        async with self._ctx.admin_db.session() as session:
+            last_uses = await ExecutionRecordRepository.last_used_by_api(
+                session, actor_id=agent_id, credential_ids=[credential_id]
+            )
+        _apply_last_use(view, last_uses)
+        return view
 
     async def get_permissions(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)
@@ -1456,3 +1470,14 @@ class AgentService:
         if agent.status not in allowed_from:
             raise InvalidTransitionError(agent_id, agent.status, verb)
         return agent
+
+
+def _apply_last_use(view: CredentialBindingView, last_uses: list[ApiLastUseRow]) -> None:
+    """Set the binding's overall and per-API "last used" from execution records."""
+    own = [r for r in last_uses if r.credential_id == view.credential_id]
+    view.last_used_at = max((r.last_used_at for r in own), default=None)
+    view.last_used_by_api = [
+        ApiLastUseView(api_vendor=r.api_vendor, api_name=r.api_name, last_used_at=r.last_used_at)
+        for r in sorted(own, key=lambda r: r.last_used_at, reverse=True)
+        if r.api_vendor is not None
+    ]

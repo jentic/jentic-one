@@ -133,10 +133,13 @@ class _CredentialAccessMixin:
                 limit=limit + 1,
                 visible_to=self._bound_agent_visibility(credential, identity),
             )
-
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            last_used = await PrerequisiteRepository.last_used_by_agents(
+                session, credential_id=credential_id, agent_ids=[r.agent_id for r in rows]
+            )
+        rows = [r._replace(last_used_at=last_used.get(r.agent_id)) for r in rows]
 
         next_cursor = None
         if has_more and rows:

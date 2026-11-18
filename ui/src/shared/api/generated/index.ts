@@ -32,6 +32,7 @@ export type { ApiKeyHistoryResponse } from './models/ApiKeyHistoryResponse';
 export type { ApiKeyInfoResponse } from './models/ApiKeyInfoResponse';
 export type { ApiKeyResponse } from './models/ApiKeyResponse';
 export type { ApiKeyUpdateRequest } from './models/ApiKeyUpdateRequest';
+export type { ApiLastUseResponse } from './models/ApiLastUseResponse';
 export type { ApiLinksResponse } from './models/ApiLinksResponse';
 export type { ApiListResponse } from './models/ApiListResponse';
 export type { APIReference } from './models/APIReference';

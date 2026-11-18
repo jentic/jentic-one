@@ -2400,6 +2400,52 @@
         ],
         "type": "object"
       },
+      "ApiLastUseResponse": {
+        "description": "When an agent last called one API through a bound credential.",
+        "examples": [
+          {
+            "api_name": "github",
+            "api_vendor": "github.com",
+            "last_used_at": "2026-02-03T14:05:00Z"
+          }
+        ],
+        "properties": {
+          "api_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the API called; null when the recorded calls carry none.",
+            "examples": [
+              "github"
+            ]
+          },
+          "api_vendor": {
+            "description": "Vendor of the API called.",
+            "examples": [
+              "github.com"
+            ],
+            "type": "string"
+          },
+          "last_used_at": {
+            "description": "When the agent last called this API through the credential (RFC 3339).",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ],
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_vendor",
+          "last_used_at"
+        ],
+        "type": "object"
+      },
       "ApiLinksResponse": {
         "description": "Hypermedia links for a (local) API resource.",
         "examples": [
@@ -6530,6 +6576,7 @@
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                 "agent_name": "billing-assistant",
                 "bound_at": "2026-01-15T09:30:00Z",
+                "last_used_at": "2026-02-03T14:05:00Z",
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "status": "active",
                 "suspended": false,
@@ -6549,6 +6596,7 @@
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "agent_name": "billing-assistant",
                   "bound_at": "2026-01-15T09:30:00Z",
+                  "last_used_at": "2026-02-03T14:05:00Z",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "status": "active",
                   "suspended": false,
@@ -6596,6 +6644,7 @@
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "agent_name": "billing-assistant",
             "bound_at": "2026-01-15T09:30:00Z",
+            "last_used_at": "2026-02-03T14:05:00Z",
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "status": "active",
             "suspended": false,
@@ -6624,6 +6673,21 @@
             ],
             "format": "date-time",
             "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ]
           },
           "rule_set_id": {
             "anyOf": [
@@ -6834,6 +6898,14 @@
                 "bound_at": "2026-01-15T09:30:00Z",
                 "credential_id": "cred_6968b39855d91a3561684b32",
                 "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                "last_used_at": "2026-02-03T14:05:00Z",
+                "last_used_by_api": [
+                  {
+                    "api_name": "github",
+                    "api_vendor": "github.com",
+                    "last_used_at": "2026-02-03T14:05:00Z"
+                  }
+                ],
                 "name": "Stripe production key",
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "serves": [
@@ -6859,6 +6931,14 @@
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
                   "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
                   "name": "Stripe production key",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
@@ -6892,6 +6972,14 @@
             "bound_at": "2026-01-15T09:30:00Z",
             "credential_id": "cred_6968b39855d91a3561684b32",
             "id": "acb_6968b3989a4f1c2e7d3b5a60",
+            "last_used_at": "2026-02-03T14:05:00Z",
+            "last_used_by_api": [
+              {
+                "api_name": "github",
+                "api_vendor": "github.com",
+                "last_used_at": "2026-02-03T14:05:00Z"
+              }
+            ],
             "name": "Stripe production key",
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "serves": [
@@ -6934,6 +7022,38 @@
               "acb_6968b3989a4f1c2e7d3b5a60"
             ],
             "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ]
+          },
+          "last_used_by_api": {
+            "default": [],
+            "description": "`last_used_at` per API the agent called through this credential, most recent first; a vendor-wide credential has one entry per API used.",
+            "examples": [
+              [
+                {
+                  "api_name": "github",
+                  "api_vendor": "github.com",
+                  "last_used_at": "2026-02-03T14:05:00Z"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ApiLastUseResponse"
+            },
+            "type": "array"
           },
           "name": {
             "anyOf": [
@@ -26341,7 +26461,7 @@
     "/agents/{agent_id}/credentials": {
       "description": "`GET`: List an agent's credential bindings. `POST`: Bind a credential to an agent.",
       "get": {
-        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), and any attached permission\n`rule_set_id`. Credential secrets are never returned. Readable like\n`GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a\ncaller holding `agents:read` (implied by `agents:write`); 404 otherwise.\nThe list is not paginated.",
+        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), any attached permission\n`rule_set_id`, and `last_used_at`: when the agent last made a call through\nthe credential (null if never). Credential secrets are never returned. Readable like\n`GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a\ncaller holding `agents:read` (implied by `agents:write`); 404 otherwise.\nThe list is not paginated.",
         "operationId": "listAgentCredentials",
         "parameters": [
           {
@@ -26376,6 +26496,14 @@
                       "bound_at": "2026-01-15T09:30:00Z",
                       "credential_id": "cred_6968b39855d91a3561684b32",
                       "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                      "last_used_at": "2026-02-03T14:05:00Z",
+                      "last_used_by_api": [
+                        {
+                          "api_name": "github",
+                          "api_vendor": "github.com",
+                          "last_used_at": "2026-02-03T14:05:00Z"
+                        }
+                      ],
                       "name": "Stripe production key",
                       "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                       "serves": [
@@ -26494,6 +26622,14 @@
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
                   "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
                   "name": "Stripe production key",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
@@ -26760,6 +26896,14 @@
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
                   "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
                   "name": "Stripe production key",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
@@ -33443,7 +33587,7 @@
     "/credentials/{credential_id}/agents": {
       "description": "`GET`: List agents bound to credential.",
       "get": {
-        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view: every agent\nwhose direct binding points at this credential, filtered to the agents\nthe caller may see.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).",
+        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view: every agent\nwhose direct binding points at this credential, filtered to the agents\nthe caller may see.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).\nEach row carries `last_used_at`: when that agent last made a call through\nthis credential (null if never).",
         "operationId": "listCredentialAgents",
         "parameters": [
           {
@@ -33513,6 +33657,7 @@
                       "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                       "agent_name": "billing-assistant",
                       "bound_at": "2026-01-15T09:30:00Z",
+                      "last_used_at": "2026-02-03T14:05:00Z",
                       "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                       "status": "active",
                       "suspended": false,

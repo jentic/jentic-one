@@ -4,14 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.pagination import Cursor
+
+
+class ApiLastUseRow(NamedTuple):
+    """Latest execution by one actor through one credential against one API."""
+
+    credential_id: str
+    api_vendor: str | None
+    api_name: str | None
+    last_used_at: datetime
 
 
 class ExecutionRecordRepository:
@@ -129,3 +139,38 @@ class ExecutionRecordRepository:
                 stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def last_used_by_api(
+        session: AsyncSession, *, actor_id: str, credential_ids: Sequence[str]
+    ) -> list[ApiLastUseRow]:
+        """Latest ``started_at`` per credential and API for one actor's executions.
+
+        "Last used" for the actor's credential bindings: any recorded call
+        through the credential counts, whatever its outcome. Calls whose API
+        was never resolved come back with ``api_vendor`` None. A credential
+        with no recorded call has no row.
+        """
+        if not credential_ids:
+            return []
+        stmt = (
+            select(
+                ExecutionRecord.credential_id,
+                ExecutionRecord.api_vendor,
+                ExecutionRecord.api_name,
+                func.max(ExecutionRecord.started_at),
+            )
+            .where(
+                ExecutionRecord.actor_id == actor_id,
+                ExecutionRecord.credential_id.in_(list(credential_ids)),
+            )
+            .group_by(
+                ExecutionRecord.credential_id, ExecutionRecord.api_vendor, ExecutionRecord.api_name
+            )
+        )
+        result = await session.execute(stmt)
+        return [
+            ApiLastUseRow(credential_id=str(cid), api_vendor=vendor, api_name=name, last_used_at=ts)
+            for cid, vendor, name, ts in result.all()
+            if cid is not None and ts is not None
+        ]

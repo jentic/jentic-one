@@ -19,6 +19,10 @@ export type CredentialAgentResponse = {
      */
     bound_at: string;
     /**
+     * When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.
+     */
+    last_used_at?: (string | null);
+    /**
      * Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
      */
     rule_set_id?: (string | null);

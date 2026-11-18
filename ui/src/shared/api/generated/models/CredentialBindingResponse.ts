@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiLastUseResponse } from './ApiLastUseResponse';
 import type { ServedApiRef } from './ServedApiRef';
 /**
  * Direct agent↔credential binding representation in API responses.
@@ -23,6 +24,14 @@ export type CredentialBindingResponse = {
      * Unique ID of the binding.
      */
     id: string;
+    /**
+     * When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.
+     */
+    last_used_at?: (string | null);
+    /**
+     * `last_used_at` per API the agent called through this credential, most recent first; a vendor-wide credential has one entry per API used.
+     */
+    last_used_by_api?: Array<ApiLastUseResponse>;
     /**
      * Name of the bound credential; null if it cannot be resolved.
      */
