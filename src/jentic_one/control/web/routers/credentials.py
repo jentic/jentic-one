@@ -548,6 +548,8 @@ async def list_credential_agents(
     the caller may see.
     Suspended bindings are included with their flag set and, when known, the
     reason (`api_deleted` when the credential's API was deleted).
+    Each row carries `last_used_at`: when that agent last made a call through
+    this credential (null if never).
     """
     data, has_more, next_cursor = await svc.list_agents(
         credential_id, cursor=cursor, limit=limit, identity=identity
@@ -562,6 +564,7 @@ async def list_credential_agents(
                 suspended=row.suspended,
                 suspended_reason=row.suspended_reason,
                 rule_set_id=row.rule_set_id,
+                last_used_at=row.last_used_at,
             )
             for row in data
         ],

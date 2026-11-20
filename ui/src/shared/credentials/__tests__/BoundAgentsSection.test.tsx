@@ -24,6 +24,7 @@ function seedBoundAgents(
 		agent_name: string;
 		suspended?: boolean;
 		suspended_reason?: string | null;
+		last_used_at?: string | null;
 	}>,
 ) {
 	worker.use(
@@ -40,6 +41,7 @@ function seedBoundAgents(
 					status: 'active',
 					suspended: r.suspended ?? false,
 					suspended_reason: r.suspended_reason ?? null,
+					...('last_used_at' in r && { last_used_at: r.last_used_at }),
 				})),
 				has_more: false,
 				next_cursor: null,
@@ -89,6 +91,35 @@ describe('BoundAgentsSection (edit-credential sheet)', () => {
 		).not.toBeInTheDocument();
 
 		await checkA11y(container);
+	});
+
+	it('shows when each agent last used the credential, and which never have', async () => {
+		resetCredentialsStore([
+			makeMockCredential({ credential_id: 'cred_slack_1', name: 'Slack bot token' }),
+		]);
+		seedBoundAgents('cred_slack_1', [
+			{
+				agent_id: 'agnt_active_1',
+				agent_name: 'support-agent',
+				last_used_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+			},
+			{ agent_id: 'agnt_idle_1', agent_name: 'idle-agent', last_used_at: null },
+			// An older server that doesn't report it: nothing is claimed.
+			{ agent_id: 'agnt_old_1', agent_name: 'legacy-agent' },
+		]);
+		renderSheet('cred_slack_1');
+
+		const rows = await screen.findAllByTestId('bound-agent-row');
+		const rowFor = (name: string) => rows.find((r) => within(r).queryByText(name))!;
+		expect(
+			within(rowFor('support-agent')).getByTestId('bound-agent-last-used'),
+		).toHaveTextContent(/^used 3d ago ·/);
+		expect(within(rowFor('idle-agent')).getByTestId('bound-agent-last-used')).toHaveTextContent(
+			/^never used ·/,
+		);
+		expect(
+			within(rowFor('legacy-agent')).queryByTestId('bound-agent-last-used'),
+		).not.toBeInTheDocument();
 	});
 
 	it('asks the host to stand aside when a link is followed in this tab', async () => {

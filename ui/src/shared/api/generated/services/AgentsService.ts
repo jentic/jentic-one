@@ -324,8 +324,9 @@ export class AgentsService {
      * List the credentials bound directly to an agent.
      *
      * Each binding names the credential, the API it serves, when it was bound,
-     * whether it is `suspended` (and why), and any attached permission
-     * `rule_set_id`. Credential secrets are never returned. Readable like
+     * whether it is `suspended` (and why), any attached permission
+     * `rule_set_id`, and `last_used_at`: when the agent last made a call through
+     * the credential (null if never). Credential secrets are never returned. Readable like
      * `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
      * caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
      * The list is not paginated.

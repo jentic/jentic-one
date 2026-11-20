@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import Boolean, bindparam, text
+from sqlalchemy import Boolean, String, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BindParameter
 
@@ -48,6 +48,9 @@ class CredentialBoundAgentRow(NamedTuple):
     # suspended by hand.
     suspended_reason: str | None = None
     agent_owner_id: str | None = None
+    # Latest recorded execution by the agent through the credential; None when
+    # never used or not looked up (see :meth:`last_used_by_agents`).
+    last_used_at: datetime | None = None
 
 
 class AgentVisibility(NamedTuple):
@@ -254,6 +257,32 @@ class PrerequisiteRepository:
             stmt = stmt.bindparams(*bind_params)
         result = await session.execute(stmt, params)
         return [RuleSetBoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
+    async def last_used_by_agents(
+        session: AsyncSession, *, credential_id: str, agent_ids: Sequence[str]
+    ) -> dict[str, datetime]:
+        """Latest ``execution_records.started_at`` per agent through one credential.
+
+        "Last used" for the credential's bound agents: any recorded call counts,
+        whatever its outcome. An agent with no recorded call is absent.
+        """
+        if not agent_ids:
+            return {}
+        stmt = (
+            text(
+                "SELECT actor_id, MAX(started_at) AS last_used_at FROM execution_records "
+                "WHERE credential_id = :credential_id AND actor_id IN :agent_ids "
+                "GROUP BY actor_id"
+            )
+            .bindparams(bindparam("agent_ids", expanding=True))
+            # Typed: SQLite returns the raw stored string otherwise.
+            .columns(actor_id=String(), last_used_at=UTCDateTime())
+        )
+        result = await session.execute(
+            stmt, {"credential_id": credential_id, "agent_ids": list(agent_ids)}
+        )
+        return {str(row[0]): row[1] for row in result.fetchall() if row[1] is not None}
 
     @staticmethod
     async def get_agent_credential_binding(

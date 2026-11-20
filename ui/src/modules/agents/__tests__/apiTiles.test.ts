@@ -13,6 +13,7 @@ import {
 	isOrphanBinding,
 	multiAccountApis,
 	partitionBindings,
+	tileLastUsedAt,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -745,5 +746,43 @@ describe('multiAccountApis / accountLabels', () => {
 		const tiles = composeApiTiles([makeBinding()], [makeCredential()], apis);
 		expect(multiAccountApis(tiles).size).toBe(0);
 		expect(accountLabels(tiles).size).toBe(0);
+	});
+});
+
+describe('last used on tiles', () => {
+	const apis = [
+		makeApi({ vendor: 'slack.com', display_name: 'Slack' }),
+		makeApi({ vendor: 'slack.com', name: 'admin', display_name: 'Slack Admin' }),
+	];
+
+	it("gives each tile of a vendor-wide binding its own API's last use", () => {
+		const binding = makeBinding({
+			lastUsedAt: '2026-03-05T00:00:00Z',
+			lastUsedByApi: [
+				{ vendor: 'slack.com', name: 'default', lastUsedAt: '2026-03-05T00:00:00Z' },
+			],
+		});
+		const tiles = composeApiTiles([binding], [makeCredential()], apis);
+		expect(tiles.map((t) => [t.title, t.lastUsedAt])).toEqual([
+			['Slack', '2026-03-05T00:00:00Z'],
+			// Called through the credential, but never this API.
+			['Slack Admin', null],
+		]);
+	});
+
+	it('reads "never used" when the binding has no recorded call', () => {
+		const binding = makeBinding({ lastUsedAt: null, lastUsedByApi: [] });
+		const tiles = composeApiTiles([binding], [makeCredential()], apis);
+		expect(tiles.every((t) => t.lastUsedAt === null)).toBe(true);
+	});
+
+	it('claims nothing when the server does not report last use', () => {
+		const tiles = composeApiTiles([makeBinding()], [makeCredential()], apis);
+		expect(tiles.every((t) => !('lastUsedAt' in t))).toBe(true);
+	});
+
+	it("uses the whole binding's last use for a tile with no API name", () => {
+		const binding = { lastUsedAt: '2026-03-05T00:00:00Z', lastUsedByApi: [] };
+		expect(tileLastUsedAt(binding, 'slack.com', null)).toBe('2026-03-05T00:00:00Z');
 	});
 });

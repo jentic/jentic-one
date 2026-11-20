@@ -189,3 +189,85 @@ async def test_list_all_with_filters(
             session, from_=base_time + timedelta(minutes=30)
         )
         assert len(from_result) == 2
+
+
+async def _record(
+    admin_db: DatabaseSession,
+    *,
+    actor_id: str,
+    credential_id: str | None,
+    started_at: datetime,
+    api_vendor: str | None = "slack.com",
+    api_name: str | None = "default",
+    status: str = "completed",
+) -> None:
+    async with admin_db.session() as session:
+        await ExecutionRecordRepository.create(
+            session,
+            toolkit_id="tk_test000000000000000000",
+            trace_id="abcdef1234567890abcdef12",
+            started_at=started_at,
+            status=status,
+            api_vendor=api_vendor,
+            api_name=api_name,
+            created_by=actor_id,
+            actor_id=actor_id,
+            actor_type="agent",
+            credential_id=credential_id,
+        )
+        await session.commit()
+
+
+async def test_last_used_by_api_takes_latest_per_credential_and_api(
+    admin_db: DatabaseSession, clean_execution_records: None
+) -> None:
+    base = datetime(2026, 3, 1, tzinfo=UTC)
+    agent = "agnt_lastused_1"
+    await _record(admin_db, actor_id=agent, credential_id="cred_a", started_at=base)
+    await _record(
+        admin_db,
+        actor_id=agent,
+        credential_id="cred_a",
+        started_at=base + timedelta(days=2),
+        status="failed",  # A failed call is still use.
+    )
+    await _record(
+        admin_db,
+        actor_id=agent,
+        credential_id="cred_a",
+        started_at=base + timedelta(days=1),
+        api_name="admin",
+    )
+    await _record(admin_db, actor_id=agent, credential_id="cred_b", started_at=base)
+    # Not counted: another agent, a credential not asked about, no credential.
+    await _record(
+        admin_db, actor_id="agnt_other", credential_id="cred_a", started_at=base + timedelta(9)
+    )
+    await _record(
+        admin_db, actor_id=agent, credential_id="cred_c", started_at=base + timedelta(days=9)
+    )
+    await _record(admin_db, actor_id=agent, credential_id=None, started_at=base + timedelta(9))
+
+    async with admin_db.session() as session:
+        rows = await ExecutionRecordRepository.last_used_by_api(
+            session, actor_id=agent, credential_ids=["cred_a", "cred_b"]
+        )
+
+    got = {(r.credential_id, r.api_vendor, r.api_name): r.last_used_at for r in rows}
+    assert got == {
+        ("cred_a", "slack.com", "default"): base + timedelta(days=2),
+        ("cred_a", "slack.com", "admin"): base + timedelta(days=1),
+        ("cred_b", "slack.com", "default"): base,
+    }
+
+
+async def test_last_used_by_api_empty_input(
+    admin_db: DatabaseSession, clean_execution_records: None
+) -> None:
+    async with admin_db.session() as session:
+        assert (
+            await ExecutionRecordRepository.last_used_by_api(
+                session, actor_id="agnt_x", credential_ids=[]
+            )
+            == []
+        )

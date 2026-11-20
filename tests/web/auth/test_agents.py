@@ -16,12 +16,14 @@ from jentic_one.admin.core.schema.actor_permission_grants import ActorPermission
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     ActorPermissionGrantRepository,
     AgentCredentialBindingRepository,
     AgentRepository,
     EventRepository,
+    ExecutionRecordRepository,
     UserRepository,
 )
 from jentic_one.admin.services._support.tokens import issue_jwt
@@ -384,6 +386,64 @@ def test_credential_binding_lifecycle(
     resp = admin_client.delete(f"/agents/{agent_id}/credentials/{control_credential_id}")
     assert resp.status_code == 404
     assert resp.json()["type"] == "credential_binding_not_found"
+
+
+async def test_credential_binding_last_used(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """A binding reports when the agent last called through it, overall and per
+    API; one never used reads null with no per-API entries."""
+    agent_id = binding_agent_id
+    resp = admin_client.post(
+        f"/agents/{agent_id}/credentials", json={"credential_id": control_credential_id}
+    )
+    assert resp.status_code == 201
+    assert resp.json()["last_used_at"] is None
+    assert resp.json()["last_used_by_api"] == []
+
+    latest = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+    async with web_context.admin_db.transaction() as session:
+        for started_at, api_name, status in (
+            (latest - timedelta(days=2), "payments", "completed"),
+            (latest - timedelta(days=1), "payments", "failed"),
+            (latest, "billing", "completed"),
+        ):
+            await ExecutionRecordRepository.create(
+                session,
+                toolkit_id="tk_test000000000000000000",
+                trace_id="abcdef1234567890abcdef12",
+                started_at=started_at,
+                status=status,
+                api_vendor="stripe",
+                api_name=api_name,
+                created_by=agent_id,
+                actor_id=agent_id,
+                actor_type="agent",
+                credential_id=control_credential_id,
+            )
+    try:
+        resp = admin_client.get(f"/agents/{agent_id}/credentials")
+        assert resp.status_code == 200
+        (binding,) = resp.json()["data"]
+        assert datetime.fromisoformat(binding["last_used_at"]) == latest
+        by_api = [
+            (u["api_vendor"], u["api_name"], datetime.fromisoformat(u["last_used_at"]))
+            for u in binding["last_used_by_api"]
+        ]
+        # Most recent first; the failed call still counts as use.
+        assert by_api == [
+            ("stripe", "billing", latest),
+            ("stripe", "payments", latest - timedelta(days=1)),
+        ]
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                delete(ExecutionRecord).where(ExecutionRecord.actor_id == agent_id)
+            )
+            await session.commit()
 
 
 def test_bind_unknown_credential_is_404(admin_client: TestClient, binding_agent_id: str) -> None:

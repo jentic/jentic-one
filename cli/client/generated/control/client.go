@@ -2340,6 +2340,26 @@ type ApiKeyUpdateRequest struct {
 // Examples: api_key
 type ApiKeyUpdateRequestType string
 
+// ApiLastUseResponse When an agent last called one API through a bound credential.
+//
+// Examples: {"api_name":"github","api_vendor":"github.com","last_used_at":"2026-02-03T14:05:00Z"}
+type ApiLastUseResponse struct {
+	// ApiName Name of the API called; null when the recorded calls carry none.
+	//
+	// Examples: github
+	ApiName *string `json:"api_name,omitempty"`
+
+	// ApiVendor Vendor of the API called.
+	//
+	// Examples: github.com
+	ApiVendor string `json:"api_vendor"`
+
+	// LastUsedAt When the agent last called this API through the credential (RFC 3339).
+	//
+	// Examples: 2026-02-03T14:05:00Z
+	LastUsedAt time.Time `json:"last_used_at"`
+}
+
 // ApiLinksResponse Hypermedia links for a (local) API resource.
 //
 // Examples: {"current_revision":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions/3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","revisions":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10/revisions","self":"https://jentic.example.com/apis/stripe.com/stripe/2024-04-10"}
@@ -3787,11 +3807,11 @@ type CreateAdminRequest struct {
 
 // CredentialAgentListResponse Paginated list of agents directly bound to a credential.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","last_used_at":"2026-02-03T14:05:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}],"has_more":true,"next_cursor":"eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="}
 type CredentialAgentListResponse struct {
 	// Data The page of bound agents.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","last_used_at":"2026-02-03T14:05:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}]
 	Data []CredentialAgentResponse `json:"data"`
 
 	// HasMore Whether more results exist after this page.
@@ -3807,7 +3827,7 @@ type CredentialAgentListResponse struct {
 
 // CredentialAgentResponse Agent directly bound to a credential.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","agent_name":"billing-assistant","bound_at":"2026-01-15T09:30:00Z","last_used_at":"2026-02-03T14:05:00Z","rule_set_id":"prs_6968b3987c22b63e87e79f05","status":"active","suspended":false,"suspended_reason":"api_deleted"}
 type CredentialAgentResponse struct {
 	// AgentId ID of the bound agent.
 	//
@@ -3823,6 +3843,11 @@ type CredentialAgentResponse struct {
 	//
 	// Examples: 2026-01-15T09:30:00Z
 	BoundAt time.Time `json:"bound_at"`
+
+	// LastUsedAt When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.
+	//
+	// Examples: 2026-02-03T14:05:00Z
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 
 	// RuleSetId Shared permission rule set this binding points at, if any. While attached, the set's ordered list is the binding's effective policy; null means the binding's inline rules apply.
 	//
@@ -3902,17 +3927,17 @@ type CredentialBindingEntry struct {
 
 // CredentialBindingListResponse List of direct credential bindings.
 //
-// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
+// Examples: {"data":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","last_used_at":"2026-02-03T14:05:00Z","last_used_by_api":[{"api_name":"github","api_vendor":"github.com","last_used_at":"2026-02-03T14:05:00Z"}],"name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]}
 type CredentialBindingListResponse struct {
 	// Data The agent's direct credential bindings.
 	//
-	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
+	// Examples: [{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","last_used_at":"2026-02-03T14:05:00Z","last_used_by_api":[{"api_name":"github","api_vendor":"github.com","last_used_at":"2026-02-03T14:05:00Z"}],"name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}]
 	Data []CredentialBindingResponse `json:"data"`
 }
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 //
-// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
+// Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","bound_at":"2026-01-15T09:30:00Z","credential_id":"cred_6968b39855d91a3561684b32","id":"acb_6968b3989a4f1c2e7d3b5a60","last_used_at":"2026-02-03T14:05:00Z","last_used_by_api":[{"api_name":"github","api_vendor":"github.com","last_used_at":"2026-02-03T14:05:00Z"}],"name":"Stripe production key","rule_set_id":"prs_6968b3987c22b63e87e79f05","serves":[{"api_name":"stripe","api_vendor":"stripe.com","api_version":"2024-04-10"}],"suspended":false,"suspended_reason":"api_deleted"}
 type CredentialBindingResponse struct {
 	// AgentId ID of the agent the credential is bound to.
 	//
@@ -3933,6 +3958,16 @@ type CredentialBindingResponse struct {
 	//
 	// Examples: acb_6968b3989a4f1c2e7d3b5a60
 	Id string `json:"id"`
+
+	// LastUsedAt When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.
+	//
+	// Examples: 2026-02-03T14:05:00Z
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+
+	// LastUsedByApi `last_used_at` per API the agent called through this credential, most recent first; a vendor-wide credential has one entry per API used.
+	//
+	// Examples: [{"api_name":"github","api_vendor":"github.com","last_used_at":"2026-02-03T14:05:00Z"}]
+	LastUsedByApi *[]ApiLastUseResponse `json:"last_used_by_api,omitempty"`
 
 	// Name Name of the bound credential; null if it cannot be resolved.
 	//
@@ -12627,8 +12662,9 @@ type ClientInterface interface {
 	// List the credentials bound directly to an agent.
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
-	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// whether it is `suspended` (and why), any attached permission
+	// `rule_set_id`, and `last_used_at`: when the agent last made a call through
+	// the credential (null if never). Credential secrets are never returned. Readable like
 	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
 	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
 	// The list is not paginated.
@@ -13674,6 +13710,8 @@ type ClientInterface interface {
 	// the caller may see.
 	// Suspended bindings are included with their flag set and, when known, the
 	// reason (`api_deleted` when the credential's API was deleted).
+	// Each row carries `last_used_at`: when that agent last made a call through
+	// this credential (null if never).
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
 	ListCredentialAgents(ctx context.Context, credentialId PathCredentialId, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -15967,8 +16005,9 @@ func (c *Client) GetAgentApiKeyHistory(ctx context.Context, agentId string, reqE
 // List the credentials bound directly to an agent.
 //
 // Each binding names the credential, the API it serves, when it was bound,
-// whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable like
+// whether it is `suspended` (and why), any attached permission
+// `rule_set_id`, and `last_used_at`: when the agent last made a call through
+// the credential (null if never). Credential secrets are never returned. Readable like
 // `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
 // caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
 // The list is not paginated.
@@ -17814,6 +17853,8 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId PathCredenti
 // the caller may see.
 // Suspended bindings are included with their flag set and, when known, the
 // reason (`api_deleted` when the credential's API was deleted).
+// Each row carries `last_used_at`: when that agent last made a call through
+// this credential (null if never).
 //
 // Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
 func (c *Client) ListCredentialAgents(ctx context.Context, credentialId PathCredentialId, params *ListCredentialAgentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -29970,8 +30011,9 @@ type ClientWithResponsesInterface interface {
 	// List the credentials bound directly to an agent.
 	//
 	// Each binding names the credential, the API it serves, when it was bound,
-	// whether it is `suspended` (and why), and any attached permission
-	// `rule_set_id`. Credential secrets are never returned. Readable like
+	// whether it is `suspended` (and why), any attached permission
+	// `rule_set_id`, and `last_used_at`: when the agent last made a call through
+	// the credential (null if never). Credential secrets are never returned. Readable like
 	// `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
 	// caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
 	// The list is not paginated.
@@ -31113,6 +31155,8 @@ type ClientWithResponsesInterface interface {
 	// the caller may see.
 	// Suspended bindings are included with their flag set and, when known, the
 	// reason (`api_deleted` when the credential's API was deleted).
+	// Each row carries `last_used_at`: when that agent last made a call through
+	// this credential (null if never).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -49290,8 +49334,9 @@ func (c *ClientWithResponses) GetAgentApiKeyHistoryWithResponse(ctx context.Cont
 // List the credentials bound directly to an agent.
 //
 // Each binding names the credential, the API it serves, when it was bound,
-// whether it is `suspended` (and why), and any attached permission
-// `rule_set_id`. Credential secrets are never returned. Readable like
+// whether it is `suspended` (and why), any attached permission
+// `rule_set_id`, and `last_used_at`: when the agent last made a call through
+// the credential (null if never). Credential secrets are never returned. Readable like
 // `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
 // caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
 // The list is not paginated.
@@ -50913,6 +50958,8 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 // the caller may see.
 // Suspended bindings are included with their flag set and, when known, the
 // reason (`api_deleted` when the credential's API was deleted).
+// Each row carries `last_used_at`: when that agent last made a call through
+// this credential (null if never).
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -174,6 +174,10 @@ interface CredentialBindingRow {
 	suspended: boolean;
 	rule_set_id: string | null;
 	bound_at: string;
+	/** Last call through the credential; null = never used. */
+	last_used_at: string | null;
+	/** Per-API last use; derived from `last_used_at` and `serves` when absent. */
+	last_used_by_api?: Array<{ api_vendor: string; api_name: string | null; last_used_at: string }>;
 	serves: Array<{ api_vendor: string; api_name?: string | null; api_version?: string | null }>;
 	permissions: BindingRule[];
 	/** The credential's granted OAuth scopes; null (the default) for a non-OAuth one. */
@@ -197,6 +201,7 @@ function seedBinding(
 		suspended: false,
 		rule_set_id: null,
 		bound_at: now(-30),
+		last_used_at: null,
 		serves: [],
 		permissions: [],
 		...over,
@@ -280,7 +285,18 @@ function bindingWriteRefusal(credentialId: string) {
 /** Wire projection of a binding row (strips the mock-internal rule list). */
 function bindingJson(row: CredentialBindingRow) {
 	const { permissions: _permissions, ...wire } = row;
-	return wire;
+	// Unless the row seeds its own, one per-API entry per served API, all at the
+	// binding's last use.
+	const last_used_by_api =
+		row.last_used_by_api ??
+		(row.last_used_at
+			? row.serves.map((s) => ({
+					api_vendor: s.api_vendor,
+					api_name: s.api_name ?? null,
+					last_used_at: row.last_used_at,
+				}))
+			: []);
+	return { ...wire, last_used_by_api };
 }
 
 /**
@@ -648,6 +664,11 @@ export function resetAgentsStore(): void {
 			agent_id: 'agnt_active_1',
 			credential_id: 'cred_slack_1',
 			name: 'Slack bot token',
+			last_used_at: now(-12),
+			// Execution records name the resolved API, never the wildcard.
+			last_used_by_api: [
+				{ api_vendor: 'slack.com', api_name: 'web-api', last_used_at: now(-12) },
+			],
 			serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
 			permissions: [
 				{ effect: 'allow', match_mode: 'prefix', methods: ['POST'], path: '/chat.' },
@@ -658,6 +679,11 @@ export function resetAgentsStore(): void {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			suspended: true,
+			// Idle for weeks: the kind of access the "last used" view surfaces.
+			last_used_at: now(-60 * 24 * 23),
+			last_used_by_api: [
+				{ api_vendor: 'github', api_name: 'github-api', last_used_at: now(-60 * 24 * 23) },
+			],
 			serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		}),
 	];
@@ -2005,6 +2031,7 @@ export const agentsHandlers = [
 					rule_set_id: b.rule_set_id,
 					status: agent?.status ?? 'active',
 					suspended: b.suspended,
+					last_used_at: b.last_used_at,
 				};
 			});
 		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });

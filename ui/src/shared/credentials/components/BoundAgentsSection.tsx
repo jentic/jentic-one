@@ -7,8 +7,8 @@
  *
  * Read-only by design: binding/rule management belongs to each agent's API
  * sidebar on the Agents surface (ApiAccessSidebar), so each row just shows
- * the agent name, suspended state (and why, when its API was deleted), bound-at
- * time and links to that agent AS
+ * the agent name, suspended state (and why, when its API was deleted), when it
+ * last used the credential, bound-at time and links to that agent AS
  * SELECTED on the flat surface — the tab whose tiles hold the bindings this
  * list is talking about, not a separate per-agent page.
  *
@@ -121,6 +121,12 @@ export function BoundAgentsSection({
 								)}
 							</span>
 							<span className="text-muted-foreground shrink-0 text-[11px]">
+								{row.last_used_at !== undefined && (
+									<span data-testid="bound-agent-last-used">
+										{lastUsedText(row.last_used_at)}
+										{' · '}
+									</span>
+								)}
 								bound {timeAgo(row.bound_at)}
 							</span>
 						</li>
@@ -129,4 +135,11 @@ export function BoundAgentsSection({
 			)}
 		</div>
 	);
+}
+
+/** "used 3d ago" / "used just now" / "never used" for a bound agent's last call. */
+function lastUsedText(lastUsedAt: string | null): string {
+	if (lastUsedAt === null) return 'never used';
+	const age = timeAgo(lastUsedAt);
+	return age === 'now' ? 'used just now' : `used ${age} ago`;
 }

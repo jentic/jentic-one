@@ -40,6 +40,9 @@ export interface ApiTileModel {
 	 * the credential's org row is unreachable — its owner is then unknown. */
 	credentialCreatedBy?: string | null;
 	boundAt: string;
+	/** Last call to this tile's API through the binding's credential; null =
+	 * never used, absent = not reported. See {@link tileLastUsedAt}. */
+	lastUsedAt?: string | null;
 	/** Soft-suspended — the broker excludes the binding until resumed. */
 	suspended: boolean;
 	/** Why it is suspended (`api_deleted` = its API was deleted). */
@@ -165,6 +168,32 @@ export function partitionBindings(
 	return { live, orphans };
 }
 
+/**
+ * When the agent last called one tile's API through the binding: null when it
+ * never has, undefined when the server doesn't report it. A vendor-wide binding
+ * fans out to a tile per API, so each reads its own API's entry; a tile with no
+ * API name (an unimported wildcard) stands for the whole binding.
+ */
+export function tileLastUsedAt(
+	binding: Pick<CredentialBindingEntity, 'lastUsedAt' | 'lastUsedByApi'>,
+	vendor: string,
+	apiName: string | null,
+): string | null | undefined {
+	if (binding.lastUsedAt === undefined) return undefined;
+	if (apiName == null || binding.lastUsedByApi === undefined) return binding.lastUsedAt;
+	const match = binding.lastUsedByApi.find((u) => u.vendor === vendor && u.name === apiName);
+	return match?.lastUsedAt ?? null;
+}
+
+function lastUsedField(
+	binding: CredentialBindingEntity,
+	vendor: string,
+	apiName: string | null,
+): Pick<ApiTileModel, 'lastUsedAt'> {
+	const lastUsedAt = tileLastUsedAt(binding, vendor, apiName);
+	return lastUsedAt === undefined ? {} : { lastUsedAt };
+}
+
 /** Compose the tile list for one agent. A binding that serves nothing — an
  * orphan (see {@link isOrphanBinding}), or any binding the backend could not
  * enrich — yields no tile. */
@@ -198,6 +227,7 @@ export function composeApiTiles(
 			// Not imported here — render from the reference's machine tuple.
 			tiles.push({
 				...base,
+				...lastUsedField(binding, served.vendor, served.name ?? null),
 				title:
 					apiRefDisplayName({ vendor: served.vendor, name: served.name }) ||
 					served.vendor,
@@ -215,6 +245,7 @@ export function composeApiTiles(
 		// `ably-io` here.
 		tiles.push({
 			...base,
+			...lastUsedField(binding, api.api.vendor, api.api.name),
 			title:
 				apiRefDisplayName({
 					displayName: api.display_name,

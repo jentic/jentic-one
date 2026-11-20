@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncGenerator, Iterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import delete, text
 
-from jentic_one.admin.repos import AgentCredentialBindingRepository
+from jentic_one.admin.repos import AgentCredentialBindingRepository, ExecutionRecordRepository
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
 from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
 from jentic_one.registry.core.schema.apis import Api
@@ -700,6 +700,45 @@ async def test_list_credential_agents_paginates(
     assert second["has_more"] is False
     seen = {first["data"][0]["agent_id"], second["data"][0]["agent_id"]}
     assert seen == set(agent_ids)
+
+
+async def test_list_credential_agents_last_used(
+    cred_writer_client: TestClient, web_context: Context, bound_agents: tuple[str, list[str]]
+) -> None:
+    """Each bound agent carries its latest execution through this credential;
+    an agent that never called through it reads null."""
+    credential_id, (active_id, suspended_id) = bound_agents
+    latest = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+    async with web_context.admin_db.transaction() as session:
+        for started_at, cred in (
+            (latest - timedelta(days=3), credential_id),
+            (latest, credential_id),
+            # A later call through another credential doesn't count here.
+            (latest + timedelta(days=1), "cred_some_other"),
+        ):
+            await ExecutionRecordRepository.create(
+                session,
+                toolkit_id="tk_test000000000000000000",
+                trace_id="abcdef1234567890abcdef12",
+                started_at=started_at,
+                status="completed",
+                created_by=active_id,
+                actor_id=active_id,
+                actor_type="agent",
+                credential_id=cred,
+            )
+    try:
+        resp = cred_writer_client.get(f"/credentials/{credential_id}/agents")
+        assert resp.status_code == 200, resp.text
+        rows = {r["agent_id"]: r for r in resp.json()["data"]}
+        assert datetime.fromisoformat(rows[active_id]["last_used_at"]) == latest
+        assert rows[suspended_id]["last_used_at"] is None
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                text("DELETE FROM execution_records WHERE actor_id = :aid"), {"aid": active_id}
+            )
+            await session.commit()
 
 
 def test_list_credential_agents_empty(cred_writer_client: TestClient) -> None:

@@ -25,6 +25,7 @@ import {
 import { TileCardStatus } from '@/modules/agents/components/flat/TileStatusMarker';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 import { API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
+import { lastUsedLabel, lastUsedShortLabel } from '@/modules/agents/lib/ago';
 
 interface ApiCardProps {
 	tile: ApiTileModel;
@@ -76,10 +77,13 @@ export function ApiCard({
 	// count badge · credential · status word) so a voice user can say what they
 	// see (WCAG 2.5.3); the full status phrase follows when it adds to the word.
 	const cardWord = TILE_STATUS_CARD_LABEL[status];
+	const lastUsed = lastUsedLabel(tile.lastUsedAt);
+	const lastUsedShort = lastUsedShortLabel(tile.lastUsedAt);
 	const visibleText = [
 		accountCount > 1 ? `${tile.title} ${accountCount}` : tile.title,
 		credentialLabel,
 		cardWord,
+		...(lastUsed ? [lastUsed] : []),
 	].join(', ');
 	const statusTail = statusLabel === cardWord ? '' : ` — ${statusLabel}`;
 
@@ -99,7 +103,7 @@ export function ApiCard({
 				// with three fixed-height rows spread by `justify-between`, so each
 				// row — and so every status dot — sits at the same y across the grid.
 				API_CARD_HEIGHT,
-				'bg-surface-1 group flex w-full min-w-0 cursor-pointer flex-col justify-between overflow-hidden rounded-[14px] px-3 py-2.5 text-left outline-none',
+				'bg-surface-1 group @container flex w-full min-w-0 cursor-pointer flex-col justify-between overflow-hidden rounded-[14px] px-3 py-2.5 text-left outline-none',
 				'transition-[background-color,box-shadow,transform] duration-150 motion-reduce:transition-none',
 				'hover:bg-surface-1-hover hover:-translate-y-0.5 hover:shadow-[var(--elevation-card-hover)] motion-reduce:hover:translate-y-0',
 				'focus-visible:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.65),var(--elevation-card-hover)]',
@@ -151,16 +155,28 @@ export function ApiCard({
 					<UserText>{credentialLabel}</UserText>
 				</TruncateWithTooltip>
 			</p>{' '}
-			{/* Row 3 (18px): status dot + word. */}
+			{/* Row 3 (18px): status dot + word · last used, right-aligned. A narrow
+			    card swaps "Used 3d ago" for "Used 3d" so the age never truncates;
+			    the card's accessible name always carries the full phrase. */}
 			<div
 				data-testid="card-row-status"
-				className="flex h-[18px] min-w-0 shrink-0 items-center whitespace-nowrap"
+				className="flex h-[18px] min-w-0 shrink-0 items-center justify-between gap-2 whitespace-nowrap"
 			>
 				<Tooltip content={statusTooltip} interactiveChild placement="bottom">
 					<span className="inline-flex" data-blocked={blocked || undefined}>
 						<TileCardStatus status={status} />
 					</span>
 				</Tooltip>
+				{lastUsed && ' '}
+				{lastUsed && (
+					<span
+						data-testid="card-last-used"
+						className="text-foreground-faint min-w-0 truncate text-[11px] leading-4 tabular-nums"
+					>
+						<span className="hidden @[11.5rem]:inline">{lastUsed}</span>
+						<span className="@[11.5rem]:hidden">{lastUsedShort}</span>
+					</span>
+				)}
 			</div>
 		</button>
 	);
