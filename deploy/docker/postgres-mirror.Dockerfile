@@ -26,7 +26,7 @@
 #     (upstream rebuilds it rarely).
 #   - apk upgrade: picks up Alpine security fixes published since the pinned
 #     digest's last upstream rebuild.
-FROM postgres:17.11-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+FROM postgres:18.6-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
 RUN apk upgrade --no-cache \
  && rm -f /usr/local/bin/gosu /sbin/su-exec \
  && apk add --no-cache shadow \
