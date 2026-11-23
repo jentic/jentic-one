@@ -124,7 +124,14 @@ function McpConfigCard({
 	const contextName = cliContextName(instanceUrl, cliName ?? '');
 	const command = `jentic mcp --context ${shellArg(contextName)}`;
 	const registerSnippet = registerCommand({ ...target, name: cliName });
-	const keyWiring = apiKeyWiringCommands({ ...target, name: cliName ?? '' }).join('\n');
+	// The environment the key is stored in always names its broker: the target's
+	// on a remote install, the reported one on a local install (where `register`
+	// would have seeded it, and `env add` does not).
+	const keyWiring = apiKeyWiringCommands({
+		url: instanceUrl,
+		brokerUrl: isRemote ? brokerUrl : reportedBrokerUrl,
+		name: cliName ?? '',
+	}).join('\n');
 	const jsonConfig = JSON.stringify(
 		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', contextName] } } },
 		null,

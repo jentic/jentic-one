@@ -31,7 +31,11 @@ export function ApiKeyDialog({ open, apiKey, agentName, onClose }: ApiKeyDialogP
 	const target = useRegisterTarget();
 	// The `identity add` line of the wiring the MCP sheet shows in full; the key
 	// stays a placeholder here so the command on screen never carries the secret.
-	const identityCommand = apiKeyWiringCommands({ ...target, name: configName(agentName) })[1];
+	const identityCommand = apiKeyWiringCommands({
+		url: target.url,
+		brokerUrl: target.brokerUrl ?? null,
+		name: configName(agentName),
+	})[1];
 
 	const handleClose = () => {
 		setRevealed(false);

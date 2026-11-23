@@ -142,19 +142,21 @@ export const API_KEY_PLACEHOLDER = '<api-key>';
  * identity instead — the environment for this instance, the identity holding
  * the key, and the context `jentic mcp --context` pins (named as `register`
  * would name it, {@link cliContextName}). `apiKey` defaults to a placeholder.
+ *
+ * The environment always names its broker, local installs included: unlike
+ * `register`, `env add` seeds none, and the CLI's default is not where a local
+ * broker listens. `brokerUrl` is the instance's reported broker; `null` (none
+ * reported) leaves a placeholder.
  */
 export function apiKeyWiringCommands(options: {
 	url: string;
-	brokerUrl?: string | null;
+	brokerUrl: string | null;
 	name: string;
 	apiKey?: string;
 }): string[] {
 	const { url, brokerUrl, name, apiKey = API_KEY_PLACEHOLDER } = options;
 	const env = cliEnvName(url);
-	const broker =
-		brokerUrl === undefined
-			? ''
-			: ` --broker-url ${brokerUrl === null ? BROKER_URL_PLACEHOLDER : shellArg(brokerUrl)}`;
+	const broker = ` --broker-url ${brokerUrl === null ? BROKER_URL_PLACEHOLDER : shellArg(brokerUrl)}`;
 	return [
 		`jentic env add ${shellArg(env)} --url ${shellArg(url)}${broker}`,
 		`jentic identity add ${shellArg(name)} --env ${shellArg(env)} --api-key ${shellArg(apiKey)}`,
