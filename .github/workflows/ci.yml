@@ -732,7 +732,7 @@ jobs:
         run: make sync
 
       - name: Download coverage artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           merge-multiple: true
@@ -1694,7 +1694,7 @@ jobs:
           fetch-tags: true
 
       - name: Download candidate image artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: candidate-image
 
