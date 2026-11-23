@@ -216,6 +216,38 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		).toBeInTheDocument();
 	});
 
+	it('on a local install the key wiring names the reported broker, which `env add` would not seed', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'http://127.0.0.1:8010',
+					host: '127.0.0.1',
+					instance_id: 'inst_local_1',
+					broker_url: 'http://127.0.0.1:8110',
+				}),
+			),
+		);
+		seedExtraAgents([
+			{
+				id: 'agnt_ui_local',
+				name: 'ui-local',
+				status: 'active',
+				registered_by: 'usr_000000000000000000000admin',
+				owner_id: 'usr_000000000000000000000admin',
+			},
+		]);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_ui_local');
+		const sheet = await openSheet(user);
+		// Read once the instance has answered (before that the origin stands in).
+		await waitFor(() =>
+			expect(sheet.getByText(/jentic identity add ui-local/)).toHaveTextContent(
+				'jentic env add 127 --url http://127.0.0.1:8010 --broker-url http://127.0.0.1:8110',
+			),
+		);
+	});
+
 	it('an agent created here gets its key stored as its identity — never `jentic register`, which would make a second agent', async () => {
 		seedExtraAgents([
 			{
@@ -236,7 +268,10 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		// The wiring: environment, identity holding the key, the context the mcp
 		// command pins — against THIS instance, as `register` would have named them.
 		const wiring = await sheet.findByText(/jentic identity add ui-made/);
-		expect(wiring).toHaveTextContent('jentic env add jentic --url https://jentic.example.test');
+		// No broker reported: an explicit placeholder, never a flag left out.
+		expect(wiring).toHaveTextContent(
+			"jentic env add jentic --url https://jentic.example.test --broker-url '<broker-url>'",
+		);
 		expect(wiring).toHaveTextContent(
 			"jentic identity add ui-made --env jentic --api-key '<api-key>'",
 		);

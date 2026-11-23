@@ -14,12 +14,26 @@ describe('apiKeyWiringCommands', () => {
 	it('stores the key as the identity of the context `register` would have created', () => {
 		expect(cliEnvName('https://jentic.example.test')).toBe('jentic');
 		expect(
-			apiKeyWiringCommands({ url: 'https://jentic.example.test', name: 'ui-made' }),
+			apiKeyWiringCommands({
+				url: 'https://jentic.example.test',
+				brokerUrl: 'https://broker.example.test',
+				name: 'ui-made',
+			}),
 		).toEqual([
-			'jentic env add jentic --url https://jentic.example.test',
+			'jentic env add jentic --url https://jentic.example.test --broker-url https://broker.example.test',
 			"jentic identity add ui-made --env jentic --api-key '<api-key>'",
 			'jentic context create jentic-ui-made --env jentic --identity ui-made',
 		]);
+	});
+
+	it('names the broker on a local install too — env add seeds none, unlike register', () => {
+		expect(
+			apiKeyWiringCommands({
+				url: 'http://127.0.0.1:8010',
+				brokerUrl: 'http://127.0.0.1:8110',
+				name: 'ui-local',
+			})[0],
+		).toBe('jentic env add 127 --url http://127.0.0.1:8010 --broker-url http://127.0.0.1:8110');
 	});
 
 	it('carries the broker on a remote install, a placeholder when none is reported', () => {
@@ -45,7 +59,12 @@ describe('apiKeyWiringCommands', () => {
 		// A pasted value carrying a command substitution.
 		const pasted = ['jak_a', '$(id)'].join('');
 		expect(
-			apiKeyWiringCommands({ url: 'https://j.test', name: 'bot', apiKey: pasted })[1],
+			apiKeyWiringCommands({
+				url: 'https://j.test',
+				brokerUrl: null,
+				name: 'bot',
+				apiKey: pasted,
+			})[1],
 		).toBe(`jentic identity add bot --env j --api-key '${pasted}'`);
 	});
 });
