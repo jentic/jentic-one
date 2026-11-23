@@ -61,8 +61,8 @@ from jentic_one.shared.web.container import AppContainer
 
 pytestmark = pytest.mark.integration
 
-_CRED_ID = "cred_composition_container_integ"
-_AGENT = "agnt_composition_container_integ"
+_CRED_ID = "cred_container_integ"
+_AGENT = "agnt_container_integ"
 _VENDOR = "container-example-com"
 _INJECTED_KEY = "container-integ-key"  # pragma: allowlist secret
 _SPY_BODY = b'{"source":"injected-broker"}'
