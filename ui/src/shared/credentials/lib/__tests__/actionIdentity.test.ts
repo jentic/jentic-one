@@ -10,6 +10,7 @@ import {
 	actionsAtThisVersion,
 	changedActionChoices,
 	describeActions,
+	ruleAmbiguity,
 	storeActionChoices,
 	twinActionIds,
 	viewActionGroups,
@@ -189,7 +190,8 @@ describe('an ambiguous action, named in every API that declares it', () => {
 			{ ...before, ask: [], deny: [CREATE] },
 			shared,
 		);
-		expect(next).toEqual({ allow: [], ask: [], deny: [CREATE, TWIN] });
+		// A Deny keeps the shared name, so no copy is left behind in Ask either.
+		expect(next).toEqual({ allow: [], ask: [], deny: ['createOrder'] });
 	});
 
 	it('the update moves a stale id to the action in each API, and counts only real moves', () => {
@@ -201,5 +203,34 @@ describe('an ambiguous action, named in every API that declares it', () => {
 		expect(
 			actionsAtThisVersion({ allow: [], ask: [CREATE, TWIN], deny: [] }, shared).changed,
 		).toBe(0);
+	});
+
+	it('the update moves a stale Deny to the shared name, and its copies give way', () => {
+		const next = actionsAtThisVersion({ allow: [], ask: [], deny: [OLD_CREATE, TWIN] }, shared);
+		expect(next.groups.deny).toEqual(['createOrder']);
+	});
+
+	it('says what is wrong with each rule, and what fixes it', () => {
+		// An Ask by the shared name: the broker refuses it.
+		const askByName = ruleAmbiguity(['createOrder'], 'ask', shared);
+		expect(askByName.shared).toHaveLength(1);
+		expect(askByName.renames.get('createOrder')).toEqual([CREATE, TWIN]);
+		// An Ask in this API only: a call resolved to the other skips it.
+		expect(ruleAmbiguity([CREATE], 'ask', shared).partial).toHaveLength(1);
+		// An Ask named in each API, or a Deny by the shared name: nothing to fix.
+		const fine = [
+			ruleAmbiguity([CREATE, TWIN], 'ask', shared),
+			ruleAmbiguity(['createOrder'], 'deny', shared),
+		];
+		for (const r of fine) expect(r.shared.length + r.partial.length + r.byCode.length).toBe(0);
+		// A Deny by registry ids: offer the name, and drop the copies.
+		const denyByCode = ruleAmbiguity([CREATE, TWIN], 'deny', shared);
+		expect(denyByCode.byCode).toHaveLength(1);
+		expect(denyByCode.renames).toEqual(
+			new Map<string, readonly string[]>([
+				[CREATE, ['createOrder']],
+				[TWIN, []],
+			]),
+		);
 	});
 });

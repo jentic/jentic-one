@@ -192,6 +192,48 @@ const choose = (scope: HTMLElement, action: string, effect: 'Allow' | 'Ask' | 'D
 		name: effect,
 	});
 
+/** A vendor-wide Slack credential: it covers every Slack API, so it can see shared names. */
+function vendorWideCredential() {
+	return makeMockCredential({
+		credential_id: 'cred_slack_1',
+		name: 'Slack bot token',
+		type: CredentialType.BEARER_TOKEN,
+		api: { vendor: 'slack.com', name: '', version: '' },
+	});
+}
+
+/** Slack Legacy, live, declaring `postMessage` only. */
+const LEGACY = {
+	name: 'legacy',
+	title: 'Slack Legacy',
+	spec: { paths: { '/chat.postMessage': { post: { operationId: 'postMessage' } } } },
+};
+
+/** The vendor-wide credential, Slack and Legacy live, and these rules. */
+function seedShared(rules: Parameters<typeof setBindingPermissions>[2]) {
+	resetCredentialsStore([vendorWideCredential()]);
+	seedRegistry([LEGACY]);
+	setBindingPermissions('agnt_active_1', 'cred_slack_1', rules);
+}
+
+/** Resolves once Legacy's document is read — what tells a name is shared. */
+function legacyDocumentRead(): Promise<void> {
+	return new Promise((resolve) => {
+		worker.events.on('response:mocked', ({ request }) => {
+			if (request.url.includes('/apis/slack.com/legacy/1.0.0/')) resolve();
+		});
+	});
+}
+
+/** Manage access → Edit access → By action, returning the editor. */
+async function editByAction(dialog: HTMLElement): Promise<HTMLElement> {
+	const user = userEvent.setup();
+	await user.click(await within(dialog).findByRole('button', { name: /Edit access/ }));
+	const editor = await within(dialog).findByTestId('access-editor');
+	await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+	return editor;
+}
+
 describe('ApiAccessSidebar — action rules across a re-import', () => {
 	beforeEach(async () => {
 		await page.viewport(1440, 900);
@@ -344,77 +386,51 @@ describe('ApiAccessSidebar — action rules across a re-import', () => {
 		});
 	});
 
-	it('a choice on an operationId another covered API shares is saved by its registry id in each API', async () => {
-		resetCredentialsStore([
-			makeMockCredential({
-				credential_id: 'cred_slack_1',
-				name: 'Slack bot token',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'slack.com', name: '', version: '' },
-			}),
-		]);
-		// Legacy declares `postMessage` only.
-		seedRegistry([
-			{
-				name: 'legacy',
-				title: 'Slack Legacy',
-				spec: { paths: { '/chat.postMessage': { post: { operationId: 'postMessage' } } } },
-			},
-		]);
-		setBindingPermissions('agnt_active_1', 'cred_slack_1', [PATH_ALLOW]);
+	it('an Ask on a shared operationId is saved by its registry id in each API; a unique one keeps its name', async () => {
+		seedShared([PATH_ALLOW]);
 		const saves = recordSaves();
-		// The other API's document answers which ids are shared.
-		const legacyRead = new Promise<void>((resolve) => {
-			worker.events.on('response:mocked', ({ request }) => {
-				if (request.url.includes('/apis/slack.com/legacy/1.0.0/openapi')) resolve();
-			});
+		const legacyRead = legacyDocumentRead();
+		const user = userEvent.setup();
+		const dialog = await openSlack();
+		const actions = await byAction(dialog);
+		await legacyRead;
+		await user.click(choose(actions, 'POST /chat.postMessage', 'Ask'));
+		await user.click(choose(actions, 'GET /conversations.list', 'Allow'));
+		await user.click(within(dialog).getByTestId('manage-apply'));
+		await user.click(within(dialog).getByRole('button', { name: /Save rules/ }));
+		await waitFor(() => expect(saves).toHaveLength(1));
+		const legacyPost = await registryOperationId('rev_other', '/chat.postMessage', 'POST');
+		expect(saves[0]).toContainEqual({
+			effect: 'require-approval',
+			operations: [POST_NOW, legacyPost],
 		});
+		expect(saves[0]).toContainEqual({ effect: 'allow', operations: ['listConversations'] });
+	});
+
+	it('a Deny on a shared operationId keeps the name: the broker still denies it, and it survives re-imports', async () => {
+		seedShared([PATH_ALLOW]);
+		const saves = recordSaves();
+		const legacyRead = legacyDocumentRead();
 		const user = userEvent.setup();
 		const dialog = await openSlack();
 		const actions = await byAction(dialog);
 		await legacyRead;
 		await user.click(choose(actions, 'POST /chat.postMessage', 'Deny'));
-		// Unique: still saved by `listConversations`; shared: by the registry id.
-		await user.click(choose(actions, 'GET /conversations.list', 'Allow'));
 		await user.click(within(dialog).getByTestId('manage-apply'));
 		await user.click(within(dialog).getByRole('button', { name: /Save rules/ }));
 		await waitFor(() => expect(saves).toHaveLength(1));
-		// Shared: by the registry id in each API that declares it.
-		const legacyPost = await registryOperationId('rev_other', '/chat.postMessage', 'POST');
-		expect(saves[0]).toContainEqual({ effect: 'deny', operations: [POST_NOW, legacyPost] });
-		expect(saves[0]).toContainEqual({ effect: 'allow', operations: ['listConversations'] });
+		expect(saves[0]).toContainEqual({ effect: 'deny', operations: ['postMessage'] });
 	});
 
-	it('a rule naming a shared action in this API only warns, Deny included, and names it in each API', async () => {
+	it('an Ask naming a shared action in this API only warns, and names it in each API', async () => {
 		// What an action set before the other API went live leaves: this API's
 		// registry id alone. A call resolved to Legacy skips it.
-		resetCredentialsStore([
-			makeMockCredential({
-				credential_id: 'cred_slack_1',
-				name: 'Slack bot token',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'slack.com', name: '', version: '' },
-			}),
-		]);
-		seedRegistry([
-			{
-				name: 'legacy',
-				title: 'Slack Legacy',
-				spec: { paths: { '/chat.postMessage': { post: { operationId: 'postMessage' } } } },
-			},
-		]);
-		setBindingPermissions('agnt_active_1', 'cred_slack_1', [
-			{ effect: 'deny', operations: [POST_NOW] },
-			PATH_ALLOW,
-		]);
+		seedShared([{ effect: 'require-approval', operations: [POST_NOW] }, PATH_ALLOW]);
 		const saves = recordSaves();
 		const user = userEvent.setup();
-		const dialog = await openSlack();
-		await user.click(await within(dialog).findByRole('button', { name: /Edit access/ }));
-		const editor = await within(dialog).findByTestId('access-editor');
-		await user.click(await within(editor).findByRole('button', { name: 'By action' }));
+		const editor = await editByAction(await openSlack());
 		const warning = await within(editor).findByTestId(
-			'manage-action-rule-deny-partial',
+			'manage-action-rule-ask-partial',
 			{},
 			{ timeout: 5000 },
 		);
@@ -423,11 +439,95 @@ describe('ApiAccessSidebar — action rules across a re-import', () => {
 		);
 		expect(warning).toHaveTextContent('a call the broker resolves there skips this rule');
 
-		await user.click(within(warning).getByTestId('manage-action-rule-deny-partial-fix'));
+		await user.click(within(warning).getByTestId('manage-action-rule-ask-partial-fix'));
+		await user.click(screen.getByRole('button', { name: /Save rules/ }));
+		await waitFor(() => expect(saves).toHaveLength(1));
+		const legacyPost = await registryOperationId('rev_other', '/chat.postMessage', 'POST');
+		expect(saves[0]).toContainEqual({
+			effect: 'require-approval',
+			operations: [POST_NOW, legacyPost],
+		});
+	});
+
+	it('a Deny naming a shared action by registry id offers the shared name instead', async () => {
+		const legacyPost = await registryOperationId('rev_other', '/chat.postMessage', 'POST');
+		seedShared([{ effect: 'deny', operations: [POST_NOW, legacyPost] }, PATH_ALLOW]);
+		const saves = recordSaves();
+		const user = userEvent.setup();
+		const editor = await editByAction(await openSlack());
+		const warning = await within(editor).findByTestId(
+			'manage-action-rule-deny-by-code',
+			{},
+			{ timeout: 5000 },
+		);
+		expect(warning).toHaveTextContent(
+			'This Deny names POST /chat.postMessage by registry id, which changes when an API is re-imported',
+		);
+		expect(warning).toHaveTextContent('its shared name, postMessage, instead');
+
+		await user.click(within(warning).getByTestId('manage-action-rule-deny-by-code-fix'));
+		await user.click(screen.getByRole('button', { name: /Save rules/ }));
+		await waitFor(() => expect(saves).toHaveLength(1));
+		// Both registry ids give way to the one name.
+		expect(saves[0]).toContainEqual({ effect: 'deny', operations: ['postMessage'] });
+	});
+
+	it('an import that makes a name shared is seen at once, not after the cache runs out', async () => {
+		resetCredentialsStore([vendorWideCredential()]);
+		seedRegistry();
+		setBindingPermissions('agnt_active_1', 'cred_slack_1', [PATH_ALLOW]);
+		const saves = recordSaves();
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await screen.findAllByText('Slack bot token');
+		await user.click(
+			screen.getAllByRole('button', { name: /^Manage access for Slack( \(|$)/ })[0]!,
+		);
+		const dialog = await screen.findByRole('dialog', { name: 'Slack' });
+		const actions = await byAction(dialog);
+		// Legacy goes live with the same `postMessage`; the import refreshes the
+		// API lists as it does in the app (`invalidateApiLists`).
+		const legacyRead = legacyDocumentRead();
+		seedRegistry([LEGACY]);
+		await queryClient.invalidateQueries({ queryKey: ['credentials', 'apis', 'list'] });
+		await legacyRead;
+		// The list waits while the shared names are worked out, then takes choices.
+		await waitFor(() => expect(within(dialog).queryByTestId('manage-keys-pending')).toBeNull());
+		await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+		await user.click(choose(actions, 'POST /chat.postMessage', 'Ask'));
+		await user.click(within(dialog).getByTestId('manage-apply'));
 		await user.click(within(dialog).getByRole('button', { name: /Save rules/ }));
 		await waitFor(() => expect(saves).toHaveLength(1));
 		const legacyPost = await registryOperationId('rev_other', '/chat.postMessage', 'POST');
-		expect(saves[0]).toContainEqual({ effect: 'deny', operations: [POST_NOW, legacyPost] });
+		expect(saves[0]).toContainEqual({
+			effect: 'require-approval',
+			operations: [POST_NOW, legacyPost],
+		});
+	});
+
+	it('the row says the rules are ambiguous, and the effective access counts the Ask as the broker does', async () => {
+		seedShared([{ effect: 'require-approval', operations: ['postMessage'] }, PATH_ALLOW]);
+		renderPage();
+		await screen.findAllByText('Slack bot token');
+		const row = screen
+			.getAllByRole('button', { name: /^Manage access for Slack( \(|$)/ })[0]!
+			.closest('li') as HTMLElement;
+		expect(
+			await within(row).findByText('Rules ambiguous', {}, { timeout: 5000 }),
+		).toBeInTheDocument();
+		// The broker refuses an Ask on a shared name: Send a message is denied,
+		// not asked; List channels runs on the path allow.
+		await userEvent
+			.setup()
+			.click(within(row).getByRole('button', { name: /^Manage access for Slack/ }));
+		const dialog = await screen.findByRole('dialog', { name: 'Slack' });
+		await waitFor(
+			() =>
+				expect(within(dialog).getByTestId('access-counts')).toHaveTextContent(
+					/1 allowed\s*0 ask\s*1 denied/,
+				),
+			{ timeout: 5000 },
+		);
 	});
 
 	it('the API card says so too, in the cards view', async () => {
