@@ -832,8 +832,19 @@ export function SelectedAgentPanel({
 		(cardsShown ? (
 			<div data-testid="held-calls-row">{heldCallsCard}</div>
 		) : (
-			<div data-testid="held-calls-row" className="-mt-[9px] pl-[31px]">
-				<TreeBranch as="div" lands="row" item={{ i: 0, n: 1 }} continues={treeFollows}>
+			// On a phone the tree's indent would leave the card a third of the
+			// screen, so there it sits flush, as in the cards view.
+			<div
+				data-testid="held-calls-row"
+				className="-mt-[9px] pl-[31px] max-sm:mt-0 max-sm:pl-0"
+			>
+				<TreeBranch
+					as="div"
+					lands="row"
+					item={{ i: 0, n: 1 }}
+					continues={treeFollows}
+					flushOnPhones
+				>
 					{heldCallsCard}
 				</TreeBranch>
 			</div>

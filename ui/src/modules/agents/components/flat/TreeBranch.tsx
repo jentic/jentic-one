@@ -53,6 +53,11 @@ interface TreeBranchProps {
 	 * two read as one tree.
 	 */
 	continues?: boolean;
+	/**
+	 * Below the `sm` breakpoint the branch drops its indent, trunk and elbow,
+	 * so a wide child (the held calls card) gets the full width of a phone.
+	 */
+	flushOnPhones?: boolean;
 	className?: string;
 	children: ReactNode;
 }
@@ -62,14 +67,20 @@ export function TreeBranch({
 	item,
 	as: Branch = 'li',
 	continues = false,
+	flushOnPhones = false,
 	className,
 	children,
 }: TreeBranchProps) {
 	const elbow = ELBOW[lands];
+	const lineOnPhones = flushOnPhones && 'max-sm:hidden';
 	return (
 		<Branch
 			data-testid="tree-branch"
-			className={cn('group/branch relative pt-2.5 pl-[34px]', className)}
+			className={cn(
+				'group/branch relative pt-2.5 pl-[34px]',
+				flushOnPhones && 'max-sm:pt-0 max-sm:pl-0',
+				className,
+			)}
 		>
 			{/* The trunk segment past this branch — only when a sibling follows,
 			    or the tree carries on below. */}
@@ -81,6 +92,7 @@ export function TreeBranch({
 				className={cn(
 					'pointer-events-none absolute top-0 left-[11px] w-[3px] origin-top',
 					continues ? '-bottom-[3px]' : 'bottom-0 group-last/branch:hidden',
+					lineOnPhones,
 				)}
 			>
 				<span className="bg-ledger-tree block h-full w-full origin-left scale-x-50" />
@@ -90,7 +102,11 @@ export function TreeBranch({
 				data-testid="tree-elbow"
 				custom={item}
 				variants={TREE_ELBOW_VARIANTS}
-				className={cn('pointer-events-none absolute top-0 left-[11px] w-[17px]', elbow.box)}
+				className={cn(
+					'pointer-events-none absolute top-0 left-[11px] w-[17px]',
+					elbow.box,
+					lineOnPhones,
+				)}
 			>
 				<span
 					className={cn(

@@ -2876,6 +2876,21 @@ describe('AgentsPage — held calls waiting on the viewer', () => {
 		);
 	});
 
+	it('375px: the card sits flush with the agent card, with no tree indent or lines', async () => {
+		await page.viewport(375, 812);
+		seedSupportAgentCalls();
+		renderPage('/?agent=agnt_active_1');
+		const card = await findHeldCard();
+		const row = screen.getByTestId('held-calls-row');
+		const agentCard = screen.getByTestId('agent-card').getBoundingClientRect();
+		const rect = card.getBoundingClientRect();
+		// The tree's indent would leave the card a third of a phone's width.
+		expect(rect.left).toBe(agentCard.left);
+		expect(rect.right).toBe(agentCard.right);
+		expect(getComputedStyle(within(row).getByTestId('tree-elbow')).display).toBe('none');
+		expect(getComputedStyle(within(row).getByTestId('tree-trunk')).display).toBe('none');
+	});
+
 	it('marks the agent “Waiting for you” beside its status, and counts its calls on its tab', async () => {
 		seedSupportAgentCalls();
 		renderPage('/?agent=agnt_active_1');
