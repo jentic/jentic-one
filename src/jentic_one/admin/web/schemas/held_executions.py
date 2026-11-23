@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jentic_one.shared.models.executions import ExecutionStatus
 from jentic_one.shared.models.held_executions import ApprovalDecision, HeldExecutionState
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -139,6 +140,59 @@ class HeldExecutionDetailResponse(HeldExecutionResponse):
         examples=[ex.USER_ID],
     )
     request: HeldRequestResponse | None = Field(default=None, description="The held call.")
+
+
+class HeldExecutionResultResponse(BaseModel):
+    """The outcome of a held call that ran: the execution document the run recorded.
+
+    A held call that never ran answers an `application/problem+json` body
+    instead of this one.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "execution_id": ex.EXECUTION_ID,
+                    "status": "completed",
+                    "http_status": 200,
+                    "duration_ms": 412,
+                    "body_b64": "eyJpZCI6ICJyZV8xMjMifQ==",
+                }
+            ]
+        }
+    )
+
+    execution_id: str = Field(
+        description="The execution record written for the released call.",
+        examples=[ex.EXECUTION_ID],
+    )
+    status: ExecutionStatus = Field(
+        description="Outcome of the run: `completed`, or `failed` for an upstream, "
+        "pipeline or re-authorization failure.",
+        examples=["completed"],
+    )
+    http_status: int | None = Field(
+        default=None,
+        description="Status the upstream answered with; null when the call never reached it.",
+        examples=[200],
+    )
+    duration_ms: int = Field(
+        description="How long the call took, in milliseconds; 0 when it never ran.",
+        examples=[412],
+    )
+    body_b64: str | None = Field(
+        default=None,
+        description="The upstream response body, base64-encoded; absent when the upstream "
+        "returned none. Interpret the decoded bytes against the upstream's own content "
+        "type — the body is never inlined as JSON.",
+        examples=["eyJpZCI6ICJyZV8xMjMifQ=="],
+    )
+    problem: dict[str, Any] | None = Field(
+        default=None,
+        description="Present only when authorization was refused as the released call ran: "
+        "the RFC 9457 body the synchronous execute route would have returned.",
+    )
 
 
 class HeldExecutionListResponse(BaseModel):

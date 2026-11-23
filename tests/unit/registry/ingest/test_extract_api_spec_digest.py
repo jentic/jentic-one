@@ -76,6 +76,7 @@ async def test_sha_carrying_spec_runs_digest_lookups_and_passes_digest_through()
         patch(
             f"{_STAGE_MODULE}.ApiRevisionRepository.delete_replaceable_by_digest",
             new_callable=AsyncMock,
+            return_value=0,
         ) as delete_replaceable,
         patch(
             f"{_STAGE_MODULE}.ApiRevisionRepository.get_by_digest",

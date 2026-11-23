@@ -25,6 +25,8 @@ class ResolveResult:
     supplies a value. ``server_variables_unresolved`` is True when the registry
     could not determine the URL's server-variable values; the broker then
     injects no credential scoped by ``server_variables`` (fail closed).
+    ``plaintext_http_allowed`` is False when an ``http://`` request matched an
+    operation whose declared servers only permit HTTPS.
     """
 
     operation: OperationInfo
@@ -33,6 +35,7 @@ class ResolveResult:
     server_variables: dict[str, str] = field(default_factory=dict)
     server_variable_defaults: dict[str, str] = field(default_factory=dict)
     server_variables_unresolved: bool = False
+    plaintext_http_allowed: bool = True
 
 
 class RevisionPinOutcome(StrEnum):
@@ -58,7 +61,7 @@ class RevisionPinOutcome(StrEnum):
     HOST_CHANGE_HELD = "host_change_held"
     """The caller's own ``draft`` serves different server hosts than the API's live
     revision, the API has bound credentials, and the caller lacks
-    ``credentials:write`` (→ 403 ``host_change_requires_operator``).
+    ``org:admin`` (→ 403 ``host_change_requires_operator``).
     ``revision_id`` is set so the broker can tell whether the draft serves the URL."""
 
 
@@ -212,6 +215,9 @@ class CredentialDerivation:
       credential covering the API. Computed only for an empty
       ``credentials``; the recovery is the operator's (resume the binding),
       never a new connect.
+    - ``binding_pending`` — an active binding covers the API through a credential
+      whose connect flow is still pending. Recovery completes that existing flow;
+      the credential's identity is not a mismatch.
     """
 
     credentials: tuple[BoundCredential, ...]
@@ -219,6 +225,7 @@ class CredentialDerivation:
     api_served: bool
     identity_mismatch: IdentityMismatch | None
     binding_suspended: bool = False
+    binding_pending: bool = False
 
 
 @runtime_checkable
@@ -279,6 +286,8 @@ class AgentRuleEvaluatorProtocol(Protocol):
         method: str,
         path: str,
         operation_id: str | None,
+        registry_operation_id: str | None = None,
+        ambiguous_operation_ids: frozenset[str] = frozenset(),
         upstream_path: str | None = None,
     ) -> RuleEvaluation: ...
 

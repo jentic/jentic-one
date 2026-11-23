@@ -29,9 +29,9 @@ _PROVIDER_CONFIG_ADAPTER: TypeAdapter[ProviderConfig] = TypeAdapter(ProviderConf
 def _build_provider(name: str, pc: ProviderConfig) -> CredentialProvider:
     """Dispatch on pc.kind to build a provider instance."""
     if isinstance(pc, DirectOAuth2ProviderConfig):
-        return DirectOAuth2Provider(pc)
+        return DirectOAuth2Provider(pc, provider_id=name)
     if isinstance(pc, PipedreamProviderConfig):
-        return PipedreamProvider(pc)
+        return PipedreamProvider(pc, provider_id=name)
     raise UnknownProviderError(name)
 
 

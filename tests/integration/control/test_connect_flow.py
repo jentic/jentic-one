@@ -3,31 +3,51 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable
+import json
+from collections.abc import AsyncGenerator, Awaitable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from sqlalchemy import delete, select, text
 
 from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.control.core.schema.connect_nonces import ConnectNonce
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+from jentic_one.control.core.schema.device_authorization_credentials import (
+    DeviceAuthorizationCredential,
+)
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
+)
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
-from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.errors import (
+    ConnectRequiresReviewError,
+    ConnectScopeWideningError,
+    CredentialNotFoundError,
+)
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
 from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
+    DeviceAuthorizationChallenge,
 )
 from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialUpdate,
@@ -42,6 +62,13 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import TokenEndpointMovedError
 from jentic_one.control.services.integrations.flow_handlers.auth_code import AuthCodeFlowHandler
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
+from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.deps import (
+    get_connect_service,
+    get_connect_session_service,
+    get_credential_service,
+)
+from jentic_one.control.web.routers import credentials as credentials_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
     DirectOAuth2ProviderConfig,
@@ -53,6 +80,42 @@ from jentic_one.shared.db.locks import advisory_lock_key
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
+from jentic_one.shared.web import deps as shared_deps
+from jentic_one.shared.web import get_ctx
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        if callable(step):
+            step = step(request)
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 pytestmark = pytest.mark.integration
 
@@ -88,21 +151,27 @@ async def clean_connect_tables(control_db: DatabaseSession) -> AsyncGenerator[No
     async with control_db.session() as session:
         await session.execute(delete(ConnectNonce))
         await session.execute(delete(OAuthToken))
+        await session.execute(delete(DeviceAuthorizationCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
         await session.execute(delete(Credential))
+        await session.execute(delete(OAuthAppRegistration))
         await session.commit()
     yield
     async with control_db.session() as session:
         await session.execute(delete(ConnectNonce))
         await session.execute(delete(OAuthToken))
+        await session.execute(delete(DeviceAuthorizationCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
         await session.execute(delete(Credential))
+        await session.execute(delete(OAuthAppRegistration))
         await session.commit()
 
 
-async def _create_oauth2_credential(ctx: Context, *, provider: str = "static") -> str:
+async def _create_oauth2_credential(
+    ctx: Context, *, provider: str = "static", created_by: str = _OWNER.sub
+) -> str:
     """Create a bare oauth2 credential and return its id."""
     async with ctx.control_db.transaction() as session:
         credential = await CredentialRepository.create(
@@ -113,7 +182,7 @@ async def _create_oauth2_credential(ctx: Context, *, provider: str = "static") -
             api_name="test-api",
             api_version="v1",
             provider=provider,
-            created_by=_OWNER.sub,
+            created_by=created_by,
         )
         return credential.id
 
@@ -140,18 +209,12 @@ async def _attach_oauth_client(
 
 
 def _patch_provider_registry(ctx: Context, name: str, provider: object) -> None:
-    """Replace one provider in the context's registry for testing.
-
-    Intercepts both the registry key (name) and the provider's internal name
-    attribute, since ConnectService.begin resolves by registry key but
-    ConnectService.complete resolves by state.provider (the provider.name).
-    """
+    """Replace one provider in the context's registry by its exact registry key."""
     ctx._providers = None
     original_get = ctx.providers.get
-    provider_name = getattr(provider, "name", None)
 
     def patched_get(n: str) -> object:
-        if n in (name, provider_name):
+        if n == name:
             return provider
         return original_get(n)
 
@@ -179,9 +242,8 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
 
     svc = ConnectService(ctx)
 
-    # Snapshot the credential's updated_at before completing the flow — the
-    # SPA polls this field to detect connect completion for `direct_oauth2`,
-    # so the connect path must bump it.
+    # Snapshot cache-freshness metadata so the test can verify that a
+    # successful connect refreshes the ordinary credential read.
     async with ctx.control_db.session() as session:
         snapshot = await CredentialRepository.get_by_id(session, credential_id)
         assert snapshot is not None
@@ -196,6 +258,19 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
     assert isinstance(challenge, AuthCodeChallenge)
     assert "https://idp.example.com/authorize" in challenge.authorize_url
     assert challenge.state
+    assert challenge.flow_id
+    concurrent = await svc.begin(
+        credential_id,
+        ConnectRequest(scopes=["read"]),
+        identity=_OWNER,
+        browser_binding=_BINDING.claim,
+    )
+    assert isinstance(concurrent, AuthCodeChallenge)
+    assert concurrent.flow_id
+    assert concurrent.flow_id != challenge.flow_id
+    assert await svc.get_flow_status(credential_id, challenge.flow_id, identity=_OWNER) == "pending"
+    with pytest.raises(CredentialNotFoundError):
+        await svc.get_flow_status(credential_id, challenge.flow_id, identity=_OTHER_USER)
 
     token_response = {
         "access_token": "at_fresh_123",
@@ -204,13 +279,7 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         "scope": "read write",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(post=httpx.Response(200, json=token_response)):
         result_id = await svc.complete(
             challenge.state, ConnectCallback(code="auth-code-xyz"), browser_binding=_BINDING.value
         )
@@ -228,10 +297,21 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         credential = await CredentialRepository.get_by_id(session, credential_id)
         assert credential is not None
         assert credential.provider_account_ref is None
-        # `updated_at` must bump on a successful connect — the SPA's polling
-        # loop relies on it for direct_oauth2 (which returns no
-        # `provider_account_ref`) to close the OAuth popup.
+        # Successful token persistence also refreshes ordinary credential
+        # metadata; exact per-flow completion is asserted below.
         assert credential.updated_at > updated_at_before
+
+    assert (
+        await svc.get_flow_status(credential_id, challenge.flow_id, identity=_OWNER) == "connected"
+    )
+    assert (
+        await svc.get_flow_status(credential_id, concurrent.flow_id, identity=_OWNER) == "pending"
+    )
+    other_credential_id = await _create_oauth2_credential(ctx)
+    assert (
+        await svc.get_flow_status(other_credential_id, challenge.flow_id, identity=_OWNER)
+        == "pending"
+    )
 
 
 async def test_direct_oauth2_derived_redirect_uri_round_trips(
@@ -260,21 +340,15 @@ async def test_direct_oauth2_derived_redirect_uri_round_trips(
     # The non-default port made it into the authorize URL.
     assert "8020" in challenge.authorize_url
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+    ) as mock_client:
         await svc.complete(
             challenge.state, ConnectCallback(code="auth-code-xyz"), browser_binding=_BINDING.value
         )
 
         # The token exchange replays the derived redirect_uri byte-identically.
-        sent_data = mock_client.post.await_args.kwargs["data"]
+        sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
         assert sent_data["redirect_uri"] == derived
 
 
@@ -305,13 +379,7 @@ async def test_direct_oauth2_replay_rejected(
         "expires_in": 3600,
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(post=httpx.Response(200, json=token_response)):
         await svc.complete(
             challenge.state, ConnectCallback(code="code-1"), browser_binding=_BINDING.value
         )
@@ -370,9 +438,9 @@ async def test_org_admin_may_connect_any_credential(
     assert isinstance(challenge, AuthCodeChallenge)
 
 
-async def _connectable_credential(ctx: Context) -> str:
-    """Create an owner-held direct-OAuth2 credential ready for ``begin``."""
-    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+async def _connectable_credential(ctx: Context, *, created_by: str = _OWNER.sub) -> str:
+    """Create a direct-OAuth2 credential ready for ``begin``."""
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth", created_by=created_by)
     provider = DirectOAuth2Provider(
         DirectOAuth2ProviderConfig(
             redirect_uri="https://app.example.com/credentials/oauth/callback"
@@ -383,16 +451,166 @@ async def _connectable_credential(ctx: Context) -> str:
     return credential_id
 
 
-async def test_owner_delegated_agent_may_connect_its_owners_credential(
+async def _connectable_device_credential(
+    ctx: Context, *, scopes: list[str] | None = None, created_by: str = _OWNER.sub
+) -> str:
+    """Create a device-code credential ready for ``begin``."""
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type=StoredCredentialType.OAUTH2_DEVICE_CODE,
+            name="Test Device Code",
+            api_vendor="test-vendor",
+            api_name="test-api",
+            api_version="v1",
+            provider="device_authorization",
+            created_by=created_by,
+        )
+        await DeviceAuthorizationCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            client_id="device-client-123",
+            token_url="https://idp.example.com/token",
+            authorization_endpoint="https://idp.example.com/device/code",
+            requested_scopes=["read", "write"] if scopes is None else scopes,
+            created_by=created_by,
+        )
+        return credential.id
+
+
+def _router_app(ctx: Context, identity: Identity) -> FastAPI:
+    app = FastAPI()
+    app.include_router(credentials_router.router)
+    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    for exc_class, handler in get_exception_handlers():
+        app.add_exception_handler(exc_class, handler)
+    app.dependency_overrides[get_ctx] = lambda: ctx
+    app.dependency_overrides[get_connect_service] = lambda: ConnectService(ctx)
+    app.dependency_overrides[get_connect_session_service] = lambda: ConnectSessionService(ctx)
+    app.dependency_overrides[get_credential_service] = lambda: CredentialService(ctx)
+    app.dependency_overrides[shared_deps.resolve_identity] = lambda: identity
+    return app
+
+
+async def test_owner_delegated_agent_cannot_connect_its_owners_credential(
     integration_context: Context, clean_connect_tables: None
 ) -> None:
     ctx = integration_context
     credential_id = await _connectable_credential(ctx)
 
+    with pytest.raises(ConnectRequiresReviewError) as exc_info:
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=_DELEGATED_AGENT)
+    assert exc_info.value.credential_id == credential_id
+
+    async with ctx.control_db.session() as session:
+        nonces = (await session.execute(select(ConnectNonce))).scalars().all()
+    assert nonces == []
+
+
+async def test_agent_may_connect_its_own_credential(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx, created_by=_DELEGATED_AGENT.sub)
+
     challenge = await ConnectService(ctx).begin(
-        credential_id, ConnectRequest(), identity=_DELEGATED_AGENT
+        credential_id,
+        ConnectRequest(scopes=["read"]),
+        identity=_DELEGATED_AGENT,
+        browser_binding=_BINDING.claim,
     )
     assert isinstance(challenge, AuthCodeChallenge)
+
+
+async def test_owner_may_connect_own_credential_with_narrower_scopes(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    auth_code_id = await _connectable_credential(ctx)
+    device_id = await _connectable_device_credential(ctx, scopes=["read", "write"])
+
+    auth_challenge = await ConnectService(ctx).begin(
+        auth_code_id,
+        ConnectRequest(scopes=["read"]),
+        identity=_OWNER,
+        browser_binding=_BINDING.claim,
+    )
+    assert isinstance(auth_challenge, AuthCodeChallenge)
+    assert parse_qs(urlsplit(auth_challenge.authorize_url).query)["scope"] == ["read"]
+
+    device_response = httpx.Response(
+        200,
+        json={
+            "device_code": "dc-narrow",
+            "user_code": "NARROW-1",
+            "verification_uri": "https://idp.example.com/device",
+            "expires_in": 900,
+            "interval": 5,
+        },
+    )
+    with idp_transport(post=device_response):
+        device_challenge = await ConnectService(ctx).begin(
+            device_id,
+            ConnectRequest(scopes=["read"]),
+            identity=_OWNER,
+        )
+    assert isinstance(device_challenge, DeviceAuthorizationChallenge)
+    async with ctx.control_db.session() as session:
+        dfc = await DeviceAuthorizationCredentialRepository.get_by_credential(session, device_id)
+    assert dfc is not None
+    assert dfc.granted_scopes == ["read"]
+
+
+@pytest.mark.parametrize("flow", ["auth_code", "device"])
+async def test_connect_with_wider_scopes_refused(
+    integration_context: Context, clean_connect_tables: None, flow: str
+) -> None:
+    ctx = integration_context
+    if flow == "auth_code":
+        credential_id = await _connectable_credential(ctx)
+    else:
+        credential_id = await _connectable_device_credential(ctx, scopes=["read", "write"])
+
+    with idp_transport() as mock_requests:
+        with pytest.raises(ConnectScopeWideningError):
+            await ConnectService(ctx).begin(
+                credential_id,
+                ConnectRequest(scopes=["read", "admin"]),
+                identity=_OWNER,
+            )
+        assert mock_requests == []
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_router_app(ctx, _OWNER)),
+        base_url="https://testserver",
+    ) as tc:
+        resp = await tc.post(
+            f"/credentials/{credential_id}/connect",
+            json={"scopes": ["read", "admin"]},
+        )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["type"] == "scope_widening_requires_review"
+
+
+@pytest.mark.parametrize("caller", [_OTHER_USER, _AGENT_OF_OTHER_OWNER], ids=["user", "agent"])
+async def test_other_users_credential_is_uniform_404(
+    integration_context: Context, clean_connect_tables: None, caller: Identity
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+
+    with pytest.raises(CredentialNotFoundError):
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=caller)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_router_app(ctx, caller)),
+        base_url="https://testserver",
+    ) as tc:
+        resp = await tc.post(f"/credentials/{credential_id}/connect", json={})
+    assert resp.status_code == 404, resp.text
+    body = resp.json()
+    assert body["type"] == "credential_not_found"
+    assert "agent_directive" not in body
 
 
 @pytest.mark.parametrize(
@@ -436,28 +654,28 @@ async def test_pipedream_connect_and_callback_stores_account_ref(
         "connect_link_url": "https://pipedream.com/connect/ct_test",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            side_effect=[
-                httpx.Response(200, json=app_token_resp),
-                httpx.Response(200, json=connect_token_resp),
-            ]
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=[
+            httpx.Response(200, json=app_token_resp),
+            httpx.Response(200, json=connect_token_resp),
+        ],
+        get=httpx.Response(
+            200,
+            json={"id": "acct_pd_789", "external_id": credential_id},
+        ),
+    ):
         challenge = await svc.begin(
             credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
         )
 
-    assert isinstance(challenge, AuthCodeChallenge)
-    assert "pipedream.com" in challenge.authorize_url
+        assert isinstance(challenge, AuthCodeChallenge)
+        assert "pipedream.com" in challenge.authorize_url
 
-    result_id = await svc.complete(
-        challenge.state, ConnectCallback(account_id="acct_pd_789"), browser_binding=_BINDING.value
-    )
+        result_id = await svc.complete(
+            challenge.state,
+            ConnectCallback(account_id="acct_pd_789"),
+            browser_binding=_BINDING.value,
+        )
     assert result_id == credential_id
 
     async with ctx.control_db.session() as session:
@@ -506,14 +724,10 @@ async def test_pipedream_refresh_populates_access_token(
         decrypt=fake_decrypt,
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=app_token_resp))
-        mock_client.get = AsyncMock(return_value=httpx.Response(200, json=account_token_resp))
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=httpx.Response(200, json=app_token_resp),
+        get=httpx.Response(200, json=account_token_resp),
+    ):
         result = await provider.refresh(ctx, token=token_view)
 
     assert result.access_token == "vendor-live-at"
@@ -543,36 +757,212 @@ async def test_pipedream_replay_rejected(
         "connect_link_url": "https://pipedream.com/connect/ct_test",
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            side_effect=[
-                httpx.Response(200, json=app_token_resp),
-                httpx.Response(200, json=connect_token_resp),
-            ]
-        )
-        mock_client_cls.return_value = mock_client
-
+    with idp_transport(
+        post=[
+            httpx.Response(200, json=app_token_resp),
+            httpx.Response(200, json=connect_token_resp),
+        ],
+        get=httpx.Response(
+            200,
+            json={"id": "acct_1", "external_id": credential_id},
+        ),
+    ):
         challenge = await svc.begin(
             credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
         )
 
-    assert isinstance(challenge, AuthCodeChallenge)
-    await svc.complete(
-        challenge.state, ConnectCallback(account_id="acct_1"), browser_binding=_BINDING.value
-    )
-
-    with pytest.raises(ConnectFlowError, match="already used"):
+        assert isinstance(challenge, AuthCodeChallenge)
         await svc.complete(
-            challenge.state, ConnectCallback(account_id="acct_2"), browser_binding=_BINDING.value
+            challenge.state, ConnectCallback(account_id="acct_1"), browser_binding=_BINDING.value
         )
+
+        with pytest.raises(ConnectFlowError, match="already used"):
+            await svc.complete(
+                challenge.state,
+                ConnectCallback(account_id="acct_2"),
+                browser_binding=_BINDING.value,
+            )
 
     async with ctx.control_db.session() as session:
         credential = await CredentialRepository.get_by_id(session, credential_id)
         assert credential is not None
         assert credential.provider_account_ref == "acct_1"
+
+
+async def test_pipedream_standalone_http_router_flow_end_to_end(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Begin and complete Pipedream connect through the real credentials router."""
+    ctx = integration_context
+    credential_id = await _create_oauth2_credential(ctx, provider="my_pipedream")
+    other_credential_id = await _create_oauth2_credential(ctx, provider="my_pipedream")
+
+    provider = PipedreamProvider(
+        PipedreamProviderConfig(
+            project_id="proj_test",
+            client_id="pd-cid",
+            client_secret="pd-csecret",  # type: ignore[arg-type]
+        ),
+        provider_id="my_pipedream",
+    )
+    _patch_provider_registry(ctx, "my_pipedream", provider)
+
+    app = FastAPI()
+    app.include_router(credentials_router.router)
+    app.dependency_overrides[get_ctx] = lambda: ctx
+    app.dependency_overrides[get_connect_service] = lambda: ConnectService(ctx)
+    app.dependency_overrides[get_connect_session_service] = lambda: ConnectSessionService(ctx)
+    app.dependency_overrides[get_credential_service] = lambda: CredentialService(ctx)
+    app.dependency_overrides[shared_deps.resolve_identity] = lambda: _OWNER
+
+    posted_token_payloads: list[dict[str, str]] = []
+    router_client_cls = httpx.AsyncClient
+
+    def _post(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/oauth/token"):
+            return httpx.Response(200, json={"access_token": "pd-app-token"})
+        if url.endswith("/connect/tokens"):
+            body = json.loads(request.content)
+            if isinstance(body, dict):
+                posted_token_payloads.append(body)
+            return httpx.Response(
+                200,
+                json={
+                    "token": "ct_live",
+                    "connect_link_url": "https://pipedream.com/connect/ct_live",
+                },
+            )
+        return httpx.Response(404)
+
+    def _get(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/connect/accounts/acct_wrong_owner"):
+            return httpx.Response(
+                200,
+                json={"id": "acct_wrong_owner", "external_id": other_credential_id},
+            )
+        if url.endswith("/connect/accounts/acct_intended"):
+            return httpx.Response(
+                200,
+                json={"id": "acct_intended", "external_id": credential_id},
+            )
+        return httpx.Response(404)
+
+    with idp_transport(post=_post, get=_get):
+        # 1. Missing account_id fails and does not connect the credential.
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_1 = await tc.post(f"/credentials/{credential_id}/connect", json={})
+            assert begin_1.status_code == 200
+            state_1 = begin_1.json()["state"]
+            assert posted_token_payloads
+            assert state_1 in posted_token_payloads[-1]["success_redirect_uri"]
+            missing_cb = await tc.get("/credentials/oauth/callback", params={"state": state_1})
+            assert "status=error" in missing_cb.headers["location"]
+
+        # 2. Malformed account_id fails.
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_2 = await tc.post(f"/credentials/{credential_id}/connect", json={})
+            state_2 = begin_2.json()["state"]
+            malformed_cb = await tc.get(
+                "/credentials/oauth/callback",
+                params={"state": state_2, "account_id": "../bad/id"},
+            )
+            assert "status=error" in malformed_cb.headers["location"]
+
+        # 3. Substituted account belonging to another credential/user fails.
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_3 = await tc.post(f"/credentials/{credential_id}/connect", json={})
+            state_3 = begin_3.json()["state"]
+            sub_cb = await tc.get(
+                "/credentials/oauth/callback",
+                params={"state": state_3, "account_id": "acct_wrong_owner"},
+            )
+            assert "status=error" in sub_cb.headers["location"]
+
+        async with ctx.control_db.session() as session:
+            cred = await CredentialRepository.get_by_id(session, credential_id)
+            assert cred is not None
+            assert cred.provider_account_ref is None
+
+        # 4. Intended account succeeds and replay is rejected.
+        async with router_client_cls(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://testserver",
+            follow_redirects=False,
+        ) as tc:
+            begin_4 = await tc.post(f"/credentials/{credential_id}/connect", json={})
+            state_4 = begin_4.json()["state"]
+            ok_cb = await tc.get(
+                "/credentials/oauth/callback",
+                params={"state": state_4, "account_id": "acct_intended"},
+            )
+            assert "status=ok" in ok_cb.headers["location"]
+
+            replay_cb = await tc.get(
+                "/credentials/oauth/callback",
+                params={"state": state_4, "account_id": "acct_wrong_owner"},
+            )
+            assert "status=error" in replay_cb.headers["location"]
+
+    async with ctx.control_db.session() as session:
+        cred = await CredentialRepository.get_by_id(session, credential_id)
+        assert cred is not None
+        assert cred.provider_account_ref == "acct_intended"
+
+
+async def test_noncanonical_provider_ids_resolve_exact_instance_without_canonical_alias(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Begin and complete use the configured noncanonical provider instance."""
+    ctx = integration_context
+    oauth_cred_id = await _create_oauth2_credential(ctx, provider="custom_oauth_a")
+    await _attach_oauth_client(ctx, oauth_cred_id)
+
+    oauth_a = _RecordingOAuth2()
+    oauth_a.name = "custom_oauth_a"
+    oauth_b = _RecordingOAuth2()
+    oauth_b.name = "custom_oauth_b"
+    oauth_canonical = _RecordingOAuth2()
+    oauth_canonical.name = "direct_oauth2"
+
+    ctx._providers = None
+    original_get = ctx.providers.get
+    registry_map = {
+        "custom_oauth_a": oauth_a,
+        "custom_oauth_b": oauth_b,
+        "direct_oauth2": oauth_canonical,
+    }
+    ctx.providers.get = lambda n: registry_map[n] if n in registry_map else original_get(n)  # type: ignore[assignment]
+
+    svc = ConnectService(ctx)
+    challenge = await svc.begin(
+        oauth_cred_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+    secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    assert decode_state(secret, challenge.state).provider == "custom_oauth_a"
+
+    await svc.complete(
+        challenge.state,
+        ConnectCallback(code="code-custom-a"),
+        browser_binding=_BINDING.value,
+    )
+    assert oauth_a.posted_to == ["https://idp.example.com/token"]
+    assert oauth_b.posted_to == []
+    assert oauth_canonical.posted_to == []
 
 
 # --- Token-row lifecycle (repo-level) ---
@@ -834,6 +1224,178 @@ async def test_reconnect_clears_revocation(
         assert updated.revoked_at is None
 
 
+async def test_reconnect_without_refresh_token_drops_previous_grants_refresh_token(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """A standalone reconnect replaces the grant instead of merging into the prior one."""
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    svc = ConnectService(ctx)
+
+    first = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(first, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_account_a",
+                "refresh_token": "rt_account_a",
+                "expires_in": 3600,
+                "scope": "read write",
+            },
+        )
+    ):
+        await svc.complete(
+            first.state, ConnectCallback(code="code-a"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        initial = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert initial is not None
+        assert initial.encrypted_refresh_token is not None
+        assert ctx.encryption.decrypt(initial.encrypted_refresh_token) == "rt_account_a"
+        assert initial.scope == "read write"
+
+    second = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(second, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_account_b",
+                "expires_in": 3600,
+            },
+        )
+    ):
+        await svc.complete(
+            second.state, ConnectCallback(code="code-b"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        replaced = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert replaced is not None
+        assert ctx.encryption.decrypt(replaced.encrypted_access_token) == "at_account_b"
+        assert replaced.encrypted_refresh_token is None
+        assert replaced.scope is None
+
+
+async def test_reconnect_to_other_client_never_keeps_old_refresh_token(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Reconnecting after switching OAuth app registration drops the old client's refresh token."""
+    ctx = integration_context
+    provider = DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback"
+        )
+    )
+    _patch_provider_registry(ctx, "my_oauth", provider)
+
+    async with ctx.control_db.transaction() as session:
+        reg_a = await OAuthAppRegistrationRepository.create_authorization_code(
+            session,
+            name="Client A",
+            api_vendor="test-vendor",
+            catalog_api_id="test-vendor/test-api",
+            display_name="Client A",
+            client_id="client-a",
+            encrypted_client_secret=ctx.encryption.encrypt("secret-a"),
+            authorize_url="https://idp.example.com/authorize",
+            token_url="https://idp.example.com/token",
+            default_scopes=["read", "write"],
+            created_by=_OWNER.sub,
+        )
+        reg_b = await OAuthAppRegistrationRepository.create_authorization_code(
+            session,
+            name="Client B",
+            api_vendor="test-vendor",
+            catalog_api_id="test-vendor/test-api",
+            display_name="Client B",
+            client_id="client-b",
+            encrypted_client_secret=ctx.encryption.encrypt("secret-b"),
+            authorize_url="https://idp.example.com/authorize",
+            token_url="https://idp.example.com/token",
+            default_scopes=["read", "write"],
+            created_by=_OWNER.sub,
+        )
+        credential = await CredentialRepository.create(
+            session,
+            type=StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+            name="Registration OAuth2",
+            api_vendor="test-vendor",
+            api_name="test-api",
+            api_version="v1",
+            provider="my_oauth",
+            created_by=_OWNER.sub,
+        )
+        await CredentialRepository.set_oauth_app_registration(
+            session, credential.id, registration_id=reg_a.id
+        )
+        credential_id = credential.id
+
+    svc = ConnectService(ctx)
+    first = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(first, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_client_a",
+                "refresh_token": "rt_client_a",
+                "expires_in": 3600,
+                "scope": "read write",
+            },
+        )
+    ):
+        await svc.complete(
+            first.state, ConnectCallback(code="code-client-a"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        token_a = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert token_a is not None
+        assert token_a.app_registration_id == reg_a.id
+        assert token_a.encrypted_refresh_token is not None
+        assert ctx.encryption.decrypt(token_a.encrypted_refresh_token) == "rt_client_a"
+
+    async with ctx.control_db.transaction() as session:
+        await CredentialRepository.set_oauth_app_registration(
+            session, credential_id, registration_id=reg_b.id
+        )
+
+    second = await svc.begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(second, AuthCodeChallenge)
+    with idp_transport(
+        post=httpx.Response(
+            200,
+            json={
+                "access_token": "at_client_b",
+                "expires_in": 3600,
+                "scope": "read",
+            },
+        )
+    ):
+        await svc.complete(
+            second.state, ConnectCallback(code="code-client-b"), browser_binding=_BINDING.value
+        )
+
+    async with ctx.control_db.session() as session:
+        token_b = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        assert token_b is not None
+        assert ctx.encryption.decrypt(token_b.encrypted_access_token) == "at_client_b"
+        assert token_b.encrypted_refresh_token is None
+        assert token_b.scope == "read"
+        assert token_b.app_registration_id == reg_b.id
+
+
 async def test_state_without_browser_binding_is_refused_and_not_consumed(
     integration_context: Context, clean_connect_tables: None
 ) -> None:
@@ -857,12 +1419,12 @@ async def test_state_without_browser_binding_is_refused_and_not_consumed(
     secret = ctx.config.credentials.connect.state_secret.get_secret_value()
     assert decode_state(secret, challenge.state).browser_binding_hash is None
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
+    with idp_transport() as mock_client:
         with pytest.raises(ConnectFlowError, match="starting browser"):
             await svc.complete(
                 challenge.state, ConnectCallback(code="c"), browser_binding=_BINDING.value
             )
-        mock_client_cls.assert_not_called()
+        assert not mock_client
 
     async with ctx.control_db.session() as session:
         assert await OAuthTokenRepository.get_by_credential(session, credential_id) is None

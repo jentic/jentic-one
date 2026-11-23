@@ -5,11 +5,11 @@ from __future__ import annotations
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.repos import AuditRepository
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import AuditEntryNotFoundError, InvalidInputError
 from jentic_one.admin.services.schemas.audit import AuditFilter, AuditView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
 
 
 class AuditService:
@@ -38,9 +38,7 @@ class AuditService:
         if has_target and (filter.target_type is None or filter.target_id is None):
             raise InvalidInputError("target_type and target_id must both be provided")
 
-        cursor_dt = None
-        if cursor is not None:
-            cursor_dt, _ = decode_cursor(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="str") if cursor is not None else None
 
         async with self._ctx.admin_db.session() as session:
             if filter.target_type is not None and filter.target_id is not None:
@@ -49,7 +47,7 @@ class AuditService:
                     filter.target_type,
                     filter.target_id,
                     limit=limit + 1,
-                    cursor=cursor_dt,
+                    cursor=cursor_key,
                     actor_id=filter.actor_id,
                     origin=filter.origin,
                     since=filter.since,
@@ -61,7 +59,7 @@ class AuditService:
                     session,
                     filter.actor_id,
                     limit=limit + 1,
-                    cursor=cursor_dt,
+                    cursor=cursor_key,
                     origin=filter.origin,
                     since=filter.since,
                     until=filter.until,
@@ -71,7 +69,7 @@ class AuditService:
                 entries = await AuditRepository.list_all(
                     session,
                     limit=limit + 1,
-                    cursor=cursor_dt,
+                    cursor=cursor_key,
                     origin=filter.origin,
                     since=filter.since,
                     until=filter.until,

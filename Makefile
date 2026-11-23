@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-quickstart-dev stop-quickstart-dev destroy-quickstart-dev start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -71,6 +71,15 @@ test-arch: ## Run architecture enforcement tests
 test-smoke: ## Run smoke tests (requires running services)
 	uv run pytest tests/smoke/ -m smoke
 
+OLD ?= 0.44.0
+BACKEND ?= postgres
+CANDIDATE ?=
+OUT_DIR ?= $(BUILD_DIR)/upgrade-$(OLD)-$(BACKEND)
+
+.PHONY: test-upgrade
+test-upgrade: ## Run container upgrade test from OLD release to CANDIDATE image (OLD=0.44.0 BACKEND=postgres [CANDIDATE=<image>])
+	OLD="$(OLD)" BACKEND="$(BACKEND)" CANDIDATE="$(CANDIDATE)" OUT_DIR="$(OUT_DIR)" ./tests/upgrade/run.sh
+
 smoke-packaging: ## Build UI+wheel, install in a clean venv, verify the SPA is packaged & served (DB-free)
 	./scripts/spa_packaging_smoke.sh
 
@@ -102,9 +111,9 @@ endpoints: ## Regenerate the endpoint + permission reference (docs/reference/end
 	uv run python -m tools.endpoint_tree
 	@echo "Regenerated docs/reference/endpoints.md and docs/reference/endpoints.json."
 
-cli-reference: ## Regenerate the CLI command reference (ui/public/cli-reference.json) from the cobra command tree
-	cd cli && go run ./cmd/clidocs -o ../ui/public/cli-reference.json
-	@echo "Regenerated ui/public/cli-reference.json."
+cli-reference: ## Regenerate the CLI command reference (ui/public/cli-reference.json + docs/reference/cli.md) from the cobra command tree
+	cd cli && go run ./cmd/clidocs -o ../ui/public/cli-reference.json -md ../docs/reference/cli.md
+	@echo "Regenerated ui/public/cli-reference.json and docs/reference/cli.md."
 
 broker-reference: ## Regenerate the Broker OpenAPI artifact (ui/public/broker-openapi.json) from the hand-curated spec
 	uv run python -m tools.broker_reference
@@ -178,7 +187,28 @@ stop-fixtures: ## Stop Docker database fixtures
 destroy-fixtures: ## Remove Docker database fixtures and volumes
 	docker compose -f docker/local-setup/docker-compose.yaml down -v
 
-start-app: ## Start combined app (all surfaces)
+# Docker quickstart plus a mock OIDC IdP (web SSO and MCP OAuth), for local development.
+QUICKSTART_DEV := docker compose -p jentic-quickstart-dev \
+	-f deploy/docker/quickstart/docker-compose.yaml \
+	-f docker/local-setup/docker-compose.quickstart-dev-oauth-idp-overlay.yaml
+
+# Extra `docker compose up` flags, e.g. ARGS="-d --wait" to run in the background.
+ARGS ?=
+
+start-quickstart-dev: ## Run the Docker quickstart with a mock IdP (SSO + MCP OAuth) on :8000/:8100/:8080, logs in the foreground (ARGS="-d --wait" for background)
+	@# The quickstart's credential-encryption key, generated once (as in the README).
+	@mkdir -p "$$HOME/.config/jentic-one"
+	@[ -f "$$HOME/.config/jentic-one/.env" ] || (umask 077; echo "JENTIC_ENCRYPTION_KEY=$$(openssl rand -base64 32)" > "$$HOME/.config/jentic-one/.env")
+	@echo "==> http://127.0.0.1:8000: create your admin, then sign in via SSO with that email"
+	$(QUICKSTART_DEV) up $(ARGS)
+
+stop-quickstart-dev: ## Remove the dev quickstart containers (keeps its data)
+	$(QUICKSTART_DEV) down
+
+destroy-quickstart-dev: ## Remove the dev quickstart stack and its data volume
+	$(QUICKSTART_DEV) down -v
+
+start-app: ## Start combined app (registry, admin, control, auth) on :8000; the broker is start-broker
 	uv run python -m jentic_one
 
 start-registry: ## Start registry surface standalone
@@ -209,7 +239,7 @@ migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/lo
 	@mkdir -p .data
 	JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one.migrations.run
 
-start-app-sqlite: migrate-sqlite ## Start combined app on local SQLite (ingest only; search disabled)
+start-app-sqlite: migrate-sqlite ## Start combined app on local SQLite (lexical search; no Docker)
 	JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one
 
 build-wheel: ## Build Python wheel (packaging TEST ONLY — never published; the container image is the canonical backend distribution)

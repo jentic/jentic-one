@@ -208,15 +208,47 @@ export function confirmConnectSession(
 	});
 }
 
-/** Every revision of a session, oldest first; gated like the review read. */
+/**
+ * Every revision of a session, oldest first; gated like the review read.
+ *
+ * The route serves one page at a time, so this follows ``next_cursor`` to the
+ * end: the history panel and the attribution on the front page both need the
+ * current revision, which is on the last page, not the first. Bounded by
+ * ``maxPages`` so a chain that keeps growing cannot spin the client.
+ */
 export async function listConnectSessionRevisions(
 	sessionId: string,
 	pollToken?: string,
+	maxPages = 10,
 ): Promise<SessionRevision[]> {
-	const body = await request<{ data: SessionRevision[] }>(
-		sessionUrl(sessionId, '/revisions', pollToken),
-	);
-	return body.data;
+	const revisions: SessionRevision[] = [];
+	let cursor: string | null = null;
+	for (let page = 0; page < maxPages; page += 1) {
+		const query = new URLSearchParams({ limit: '200' });
+		if (cursor) query.set('cursor', cursor);
+		const suffix = `/revisions?${query.toString()}`;
+		const body = await request<{
+			data: SessionRevision[];
+			has_more?: boolean;
+			next_cursor?: string | null;
+		}>(
+			pollToken
+				? `${sessionUrl(sessionId, suffix)}&poll_token=${encodeURIComponent(pollToken)}`
+				: sessionUrl(sessionId, suffix),
+		);
+		revisions.push(...body.data);
+		if (!body.has_more || !body.next_cursor) break;
+		cursor = body.next_cursor;
+	}
+	return revisions;
+}
+
+/** Resolve an open edit onto the binding as it is now (``POST …:rebase``). */
+export function rebaseConnectSession(
+	sessionId: string,
+	pollToken?: string,
+): Promise<AmendedSession> {
+	return request(sessionUrl(sessionId, ':rebase', pollToken), { method: 'POST' });
 }
 
 /** Change an open session's ask as a new revision (``POST …:amend``). */

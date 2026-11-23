@@ -15,6 +15,8 @@ import ast
 import importlib
 import inspect
 
+import pytest
+
 from .conftest import SRC_ROOT, python_files_in
 
 _BANNED_ERROR_MODULE_NAMES = {"exc.py", "exceptions.py"}
@@ -27,6 +29,9 @@ _DISCOVERY_ERRORS = {
     "TooManyCandidatesError",
 }
 _DISCOVERY_MODULE = SRC_ROOT / "shared" / "discovery" / "errors.py"
+
+
+pytestmark = pytest.mark.arch
 
 
 def test_error_modules_are_named_errors_py() -> None:

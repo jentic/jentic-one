@@ -125,10 +125,11 @@ recovery — follow its instruction instead of retrying the same call.
 - Exit codes are a coarse contract: **0** ok, **1** transport/unexpected,
   **2** "cannot succeed as asked" (denial, resolve failure, missing context —
   do not blind-retry), **3** timed out still pending (retry later). Two
-  caveats: `execute` exits **0 for any
-  non-denial broker response**, including 429 rate-limits, 503 shed/circuit
-  responses and 504 timeouts — always check the HTTP status in the JSON
-  envelope, never the exit code alone. Exit 1 is also broader than
+  caveats: `execute` exits **0 for any upstream response**, including an
+  upstream 4xx/5xx — always check the HTTP status in the JSON envelope, never
+  the exit code alone; a 429/5xx the broker generated itself (circuit open, at
+  capacity, rate limited, timed out) is `TRANSPORT_ERROR`, exit **1**, with
+  `details.retryable` telling you whether to re-run it. Exit 1 is also broader than
   "transport": several deterministic, named-fix errors (e.g.
   `MIGRATION_REQUIRED`, `NOT_AUTHENTICATED`, `PENDING_APPROVAL`) also exit 1
   — read the envelope's `error.code` and `actionable_step` before treating 1

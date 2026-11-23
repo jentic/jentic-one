@@ -15,6 +15,7 @@ from jentic_one.registry.ingest.host_change_guard import (
     pending_host_change,
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.url_index_repo import (
     UrlIndexRepository,
@@ -31,8 +32,32 @@ from jentic_one.registry.services.errors import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.models import ORIGIN_CATALOG, ApiRevisionState, EventType
 from jentic_one.shared.pagination import decode_cursor, encode_cursor
+
+
+def _should_resolve_catalog_update_available(
+    *,
+    origin: str | None,
+    spec_digest: str | None,
+    source_url: str | None,
+    check: Any,
+) -> bool:
+    """Return whether promoting this revision resolves the API's update-available check (#1490).
+
+    Only a catalog-origin revision carrying the exact outstanding notified digest
+    resolves an open check row on the same source URL whose notification is a
+    plain ``catalog.update_available`` (or an in-sync baseline with no conflict
+    class). Other digests, overlay-conflict notifications, and manual or overlay
+    revisions leave the check row untouched.
+    """
+    if origin != ORIGIN_CATALOG or not spec_digest or check is None:
+        return False
+    if source_url is not None and check.spec_url != source_url:
+        return False
+    if check.last_notified_digest is None or check.last_notified_digest != spec_digest:
+        return False
+    return bool(check.last_notified_event_class in (EventType.CATALOG_UPDATE_AVAILABLE, None))
 
 
 class RevisionPageItem(BaseModel):
@@ -103,10 +128,7 @@ class RevisionService:
         cursor: str | None = None,
         limit: int = 50,
     ) -> RevisionPage:
-        cursor_created_at = None
-        cursor_id: str | None = None
-        if cursor is not None:
-            cursor_created_at, cursor_id = decode_cursor(cursor)
+        cursor_key = decode_cursor(cursor, id_kind="uuid") if cursor is not None else None
 
         async with self._ctx.registry_db.session() as session:
             api = await ApiRepository.get_by_identifier(session, vendor, name, version)
@@ -117,8 +139,7 @@ class RevisionService:
                 session,
                 api_id=api.id,
                 limit=limit + 1,
-                cursor_created_at=cursor_created_at,
-                cursor_id=cursor_id,
+                cursor=cursor_key,
                 states=states,
             )
 
@@ -251,9 +272,12 @@ class RevisionService:
             # A draft that came from an origin-tracked source (a catalog revision held
             # for review) goes live as IMPORTED, like any catalog revision, so the next
             # catalog re-import archives it instead of colliding with it.
+            revision_origin = revision.origin
+            revision_spec_digest = revision.spec_digest
+            revision_source_url = revision.source_url
             promoted_state = (
                 ApiRevisionState.IMPORTED
-                if revision.origin is not None
+                if revision_origin is not None
                 else ApiRevisionState.PUBLISHED
             )
             now = datetime.now(UTC)
@@ -267,6 +291,13 @@ class RevisionService:
                 session, revision_uuid, promoted_state, promoted_at=now
             )
             await ApiRepository.set_current_revision(session, api.id, revision_uuid)
+            await self._resolve_catalog_update_available(
+                session,
+                api_id=api.id,
+                origin=revision_origin,
+                spec_digest=revision_spec_digest,
+                source_url=revision_source_url,
+            )
 
             # The demote path above mutates revision rows via bulk UPDATEs and
             # repoints ``Api.current_revision_id``. Bulk updates do not sync the
@@ -304,7 +335,7 @@ class RevisionService:
     ) -> None:
         """Refuse a promote that changes the server hosts of a credential-bound API.
 
-        Only called for callers without ``credentials:write``. Same rules as the
+        Only called for callers without ``org:admin``. Same rules as the
         catalog re-import guard (``registry/ingest/host_change_guard.py``); see
         ``pending_host_change`` for the baseline and the never-live case.
         """
@@ -322,6 +353,33 @@ class RevisionService:
         current_hosts, new_hosts = held
         raise HostChangeRequiresOperatorError(
             str(revision_id), current_hosts=current_hosts, new_hosts=new_hosts
+        )
+
+    @staticmethod
+    async def _resolve_catalog_update_available(
+        session: Any,
+        *,
+        api_id: uuid.UUID,
+        origin: str | None,
+        spec_digest: str | None,
+        source_url: str | None,
+    ) -> None:
+        """Advance ``catalog_update_checks`` when a catalog-origin draft goes live (#1490)."""
+        if origin != ORIGIN_CATALOG or not spec_digest:
+            return
+        check = await CatalogUpdateCheckRepository.get(session, api_id)
+        if not _should_resolve_catalog_update_available(
+            origin=origin,
+            spec_digest=spec_digest,
+            source_url=source_url,
+            check=check,
+        ):
+            return
+        await CatalogUpdateCheckRepository.mark_notified(
+            session,
+            local_api_id=api_id,
+            notified_digest=spec_digest,
+            notified_event_class=EventType.CATALOG_UPDATE_AVAILABLE,
         )
 
     async def archive(
@@ -416,8 +474,13 @@ class RevisionService:
                     revision_id, revision.state, [ApiRevisionState.ARCHIVED], "delete"
                 )
 
-            await ApiRevisionRepository.delete(session, revision_uuid)
-            await ApiRepository.apply_counts(session, api.id, revision_count_delta=-1)
+            # The row can vanish between the read above and this DELETE (an
+            # identical re-import replaces an archived revision and gives its
+            # count back), so the decrement follows what was actually deleted.
+            deleted = await ApiRevisionRepository.delete(session, revision_uuid)
+            if not deleted:
+                raise RevisionNotFoundError(revision_id, vendor, name, version)
+            await ApiRepository.apply_counts(session, api.id, revision_count_delta=-deleted)
 
         await record_audit_best_effort(
             self._ctx,

@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tests__/test-utils';
+import {
+	checkA11y,
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	within,
+} from '@/__tests__/test-utils';
 import { VendorConnectFlow } from '@/shared/credentials/components/VendorConnectFlow';
 import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import {
@@ -79,10 +86,10 @@ function seedEdit(edit: ReviewEdit) {
 function renderApprove(sessionId: string) {
 	const onBack = vi.fn();
 	const onDone = vi.fn();
-	renderWithProviders(
+	const { container } = renderWithProviders(
 		<VendorConnectFlow mode="approve" sessionId={sessionId} onBack={onBack} onDone={onDone} />,
 	);
-	return { onBack, onDone };
+	return { onBack, onDone, container };
 }
 
 beforeEach(() => {
@@ -263,7 +270,7 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 
 		const scopes = await screen.findByRole('region', { name: 'Scope changes' });
 		expect(scopes).toHaveTextContent('gmail.send');
-		expect(scopes).toHaveTextContent(/reach 1 other agent/);
+		expect(await screen.findByText(/reach 1 other agent/)).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Approve and sign in' }));
 		await waitFor(() =>
@@ -278,6 +285,121 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 			confirmed_scopes: ['gmail.readonly', 'gmail.send'],
 		});
 	});
+
+	it('names the amend as well as the rebase when both the ask and the access moved', async () => {
+		// Let the access drift win the headline and the reviewer is pointed at
+		// a rebase whose own revision is then the only change on the page,
+		// attributed to them, with the agent's amend named nowhere.
+		// A reason-only ask, so the page carries no rule-diff badges: the audit
+		// below is of this flow's own markup (the live region, the reach
+		// section), not of the shared badge palette.
+		const unchanged = {
+			target: 'binding' as const,
+			rules: [READ, DENY],
+			scopes: ['gmail.readonly'],
+			suspended: false,
+		};
+		const seeded = seedEdit(editBlock({ result: unchanged, widens_access: false }));
+		const { container } = renderApprove(seeded.session_id);
+		await screen.findByRole('region', { name: 'Rule changes' });
+		seeded.stale = true;
+		seeded.edit = editBlock({
+			result: unchanged,
+			widens_access: false,
+			revision: { id: 'csr_2', number: 2 },
+		});
+		seeded.revisions = [
+			{
+				id: 'csr_1',
+				number: 1,
+				created_by: 'agnt_1',
+				created_at: '2026-10-19T10:00:00Z',
+				proposal: { reason: 'Needs to send' },
+				result: { rules: [READ, DENY], scopes: ['gmail.readonly'] },
+			},
+			{
+				id: 'csr_2',
+				number: 2,
+				created_by: 'agnt_1',
+				created_at: '2026-10-19T10:05:00Z',
+				proposal: { reason: 'Also the drafts' },
+				result: { rules: [READ, DENY], scopes: ['gmail.readonly'] },
+			},
+		];
+		await waitFor(
+			() =>
+				expect(
+					screen.getByText('This request changed while you were reviewing it.'),
+				).toBeInTheDocument(),
+			{ timeout: 15_000 },
+		);
+		await waitFor(() => expect(screen.getByText(/Revision 2:/)).toBeInTheDocument(), {
+			timeout: 15_000,
+		});
+		await checkA11y(container);
+	}, 30_000);
+
+	it('names the agents a shared rule-set rewrite reaches, with no scope change', async () => {
+		const seeded = seedEdit(
+			editBlock({
+				current: {
+					rules: [READ, DENY],
+					rule_set: {
+						id: 'prs_shared',
+						name: 'Mail team',
+						curated: false,
+						rules: [READ, DENY],
+					},
+					suspended: false,
+					granted_scopes: ['gmail.readonly'],
+				},
+				result: {
+					target: 'rule_set',
+					rules: [READ, SEND],
+					scopes: ['gmail.readonly'],
+					suspended: false,
+				},
+				other_bound_agents: [{ agent_id: 'agnt_2', name: 'Helper' }],
+			}),
+		);
+		renderApprove(seeded.session_id);
+
+		expect(await screen.findByText(/reach 1 other agent/)).toBeInTheDocument();
+		const scopes = screen.getByRole('region', { name: 'Scope changes' });
+		expect(scopes).not.toHaveTextContent(/reach 1 other agent/);
+	});
+
+	it('reads a revision chain longer than one page to its end', async () => {
+		// The client asks for pages and follows `next_cursor`: discarding it
+		// loses the attribution for every revision past the first page, which
+		// is what the history is for.
+		const seeded = seedEdit(editBlock({ revision: { id: 'csr_250', number: 250 } }));
+		seeded.revisions = Array.from({ length: 250 }, (_, i) => ({
+			id: `csr_${i + 1}`,
+			number: i + 1,
+			created_by: i % 2 === 0 ? 'agnt_1' : 'usr_owner',
+			created_at: '2026-10-19T10:00:00Z',
+			proposal: { reason: `take ${i + 1}` },
+			result: { rules: [READ, SEND], scopes: ['gmail.readonly'] },
+		}));
+		const pages: string[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.includes('/revisions')) pages.push(request.url);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderApprove(seeded.session_id);
+			const user = userEvent.setup();
+			await screen.findByRole('region', { name: 'Rule changes' });
+			await user.click(screen.getByRole('button', { name: 'History' }));
+			// The last revision is only reachable by following the cursor.
+			expect(await screen.findByText(/take 250/)).toBeInTheDocument();
+			await waitFor(() => expect(pages.length).toBeGreaterThan(1));
+			expect(pages.some((url) => url.includes('cursor='))).toBe(true);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	}, 30_000);
 
 	it("shows each revision's own change in the history", async () => {
 		const seeded = seedEdit(editBlock({ revision: { id: 'csr_2', number: 2 } }));
@@ -362,6 +484,115 @@ describe('VendorConnectFlow approve — edit sessions', () => {
 		await user.click(await screen.findByRole('button', { name: 'Review the new version' }));
 		expect(screen.getByText('Revision 2')).toBeInTheDocument();
 	});
+
+	it('brings a stale request up to date on opening the review', async () => {
+		// The read says the access moved and writes nothing, so the client asks
+		// for the rebase before the reviewer studies a diff against old access.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		const rebases: Request[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.endsWith(':rebase')) rebases.push(request);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderApprove(seeded.session_id);
+			await screen.findByRole('region', { name: 'Rule changes' });
+			await waitFor(() => expect(rebases).toHaveLength(1));
+			// Asked once, not once per poll.
+			expect(await screen.findByText('Revision 2')).toBeInTheDocument();
+			expect(rebases).toHaveLength(1);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	});
+
+	it('leaves a stale request alone for a viewer who cannot approve it', async () => {
+		// The rebase is a write against the connect bucket, so a bystander's
+		// page open must not spend it on an action they cannot take.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		seeded.can_confirm = false;
+		const rebases: Request[] = [];
+		const record = ({ request }: { request: Request }): void => {
+			if (request.url.endsWith(':rebase')) rebases.push(request);
+		};
+		worker.events.on('request:start', record);
+		try {
+			renderApprove(seeded.session_id);
+			await screen.findByRole('region', { name: 'Rule changes' });
+			expect(
+				screen.getByText(/The access this request was opened against has changed/),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByRole('button', { name: 'Update to current access' }),
+			).not.toBeInTheDocument();
+			expect(rebases).toEqual([]);
+		} finally {
+			worker.events.removeListener('request:start', record);
+		}
+	});
+
+	it('says so when bringing a stale request up to date is refused', async () => {
+		// A refusal has to say so: unhandled, the rejection is silent and the
+		// banner goes on offering an action that appears to do nothing.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		worker.use(
+			http.post('/connect-sessions/:sessionId\\:rebase', () =>
+				HttpResponse.json(
+					{ title: 'Too Many Requests', detail: 'Rate limit exceeded.' },
+					{ status: 429 },
+				),
+			),
+		);
+		renderApprove(seeded.session_id);
+		expect(await screen.findByText('Rate limit exceeded.')).toBeInTheDocument();
+		expect(screen.getByText('Revision 1')).toBeInTheDocument();
+	});
+
+	it('banners a rebase that lands over an amend the reviewer has not seen', async () => {
+		// Adopted as their own revision, it clears the acknowledgement of the
+		// amend and re-enables Approve for an ask never shown to them.
+		const seeded = seedEdit(editBlock());
+		seeded.stale = true;
+		worker.use(
+			http.post('/connect-sessions/:sessionId\\:rebase', () => {
+				seeded.edit = editBlock({ revision: { id: 'csr_3', number: 3 } });
+				seeded.stale = false;
+				return HttpResponse.json({
+					session_id: seeded.session_id,
+					revision_id: 'csr_3',
+					revision_number: 3,
+				});
+			}),
+		);
+		renderApprove(seeded.session_id);
+		expect(
+			await screen.findByText('This request changed while you were reviewing it.'),
+		).toBeInTheDocument();
+		expect(screen.getByText('Revision 1')).toBeInTheDocument();
+	});
+
+	it('offers the update when the access moves while the reviewer is reading', async () => {
+		const seeded = seedEdit(editBlock());
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await screen.findByRole('region', { name: 'Rule changes' });
+		// It goes stale under them: the diff must not move unasked, so the
+		// banner offers the update rather than taking it.
+		seeded.stale = true;
+		await waitFor(
+			() =>
+				expect(
+					screen.getByText(/The access this request was opened against has changed/),
+				).toBeInTheDocument(),
+			{ timeout: 15_000 },
+		);
+		expect(screen.getByText('Revision 1')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Update to current access' }));
+		expect(await screen.findByText('Revision 2')).toBeInTheDocument();
+	}, 30_000);
 
 	it('says when this agent’s ask was rejected before', async () => {
 		const seeded = seedEdit(editBlock());

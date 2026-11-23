@@ -119,13 +119,14 @@ class Ingestor:
                 ingest_duration.record(elapsed_ms, {"status": status})
 
     async def _with_host_change_guard(self, spec: IngestSpecification) -> IngestSpecification:
-        """Arm the server-host change guard for a non-operator catalog ingest.
+        """Arm the server-host change guard for a catalog ingest no admin approved.
 
         Applies to origin-tracked, non-overlay ingests (catalog re-imports) that
-        were not operator-approved, and only when the API has credentials bound
-        to a consumer. The binding lookup crosses into the control/admin
-        databases, so it runs here, before the registry transaction opens.
-        Overlay materialization is already operator-gated (``overlays:confirm``).
+        were not approved by an organisation admin, and only when the API has
+        credentials bound to a consumer. The binding lookup crosses into the
+        control/admin databases, so it runs here, before the registry transaction
+        opens. Overlay materialization is separately gated on the operator scope
+        ``overlays:confirm``.
         """
         if spec.origin is None or spec.origin == ORIGIN_OVERLAY or spec.host_change_approved:
             return spec

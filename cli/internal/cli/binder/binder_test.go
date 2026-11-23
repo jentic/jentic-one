@@ -36,9 +36,9 @@ type logSection struct {
 	Ratio   float64 `json:"ratio"`
 }
 
-func TestBindFlags_FlattensNestedScalarLeavesToDottedFlags(t *testing.T) {
+func TestBindFlagsWithOptions_FlattensNestedScalarLeavesToDottedFlags(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
-	binder.BindFlags(cmd, &nested{})
+	binder.BindFlagsWithOptions(cmd, &nested{}, binder.BindOptions{})
 	flags := cmd.Flags()
 
 	for _, name := range []string{
@@ -59,49 +59,7 @@ func TestBindFlags_FlattensNestedScalarLeavesToDottedFlags(t *testing.T) {
 	}
 }
 
-func TestHydrateStruct_OnlyOverridesChangedFlags(t *testing.T) {
-	cmd := &cobra.Command{Use: "install"}
-	cfg := &nested{}
-	binder.BindFlags(cmd, cfg)
-
-	// Simulate the precedence ladder: defaults/preset populated cfg first.
-	cfg.Server.Host = "preset-host"
-	cfg.Server.Port = 1111
-	cfg.Logging = &logSection{Level: "info", Enabled: false}
-
-	// Operator passes only a subset of flags.
-	if err := cmd.ParseFlags([]string{
-		"--server-port=8080",
-		"--database-registry-host=db.internal",
-		"--logging-enabled=true",
-		"--logging-ratio=0.5",
-	}); err != nil {
-		t.Fatalf("ParseFlags: %v", err)
-	}
-	if err := binder.HydrateStruct(cmd, cfg); err != nil {
-		t.Fatalf("HydrateStruct: %v", err)
-	}
-
-	// Changed flags win.
-	if cfg.Server.Port != 8080 {
-		t.Errorf("server.port = %d, want 8080 (flag override)", cfg.Server.Port)
-	}
-	if cfg.Database == nil || cfg.Database.Registry.Host != "db.internal" {
-		t.Errorf("database.registry.host not hydrated: %+v", cfg.Database)
-	}
-	if cfg.Logging.Enabled != true || cfg.Logging.Ratio != 0.5 {
-		t.Errorf("logging leaves not hydrated: %+v", cfg.Logging)
-	}
-	// Unchanged flag must NOT clobber the preset value with a zero.
-	if cfg.Server.Host != "preset-host" {
-		t.Errorf("server.host = %q, want preset-host preserved (flag not set)", cfg.Server.Host)
-	}
-	if cfg.Logging.Level != "info" {
-		t.Errorf("logging.level = %q, want info preserved (flag not set)", cfg.Logging.Level)
-	}
-}
-
-func TestBindFlags_UnsupportedKindPanicsLoudly(t *testing.T) {
+func TestBindFlagsWithOptions_UnsupportedKindPanicsLoudly(t *testing.T) {
 	type bad struct {
 		Ch chan int `json:"ch"`
 	}
@@ -110,7 +68,7 @@ func TestBindFlags_UnsupportedKindPanicsLoudly(t *testing.T) {
 			t.Error("unsupported kind must panic at construction, not be silently skipped")
 		}
 	}()
-	binder.BindFlags(&cobra.Command{Use: "x"}, &bad{})
+	binder.BindFlagsWithOptions(&cobra.Command{Use: "x"}, &bad{}, binder.BindOptions{})
 }
 
 func TestBindFlagsWithOptions_ExcludesAndHides(t *testing.T) {
@@ -134,21 +92,21 @@ func TestBindFlagsWithOptions_ExcludesAndHides(t *testing.T) {
 	}
 }
 
-func TestBindFlags_RejectsNonStructPointer(t *testing.T) {
+func TestBindFlagsWithOptions_RejectsNonStructPointer(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Error("BindFlags must panic on a non-struct-pointer target")
+			t.Error("BindFlagsWithOptions must panic on a non-struct-pointer target")
 		}
 	}()
 	x := 5
-	binder.BindFlags(&cobra.Command{Use: "x"}, &x)
+	binder.BindFlagsWithOptions(&cobra.Command{Use: "x"}, &x, binder.BindOptions{})
 }
 
 // The real generated BackendConfig must bind cleanly (no panic) and stay well
 // under the recursion bound — the whole point of the phase.
-func TestBindFlags_RealBackendConfigBindsCleanly(t *testing.T) {
+func TestBindFlagsWithOptions_RealBackendConfigBindsCleanly(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
-	binder.BindFlags(cmd, &generated.BackendConfig{})
+	binder.BindFlagsWithOptions(cmd, &generated.BackendConfig{}, binder.BindOptions{})
 
 	// A representative spread of dotted leaves the real schema is known to carry.
 	for _, name := range []string{
@@ -164,7 +122,7 @@ func TestBindFlags_RealBackendConfigBindsCleanly(t *testing.T) {
 
 // A pathologically deep (self-referential) shape must trip the depth bound and
 // panic rather than overflow the stack.
-func TestBindFlags_ExceedingDepthPanics(t *testing.T) {
+func TestBindFlagsWithOptions_ExceedingDepthPanics(t *testing.T) {
 	type recur struct {
 		Next *recur `json:"next,omitempty"`
 		Leaf string `json:"leaf"`
@@ -174,17 +132,19 @@ func TestBindFlags_ExceedingDepthPanics(t *testing.T) {
 			t.Error("a cyclic/too-deep struct must panic at the depth bound")
 		}
 	}()
-	binder.BindFlags(&cobra.Command{Use: "x"}, &recur{})
+	binder.BindFlagsWithOptions(&cobra.Command{Use: "x"}, &recur{}, binder.BindOptions{})
 }
 
 func TestChangedOverrides_OnlyIncludesSetFlagsAsNestedMap(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	cfg := &nested{}
-	binder.BindFlags(cmd, cfg)
+	binder.BindFlagsWithOptions(cmd, cfg, binder.BindOptions{})
 
 	if err := cmd.ParseFlags([]string{
 		"--server-port=8080",
 		"--database-registry-host=db.internal",
+		"--logging-enabled=true",
+		"--logging-ratio=0.5",
 	}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
@@ -205,12 +165,16 @@ func TestChangedOverrides_OnlyIncludesSetFlagsAsNestedMap(t *testing.T) {
 	if !ok || reg["host"] != "db.internal" {
 		t.Errorf("database.registry.host override missing/wrong: %v", db)
 	}
+	logging, ok := over["logging"].(map[string]any)
+	if !ok || logging["enabled"] != true || logging["ratio"] != 0.5 {
+		t.Errorf("logging overrides missing/wrong: %v", over["logging"])
+	}
 	// A flag that was NOT set must be entirely absent (not a zero value).
 	if _, present := server["host"]; present {
 		t.Errorf("unset flag leaked into overrides: %v", server)
 	}
-	if _, present := over["logging"]; present {
-		t.Errorf("untouched section leaked into overrides: %v", over)
+	if _, present := logging["level"]; present {
+		t.Errorf("unset logging.level leaked into overrides: %v", logging)
 	}
 }
 

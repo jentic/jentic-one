@@ -10,7 +10,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class AgentRegistrationService {
     /**
-     * Register Endpoint
+     * Register an agent client
      * Register a new agent client (RFC 7591).
      * @returns RegisterResponse Successful Response
      * @throws ApiError
@@ -31,15 +31,16 @@ export class AgentRegistrationService {
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,
+                429: `Too Many Requests`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
         });
     }
     /**
-     * Delete Registration Endpoint
+     * Delete a client registration (unsupported)
      * Client deletion not supported — returns 403.
-     * @returns any Successful Response
+     * @returns void
      * @throws ApiError
      */
     public static deleteRegistrationEndpoint({
@@ -49,7 +50,7 @@ export class AgentRegistrationService {
          * ID of the registered agent (its client_id).
          */
         agentId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/register/{agent_id}',
@@ -59,7 +60,7 @@ export class AgentRegistrationService {
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                403: `Client deletion is not supported. This endpoint exists to refuse the RFC 7592 delete call, so it has no success response: every request answers 403 and the registration remains. Archive the agent instead.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -67,7 +68,7 @@ export class AgentRegistrationService {
         });
     }
     /**
-     * Poll Status Endpoint
+     * Poll an agent registration's status
      * Poll registration status (RFC 7592).
      * @returns RegistrationStatusResponse Successful Response
      * @throws ApiError
@@ -96,9 +97,9 @@ export class AgentRegistrationService {
         });
     }
     /**
-     * Update Registration Endpoint
+     * Update a client registration (unsupported)
      * Client update not supported — returns 403.
-     * @returns any Successful Response
+     * @returns void
      * @throws ApiError
      */
     public static updateRegistrationEndpoint({
@@ -108,7 +109,7 @@ export class AgentRegistrationService {
          * ID of the registered agent (its client_id).
          */
         agentId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/register/{agent_id}',
@@ -118,7 +119,7 @@ export class AgentRegistrationService {
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
-                403: `Forbidden`,
+                403: `Client update is not supported. This endpoint exists to refuse the RFC 7592 update call, so it has no success response: every request answers 403 and nothing is changed. Re-register instead.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -55,6 +55,7 @@ flowchart LR
 
     REG --- RDB
     REG -.- ADB
+    REG -.- CDB
     CON --- CDB
     CON -.- ADB
     CON -.->|"MCP mount only"| RDB
@@ -77,10 +78,12 @@ Five things the diagram compresses:
   composition point that sees across them
   ([surfaces and layering](surfaces-and-layering.md)). The dotted DB edges
   are real but narrower than the solid ones: control and registry read the
-  admin DB to verify callers (API keys, permissions), a control process
-  serving the `/mcp` mount reaches the registry DB for in-process
-  search/inspect, and auth reads the control DB only to resolve
-  credential-binding names for the `/me` response.
+  admin DB to verify callers (API keys, permissions), registry reads the
+  control DB to derive the caller's credential scopes for `/governed-hosts`,
+  a control process serving the `/mcp` mount reaches the registry DB for
+  in-process search/inspect, and auth uses the control DB to resolve
+  credential-binding names for the `/me` response and to delete agent-keyed
+  control rows when a binding or an agent is purged.
 - **The surface set is chosen at runtime.** One container image runs either
   role; `JENTIC__APPS` picks the surfaces, and the entrypoint refuses to
   bundle the broker with anything else

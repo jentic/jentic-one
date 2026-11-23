@@ -6,8 +6,8 @@ It fetches/parses OpenAPI/Arazzo sources and creates draft ApiRevisions.
 
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime
+from collections.abc import Iterator
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -16,35 +16,36 @@ from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from jentic_one.registry.ingest.errors import (
     BaseIngestError,
+    CatalogIdentityConflictError,
     DuplicateRevisionError,
+    HostOwnedByOtherVendorIngestError,
     IngestJobError,
+    NonRetryableIngestJobError,
+    RelativeServerUrlError,
+    RetryableFetchError,
+    UnexpectedStageError,
 )
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
-from jentic_one.registry.repos.api_repo import ApiRepository
-from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import (
-    ApiRevisionRepository,
+    is_duplicate_digest_conflict,
     is_duplicate_revision_conflict,
 )
-from jentic_one.registry.services.catalog.flow3_metrics import (
-    record_overlay_auto_deprecated,
-)
 from jentic_one.registry.services.errors import RegistryServiceError
+from jentic_one.registry.services.import_overlay import (
+    SupersedeSkipReason as SupersedeSkipReason,
+)
+from jentic_one.registry.services.import_overlay import (
+    _OverlayReconciliationMixin,
+    _Recovery,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.discovery.errors import DiscoveryError
-from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.handlers import JobResultPayload
-from jentic_one.shared.models import (
-    ORIGIN_OVERLAY,
-    ActorType,
-    OverlayDeprecationReason,
-    OverlayStatus,
-)
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
 
@@ -65,26 +66,146 @@ SOURCE_FAILURE_PREFIX_TEMPLATE = "source[{index}]: "
 ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
 
 
+# The readable ``job.error`` entry for a lost race for the API's one active
+# revision slot (``ix_api_revisions_one_active``). It deliberately does not
+# carry the duplicate-content wording: the competing active revision can hold
+# different content, so /mcp must not report the spec as already imported.
+ACTIVE_REVISION_CONFLICT_ERROR = "another revision of this API version is already active"
+
+
+def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    """Yield ``exc`` and its causes or contexts, outermost first, without a depth cutoff.
+
+    Follows ``__cause__``, then an unsuppressed ``__context__`` (an exception
+    raised inside an ``except`` block without ``from``), as a rendered
+    traceback does. Identity-based cycle detection terminates loops while still
+    exposing transient causes beneath arbitrarily deep wrappers.
+    """
+    seen: set[int] = set()
+    link: BaseException | None = exc
+    while link is not None and id(link) not in seen:
+        seen.add(id(link))
+        yield link
+        if link.__cause__ is not None:
+            link = link.__cause__
+        elif not link.__suppress_context__:
+            link = link.__context__
+        else:
+            link = None
+
+
+def _is_active_revision_conflict(exc: BaseException) -> bool:
+    """True when the failure is a lost race for the one-active revision slot.
+
+    The integrity error can arrive raw (at commit) or under the
+    ``DuplicateRevisionError`` the revision stage raises for it. An
+    ``UnexpectedStageError`` always keeps its internal-failure classification:
+    an active-index cause does not turn a stage bug into an expected race.
+    """
+    chain = tuple(_exception_chain(exc))
+    if any(isinstance(link, UnexpectedStageError) for link in chain):
+        return False
+    return any(
+        isinstance(link, DatabaseIntegrityError)
+        and is_duplicate_revision_conflict(link)
+        and not is_duplicate_digest_conflict(link)
+        for link in chain
+    )
+
+
 def _readable_source_error(exc: Exception) -> str:
     """Map a source-level ingest failure to a message safe to show a user.
 
     The result lands in ``Job.error`` and event summaries, so only deliberate,
     operator-facing messages pass through: ingest/registry domain errors and
-    source-payload validation errors. A duplicate-revision collision (same
-    digest, or a lost race for the one-active slot) surfacing as a raw
-    integrity error at commit reads as the duplicate message. Anything else —
-    database/driver errors, unexpected internals — maps to a generic message so
-    SQL or driver text never reaches the job record; the detail is logged by
-    the caller (``import_source_failed``).
+    source-payload validation errors. A lost race for the one-active revision
+    slot reads as :data:`ACTIVE_REVISION_CONFLICT_ERROR`; an identical-content
+    collision surfacing as a raw integrity error at commit reads as the
+    duplicate message. Anything else — database/driver errors, unexpected
+    internals — maps to a generic message so SQL or driver text never reaches
+    the job record; the detail is logged by the caller (``import_source_failed``).
     """
-    if isinstance(exc, DatabaseIntegrityError) and is_duplicate_revision_conflict(exc):
+    if _is_active_revision_conflict(exc):
+        return ACTIVE_REVISION_CONFLICT_ERROR
+    if isinstance(exc, DatabaseIntegrityError) and is_duplicate_digest_conflict(exc):
         return DuplicateRevisionError().message
     if isinstance(exc, BaseIngestError | RegistryServiceError | DiscoveryError | ValidationError):
         return str(exc)
     return _UNEXPECTED_SOURCE_ERROR
 
 
-class ImportHandler:
+# Ingest refusals that keep their meaning however they were raised (some chain
+# the repository error that detected them): the stored state or the document
+# decides them, so a retry meets the same refusal.
+_DETERMINISTIC_INGEST_ERRORS: tuple[type[BaseIngestError], ...] = (
+    DuplicateRevisionError,
+    CatalogIdentityConflictError,
+    HostOwnedByOtherVendorIngestError,
+    RelativeServerUrlError,
+)
+# Ingest errors that report a failure a later attempt may not repeat.
+_RETRYABLE_INGEST_ERRORS: tuple[type[BaseIngestError], ...] = (
+    RetryableFetchError,
+    UnexpectedStageError,
+)
+
+
+def _is_retryable_fetch_failure(exc: BaseException) -> bool:
+    """True when a transient fetch error appears anywhere in the exception chain."""
+    return any(isinstance(link, RetryableFetchError) for link in _exception_chain(exc))
+
+
+class _SourcePhase(StrEnum):
+    """Which step of importing one source was running when it failed."""
+
+    VALIDATE = "validate"
+    LOAD = "load"
+    INGEST = "ingest"
+
+
+def _is_deterministic_source_failure(exc: Exception, *, phase: _SourcePhase) -> bool:
+    """True when a source failed for a reason no retry of the job can change.
+
+    Deterministic:
+
+    * the source payload fails its model (``ValidationError``);
+    * loading the source raises an ingest error other than
+      :class:`RetryableFetchError`: an unsafe URL, too many redirects, a
+      non-transient 4xx, an oversized document, unparseable content, or an
+      unresolvable API identity;
+    * the ingest pipeline refuses the spec: identical content already stored
+      (also the raw digest integrity error of a lost race), a catalog identity
+      conflict, a host another vendor serves, an unusable server URL, or any
+      ingest error a stage raises itself, with no underlying exception.
+
+    Everything else stays retryable: database and driver errors, network
+    errors and transient upstream statuses, a lost race for the one-active
+    revision slot, and :class:`UnexpectedStageError` (the "Stage '…' failed
+    unexpectedly" wrapper), as does an ingest error raised from, or while
+    handling, a non-ingest exception.
+    """
+    if phase == _SourcePhase.VALIDATE:
+        return isinstance(exc, ValidationError)
+    if phase == _SourcePhase.LOAD:
+        if _is_retryable_fetch_failure(exc):
+            return False
+        return isinstance(exc, BaseIngestError)
+    if _is_active_revision_conflict(exc):
+        return False
+    if isinstance(exc, DatabaseIntegrityError):
+        return is_duplicate_digest_conflict(exc)
+    for link in _exception_chain(exc):
+        if isinstance(link, _RETRYABLE_INGEST_ERRORS):
+            return False
+        if isinstance(link, _DETERMINISTIC_INGEST_ERRORS):
+            return True
+        if not isinstance(link, BaseIngestError):
+            return False
+    # Every link is an ingest error; the innermost was raised on purpose.
+    return True
+
+
+class ImportHandler(_OverlayReconciliationMixin):
     """Handles kind=import jobs by processing API sources."""
 
     def __init__(self, ctx: Context) -> None:
@@ -106,7 +227,9 @@ class ImportHandler:
         """
         bind_contextvars(job_id=job_id)
         if created_by is None:
-            raise IngestJobError("import job is missing the triggering actor (created_by)")
+            raise NonRetryableIngestJobError(
+                "import job is missing the triggering actor (created_by)"
+            )
         try:
             payload = payload or {}
             sources = payload.get("sources", [])
@@ -118,14 +241,19 @@ class ImportHandler:
             resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
+            # Whether every failure so far is one a retry cannot change.
+            all_failures_deterministic = True
             recovered_overlay_link = False
 
             logger.info("import_handler_start", source_count=len(sources), job_id=job_id)
 
             for idx, src in enumerate(sources):
+                phase = _SourcePhase.VALIDATE
                 try:
                     source = _source_adapter.validate_python(src)
+                    phase = _SourcePhase.LOAD
                     spec = await load_specification(source, config=self._ctx.config.ingest)
+                    phase = _SourcePhase.INGEST
                     result = await Ingestor(self._ctx).ingest(spec, created_by=created_by)
                     revisions.append(
                         {
@@ -145,7 +273,8 @@ class ImportHandler:
                     )
                     held = result.held_host_change
                     if held is not None:
-                        # Server-host change guard: kept as a draft for operator review.
+                        # Server-host change guard: kept as a draft for an organisation
+                        # admin to review.
                         revisions[-1]["held_for_review"] = True
                         revisions[-1]["host_change"] = held.model_dump()
                     if result.server_url_changes is not None:
@@ -169,10 +298,36 @@ class ImportHandler:
                         origin=None,
                     )
                 except Exception as exc:
-                    logger.exception("import_source_failed", source_index=idx, job_id=job_id)
+                    readable_error = _readable_source_error(exc)
+                    if _is_deterministic_source_failure(exc, phase=phase):
+                        # A refused spec or payload is the caller's to fix, not
+                        # a system fault: no traceback.
+                        logger.warning(
+                            "import_source_failed",
+                            source_index=idx,
+                            job_id=job_id,
+                            retryable=False,
+                            error_type=type(exc).__name__,
+                            error=readable_error,
+                        )
+                    elif _is_retryable_fetch_failure(exc) or _is_active_revision_conflict(exc):
+                        # An expected transient condition: the job is retried.
+                        all_failures_deterministic = False
+                        logger.warning(
+                            "import_source_failed",
+                            source_index=idx,
+                            job_id=job_id,
+                            retryable=True,
+                            error_type=type(exc).__name__,
+                            error=readable_error,
+                        )
+                    else:
+                        all_failures_deterministic = False
+                        logger.exception(
+                            "import_source_failed", source_index=idx, job_id=job_id, retryable=True
+                        )
                     failures.append(
-                        SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx)
-                        + _readable_source_error(exc)
+                        SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx) + readable_error
                     )
 
             logger.info(
@@ -184,10 +339,14 @@ class ImportHandler:
             )
 
             # A4b worker step: an authorized catalog re-import that supersedes a live
-            # confirmed overlay. The re-ingest archived the overlay's revision (the
-            # supersede_active stage archived *all* active revisions), so the served spec
-            # is now the fresh upstream. Auto-deprecate the overlay so its lifecycle
-            # reflects reality. Two cases reach a correct end state:
+            # confirmed overlay. When the re-ingest archived the overlay's revision (the
+            # supersede_active stage archives *all* active revisions of the API row it
+            # lands on), the served spec is the fresh upstream and the overlay is
+            # auto-deprecated so its lifecycle reflects reality — unless the same-API
+            # guard finds the re-import did not supersede it (#1078; see
+            # _deprecate_superseded_overlay), in which case the overlay stays confirmed
+            # and the job result records ``supersede_skipped``. Two cases reach a correct
+            # end state:
             #   - clean first run: the fresh revision was created this attempt; deprecate.
             #   - duplicate-on-retry: a prior attempt already committed the fresh revision
             #     and made it current, then crashed *before* the (separate-transaction)
@@ -197,6 +356,7 @@ class ImportHandler:
             #     archived revision. So treat "served spec is already the fresh upstream"
             #     as success and (idempotently, CAS on CONFIRMED) deprecate + settle.
             recovered_supersede = False
+            supersede_skipped: SupersedeSkipReason | None = None
             if supersede_overlay_id:
                 if any(rev.get("held_for_review") for rev in revisions):
                     # The upstream revision was held for review, so nothing was archived
@@ -207,22 +367,28 @@ class ImportHandler:
                         overlay_id=supersede_overlay_id,
                     )
                 elif revisions and not failures:
-                    await self._deprecate_superseded_overlay(
+                    skipped_reason = await self._deprecate_superseded_overlay(
                         job_id,
                         str(supersede_overlay_id),
                         superseding_revision=revisions[0],
                         actor_id=created_by,
                         actor_type=actor_type,
                     )
+                    if skipped_reason is not None:
+                        revisions[0]["supersede_skipped"] = skipped_reason.value
                 elif not revisions and len(sources) == 1:
-                    recovered_api_id = await self._recover_supersede(
+                    supersede_recovery = await self._recover_supersede(
                         job_id,
                         str(supersede_overlay_id),
                         sources[0],
                         actor_id=created_by,
                         actor_type=actor_type,
                     )
-                    recovered_supersede = recovered_api_id is not None
+                    recovered_supersede = supersede_recovery.outcome == _Recovery.RECOVERED
+                    if supersede_recovery.outcome == _Recovery.RECOVERED:
+                        supersede_skipped = supersede_recovery.skipped
+                    elif supersede_recovery.outcome == _Recovery.ERRORED:
+                        all_failures_deterministic = False
 
             # Overlay materialization: link the confirmed overlay to the revision the
             # re-ingest just produced, so the served spec and the overlay agree on which
@@ -246,9 +412,12 @@ class ImportHandler:
                     # existing active revision *is* the materialization we want linked —
                     # resolve it by digest and back-link, so H2 recovery completes even
                     # when the revision (not just the link) already landed.
-                    recovered_overlay_link = await self._recover_overlay_link(
+                    link_recovery = await self._recover_overlay_link(
                         job_id, str(overlay_id), sources[0]
                     )
+                    recovered_overlay_link = link_recovery == _Recovery.RECOVERED
+                    if link_recovery == _Recovery.ERRORED:
+                        all_failures_deterministic = False
                 else:
                     logger.warning(
                         "overlay_materialize_unexpected_result",
@@ -268,416 +437,36 @@ class ImportHandler:
             # content already exists" *did* achieve its goal (the revision exists and
             # we linked it above) — treat it as success, not a failed job. Same for a
             # supersede re-import recovered on duplicate-retry (fresh upstream already
-            # served, overlay deprecated) — see _recover_supersede.
+            # served; the overlay is deprecated unless the same-API guard skips) — see
+            # _recover_supersede. Both recoveries run above, on the attempt that hit the
+            # duplicate, so a deterministic duplicate is only failed once recovery has had
+            # its chance. A recovery that raised (``_Recovery.ERRORED``) keeps the job
+            # retryable, so the retry runs the recovery again.
+            #
+            # When every failure is deterministic the job fails without a retry
+            # (NonRetryableIngestJobError); one retryable failure keeps the
+            # worker's backoff budget for the whole job. The message is the same
+            # either way.
             if (
                 failures
                 and not revisions
                 and not recovered_overlay_link
                 and not recovered_supersede
             ):
-                raise IngestJobError(
-                    ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources))
-                    + "; ".join(failures)
+                message = ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources)) + "; ".join(
+                    failures
                 )
+                if all_failures_deterministic:
+                    raise NonRetryableIngestJobError(message)
+                raise IngestJobError(message)
 
+            body: dict[str, Any] = {"revisions": revisions}
+            if supersede_skipped is not None:
+                # The recovery path has no revision entry to carry the skip.
+                body["supersede_skipped"] = supersede_skipped.value
             return JobResultPayload(
-                body={"revisions": revisions},
+                body=body,
                 content_type=None,
             )
         finally:
             unbind_contextvars("job_id")
-
-    async def _link_overlay_revision(
-        self,
-        job_id: str,
-        overlay_id: str,
-        revision_id: str,
-        superseded_revision_id: str | None = None,
-    ) -> None:
-        """Record the materialized revision on the overlay (best-effort).
-
-        Runs in its own registry_db transaction — the Ingestor already committed the
-        revision, so this is a follow-up write. A failure here does not undo the
-        (durable) re-ingest, so it is logged rather than raised: the served spec is
-        already correct; only the overlay->revision back-reference is missing and can
-        be repaired by re-confirming.
-
-        ``superseded_revision_id`` (the revision this materialization archived) is
-        recorded alongside so a later un-confirm/rollback (A5b) has a deterministic
-        prior-revision target. ``None`` when the materialize superseded nothing (a
-        first-ever current revision).
-        """
-        try:
-            async with self._ctx.registry_db.transaction() as session:
-                updated = await OverlayRepository.set_confirmed_revision(
-                    session,
-                    overlay_id,
-                    uuid.UUID(revision_id),
-                    superseded_revision_id=(
-                        uuid.UUID(superseded_revision_id)
-                        if superseded_revision_id is not None
-                        else None
-                    ),
-                )
-            if updated == 0:
-                logger.warning(
-                    "overlay_confirmed_revision_not_linked",
-                    job_id=job_id,
-                    overlay_id=overlay_id,
-                    reason="overlay_not_found",
-                )
-        except Exception:
-            logger.exception(
-                "overlay_confirmed_revision_link_failed",
-                job_id=job_id,
-                overlay_id=overlay_id,
-            )
-
-    async def _deprecate_superseded_overlay(
-        self,
-        job_id: str,
-        overlay_id: str,
-        *,
-        superseding_revision: dict[str, Any] | None = None,
-        actor_id: str,
-        actor_type: str | None,
-    ) -> None:
-        """Auto-deprecate an overlay superseded by an authorized catalog re-import (A4b).
-
-        The re-ingest already archived the overlay's materialized revision and made the
-        fresh upstream the served spec; this only flips the overlay's own lifecycle to
-        DEPRECATED (CAS on it still being CONFIRMED) so status reflects reality. Runs in
-        its own registry_db transaction — a failure here does not undo the durable
-        re-ingest, so it is logged rather than raised (the served spec is already correct;
-        only the overlay's status label lags and can be repaired).
-
-        Which overlay to deprecate: prefer the one that *actually backed the revision the
-        supersede just archived* (``superseding_revision["superseded_revision_id"]``),
-        re-resolved here rather than trusting the enqueue-time ``overlay_id``. A concurrent
-        confirm can make a *different* overlay live between the A4b authorization gate and
-        this worker; the ingest stage archives whatever is current *now*, so deprecating the
-        stale enqueue-time id would leave the actually-superseded overlay stuck CONFIRMED
-        over an archived revision (#940). Fall back to the enqueue-time ``overlay_id`` when
-        the archived revision or its backing overlay can't be re-resolved, so there is no
-        regression versus the prior behaviour.
-
-        L2 (#921): on a successful demote we emit an attributed ``overlay.deprecated``
-        event so the overlay is not *silently* flipped behind the audit log. ``actor_id``/
-        ``actor_type`` are the authorizing operator (the job's ``created_by``); the event
-        also carries the overlay's own author (``created_by``) so a UI can notify them and
-        show "deprecated by re-import on <date>" (L3). Emitted best-effort in the admin DB
-        (events live there), requires_action=False — a notification, not an inbox item.
-        """
-        # Resolve which overlay to deprecate first, isolating a *resolution* failure (a DB
-        # read error while re-resolving) from a *demote* failure. On a resolver error, fall
-        # back to the enqueue-time id and still attempt the demote — a transient resolver
-        # error must not skip the deprecate entirely (which would regress to leaving the
-        # overlay CONFIRMED over an archived revision). The resolver's own miss-cases already
-        # return the enqueue-time id internally; this guard only covers it *raising*.
-        try:
-            target_overlay_id = await self._resolve_superseded_overlay_id(
-                job_id, overlay_id, superseding_revision
-            )
-        except Exception:
-            logger.exception(
-                "overlay_supersede_resolve_failed",
-                job_id=job_id,
-                overlay_id=overlay_id,
-            )
-            target_overlay_id = overlay_id
-        try:
-            async with self._ctx.registry_db.transaction() as session:
-                overlay = await OverlayRepository.get_by_id(session, target_overlay_id)
-                demoted = await OverlayRepository.set_status(
-                    session,
-                    target_overlay_id,
-                    OverlayStatus.DEPRECATED,
-                    deprecated_at=datetime.now(UTC),
-                    deprecated_reason=OverlayDeprecationReason.SUPERSEDED_BY_REIMPORT,
-                    expected_status=OverlayStatus.CONFIRMED,
-                )
-            if demoted == 0:
-                logger.warning(
-                    "overlay_supersede_not_deprecated",
-                    job_id=job_id,
-                    overlay_id=target_overlay_id,
-                    reason="overlay_not_confirmed_or_missing",
-                )
-                return
-            await self._emit_overlay_deprecated(
-                job_id=job_id,
-                overlay=overlay,
-                overlay_id=target_overlay_id,
-                actor_id=actor_id,
-                actor_type=actor_type,
-            )
-            record_overlay_auto_deprecated()
-        except Exception:
-            logger.exception(
-                "overlay_supersede_deprecate_failed",
-                job_id=job_id,
-                overlay_id=target_overlay_id,
-            )
-
-    async def _resolve_superseded_overlay_id(
-        self,
-        job_id: str,
-        enqueue_overlay_id: str,
-        superseding_revision: dict[str, Any] | None,
-    ) -> str:
-        """Resolve the overlay that actually backed the supersede-archived revision (#940).
-
-        Returns the CONFIRMED overlay whose ``confirmed_revision_id`` is the revision the
-        worker just archived (captured pre-archive as
-        ``superseding_revision["superseded_revision_id"]``), re-resolved here rather than
-        trusting the enqueue-time id (a concurrent confirm may have changed the live overlay
-        after enqueue).
-
-        Two-stage resolution:
-        1. Strict: :meth:`OverlayRepository.get_live_confirmed_for_revision` on the archived
-           revision — unambiguous when the backing overlay is linked.
-        2. Lazy-link recovery: the strict lookup misses in the lazy-link window (the confirm
-           path makes the overlay's revision current *before* it stamps
-           ``confirmed_revision_id``; that link is a separate, best-effort txn, so a live
-           CONFIRMED overlay can transiently — or durably, on a failed link — have a NULL
-           link). When the archived revision was overlay-origin and there is *exactly one*
-           NULL-linked CONFIRMED overlay for the API, that is the live overlay → deprecate
-           it. This mirrors why :meth:`get_live_confirmed_for_api` refuses to key strictly.
-
-        Falls back to the enqueue-time ``enqueue_overlay_id`` only when neither stage
-        resolves (no archived revision captured, API/overlay unresolved, or an *ambiguous*
-        lazy-link set). Logs when the re-resolved overlay differs from the enqueue-time one,
-        or when it can't safely re-resolve, so the concurrent-confirm race is observable.
-        """
-        if superseding_revision is None:
-            return enqueue_overlay_id
-        archived_id_raw = superseding_revision.get("superseded_revision_id")
-        api = superseding_revision.get("api") or {}
-        vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
-        if not archived_id_raw or not (vendor and name and version):
-            return enqueue_overlay_id
-        try:
-            archived_revision_id = uuid.UUID(str(archived_id_raw))
-        except ValueError:
-            return enqueue_overlay_id
-
-        async with self._ctx.registry_db.session() as session:
-            api_row = await ApiRepository.get_by_identifier(session, vendor, name, version)
-            if api_row is None:
-                return enqueue_overlay_id
-            overlay = await OverlayRepository.get_live_confirmed_for_revision(
-                session, api_row.id, archived_revision_id
-            )
-            if overlay is None:
-                # Strict miss — try the lazy-link recovery. Only meaningful when the archived
-                # revision was itself overlay-origin (an overlay backed it); a catalog/manual
-                # base has no overlay to re-resolve.
-                archived_origin = await ApiRevisionRepository.origin_of(
-                    session, archived_revision_id
-                )
-                if archived_origin == ORIGIN_OVERLAY:
-                    unlinked = await OverlayRepository.list_confirmed_unlinked_for_api(
-                        session, api_row.id
-                    )
-                    if len(unlinked) == 1:
-                        overlay = unlinked[0]
-
-        if overlay is None:
-            # Could not safely re-resolve (no backing overlay, or an ambiguous lazy-link
-            # set). Do NOT silently trust the enqueue-time id — a concurrent confirm may have
-            # made it stale. Fall back to it (#940), but warn so the
-            # wrong-overlay risk in this narrow window is observable rather than silent.
-            logger.warning(
-                "overlay_supersede_target_unresolved",
-                job_id=job_id,
-                enqueue_overlay_id=enqueue_overlay_id,
-                archived_revision_id=str(archived_revision_id),
-                detail=(
-                    "could not re-resolve the overlay backing the archived revision "
-                    "(lazy-link window or ambiguous confirmed set); falling back to the "
-                    "enqueue-time overlay id, which may be stale under a concurrent confirm "
-                    "(#940)"
-                ),
-            )
-            return enqueue_overlay_id
-        if overlay.id != enqueue_overlay_id:
-            logger.info(
-                "overlay_supersede_target_reresolved",
-                job_id=job_id,
-                enqueue_overlay_id=enqueue_overlay_id,
-                resolved_overlay_id=overlay.id,
-                archived_revision_id=str(archived_revision_id),
-                detail=(
-                    "a concurrent confirm changed the live overlay after enqueue; "
-                    "deprecating the overlay that backed the archived revision (#940)"
-                ),
-            )
-        return overlay.id
-
-    async def _emit_overlay_deprecated(
-        self,
-        *,
-        job_id: str,
-        overlay: Any,
-        overlay_id: str,
-        actor_id: str,
-        actor_type: str | None,
-    ) -> None:
-        """Emit the attributed ``overlay.deprecated`` notification (L2/L3).
-
-        Best-effort in the admin DB. ``author`` is the overlay's own ``created_by`` (whom
-        to notify); ``actor_id``/``actor_type`` is the operator who ran the superseding
-        re-import. Swallows failures — the demote already committed; a missed notification
-        must not fail (or retry-loop) the import job.
-        """
-        author = getattr(overlay, "created_by", None) if overlay is not None else None
-        api_id = getattr(overlay, "api_id", None) if overlay is not None else None
-        try:
-            async with self._ctx.admin_db.transaction() as session:
-                await emit_event_best_effort(
-                    session,
-                    type=EventType.OVERLAY_DEPRECATED,
-                    severity=EventSeverity.INFO,
-                    summary=(
-                        f"Overlay {overlay_id} was deprecated by an authorized catalog "
-                        "re-import that adopted the upstream spec"
-                    ),
-                    requires_action=False,
-                    created_by=actor_id,
-                    actor_id=actor_id,
-                    actor_type=actor_type,
-                    data={
-                        "overlay_id": overlay_id,
-                        "api_id": str(api_id) if api_id is not None else None,
-                        "author": author,
-                        "reason": "superseded_by_catalog_reimport",
-                    },
-                )
-        except Exception:
-            logger.exception("overlay_deprecated_emit_failed", job_id=job_id, overlay_id=overlay_id)
-
-    async def _recover_supersede(
-        self, job_id: str, overlay_id: str, source: Any, *, actor_id: str, actor_type: str | None
-    ) -> uuid.UUID | None:
-        """Recover an interrupted A4b supersede after a duplicate-on-retry re-ingest.
-
-        Mirrors ``_recover_overlay_link`` for the supersede path. A prior attempt already
-        committed the fresh upstream revision and made it current, then crashed before the
-        separate-transaction deprecate ran; the retry re-ingests identical content and
-        fails with ``DuplicateRevisionError`` (no new revision). Returns the resolved
-        ``api_id`` — so the caller completes the job (instead of dead-lettering) — when
-        the served revision is now a *non-overlay* (upstream) revision, meaning the
-        supersede's durable effect already landed. In that case it also
-        (idempotently, CAS on CONFIRMED) deprecates the overlay to finish the interrupted
-        step. Returns ``None`` for a genuine failure (served revision is still the overlay,
-        or identity can't be resolved).
-
-        Identity is resolved by the source's upstream ``url`` (the catalog ``spec_url``),
-        *not* the (vendor, name, version) triple: the production supersede source is a
-        ``type:"url"`` payload built by ``CatalogService._to_import_source`` that has no
-        ``version`` key (the version isn't known until the spec is fetched). Keying on the
-        served revision's ``source_url`` — the same provenance the enqueue-time gate uses
-        (``current_revision_for_source_url``) — is what lets this fire on the real path.
-        """
-        src = source if isinstance(source, dict) else {}
-        url = src.get("url")
-        if not isinstance(url, str):
-            return None
-        try:
-            async with self._ctx.registry_db.session() as session:
-                current = await ApiRevisionRepository.current_revision_for_source_url(session, url)
-                if current is None:
-                    return None
-                api_id, current_revision_id = current
-                origin = await ApiRevisionRepository.origin_of(session, current_revision_id)
-                if origin is None:
-                    return None
-                # The supersede's durable effect is "served revision is the fresh upstream"
-                # (non-overlay). If the current revision is still the overlay, the prior
-                # attempt did not actually supersede — this is a real duplicate failure.
-                if origin == ORIGIN_OVERLAY:
-                    return None
-            logger.info(
-                "overlay_supersede_recovered_existing_revision",
-                job_id=job_id,
-                overlay_id=overlay_id,
-                revision_id=str(current_revision_id),
-            )
-        except Exception:
-            logger.exception(
-                "overlay_supersede_recovery_failed", job_id=job_id, overlay_id=overlay_id
-            )
-            return None
-        # Finish the interrupted deprecate (idempotent: CAS on CONFIRMED — a no-op if a
-        # prior attempt already demoted it).
-        #
-        # Residual (#940): this recovery path passes no ``superseding_revision``, so
-        # ``_deprecate_superseded_overlay`` cannot re-resolve and deprecates the enqueue-time
-        # ``overlay_id`` verbatim. Under a *concurrent confirm that changed the live overlay
-        # after enqueue* AND a crash mid-supersede (a double fault), that id can be stale, so
-        # the wrong overlay may be demoted here. We do not re-resolve because by recovery time
-        # the archived overlay revision is gone (the served revision is already the fresh
-        # non-overlay upstream — asserted by the ``origin == ORIGIN_OVERLAY`` guard above), so
-        # there is no reliable ``superseded_revision_id`` to key on. The CAS still guarantees
-        # we only ever demote a CONFIRMED overlay, never corrupt state; the narrow cost is a
-        # possibly-wrong-overlay demote in this double-fault corner. Left as a known residual
-        # rather than adding a heuristic that could misfire.
-        await self._deprecate_superseded_overlay(
-            job_id, overlay_id, actor_id=actor_id, actor_type=actor_type
-        )
-        return api_id
-
-    async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
-        """Link an overlay to its already-materialized revision after a duplicate re-ingest.
-
-        Returns ``True`` if the re-ingest failed *only* because the overlaid content
-        already exists and the current revision is the overlay revision we linked
-        (so the job is a successful no-op recovery), else ``False`` (a genuine failure
-        that should still surface). Best-effort like ``_link_overlay_revision``.
-        """
-        src = source if isinstance(source, dict) else {}
-        vendor = src.get("vendor")
-        name = src.get("api_name")
-        version = src.get("version")
-        if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
-            return False
-        try:
-            async with self._ctx.registry_db.transaction() as session:
-                api = await ApiRepository.get_by_identifier_with_current_revision(
-                    session, vendor, name, version
-                )
-                if api is None or api.current_revision is None:
-                    return False
-                # Only claim recovery when the live revision is the overlaid one; a
-                # non-overlay current revision means the duplicate was something else.
-                if api.current_revision.origin != ORIGIN_OVERLAY:
-                    return False
-                assert api.current_revision_id is not None
-                # Reconstruct the revision this materialize superseded. The original
-                # confirm archived it before crashing pre-link, so it isn't in memory
-                # here — recover it as the newest archived non-overlay revision. Passed
-                # best-effort: set_confirmed_revision won't clobber an already-captured
-                # value, and None (first-ever materialize) leaves it NULL as intended.
-                superseded_id = await ApiRevisionRepository.latest_archived_non_overlay(
-                    session, api.id, ORIGIN_OVERLAY
-                )
-                updated = await OverlayRepository.set_confirmed_revision(
-                    session,
-                    overlay_id,
-                    api.current_revision_id,
-                    superseded_revision_id=superseded_id,
-                )
-            logger.info(
-                "overlay_materialize_recovered_existing_revision",
-                job_id=job_id,
-                overlay_id=overlay_id,
-                revision_id=str(api.current_revision_id),
-                superseded_revision_id=str(superseded_id) if superseded_id else None,
-                linked=updated > 0,
-            )
-            return updated > 0
-        except Exception:
-            logger.exception(
-                "overlay_materialize_recovery_failed", job_id=job_id, overlay_id=overlay_id
-            )
-            return False

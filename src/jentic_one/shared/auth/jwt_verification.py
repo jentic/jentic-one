@@ -2,16 +2,18 @@
 
 The single source for *asymmetric* JWT verification across surfaces (the broker
 edge today). Key resolution is delegated to PyJWT's :class:`PyJWKClient` — one
-per trusted issuer — which fetches the issuer's published JWKS, caches keys by
-``kid``, and re-fetches on an unknown ``kid`` bounded by ``lifespan`` (so a
-rotated signing key is picked up without a restart).
+per trusted issuer — which fetches the issuer's published JWKS and caches the
+JWK set for ``_JWKS_LIFESPAN_S`` without per-key indefinite caching. Withdrawn
+signing keys stop resolving once ``lifespan`` expires, newly rotated signing
+keys are picked up on a cache miss (bounded by the client's refresh cooldown),
+and JWKS network fetches run off the event loop via :func:`asyncio.to_thread`.
 
 Hardening rules enforced here:
 
 - **Strict asymmetric alg allowlist** per issuer (``RS*``/``ES*``/``PS*``/
   ``EdDSA``). ``alg: none`` and **all HMAC algs are rejected** — an HS-signed
-  token can't be validated against an RSA/EC public key (the RS↔HS key-confusion
-  attack), and a token with no signature is never trusted.
+  token cannot be validated against an RSA/EC public key, and a token with no
+  signature is never trusted.
 - **``iss``** must match a configured trusted issuer (selected from the
   *unverified* claim, then re-asserted by ``jwt.decode``).
 - **``aud``** must equal the broker's configured audience (when set).
@@ -23,7 +25,10 @@ machinery is single-sourced under ``shared/auth`` (``test_jwks_single_source``).
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import jwt
 import structlog
@@ -33,6 +38,9 @@ from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.config import JwtVerificationConfig, TrustedIssuerConfig
 
 logger = structlog.get_logger(__name__)
+
+_JWKS_LIFESPAN_S: float = 300.0
+_JWKS_FETCH_TIMEOUT_S: float = 5.0
 
 
 class JwtVerificationError(TokenValidationError):
@@ -48,37 +56,86 @@ class JwtVerificationError(TokenValidationError):
 class _IssuerKeys:
     config: TrustedIssuerConfig
     client: PyJWKClient
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass
 class TrustedIssuerVerifier:
     """Verify a self-contained JWT against a configured set of trusted issuers.
 
-    Holds one :class:`PyJWKClient` per issuer (keys cached + rotation-aware). The
-    ``iss`` claim selects the issuer; verification then pins to that issuer's
-    JWKS, asymmetric alg allowlist, and the broker's expected audience.
+    Holds one :class:`PyJWKClient` per issuer with time-bounded JWK-set caching.
+    The ``iss`` claim selects the issuer; verification then pins to that
+    issuer's JWKS, asymmetric alg allowlist, and the broker's expected audience.
     """
 
     config: JwtVerificationConfig
     _issuers: dict[str, _IssuerKeys] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # `lifespan` bounds how often an unknown-kid miss re-fetches the JWKS, so a
-        # burst of unknown kids can't hammer the IdP; rotation is still picked up
-        # within `lifespan`.
+        # `cache_keys=False` ensures every lookup consults the time-bounded
+        # JWK-set cache (`lifespan`), so withdrawn keys stop resolving after
+        # expiry while cooldown bounds unknown-kid refetches.
         self._issuers = {
             issuer.issuer: _IssuerKeys(
                 config=issuer,
                 client=PyJWKClient(
                     issuer.jwks_url,
-                    cache_keys=True,
-                    lifespan=300,
+                    cache_keys=False,
+                    cache_jwk_set=True,
+                    lifespan=_JWKS_LIFESPAN_S,
+                    timeout=_JWKS_FETCH_TIMEOUT_S,
                 ),
             )
             for issuer in self.config.trusted_issuers
         }
 
-    def verify(self, token: str) -> dict[str, object]:
+    @staticmethod
+    def _lookup_cached_key(client: PyJWKClient, kid: str) -> Any | None:
+        cache = client.jwk_set_cache
+        if cache is None:
+            return None
+        jwk_set = cache.get()
+        if jwk_set is None:
+            return None
+        for k in jwk_set.keys:
+            if k.key_id == kid and k.public_key_use in ("sig", None):
+                return k
+        return None
+
+    @staticmethod
+    def _fetch_signing_key(client: PyJWKClient, kid: str) -> Any:
+        cache = client.jwk_set_cache
+        had_empty_cache = cache is not None and cache.get() is None
+        prev_fetch = getattr(client, "_last_successful_fetch", None)
+        if had_empty_cache:
+            client._last_successful_fetch = time.monotonic()
+        try:
+            return client.get_signing_key(kid)
+        except Exception:
+            if had_empty_cache and cache is not None and cache.get() is None:
+                client._last_successful_fetch = prev_fetch
+            raise
+
+    async def _resolve_key(self, entry: _IssuerKeys, kid: object) -> Any:
+        if not isinstance(kid, str) or not kid:
+            raise JwtVerificationError("jwt_kid_missing")
+
+        cached = self._lookup_cached_key(entry.client, kid)
+        if cached is not None:
+            return cached
+
+        async with entry.lock:
+            cached = self._lookup_cached_key(entry.client, kid)
+            if cached is not None:
+                return cached
+            try:
+                return await asyncio.to_thread(self._fetch_signing_key, entry.client, kid)
+            except jwt.PyJWKClientError as exc:
+                raise JwtVerificationError(f"jwt_key_unresolved: {exc}") from exc
+            except jwt.InvalidTokenError as exc:
+                raise JwtVerificationError(f"jwt_malformed: {exc}") from exc
+
+    async def verify(self, token: str) -> dict[str, object]:
         """Verify *token* and return its claims, or raise :class:`JwtVerificationError`."""
         # 1) Reject `alg: none` / HMAC before any key work, off the *unverified*
         #    header — a token claiming a symmetric alg never reaches key lookup.
@@ -104,13 +161,8 @@ class TrustedIssuerVerifier:
         if alg not in entry.config.algorithms:
             raise JwtVerificationError(f"jwt_alg_not_allowed: {alg!r}")
 
-        # 3) Resolve the signing key by kid (rotation-aware fetch) and verify.
-        try:
-            signing_key = entry.client.get_signing_key_from_jwt(token)
-        except jwt.PyJWKClientError as exc:
-            raise JwtVerificationError(f"jwt_key_unresolved: {exc}") from exc
-        except jwt.InvalidTokenError as exc:
-            raise JwtVerificationError(f"jwt_malformed: {exc}") from exc
+        # 3) Resolve the signing key by kid (cached fast path or off-loop fetch) and verify.
+        signing_key = await self._resolve_key(entry, header.get("kid"))
 
         require = ["exp", "iss"]
         if self.config.audience is not None:

@@ -18,11 +18,14 @@ def to_stored(wire: CredentialType, *, grant_type: str | None = None) -> StoredC
     if wire == CredentialType.SIGV4:
         return StoredCredentialType.AWS_SIGV4
     if wire == CredentialType.OAUTH2:
+        if grant_type is None or grant_type == "client_credentials":
+            return StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS
         if grant_type == "authorization_code":
             return StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
         if grant_type == "device_code":
             return StoredCredentialType.OAUTH2_DEVICE_CODE
-        return StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS
+        msg = f"Unsupported OAuth2 grant_type: {grant_type!r}"
+        raise ValueError(msg)
     msg = f"Unsupported wire type: {wire}"
     raise ValueError(msg)
 

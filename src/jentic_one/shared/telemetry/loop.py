@@ -1,9 +1,10 @@
 """Supervised flush loop that drains the telemetry queue and POSTs batches.
 
-Modeled on ``WorkerLoop`` (the repo bans bare ``create_task`` in handlers — see
-``docs/rules/async-patterns.md``): a single long-lived task the lifespan owns,
-that drains on shutdown so queued events get one last flush. A tick never kills
-the loop; the HTTP client swallows its own errors.
+Application lifespan (``_start_telemetry`` / ``_stop_telemetry`` in
+``shared/web/app_factory.py``) owns one long-lived task: it starts the loop on
+startup, drains queued events during shutdown, cancels any remaining work, and
+closes the client. Periodic sends and the final drain are best-effort, and send
+failures are logged and swallowed so telemetry does not terminate request flow.
 """
 
 from __future__ import annotations

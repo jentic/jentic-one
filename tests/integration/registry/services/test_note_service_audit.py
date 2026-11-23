@@ -15,9 +15,11 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.services.note_service import NoteService
+from jentic_one.registry.services.schemas import NoteCreate, NoteResource, NoteUpdate
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.schemas.api_reference import APIReference
 
 pytestmark = pytest.mark.integration
 
@@ -56,8 +58,16 @@ async def test_create_records_audit_entry(
 ) -> None:
     svc = NoteService(integration_context)
     view = await svc.create(
-        resource_api=(note_api.vendor, note_api.name, note_api.version),
-        body="An audited note",
+        NoteCreate(
+            resource=NoteResource(
+                api=APIReference(
+                    vendor=note_api.vendor,
+                    name=note_api.name,
+                    version=note_api.version,
+                )
+            ),
+            body="An audited note",
+        ),
         identity=_IDENTITY,
     )
 
@@ -75,12 +85,20 @@ async def test_update_and_delete_record_audit_entries(
 ) -> None:
     svc = NoteService(integration_context)
     view = await svc.create(
-        resource_api=(note_api.vendor, note_api.name, note_api.version),
-        body="Original body",
+        NoteCreate(
+            resource=NoteResource(
+                api=APIReference(
+                    vendor=note_api.vendor,
+                    name=note_api.name,
+                    version=note_api.version,
+                )
+            ),
+            body="Original body",
+        ),
         identity=_IDENTITY,
     )
 
-    await svc.update(view.id, body="Updated body", identity=_IDENTITY)
+    await svc.update(view.id, NoteUpdate(body="Updated body"), identity=_IDENTITY)
     await svc.delete(view.id, identity=_IDENTITY)
 
     entries = await _audit_entries_for(integration_context, view.id)

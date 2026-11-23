@@ -22,7 +22,7 @@ from sqlalchemy import delete, func, select, text
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.web.routers.execute import (
+from jentic_one.broker.services.execution.streaming_persistence import (
     _persist_streaming_outcome,
     _streaming_persist_failures,
     _streaming_persist_pending,
@@ -198,7 +198,7 @@ async def test_streaming_persist_failure_is_counted_and_releases_slot(
     ) as failures:
         # Same primary key → IntegrityError inside the admin transaction.
         await _persist(bounded_ctx, execution_id)
-        failures.assert_called_once_with(1, {"reason": "write_error"})
+        failures.assert_called_once_with(1, {"kind": "streaming", "reason": "write_error"})
 
     assert pending_spy["waiting"] == 0
     assert pending_spy["in_flight"] == 0

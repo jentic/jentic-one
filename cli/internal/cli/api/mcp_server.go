@@ -22,6 +22,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -383,11 +384,46 @@ func (s *mcpServer) noteClient(ci *mcp.Implementation) {
 	s.clientInfo.Store(ci)
 }
 
+// refreshActiveState reloads the active environment's URLs/CA path from disk
+// when a long-running MCP process holds a disk-backed context, so an operator
+// `jentic env add --force` repoint takes effect on the next tool call. If the
+// environment can no longer be resolved, it degrades the state rather than
+// retaining credentials and routing for an origin that is no longer configured.
+func refreshActiveState(ctx context.Context) context.Context {
+	st := clictx.ActiveContext(ctx)
+	if st == nil || st.InjectedBearerToken != "" {
+		return ctx
+	}
+	deactivate := func() context.Context {
+		stCopy := *st
+		stCopy.ResolvedState = nil
+		return clictx.WithActiveState(ctx, &stCopy)
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		return deactivate()
+	}
+	env, ok := cfg.Environments[st.EnvironmentName]
+	if !ok || env.BaseURL == "" {
+		return deactivate()
+	}
+	if env.BaseURL == st.BaseURL && env.BrokerURL == st.BrokerURL && env.CACertPath == st.CACertPath {
+		return ctx
+	}
+	rsCopy := *st.ResolvedState
+	rsCopy.BaseURL = env.BaseURL
+	rsCopy.BrokerURL = env.BrokerURL
+	rsCopy.CACertPath = env.CACertPath
+	stCopy := *st
+	stCopy.ResolvedState = &rsCopy
+	return clictx.WithActiveState(ctx, &stCopy)
+}
+
 // callContext derives the per-call context every handler uses: the session
 // context's values (ActiveState, transport hook) with this call's deadline.
 // Control-plane-only tools get the 30s mcpCallTimeout.
 func (s *mcpServer) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, mcpCallTimeout)
+	return context.WithTimeout(refreshActiveState(ctx), mcpCallTimeout)
 }
 
 // executeCallContext is callContext for the execute family: the broker leg
@@ -395,7 +431,7 @@ func (s *mcpServer) callContext(ctx context.Context) (context.Context, context.C
 // mcpExecuteCallTimeout instead of the control-plane deadline (which would
 // silently cap the advertised 60s execute ceiling at 30s).
 func (s *mcpServer) executeCallContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, mcpExecuteCallTimeout)
+	return context.WithTimeout(refreshActiveState(ctx), mcpExecuteCallTimeout)
 }
 
 // result builds the one tool-result shape every tool returns: the payload
@@ -427,12 +463,17 @@ func (s *mcpServer) result(ctx context.Context, payload map[string]any) *mcp.Cal
 // mirroring the CLI envelopes' schema_version (13 §2/§6).
 const mcpSchemaVersion = "1"
 
-// redactedErr funnels an error's message through the ux redaction backstop
-// before it is written to the MCP log file. The log is an output surface like
-// stderr — and HTTPError.Error() embeds the raw upstream response body — so
-// every failure-logging site must apply the same guarantee ReportError's
-// stderr path does, not write err verbatim.
+// redactedErr funnels an error's message through the ux redaction backstop.
+// HTTP response bodies and problem-detail strings are upstream-controlled, so
+// only the status survives; the caller's log message supplies the local context.
 func redactedErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	var he *HTTPError
+	if errors.As(err, &he) && he != nil {
+		return fmt.Sprintf("http %d: [REDACTED]", he.StatusCode)
+	}
 	return string(ux.RedactBytes([]byte(err.Error())))
 }
 
@@ -512,13 +553,22 @@ func (s *mcpServer) softErrorExtra(ctx context.Context, err error, nextTool stri
 // catch-all with no next_tool pointer.
 func mcpCoded(err error) *ux.CodedError {
 	var httpErr *HTTPError
-	if errors.As(err, &httpErr) &&
-		(httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
+	if errors.As(err, &httpErr) && httpErr != nil {
+		if httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden {
+			return &ux.CodedError{
+				Code: ux.CodeNotAuthenticated,
+				Msg: fmt.Sprintf("the control plane rejected this agent's credentials (%s) — "+
+					"the identity may have been revoked or disabled", redactedErr(err)),
+				Actionable: "call get_started to diagnose this machine's setup and relay its instruction to your operator",
+			}
+		}
+		coded := asCoded(err)
 		return &ux.CodedError{
-			Code: ux.CodeNotAuthenticated,
-			Msg: fmt.Sprintf("the control plane rejected this agent's credentials (%v) — "+
-				"the identity may have been revoked or disabled", err),
-			Actionable: "call get_started to diagnose this machine's setup and relay its instruction to your operator",
+			Code:       coded.Code,
+			Msg:        fmt.Sprintf("control plane request failed (http %d)", httpErr.StatusCode),
+			Actionable: coded.Actionable,
+			Details:    coded.Details,
+			Cause:      coded.Cause,
 		}
 	}
 	return asCoded(err)

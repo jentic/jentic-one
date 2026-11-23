@@ -75,11 +75,26 @@ Re-importing an upstream spec over an API whose current revision is a live confi
 overlay is doubly gated: the caller needs both `catalog:import` **and**
 `overlays:confirm`. An authorized re-import:
 
-1. archives the overlay's materialized revision and adopts the fresh upstream as the
-   served spec, then
+1. archives the active revision of the API row the re-import lands on and adopts the
+   fresh upstream as the served spec, then
 2. **auto-deprecates** the superseded overlay and emits an attributed
    `overlay.deprecated` event (recording the authorizing operator and the overlay's
    author) so the change is visible where humans work, not just in the audit log.
+
+The auto-deprecate only fires when the re-import actually superseded the overlay. It is
+skipped, and the overlay stays confirmed, when:
+
+- **`api_mismatch`** — the re-import landed on a different API row than the overlay's
+  (for example the clean identity of an API whose stored vendor was doubled), so the
+  overlay's revision was never archived; or
+- **`revision_still_served`** — the overlay's materialized revision is still the
+  served revision of its API.
+
+A skip emits no `overlay.deprecated` event. The import job result records it as
+`supersede_skipped: <reason>` on the revision entry (or at the top level of the result
+when a retried job recovers an interrupted supersede), the worker logs
+`overlay_supersede_skipped`, and the `jentic_one.flow3.overlay_supersede_skipped`
+counter (label `reason`) is incremented.
 
 An unauthorized caller is **refused** (HTTP 403 `overlay_supersede_forbidden`) and a
 fresh `catalog.update_conflicts_overlay` event is re-emitted for a privileged

@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import json
 import typing
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import websocket_request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
 from fastapi.testclient import TestClient
+from jentic.problem_details import ProblemDetailException
 from sqlalchemy.exc import DBAPIError
+from starlette.exceptions import HTTPException
 
+from jentic_one.__main__ import _expand_allowed_dbs
 from jentic_one.broker.core.directives import (
     AgentDirective,
     AgentStrategy,
@@ -20,6 +26,7 @@ from jentic_one.broker.core.directives import (
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
+    held_execution_directive,
     no_credential_binding_directive,
     suggested_permission_rules,
     switch_toolkit_directive,
@@ -38,16 +45,27 @@ from jentic_one.broker.core.errors import (
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR, broker_error_problem
+from jentic_one.broker.core.schemas import (
+    HeldExecutionAcceptedLinks,
+    HeldExecutionAcceptedResponse,
+)
+from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.broker.web.errors import (
     handle_broker_error,
+    handle_database_unavailable,
     handle_discovery_error,
+    handle_http_exception,
+    handle_validation,
     install_broker_error_handlers,
     problem_response,
 )
+from jentic_one.broker.web.routers.execute import _FIXED_STATUS_BY_HANDLER
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.execution import ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.config import AppConfig
+from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import (
     DatabaseCommitOutcomeUnknownError,
     DatabaseUnavailableError,
@@ -59,7 +77,15 @@ from jentic_one.shared.discovery.errors import (
     OperationNotFoundError,
     TooManyCandidatesError,
 )
-from jentic_one.shared.web.errors import DB_COMMIT_OUTCOME_UNKNOWN_DETAIL
+from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE
+from jentic_one.shared.state.backend import StateBackendCapacityError
+from jentic_one.shared.web.app_factory import spa_aware_problem_detail_handler
+from jentic_one.shared.web.errors import (
+    DB_COMMIT_OUTCOME_UNKNOWN_DETAIL,
+    request_validation_error_handler,
+    state_backend_capacity_error_handler,
+    unhandled_exception_handler,
+)
 
 
 def _body(resp: Any) -> dict[str, Any]:
@@ -73,9 +99,10 @@ def test_directive_factories_emit_known_strategies() -> None:
     """Every directive factory must emit a strategy in the AgentStrategy
     vocabulary. This is the recovery contract autonomous agents depend on; a
     factory drifting to an unknown strategy (or the enum being trimmed) would
-    silently break the loop. The Go ``agentDirective`` struct
-    (cli/internal/cmd/execute.go) mirrors these same values by hand — keep them
-    in lock-step until the contract is a shared OpenAPI schema (review P1-1)."""
+    silently break the loop. Go decodes directives into ``ux.Directive``
+    (``cli/internal/cli/ux/execute.go``) via ``agentops.ParseAgentDirective``
+    (``cli/internal/agentops/classify.go``); Python factories and Go directive
+    handling must remain aligned on the wire vocabulary."""
     directives = [
         switch_toolkit_directive(503),
         credential_identity_mismatch_directive(
@@ -428,7 +455,11 @@ def test_status_table_maps_credential_errors() -> None:
     # BrokerError -> 500.
     assert STATUS_BY_ERROR[CredentialNotProvisionedError] == 424
     assert STATUS_BY_ERROR[CredentialUndecryptableError] == 424
-    assert STATUS_BY_ERROR[CredentialNeedsReconnectError] == 401
+    # A revoked *stored* grant is a failed dependency, not a challenge to the
+    # caller's own bearer token: it shares 424 with its sibling credential
+    # failures. A 401 here would tell an SDK to re-authenticate itself, which
+    # can never clear a revoked upstream grant.
+    assert STATUS_BY_ERROR[CredentialNeedsReconnectError] == 424
     assert STATUS_BY_ERROR[CredentialRefreshTransientError] == 502
 
 
@@ -438,7 +469,7 @@ def test_status_table_maps_credential_errors() -> None:
     [
         (CredentialNotProvisionedError("nope"), 424),
         (CredentialUndecryptableError("undecryptable"), 424),
-        (CredentialNeedsReconnectError("reconnect"), 401),
+        (CredentialNeedsReconnectError("reconnect"), 424),
         (CredentialRefreshTransientError("transient"), 502),
     ],
 )
@@ -641,3 +672,77 @@ def test_installed_handlers_render_a_raised_discovery_error() -> None:
     assert resp.status_code == 503
     assert resp.json()["type"] == "too_many_candidates"
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "broker"
+
+
+def test_every_registered_http_handler_has_a_classification_contract(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A new broker handler registration must also update failure classification."""
+    config = AppConfig.model_validate(sample_config_dict)
+    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(["broker"], config))
+    app = create_broker_app(ctx)
+
+    assert app.exception_handlers == {
+        HTTPException: handle_http_exception,
+        RequestValidationError: handle_validation,
+        WebSocketRequestValidationError: websocket_request_validation_exception_handler,
+        ProblemDetailException: spa_aware_problem_detail_handler,
+        StateBackendCapacityError: state_backend_capacity_error_handler,
+        Exception: unhandled_exception_handler,
+        BrokerError: handle_broker_error,
+        DiscoveryError: handle_discovery_error,
+        DatabaseUnavailableError: handle_database_unavailable,
+    }
+    assert {
+        handle_validation: 422,
+        request_validation_error_handler: 422,
+        state_backend_capacity_error_handler: 503,
+        handle_database_unavailable: 503,
+        unhandled_exception_handler: 500,
+    } == _FIXED_STATUS_BY_HANDLER
+
+
+def test_held_execution_directive_is_a_structured_object() -> None:
+    """A held 202 carries the same directive object a denial does, not bare prose.
+
+    An agent switching on ``agent_directive.strategy`` must keep working when a
+    human decision is required — the one moment the field matters most. The
+    prose stays reachable as ``human_readable_instruction``.
+    """
+    directive = held_execution_directive(
+        held_execution_id="held_abc",
+        review_url="https://jentic.example/app/agents/approvals/held_abc",
+        instruction=HELD_AGENT_DIRECTIVE,
+    )
+    assert directive.strategy == "prompt_human"
+    assert directive.human_readable_instruction == HELD_AGENT_DIRECTIVE
+    assert directive.parameters == {
+        "held_execution_id": "held_abc",
+        "review_url": "https://jentic.example/app/agents/approvals/held_abc",
+    }
+
+
+def test_held_accepted_response_serializes_the_directive_as_an_object() -> None:
+    """The 202 body's ``agent_directive`` is an object with the directive's three keys."""
+    body = HeldExecutionAcceptedResponse(
+        held_execution_id="held_abc",
+        review_url="https://jentic.example/app/agents/approvals/held_abc",
+        expires_at=datetime(2026, 1, 1, tzinfo=UTC),
+        agent_directive=held_execution_directive(
+            held_execution_id="held_abc",
+            review_url="https://jentic.example/app/agents/approvals/held_abc",
+            instruction=HELD_AGENT_DIRECTIVE,
+        ),
+        links=HeldExecutionAcceptedLinks(
+            self_link="/executions/holds/held_abc",
+            result="/executions/holds/held_abc/result",
+            withdraw="/executions/holds/held_abc:withdraw",
+        ),
+    )
+    dumped = json.loads(body.model_dump_json(by_alias=True))
+    assert set(dumped["agent_directive"]) == {
+        "strategy",
+        "parameters",
+        "human_readable_instruction",
+    }
+    assert dumped["agent_directive"]["strategy"] == "prompt_human"

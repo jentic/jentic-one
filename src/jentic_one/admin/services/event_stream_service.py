@@ -13,6 +13,7 @@ from jentic_one.admin.services.schemas.events import EventView, Heartbeat
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.events import EventSeverity
+from jentic_one.shared.pagination import Cursor
 
 #: Rows fetched per repo page while draining the overlap window. A short page
 #: (< limit) means the window is drained, saving the empty-batch round-trip.
@@ -129,7 +130,7 @@ class EventStreamService:
         # client-side toasts/invalidations on page load). Rows seeded here are
         # by definition not late-commit victims for THIS connection; anything
         # that becomes visible after this scan is delivered normally.
-        page_cursor: tuple[datetime, str] = (watermark - overlap, "")
+        page_cursor = Cursor(timestamp=watermark - overlap, id="")
         while True:
             async with self._ctx.admin_db.session() as session:
                 batch = await EventRepository.list_after_cursor(
@@ -162,13 +163,13 @@ class EventStreamService:
             # wasted I/O the main loop then re-reads to deliver.
             if len(batch) < page_limit or batch[-1].created_at > watermark:
                 break
-            page_cursor = (batch[-1].created_at, batch[-1].id)
+            page_cursor = Cursor(timestamp=batch[-1].created_at, id=batch[-1].id)
 
         while True:
             yielded = False
-            # "" sorts before every real id, so the two-tuple cursor starts
-            # strictly at the horizon without skipping same-instant rows.
-            page_cursor = (watermark - overlap, "")
+            # "" sorts before every real id, so the cursor starts strictly at
+            # the horizon without skipping same-instant rows.
+            page_cursor = Cursor(timestamp=watermark - overlap, id="")
 
             while True:
                 # Re-scope before every page, not just every poll: a burst can
@@ -228,7 +229,7 @@ class EventStreamService:
                 # round-trip that would only observe emptiness.
                 if len(batch) < page_limit:
                     break
-                page_cursor = (batch[-1].created_at, batch[-1].id)
+                page_cursor = Cursor(timestamp=batch[-1].created_at, id=batch[-1].id)
 
             if not yielded:
                 yield Heartbeat(sent_at=datetime.now(UTC))

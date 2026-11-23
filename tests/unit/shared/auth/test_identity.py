@@ -10,7 +10,7 @@ def test_identity_serialization_and_defaults() -> None:
     assert identity.sub == "usr_123"
     assert identity.email == "test@example.com"
     assert identity.permissions == []
-    assert identity.parent_permissions == []
+    assert not hasattr(identity, "parent_permissions")
     assert identity.actor_type == "user"
     assert identity.parent_actor_id is None
     assert identity.must_change_password is False
@@ -25,11 +25,9 @@ def test_identity_agent_assignment() -> None:
         actor_type=ActorType.AGENT,
         parent_actor_id="usr_abc",
         permissions=["broker:execute"],
-        parent_permissions=["org:admin"],
     )
 
     assert identity.permissions == ["broker:execute"]
-    assert identity.parent_permissions == ["org:admin"]
     assert identity.actor_type == "agent"
     assert identity.parent_actor_id == "usr_abc"
 

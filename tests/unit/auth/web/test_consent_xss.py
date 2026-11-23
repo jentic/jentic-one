@@ -5,7 +5,7 @@ from __future__ import annotations
 import html as html_mod
 
 from jentic_one.auth.web.flow import FONTS_URL
-from jentic_one.auth.web.routers.authorize import (
+from jentic_one.auth.web.pages import (
     _CONSENT_PAGE_TEMPLATE,
 )
 from jentic_one.auth.web.theme import AUTH_PAGE_CSS, LOGO_BLOCK_HTML

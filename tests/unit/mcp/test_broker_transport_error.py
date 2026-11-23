@@ -12,6 +12,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -49,6 +50,16 @@ def _headers(origin: str | None, retry_after: str | None = None) -> httpx.Header
 
 def _body(problem: dict[str, Any]) -> bytes:
     return json.dumps(problem).encode()
+
+
+_PARITY_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "retry-after-parity.json"
+
+
+def _load_retry_after_parity_cases(key: str = "cases") -> list[dict[str, Any]]:
+    data = json.loads(_PARITY_FIXTURE.read_text(encoding="utf-8"))
+    cases = list(data[key])
+    assert cases
+    return cases
 
 
 @pytest.mark.parametrize(
@@ -165,6 +176,20 @@ def test_rate_limit_429_relays_retry_after() -> None:
     assert "(7s)" in got.actionable
 
 
+def test_fractional_retry_after_relays_whole_seconds_rounded_up() -> None:
+    # MCP and the broker share one Retry-After parser (#1957).
+    got = ex.classify_broker_transport_error(
+        503,
+        _headers("broker", retry_after="1.5"),
+        _body({"type": "circuit_open", "title": "Circuit open"}),
+        retry_safe=False,
+    )
+    assert got is not None
+    assert got.details is not None
+    assert got.details["retry_after_s"] == 2
+    assert "(2s)" in got.actionable
+
+
 def test_scheme_unsupported_points_at_search_apis() -> None:
     got = ex.classify_broker_transport_error(
         501,
@@ -224,13 +249,68 @@ def test_retry_after_seconds() -> None:
     assert ex.retry_after_seconds(httpx.Headers({})) is None
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "12"})) == 12
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": " 3 "})) == 3
-    assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "1.5"})) == 1.5
+    assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "1.5"})) == 2
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "-1"})) is None
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": "soon"})) is None
     remaining = ex.retry_after_seconds(httpx.Headers({"Retry-After": future}))
     assert remaining is not None
     assert 60 < remaining <= 91
     assert ex.retry_after_seconds(httpx.Headers({"Retry-After": past})) == 0
+
+
+@pytest.mark.parametrize("case", _load_retry_after_parity_cases(), ids=lambda c: c["name"])
+def test_mcp_retry_after_matches_shared_parity_vectors(case: dict[str, Any]) -> None:
+    """Pins #1991: mounted MCP transport errors relay the shared Retry-After delay."""
+    raw = case["header"]
+    want = case["seconds"]
+    only_retry_after = (
+        httpx.Headers({}, encoding="utf-8")
+        if raw is None
+        else httpx.Headers({"Retry-After": raw}, encoding="utf-8")
+    )
+    assert ex.retry_after_seconds(only_retry_after) == want
+
+    items: list[tuple[str, str]] = [
+        ("Content-Type", "application/problem+json"),
+        ("Jentic-Error-Origin", "broker"),
+    ]
+    if raw is not None:
+        items.append(("Retry-After", raw))
+    got = ex.classify_broker_transport_error(
+        503,
+        httpx.Headers(items, encoding="utf-8"),
+        _body({"type": "circuit_open", "title": "Circuit open"}),
+        retry_safe=False,
+    )
+    assert got is not None
+    assert got.details is not None
+    assert got.extra is not None
+    assert got.details.get("retry_after_s") == want
+    assert got.extra.get("retry_after_s") == want
+
+
+@pytest.mark.parametrize(
+    "case", _load_retry_after_parity_cases("http_date_cases"), ids=lambda c: c["name"]
+)
+def test_mcp_http_date_matches_shared_parity_vectors(case: dict[str, Any]) -> None:
+    """Mounted MCP errors apply the shared fixed-clock HTTP-date vectors."""
+    headers = _headers("broker", retry_after=case["header"])
+    want = case["seconds"]
+    now_epoch = 1_609_459_200.0
+    assert ex.retry_after_seconds(headers, now_epoch=now_epoch) == want
+
+    got = ex.classify_broker_transport_error(
+        503,
+        headers,
+        _body({"type": "circuit_open", "title": "Circuit open"}),
+        retry_safe=False,
+        now_epoch=now_epoch,
+    )
+    assert got is not None
+    assert got.details is not None
+    assert got.extra is not None
+    assert got.details.get("retry_after_s") == want
+    assert got.extra.get("retry_after_s") == want
 
 
 @pytest.mark.parametrize(

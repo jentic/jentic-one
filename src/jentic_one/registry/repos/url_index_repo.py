@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Select, and_, delete, func, select, text
+from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.url_index import URLIndexEntry
+from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.schemas import APIReference
 
 
@@ -24,6 +25,7 @@ class OperationContext:
     api: APIReference
     path: str
     method: str
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +45,7 @@ class UrlIndexCandidate:
     version: str
     operation_path: str
     operation_method: str
+    spec_operation_id: str | None = None
 
     def context(self) -> OperationContext:
         """The operation's API identity + path/method as an :class:`OperationContext`."""
@@ -50,10 +53,11 @@ class UrlIndexCandidate:
             api=APIReference(vendor=self.vendor, name=self.name, version=self.version),
             path=self.operation_path,
             method=self.operation_method,
+            operation_id=self.spec_operation_id,
         )
 
 
-_CandidateSelect = Select[OperationURLIndex, str, str, str, str, str]
+_CandidateSelect = Select[OperationURLIndex, str, str, str, str, str, str | None]
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,7 @@ def _candidate_rows() -> _CandidateSelect:
             Api.version,
             Operation.path,
             Operation.method,
+            Operation.operation_id,
         )
         .join(Operation, Operation.id == OperationURLIndex.operation_id)
         .join(ApiRevision, ApiRevision.id == OperationURLIndex.revision_id)
@@ -160,8 +165,9 @@ async def _fetch_candidates(
             version=version,
             operation_path=path,
             operation_method=method,
+            spec_operation_id=spec_operation_id,
         )
-        for row, vendor, name, version, path, method in result
+        for row, vendor, name, version, path, method, spec_operation_id in result
     ]
 
 
@@ -211,14 +217,21 @@ async def _concrete_hosts(session: AsyncSession, revision_id: uuid.UUID) -> list
 
 async def _lock_hosts(session: AsyncSession, canonical_hosts: list[str]) -> None:
     """Take a transaction-scoped advisory lock per host (Postgres only), in the given order."""
-    bind = session.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
     for host in canonical_hosts:
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-            {"key": _HOST_LOCK_NAMESPACE + host},
-        )
+        await advisory_xact_lock(session, hashtext_name=_HOST_LOCK_NAMESPACE + host)
+
+
+def _segment_count_filter(segment_count: int) -> ColumnElement[bool]:
+    """Filter for exact-segment, catch-all (``-1``), and trailing-``{param}`` rows."""
+    return or_(
+        OperationURLIndex.segment_count == segment_count,
+        OperationURLIndex.segment_count == -1,
+        and_(
+            OperationURLIndex.segment_count > 0,
+            OperationURLIndex.segment_count < segment_count,
+            OperationURLIndex.path_template.like("%}"),
+        ),
+    )
 
 
 class UrlIndexRepository:
@@ -279,11 +292,11 @@ class UrlIndexRepository:
         host: str,
         segment_count: int,
     ) -> list[UrlIndexCandidate]:
-        """Find entries of ``revision_id`` matching exact host, method, and segment count."""
+        """Find entries of ``revision_id`` matching host, method, and compatible segment count."""
         stmt = _pinned_rows(revision_id).where(
             OperationURLIndex.method == method,
             OperationURLIndex.host == host,
-            OperationURLIndex.segment_count == segment_count,
+            _segment_count_filter(segment_count),
         )
         return await _fetch_candidates(session, stmt)
 
@@ -295,7 +308,7 @@ class UrlIndexRepository:
         host: str,
         segment_count: int,
     ) -> list[UrlIndexCandidate]:
-        """Find live-revision entries matching host, method, and segment count.
+        """Find live-revision entries matching host, method, and compatible segment count.
 
         Only rows of each API's current (live) revision are returned — see
         ``_live_rows``.
@@ -303,7 +316,7 @@ class UrlIndexRepository:
         stmt = _live_rows().where(
             OperationURLIndex.method == method,
             OperationURLIndex.host == host,
-            OperationURLIndex.segment_count == segment_count,
+            _segment_count_filter(segment_count),
         )
         return await _fetch_candidates(session, stmt)
 
@@ -315,12 +328,12 @@ class UrlIndexRepository:
         host: str,
         segment_count: int,
     ) -> list[OperationURLIndex]:
-        """Find URL index entries matching host and segment count (any method)."""
+        """Find URL index entries matching host and compatible segment count (any method)."""
         stmt = select(OperationURLIndex).where(
             and_(
                 OperationURLIndex.revision_id == revision_id,
                 OperationURLIndex.host == host,
-                OperationURLIndex.segment_count == segment_count,
+                _segment_count_filter(segment_count),
             )
         )
         result = await session.execute(stmt)
@@ -334,12 +347,12 @@ class UrlIndexRepository:
         method: str,
         segment_count: int,
     ) -> list[UrlIndexCandidate]:
-        """Find regex-host entries of ``revision_id`` matching method and segment count."""
+        """Find regex-host entries of ``revision_id`` matching method and segment count filter."""
         stmt = _pinned_rows(revision_id).where(
             OperationURLIndex.method == method,
             OperationURLIndex.host.is_(None),
             OperationURLIndex.host_regex.isnot(None),
-            OperationURLIndex.segment_count == segment_count,
+            _segment_count_filter(segment_count),
         )
         return await _fetch_candidates(session, stmt)
 
@@ -350,12 +363,12 @@ class UrlIndexRepository:
         method: str,
         segment_count: int,
     ) -> list[UrlIndexCandidate]:
-        """Find live-revision regex-host entries matching method and segment count."""
+        """Find live-revision regex-host entries matching method and compatible segment count."""
         stmt = _live_rows().where(
             OperationURLIndex.method == method,
             OperationURLIndex.host.is_(None),
             OperationURLIndex.host_regex.isnot(None),
-            OperationURLIndex.segment_count == segment_count,
+            _segment_count_filter(segment_count),
         )
         return await _fetch_candidates(session, stmt)
 
@@ -421,13 +434,13 @@ class UrlIndexRepository:
         revision_id: uuid.UUID,
         segment_count: int,
     ) -> list[OperationURLIndex]:
-        """Find regex-host entries matching segment count (any method)."""
+        """Find regex-host entries matching compatible segment count (any method)."""
         stmt = select(OperationURLIndex).where(
             and_(
                 OperationURLIndex.revision_id == revision_id,
                 OperationURLIndex.host.is_(None),
                 OperationURLIndex.host_regex.isnot(None),
-                OperationURLIndex.segment_count == segment_count,
+                _segment_count_filter(segment_count),
             )
         )
         result = await session.execute(stmt)

@@ -1,0 +1,75 @@
+<script>
+(function () {
+    "use strict";
+    var cfg = JSON.parse(
+        document.getElementById("agent-approval-config").textContent);
+    var statusEl = document.getElementById("agent-approval-status");
+    var settled = false;
+
+    function onStatus(status) {
+        if (settled) { return; }
+        if (status === "approved") {
+            settled = true;
+            statusEl.textContent = "Approved — continuing…";
+            // Re-enter the consent page: the handle re-validates server-side
+            // and the newly-active agent renders pre-selected.
+            window.location.replace(cfg.continue_url);
+        } else if (status === "denied") {
+            settled = true;
+            statusEl.textContent =
+                "An administrator denied this agent. " +
+                "You can close this page.";
+        }
+    }
+
+    // Poll cadence: cfg.poll_ms steady-state. A 429 backs off to the
+    // server's Retry-After hint (or doubles the cadence when absent),
+    // clamped to [cfg.poll_ms, 60 s]; any non-429 answer resets it.
+    var pollDelay = cfg.poll_ms;
+    function schedule() {
+        if (!settled) { window.setTimeout(poll, pollDelay); }
+    }
+    function poll() {
+        if (settled) { return; }
+        fetch(cfg.status_url, { headers: { Accept: "application/json" } })
+            .then(function (resp) {
+                if (resp.status === 400) {
+                    settled = true;
+                    statusEl.textContent =
+                        "This page has expired. Retry the connection " +
+                        "from your application.";
+                    return null;
+                }
+                if (resp.status === 429) {
+                    var retryAfter = parseInt(resp.headers.get("Retry-After"), 10);
+                    var hinted = isNaN(retryAfter) ? 0 : retryAfter * 1000;
+                    pollDelay = Math.min(
+                        Math.max(hinted, pollDelay * 2, cfg.poll_ms), 60000);
+                    return null;
+                }
+                pollDelay = cfg.poll_ms;
+                return resp.ok ? resp.json() : null;
+            })
+            .then(function (body) {
+                if (body && body.status) { onStatus(body.status); }
+                schedule();
+            })
+            .catch(function () { schedule(); });
+    }
+    poll();
+
+    document.getElementById("copy-link").addEventListener("click", function () {
+        var input = document.getElementById("agents-link");
+        input.select();
+        var self = this;
+        try {
+            navigator.clipboard.writeText(input.value).then(function () {
+                self.textContent = "Copied";
+            });
+        } catch (e) {
+            document.execCommand("copy");
+            self.textContent = "Copied";
+        }
+    });
+})();
+</script>

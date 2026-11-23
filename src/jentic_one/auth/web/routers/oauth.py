@@ -296,6 +296,7 @@ token_router = APIRouter(route_class=_TokenRoute)
 
 @token_router.post(
     "/oauth/token",
+    summary="Exchange a grant for OAuth tokens",
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
     responses={
@@ -311,6 +312,13 @@ token_router = APIRouter(route_class=_TokenRoute)
             "authentication fails after attempting HTTP Basic (`Authorization` header, "
             "RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status "
             "401 and a `WWW-Authenticate: Basic` challenge, per §5.2."
+        ),
+        401: oauth_error(
+            "Client authentication failed after the client attempted HTTP Basic "
+            "(RFC 6749 §2.3.1): the same `invalid_client` dialect body as the 400 arm, "
+            "plus a `WWW-Authenticate: Basic` challenge. A client that did not attempt "
+            "Basic gets `invalid_client` as a 400 instead, so branch on the body's "
+            "`error` member rather than on the status code."
         ),
         429: oauth_error(
             "Per-client_id + client-network rate limit exceeded (`Retry-After` header set; "
@@ -593,9 +601,24 @@ _REVOKE_FORM_BODY: dict[str, object] = {
 
 @revocation_router.post(
     "/oauth/revoke",
+    summary="Revoke an OAuth token",
     status_code=200,
+    # Both arms answer ``Response(status_code=200)``: no body, which RFC 7009
+    # §2.2 prescribes. ``response_class=Response`` keeps the generated ``200``
+    # body-less instead of inventing an empty JSON schema for it.
+    response_class=Response,
     openapi_extra=_REVOKE_FORM_BODY,
     responses={
+        200: {
+            "description": (
+                "The token is revoked, or there was nothing to revoke. The response body "
+                "is **empty** (RFC 7009 §2.2) — there is nothing to parse, and success is "
+                "indistinguishable from a no-op on both arms, deliberately: neither tells "
+                "the caller whether the token existed. Both arms answer this same empty "
+                "`200` — the form-encoded RFC 7009 arm and the bearer-authenticated JSON "
+                "arm."
+            )
+        },
         400: oauth_error(
             "Form-encoded (RFC 7009) requests only: missing `token` "
             "(RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): "
@@ -736,6 +759,7 @@ introspection_router = APIRouter(route_class=_IntrospectionRoute)
 
 @introspection_router.post(
     "/oauth/introspect",
+    summary="Introspect an OAuth token",
     openapi_extra=_INTROSPECT_REQUEST_BODY,
     responses={
         400: {

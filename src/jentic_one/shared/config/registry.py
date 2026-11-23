@@ -18,25 +18,58 @@ class SearchConfig(BaseModel):
     via ``register_strategy`` without editing this schema.
     """
 
-    # Gate ingest-time construction of the lexical search_text projection.
-    enabled: bool = True
-    # Toggle query-time search independently of ingest-time indexing.
-    search_enabled: bool = True
-    # Search mode name; resolved against the SearchStrategy registry per dialect.
-    # "lexical" is the built-in mode.
-    search_mode: str = "lexical"
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Build the lexical search text for operations at import time. APIs "
+            "imported while this is off are not findable by lexical search until "
+            "re-imported."
+        ),
+    )
+    search_enabled: bool = Field(
+        default=True,
+        description=(
+            "Serve search queries. Off, search requests fail with a "
+            "search-disabled error; indexing at import is controlled separately by "
+            "``enabled``."
+        ),
+    )
+    search_mode: str = Field(
+        default="lexical",
+        description=(
+            "Search strategy name, resolved per database dialect against the "
+            "registered strategies. ``lexical`` (BM25 on SQLite, native full-text "
+            "on PostgreSQL) is built in; an unknown mode fails on first use with "
+            "the available modes listed."
+        ),
+    )
 
 
 class IngestConfig(BaseModel):
     """Spec ingestion settings (fetch limits, timeouts, egress policy)."""
 
     # Public-API specs in the catalog (Stripe, AWS, Azure, …) routinely exceed a
-    # few MB; a 5 MiB cap made large specs both un-previewable and un-importable.
-    # 25 MiB comfortably covers the largest specs in jentic-public-apis while
-    # still bounding memory per fetch.
-    max_spec_bytes: int = 25 * 1024 * 1024
-    fetch_timeout_s: float = 30.0
-    max_redirects: int = 5
+    # few MB; 25 MiB comfortably covers the largest specs in jentic-public-apis
+    # while still bounding memory per fetch.
+    max_spec_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        description=(
+            "Largest API spec (bytes) accepted from a URL fetch or an inline import "
+            "source, fetched for a catalog preview, or produced by applying an "
+            "overlay (default 25 MiB)."
+        ),
+    )
+    fetch_timeout_s: float = Field(
+        default=30.0,
+        description="Timeout (seconds) for fetching a spec or the catalog manifest from a URL.",
+    )
+    max_redirects: int = Field(
+        default=5,
+        description=(
+            "Maximum HTTP redirects followed when fetching a spec or the catalog "
+            "manifest; each hop is re-checked against the egress policy."
+        ),
+    )
     # SSRF/egress policy for fetching URL sources. Strict by default (private
     # ranges blocked); opt in to internal targets for in-cluster/corporate
     # imports — mirrors broker.egress. See EgressConfig.
@@ -79,34 +112,53 @@ class CatalogConfig(BaseModel):
             "apis/openapi/apis.json"
         ),
     )
-    # Lazy refresh-on-read: a manifest older than this is refreshed on the next
-    # list()/get(). Zero disables auto-refresh (manual :refresh only).
-    manifest_max_age_seconds: int = 86400
-    # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
-    # app_factory when both the registry + admin DBs are present) runs one sweep per
-    # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
-    # (If-None-Match) and emitting a ``catalog.update_available`` event when the
-    # upstream spec changed. The manual ``POST /catalog:refresh`` also triggers a
-    # sweep. A given API is re-probed at most once per this interval (a persistent
-    # per-API gate, so scanner + manual refresh don't double-probe). Zero disables the
-    # sweep + scanner entirely (kill switch for air-gapped installs — no event spam,
-    # no egress). Standalone-registry deployments (no admin DB) get no scanner.
-    update_check_interval_seconds: int = 86400
-    # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off
-    # the triggering read (fire-and-forget), but it still probes N registered specs
-    # over the network, so bound the batch: stop after this many wall-clock seconds
-    # and run at most this many probes concurrently. Concurrency is kept below the
-    # registry DB pool so the sweep never starves live request traffic; the sweep
-    # also holds one more registry connection for its single-flight advisory lock.
-    update_sweep_deadline_seconds: int = 300
-    update_sweep_max_concurrency: int = 4
-    # Full-jitter fraction added to the per-cycle sweep interval, to de-phase the
-    # scanner across replicas (thundering-herd mitigation). Each time a sweep runs,
-    # the next one is due after ``interval * (1 + uniform(0, jitter_ratio))``, so N
-    # replicas that start in lock-step drift apart instead of all re-probing the
-    # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
-    # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
-    update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    manifest_max_age_seconds: int = Field(
+        default=86400,
+        description=(
+            "Age (seconds) after which the cached catalog manifest is refreshed on "
+            "the next catalog read. 0 disables automatic refresh (only "
+            "``POST /catalog:refresh``)."
+        ),
+    )
+    # The scanner starts only when both the registry and admin DBs are present.
+    # A persistent per-API gate keeps the scanner and a manual refresh from
+    # probing the same API twice within one interval.
+    update_check_interval_seconds: int = Field(
+        default=86400,
+        description=(
+            "Seconds between update-check sweeps, which conditionally re-fetch the "
+            "spec URLs of upstream-tracked APIs and emit "
+            "``catalog.update_available`` when an upstream spec changed; each API "
+            "is probed at most once per interval. ``POST /catalog:refresh`` also "
+            "triggers a sweep. 0 disables the check entirely (no events, no egress)."
+        ),
+    )
+    # The sweep runs off the triggering read but still probes every tracked spec
+    # over the network, so the batch is bounded. It also holds one more registry
+    # connection for its single-flight advisory lock.
+    update_sweep_deadline_seconds: int = Field(
+        default=300,
+        description=(
+            "Wall-clock budget (seconds) for one update-check sweep; it stops when exceeded."
+        ),
+    )
+    update_sweep_max_concurrency: int = Field(
+        default=4,
+        description=(
+            "Maximum concurrent spec probes in one update-check sweep. Keep it below "
+            "the registry database pool size so sweeps never starve request traffic."
+        ),
+    )
+    update_sweep_jitter_ratio: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Random extra delay added to each sweep interval, as a fraction of it "
+            "(next sweep after ``interval * (1 + uniform(0, ratio))``), so replicas "
+            "started together drift apart. 0 disables jitter."
+        ),
+    )
     # Catalog preview (``GET /catalog/{id}/operations``) fetches the upstream
     # spec (up to ``ingest.max_spec_bytes``); the slimmed operation projection is
     # kept in-process so repeated previews of the same spec within the TTL cost

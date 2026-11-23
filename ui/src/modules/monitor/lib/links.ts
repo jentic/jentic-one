@@ -16,7 +16,7 @@
  *              (fallback when the row has no usable trace)
  *   job_id     open the job detail sheet for this job
  *   status     per-source status filter (the UI filter value)
- *   target_id  Audit: filter by target (carried from a detail sheet's "View in audit")
+ *   target_id  Audit: filter by target (carried from the job sheet's "View in audit")
  *   target_type Audit: the target's type, required alongside target_id
  *   days       Global: trailing time-window selection (1 | 7 | 30)
  *   actor_id   Global: filter by actor (set by the global filter bar)

@@ -25,7 +25,14 @@ from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.app import make_superset_verifier
 from jentic_one.auth.web.errors import service_error_handler
-from jentic_one.auth.web.routers import authorize, local_login, oauth
+from jentic_one.auth.web.routers import (
+    approval,
+    authorize,
+    consent,
+    consent_agent,
+    local_login,
+    oauth,
+)
 from jentic_one.shared.auth.identity import LoginPayload
 from jentic_one.shared.context import Context
 from jentic_one.shared.state.backend import MemoryStateBackend
@@ -54,7 +61,10 @@ def _make_app(ctx: Context) -> FastAPI:
     a platform bearer token, so the real superset verifier is installed.
     """
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.include_router(local_login.router)
     app.include_router(oauth.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)

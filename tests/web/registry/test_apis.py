@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import AsyncGenerator, Iterator, MutableMapping
 from datetime import UTC, datetime
@@ -196,25 +197,44 @@ async def test_import_defaults_submitted_by_to_principal(
     assert payload["sources"][0]["submitted_by"] == "usr_test_registry"
 
 
-async def test_import_keeps_explicit_submitted_by(
-    authed_client: TestClient, web_context: Context
-) -> None:
-    """A client-supplied `submitted_by` (importing on behalf of someone) wins."""
-    resp = authed_client.post(
+def _post_on_behalf_of(client: TestClient, submitted_by: str) -> str:
+    resp = client.post(
         "/apis",
         json={
             "sources": [
                 {
                     "type": "url",
                     "url": "https://api.example.com/openapi.yaml",
-                    "submitted_by": "someone-else@example.com",
+                    "submitted_by": submitted_by,
                 }
             ]
         },
     )
     assert resp.status_code == 202
-    payload = await _get_job_payload(web_context, resp.json()["job_id"])
+    job_id: str = resp.json()["job_id"]
+    return job_id
+
+
+async def test_import_keeps_explicit_submitted_by_for_org_admin(
+    admin_client: TestClient, web_context: Context
+) -> None:
+    """An organisation admin may attribute the revision to someone else."""
+    job_id = _post_on_behalf_of(admin_client, "someone-else@example.com")
+    payload = await _get_job_payload(web_context, job_id)
     assert payload["sources"][0]["submitted_by"] == "someone-else@example.com"
+
+
+async def test_import_replaces_explicit_submitted_by_for_non_admin(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """Without ``org:admin`` a client-supplied ``submitted_by`` is replaced with the caller.
+
+    A draft's submitter is who may pin it, so an ``apis:write`` caller must not
+    be able to attribute a draft to another actor.
+    """
+    job_id = _post_on_behalf_of(authed_client, "someone-else@example.com")
+    payload = await _get_job_payload(web_context, job_id)
+    assert payload["sources"][0]["submitted_by"] == "usr_test_registry"
 
 
 def test_import_inline_source(authed_client: TestClient) -> None:
@@ -493,3 +513,18 @@ async def test_list_and_detail_agree_on_update_available_for_published_over_cata
     detail = detail_resp.json()
     assert detail["source_url"] is None  # the caveat precondition: manually published
     assert detail["update_available"] is True  # must match the list, not short-circuit off
+
+
+#: Cursors that base64-decode to JSON of the wrong shape (#1956).
+_WRONG_SHAPE_CURSORS = [
+    base64.b64encode(raw.encode()).decode()
+    for raw in ("null", "[1]", '{"t": 1, "id": "x"}', '{"t": "2024-01-01", "id": 1}')
+]
+
+
+@pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
+def test_list_wrong_shape_cursor_returns_400(authed_client: TestClient, cursor: str) -> None:
+    """A tampered cursor is a 400 ``invalid_cursor``, never a 500."""
+    resp = authed_client.get("/apis", params={"cursor": cursor})
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_cursor"

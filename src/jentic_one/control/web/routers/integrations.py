@@ -48,7 +48,6 @@ from jentic_one.control.web.schemas.integrations import (
     AmendSessionRequest,
     AmendSessionResponse,
     ApiKeyConfirmSessionRequest,
-    ApiReferenceResponse,
     AuthCodeConfirmSessionResponse,
     BasicConfirmSessionRequest,
     BearerConfirmSessionRequest,
@@ -84,6 +83,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
+    SessionApiReferenceResponse,
     SessionRevisionListResponse,
     SessionRevisionRef,
     SessionRevisionResponse,
@@ -162,7 +162,7 @@ async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> N
     "/integrations:connect",
     status_code=201,
     summary="Start an integration connect session",
-    response_model=None,
+    response_model=IntegrationsConnectResponse,
     responses=with_responses(
         not_found("Unknown vendor or API, or API targets are not enabled"),
         conflict(
@@ -243,7 +243,7 @@ async def integrations_connect(
 @router.get(
     "/integrations/{vendor}/{name}/{version}/connect-options",
     summary="How a connection to an API would be made",
-    response_model=None,
+    response_model=ConnectOptionsResponse,
     responses=with_responses(not_found("The registry holds no such API")),
 )
 async def integrations_connect_options(
@@ -301,7 +301,7 @@ def _scope_change(scopes: EditScopesRequest | None) -> dict[str, Any]:
     "/integrations:edit-connection",
     status_code=201,
     summary="Ask to change a credential binding",
-    response_model=None,
+    response_model=EditConnectionResponse,
     responses=with_responses(
         not_found("No binding the caller may edit for this credential"),
         conflict("The calling agent already has an open edit of this binding; amend it"),
@@ -469,7 +469,7 @@ async def list_connect_sessions(
 @router.get(
     "/connect-sessions/{session_id}",
     summary="Get review data for a connect session",
-    response_model=None,
+    response_model=ReviewSessionResponse,
     responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
@@ -533,7 +533,8 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
             else None
         ),
         last_rejected_at=data.last_rejected_at,
-        api_reference=ApiReferenceResponse(
+        stale=data.stale,
+        api_reference=SessionApiReferenceResponse(
             vendor=data.api_vendor,
             name=data.api_name,
             version=data.api_version,
@@ -585,6 +586,7 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 other_bound_agents=[
                     EditAgentRef(agent_id=a.agent_id, name=a.name) for a in c.other_bound_agents
                 ],
+                other_bound_agents_truncated=c.other_bound_agents_truncated,
                 can_bind=c.can_bind,
                 needs_vendor_consent=c.needs_vendor_consent,
             )
@@ -617,13 +619,14 @@ def _edit_response(edit: EditReview) -> ReviewEditResponse:
         other_bound_agents=[
             EditAgentRef(agent_id=a.agent_id, name=a.name) for a in edit.other_bound_agents
         ],
+        other_bound_agents_truncated=edit.other_bound_agents_truncated,
     )
 
 
 @router.get(
     "/connect-sessions/{session_id}/revisions",
     summary="List a connect session's revisions",
-    response_model=None,
+    response_model=SessionRevisionListResponse,
 )
 async def list_connect_session_revisions(
     session_id: Annotated[
@@ -638,17 +641,34 @@ async def list_connect_session_revisions(
         description=_POLL_TOKEN_DESCRIPTION,
         openapi_examples=ex.example(ex.OPAQUE_TOKEN),
     ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous page's `next_cursor`.",
+        openapi_examples=ex.example(ex.CURSOR),
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of revisions to return (1-200, default 50).",
+        openapi_examples=ex.example(25),
+    ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> SessionRevisionListResponse:
-    """Every version of what the session asks for, oldest first.
+    """One page of what the session has asked for, oldest first.
 
     The review shows the current revision against today's access; this is the
     history behind it, one entry per ask and amend. Gated like the review
-    read.
+    read, and bounded like the session list.
     """
-    revisions = await svc.list_revisions(session_id, poll_token=poll_token, identity=identity)
+    revisions, has_more, next_cursor = await svc.list_revisions(
+        session_id, poll_token=poll_token, identity=identity, limit=limit, cursor=cursor
+    )
     return SessionRevisionListResponse(
+        limit=limit,
+        has_more=has_more,
+        next_cursor=next_cursor,
         data=[
             SessionRevisionResponse(
                 id=r.id,
@@ -659,7 +679,7 @@ async def list_connect_session_revisions(
                 result=dict(r.result),
             )
             for r in revisions
-        ]
+        ],
     )
 
 
@@ -671,9 +691,10 @@ async def list_connect_session_revisions(
 @router.post(
     "/connect-sessions/{session_id}:confirm",
     summary="Confirm a connect session",
-    response_model=None,
+    response_model=ConfirmSessionResponse,
     responses=with_responses(
         not_found(),
+        too_many_requests("Rate limit"),
         conflict(
             "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, "
             "the review is stale, or the agent's binding for the API is suspended"
@@ -836,8 +857,16 @@ def _to_variant(
 @router.post(
     "/connect-sessions/{session_id}:amend",
     summary="Amend an open connect session's request",
-    response_model=None,
-    responses=with_responses(conflict("The session is closed: confirmed or ended")),
+    response_model=AmendSessionResponse,
+    responses=with_responses(
+        not_found(),
+        conflict(
+            "The session is closed (`session_closed`), holds every revision it may "
+            "(`too_many_revisions`), moved since it was read (`revision_changed`), or the "
+            "agent already has an open request for this target (`connect_open`)"
+        ),
+        too_many_requests("Rate limit"),
+    ),
 )
 async def amend_connect_session(
     session_id: Annotated[
@@ -848,6 +877,7 @@ async def amend_connect_session(
         ),
     ],
     body: AmendSessionRequest,
+    request: Request,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
@@ -865,6 +895,7 @@ async def amend_connect_session(
     URL and poll token stay the same, and any confirm must name the new
     `revision_id`.
     """
+    await _enforce_connect_rate_limit(request, identity)
     fields = frozenset(body.model_fields_set)
     rules = body.rules
     amended = await svc.amend_session(
@@ -914,7 +945,7 @@ async def amend_connect_session(
 @router.get(
     "/connect-sessions/{session_id}/status",
     summary="Poll a connect session's status",
-    response_model=None,
+    response_model=StatusResponse,
 )
 async def poll_connect_session_status(
     session_id: Annotated[
@@ -964,12 +995,65 @@ async def poll_connect_session_status(
         credential_id=result.credential_id,
         bound_scopes=result.bound_scopes,
         error_code=result.error_code,
+        stale=result.stale,
     )
 
 
 # ---------------------------------------------------------------------------
 # POST /connect-sessions/{id}:cancel — user aborts before terminal
 # ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/connect-sessions/{session_id}:rebase",
+    summary="Resolve an open edit against the binding as it is now",
+    response_model=AmendSessionResponse,
+    responses=with_responses(
+        not_found(),
+        conflict(
+            "The session is closed (`session_closed`), or holds every revision it may, so it "
+            "cannot be brought up to date (`too_many_revisions`)"
+        ),
+        too_many_requests("Rate limit"),
+    ),
+)
+async def rebase_connect_session(
+    session_id: Annotated[
+        str,
+        Path(
+            description="ID of the connect session.",
+            openapi_examples=ex.example(ex.CONNECT_SESSION_ID),
+        ),
+    ],
+    request: Request,
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:connect", "credentials:write"]
+    ),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> AmendSessionResponse:
+    """Bring an open edit up to date with its binding, as a new revision.
+
+    What a reader asks for when the review or the status reports the session
+    `stale`: the ask is re-resolved against the binding as it is now, and any
+    part of it the binding no longer fits comes back as a conflict on that
+    revision. Reads never do this themselves, so a GET appends nothing.
+
+    Idempotent: a session already current answers with the revision it
+    already had. Its initiator, or a human who may confirm it, as an amend
+    takes; a closed session is 409 `session_closed`.
+    """
+    await _enforce_connect_rate_limit(request, identity)
+    rebased = await svc.rebase_session(session_id, poll_token=poll_token, identity=identity)
+    return AmendSessionResponse(
+        session_id=rebased.session_id,
+        revision_id=rebased.revision_id,
+        revision_number=rebased.revision_number,
+    )
 
 
 @router.post(

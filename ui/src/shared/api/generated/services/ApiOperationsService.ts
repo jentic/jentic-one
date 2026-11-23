@@ -64,6 +64,7 @@ export class ApiOperationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `The API does not exist (type \`api_not_found\`), or it exists but has no live revision to list operations from (type \`no_current_revision\`).`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -78,7 +79,7 @@ export class ApiOperationsService {
      * but for the named revision, so you can review a draft before promoting
      * it or compare against an archived one. Follow each row's `inspect` link
      * for full detail. 404 if the API or revision does not exist.
-     * @returns any Successful Response
+     * @returns OperationSummaryListResponse Successful Response
      * @throws ApiError
      */
     public static listApiRevisionOperations({
@@ -113,7 +114,7 @@ export class ApiOperationsService {
          * Maximum number of operations to return (1-200).
          */
         limit?: number,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OperationSummaryListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations',
@@ -131,6 +132,7 @@ export class ApiOperationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `The API (type \`api_not_found\`) or the revision (type \`revision_not_found\`) does not exist.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

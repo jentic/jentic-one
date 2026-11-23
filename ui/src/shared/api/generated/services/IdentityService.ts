@@ -9,7 +9,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class IdentityService {
     /**
-     * Get Me
+     * Get the caller's identity
      * Return the caller's identity and context, discriminated by actor type.
      * @returns any Successful Response
      * @throws ApiError

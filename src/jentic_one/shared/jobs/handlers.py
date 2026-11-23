@@ -9,6 +9,17 @@ from jentic_one.shared.db.protocols import TransactionalDatabase
 from jentic_one.shared.models.jobs import JobKind
 
 
+class NonRetryableJobError(Exception):
+    """Raised by a handler when no later attempt can change the job's outcome.
+
+    The worker moves the job to ``failed`` on the attempt that raised it, with
+    ``str(exc)`` as ``job.error``, instead of requeueing it with backoff. Every
+    other handler exception keeps the ``worker.max_attempts`` retry budget, so
+    raise this only for a failure that is a pure function of the job's input
+    (e.g. a payload or document that fails validation).
+    """
+
+
 @dataclass
 class JobResultPayload:
     """Result produced by a job handler."""
@@ -40,6 +51,9 @@ class JobHandler(Protocol):
         Handlers that write audit entries (which require a real actor) must
         reject a missing ``created_by``; handlers that only emit system
         lifecycle events may treat it as optional.
+
+        Raising :class:`NonRetryableJobError` fails the job on this attempt;
+        any other exception is retried with backoff.
         """
         ...
 

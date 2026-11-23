@@ -26,7 +26,7 @@ from jentic_one.shared.auth.api_key_resolver import (
     is_retired_service_account_key,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import OIDC_PASSTHROUGH_SCOPES
+from jentic_one.shared.auth.permission_catalog import USER_OAUTH_PASSTHROUGH_SCOPES
 from jentic_one.shared.auth.verify import resolve_permissions_for_actor, verify_token
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
@@ -80,31 +80,40 @@ def _make_auth_verifier(ctx: Context) -> Any:
                     type="unauthorized",
                 )
 
-            permissions, parent_permissions = await resolve_permissions_for_actor(
-                ctx, resolved.actor_type, resolved.sub, resolved.parent_actor_id
-            )
             if resolved.actor_type == ActorType.AGENT:
-                # The access-token row carries the scopes minted from the agent's
-                # live actor_permission_grants (TokenService.issue_pair via the
-                # jwt-bearer exchange). Trust those as the agent's permissions:
-                # the AGENT branch of resolve_permissions_for_actor is an
-                # unimplemented stub that returns [], which silently drops every
-                # granted scope — an approved capabilities:read then 403s and
-                # a token re-mint can never take effect. This mirrors the
-                # broker's InProcessTokenResolver, which already reads row.scopes.
-                # parent_permissions (owner inheritance) is still resolved above.
+                # The access-token row resolves live actor_permission_grants
+                # capped by the owner's live permissions via TokenService.
                 permissions = list(resolved.permissions)
-            elif resolved.oauth_client_id is not None:
-                consented = set(resolved.permissions)
-                permissions = [p for p in permissions if p in consented]
-                oidc = [s for s in consented if s in OIDC_PASSTHROUGH_SCOPES]
-                permissions.extend(oidc)
+            else:
+                permissions = await resolve_permissions_for_actor(
+                    ctx, resolved.actor_type, resolved.sub, resolved.parent_actor_id
+                )
+                # First-party SPA OIDC-only sessions carry only passthrough identity
+                # scopes on the token row and derive control-plane permissions from
+                # live user grants. Client-bound, ephemeral, or explicitly
+                # permission-scoped USER tokens enforce their resolved token scopes
+                # intersected with live grants so narrowed tokens are never
+                # re-broadened (#1442).
+                is_ephemeral = bool(getattr(resolved, "is_ephemeral", False))
+                raw_scopes = getattr(resolved, "raw_scopes", None)
+                scopes_for_mode = (
+                    list(raw_scopes) if raw_scopes is not None else list(resolved.permissions)
+                )
+                is_spa_oidc_session = (
+                    resolved.oauth_client_id is None
+                    and resolved.oauth_grant_id is None
+                    and not is_ephemeral
+                    and bool(scopes_for_mode)
+                    and set(scopes_for_mode) <= USER_OAUTH_PASSTHROUGH_SCOPES
+                )
+                if not is_spa_oidc_session:
+                    live_allowed = set(permissions) | USER_OAUTH_PASSTHROUGH_SCOPES
+                    permissions = [s for s in resolved.permissions if s in live_allowed]
 
             return Identity(
                 sub=resolved.sub,
                 email="",
                 permissions=permissions,
-                parent_permissions=parent_permissions,
                 actor_type=resolved.actor_type,
                 parent_actor_id=resolved.parent_actor_id,
                 oauth_client_id=resolved.oauth_client_id,

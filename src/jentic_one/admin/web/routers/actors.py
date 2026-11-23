@@ -71,7 +71,7 @@ async def list_actors(
     )
 
 
-@router.get("/actors/lookup", summary="Resolve actor names by id")
+@router.get("/actors/lookup", summary="Resolve actor names by ID")
 async def lookup_actors(
     identity: Identity = get_current_identity(),
     actor_svc: ActorService = Depends(get_actor_service),

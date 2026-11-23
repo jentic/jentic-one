@@ -255,10 +255,11 @@ _URL_INDEX_REBUILD_CANARY_SERVERS = [
 def test_url_index_rebuild_migration_matches_live_index_entry(
     server_url: str, template: str
 ) -> None:
-    """The e8f9a0b1c2d3 data migration's frozen helpers must build the rows the
-    live ``registry.core.url_index`` built before server-variable capture groups
-    (same contract as the repair migration canary above: on failure write a NEW
-    data migration, never edit the frozen copies).
+    """The e8f9a0b1c2d3 frozen helpers retain their historical host regexes.
+
+    Every other field agrees with the live builder. A historical free-host
+    regex is asserted explicitly alongside the live builder's literal-template
+    regex, keeping the frozen migration unchanged as live indexing tightens.
 
     The rebuilt rows are the legacy format: no ``URL_INDEX_FORMAT_MARKER``, so
     ``URLLookupService`` re-derives their server-variable values from the stored
@@ -276,9 +277,15 @@ def test_url_index_rebuild_migration_matches_live_index_entry(
     entry = live.build_index_entry(parsed.host, merged, parsed.scheme)
     frozen = mig.build_entry(parsed.host, merged, parsed.scheme)
     assert live.URL_INDEX_FORMAT_MARKER not in frozen["path_regex"]
-    assert frozen == {
+    if live.is_free_host_regex(frozen["host_regex"]):
+        assert frozen["host_regex"] == r"^[^:/]+\.example\.com$"
+        assert entry.host_regex.pattern == r"^\{region\}\.example\.com$"
+        assert entry.host_regex.fullmatch(parsed.host)
+        assert not entry.host_regex.fullmatch("acme.example.com")
+    else:
+        assert frozen["host_regex"] == entry.host_regex.pattern
+    assert {key: value for key, value in frozen.items() if key != "host_regex"} == {
         "host": entry.host_pattern,
-        "host_regex": entry.host_regex.pattern,
         "path_template": entry.path_pattern,
         "path_regex": entry.path_regex.pattern.removeprefix(live.URL_INDEX_FORMAT_MARKER),
         "param_names": entry.param_names,

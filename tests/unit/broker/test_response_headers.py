@@ -75,6 +75,26 @@ def test_metadata_headers_omit_operation_when_discovery_resolved_none():
     )
 
 
+def test_stream_metadata_headers_echo_jentic_tracestate():
+    """The streaming path echoes the same packed member as the buffered one.
+
+    Streaming is the default sync path (no ``Idempotency-Key``), so a header
+    the spec declares on every 200 has to be set here or most successful
+    responses would ship without it.
+    """
+    headers = _stream_metadata_headers(_ctx(), "exec_xyz789", 200)
+    assert headers[TRACESTATE_HEADER] == "jentic=exec_xyz789:tk_abc123:stripe:payments:2023-10-16"
+
+
+def test_both_paths_pack_the_same_tracestate_member():
+    """Buffered and streaming agree byte-for-byte, including the ``_`` placeholders."""
+    ctx = _ctx(toolkit_id=None, api_name=None)
+    buffered = _metadata_headers(ctx, "exec_1")
+    streamed = _stream_metadata_headers(ctx, "exec_1", 200)
+    assert streamed[TRACESTATE_HEADER] == buffered[TRACESTATE_HEADER]
+    assert streamed[TRACESTATE_HEADER] == "jentic=exec_1:_:stripe:_:2023-10-16"
+
+
 def test_stream_metadata_headers_stamp_credential_attribution():
     """Streaming path stays symmetric with the sync router (#740)."""
     headers = _stream_metadata_headers(

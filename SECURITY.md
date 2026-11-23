@@ -35,8 +35,9 @@ We will credit reporters in release notes unless anonymity is requested.
 Jentic One is designed so that **credentials never leave the data plane**:
 
 - Stored credentials are **encrypted at rest** and are only decrypted inside the
-  Broker at execution time. They are never returned to callers, never logged in
-  cleartext, and never exposed to the agent.
+  Broker at execution time. The create response to `POST /credentials` echoes the
+  just-supplied secret once; subsequent reads return only redacted details.
+  Stored secrets are never logged in cleartext and are never exposed to the agent.
 - The credential-at-rest encryption keyset is **required** and must be supplied
   by the operator — point an entry at a secret file (docker/k8s secret mount,
   systemd `LoadCredential`) with `material_file`, or at a secret-manager-injected

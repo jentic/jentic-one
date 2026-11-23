@@ -173,6 +173,12 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 		upstream = r.URL
 	}
 	for _, kv := range r.PathParams {
+		if kv.Value == "." || kv.Value == ".." {
+			return nil, &ux.CodedError{
+				Code: ux.CodeMissingArgument,
+				Msg:  fmt.Sprintf("path parameter %q has a dot-segment value", kv.Key),
+			}
+		}
 		upstream = strings.ReplaceAll(upstream, "{"+kv.Key+"}", url.PathEscape(kv.Value))
 	}
 
@@ -210,8 +216,6 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 			Actionable: "Use an https broker URL, or a loopback (127.0.0.1/localhost) http broker for local installs.",
 		}
 	}
-	req.Header.Set("Authorization", "Bearer "+r.Token)
-
 	// Auto-set Content-Type for body requests.
 	hasContentType := false
 	for _, kv := range r.Headers {
@@ -228,6 +232,16 @@ func BuildRequest(ctx context.Context, r ExecuteRequest) (*http.Request, error) 
 	for _, kv := range r.Headers {
 		req.Header.Set(strings.TrimSpace(kv.Key), strings.TrimSpace(kv.Value))
 	}
+
+	// The bearer goes on LAST, after any caller-supplied headers, so a header
+	// the model chose can never replace the agent's token on the outbound
+	// broker leg. The hosted mount merges the same way round
+	// (mcp/execute.py); over stdio these headers are model-supplied input.
+	// The other headers an agent must not choose for itself are stamped later
+	// still: the MCP server's attributionTransport.RoundTrip sets User-Agent
+	// and the session id on every attempt, after this builder has run.
+	req.Header.Del("Authorization")
+	req.Header.Set("Authorization", "Bearer "+r.Token)
 
 	// Correlation (P5.2, F8-6). execute builds a bare request outside the SDK
 	// editor chain, so the SDK's session/trace editors never run on this path —
@@ -376,9 +390,9 @@ func brokerRedirect(res *ExecuteResult) bool {
 }
 
 // Execute is the one-call UX-free core (ExecuteRequest → ExecuteResult):
-// BuildRequest + Do. The CLI drives the two phases itself so its --dry-run/
-// --export-plan hook can render the built request and stop; embedders with no
-// plan surface (the MCP handler) call this.
+// BuildRequest + Do. The CLI and MCP handler drive the two phases separately
+// (so --dry-run/--export-plan can stop before firing and MCP can pass its
+// CA-pinned client to DoWith); parity tests and simple callers use this helper.
 func Execute(ctx context.Context, r ExecuteRequest) (*ExecuteResult, error) {
 	req, err := BuildRequest(ctx, r)
 	if err != nil {

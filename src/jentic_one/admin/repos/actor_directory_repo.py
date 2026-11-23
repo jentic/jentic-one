@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, String, case, literal, select, tuple_, union_all
+from sqlalchemy import Boolean, String, case, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import CompoundSelect
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ActorStatus, ActorType
+from jentic_one.shared.pagination import Cursor
 
 
 def _build_union(
@@ -57,21 +58,14 @@ class ActorDirectoryRepository:
         session: AsyncSession,
         *,
         limit: int = 1000,
-        cursor_ts: datetime | None = None,
-        cursor_id: str | None = None,
+        cursor: Cursor | None = None,
         agent_filters: Sequence[ColumnElement[bool]] = (),
         user_filters: Sequence[ColumnElement[bool]] = (),
     ) -> list[Any]:
         subq = _build_union(agent_filters, user_filters).subquery()
         stmt = select(subq).order_by(subq.c.created_at.desc(), subq.c.id.desc()).limit(limit)
 
-        if cursor_ts is not None and cursor_id is not None:
-            stmt = stmt.where(
-                tuple_(subq.c.created_at, subq.c.id)
-                < tuple_(literal(cursor_ts), literal(cursor_id))
-            )
-        elif cursor_ts is not None:
-            stmt = stmt.where(subq.c.created_at < cursor_ts)
+        stmt = apply_desc_keyset(stmt, subq.c.created_at, subq.c.id, cursor)
 
         result = await session.execute(stmt)
         return list(result.all())

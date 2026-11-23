@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -17,6 +17,9 @@ from jentic_one.control.core.schema.connect_sessions import (
     TARGET_KIND_VENDOR,
     ConnectSession,
 )
+from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.db.locks import advisory_xact_lock
+from jentic_one.shared.pagination import Cursor
 
 # The non-terminal states. A session outside these is frozen — no transition
 # (including the terminal sweep) may touch it. ``awaiting_app`` is an OAuth
@@ -95,7 +98,7 @@ class ConnectSessionRepository:
     async def list_all(
         session: AsyncSession,
         *,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         state: str | None = None,
         vendor: str | None = None,
@@ -115,12 +118,7 @@ class ConnectSessionRepository:
             stmt = stmt.where(ConnectSession.state == state)
         if vendor is not None:
             stmt = stmt.where(ConnectSession.vendor == vendor)
-        if cursor is not None:
-            cursor_ts, cursor_id = cursor
-            stmt = stmt.where(
-                (ConnectSession.created_at < cursor_ts)
-                | ((ConnectSession.created_at == cursor_ts) & (ConnectSession.id < cursor_id))
-            )
+        stmt = apply_desc_keyset(stmt, ConnectSession.created_at, ConnectSession.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
@@ -148,6 +146,25 @@ class ConnectSessionRepository:
         )
         result = await session.execute(stmt)
         return result.scalars().first()
+
+    @staticmethod
+    async def acquire_revision_lock(session: AsyncSession, session_id: str) -> None:
+        """Serialise the writers that append a revision to one session.
+
+        An amend swaps the session row and then inserts its revision; a rebase
+        inserted first and swapped after, so the two took the same two rows in
+        opposite orders and could deadlock — and a deadlock is an operational
+        error, not an integrity one, so it surfaced as a 5xx rather than a
+        mapped conflict. Both take this first instead.
+
+        On PostgreSQL this is ``pg_advisory_xact_lock`` (released at commit or
+        rollback). On SQLite it is a no-op: every write transaction opens with
+        ``BEGIN IMMEDIATE``, which already serialises writers to the file.
+        """
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"connect_session_revision:{session_id}",
+        )
 
     @staticmethod
     async def transition_state(
@@ -416,12 +433,10 @@ class ConnectSessionRepository:
         SQLite: a no-op; its write transactions are already serial
         (``BEGIN IMMEDIATE``).
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                {"key": f"connect_session_cap:{owner_key}"},
-            )
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"connect_session_cap:{owner_key}",
+        )
 
     @staticmethod
     async def count_open(

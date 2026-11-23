@@ -13,7 +13,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import AgentNotFoundError
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import ActorStatus
+from jentic_one.shared.pagination import Cursor
 
 
 class AgentRepository:
@@ -96,17 +98,16 @@ class AgentRepository:
         owner_id: str,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Agent]:
         stmt = (
             select(Agent)
             .where(Agent.owner_id == owner_id)
-            .order_by(Agent.created_at.desc())
+            .order_by(Agent.created_at.desc(), Agent.id.desc())
             .limit(limit)
         )
-        if cursor is not None:
-            stmt = stmt.where(Agent.created_at < cursor)
+        stmt = apply_desc_keyset(stmt, Agent.created_at, Agent.id, cursor)
         if filters is not None:
             for f in filters:
                 stmt = stmt.where(f)
@@ -118,13 +119,12 @@ class AgentRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         status: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Agent]:
-        stmt = select(Agent).order_by(Agent.created_at.desc()).limit(limit)
-        if cursor is not None:
-            stmt = stmt.where(Agent.created_at < cursor)
+        stmt = select(Agent).order_by(Agent.created_at.desc(), Agent.id.desc()).limit(limit)
+        stmt = apply_desc_keyset(stmt, Agent.created_at, Agent.id, cursor)
         if status is not None:
             stmt = stmt.where(Agent.status == status)
         if filters is not None:

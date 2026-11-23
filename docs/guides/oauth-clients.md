@@ -2,9 +2,10 @@
 
 An OAuth client represents a third-party application that authenticates users
 through Jentic One using the Authorization Code flow with PKCE (S256). Clients
-are **confidential** — a `client_id` and `client_secret` are issued at
+an admin creates are **confidential** — a `client_id` and `client_secret` are issued at
 registration, and the secret must be presented alongside the authorization code
-when exchanging at `/oauth/token`.
+when exchanging at `/oauth/token`. Self-registered clients are public (see
+[dynamic client registration](#dynamic-client-registration-anonymous)).
 
 ## Creating a client via the UI
 
@@ -82,6 +83,60 @@ Sets `active=false`. The client can no longer start authorization flows, and
 outstanding access/refresh tokens issued by it stop resolving on both the auth
 surface and the broker data plane on the next request. Re-enable by patching
 `active: true`.
+
+## Deleting a client
+
+```
+POST /admin/oauth-clients/{id}:delete
+```
+
+Requires `oauth-clients:write`. Permanent, unlike `DELETE` (which only
+disables): every active grant of the client is revoked, every token in its
+lineage is revoked, and the registration row is removed. The audit trail is
+kept. A client that registers again through dynamic registration is a new
+registration and re-enters the approval queue as `pending`.
+
+## Listing grants
+
+```
+GET /admin/oauth-grants
+```
+
+Requires `oauth-clients:read`. Lists consent→agent grants across clients,
+filterable by `client_id` (the public client id), `agent_id`, `user_id`, and
+`status` (`active` or `revoked`), with `limit` (1–200, default 50) and
+`cursor` paging. Each item carries the client's name and redirect-URI origin
+and the consenting `user_id`. An org admin sees every grant; anyone else sees
+the grants they consented to and the grants bound to agents they own. Revoke
+one grant with `POST /oauth-grants/{grant_id}:revoke` (the consenting user or
+an admin); it revokes every token minted under it.
+
+## Dynamic client registration (anonymous)
+
+```
+POST /oauth-clients
+```
+
+Unauthenticated (RFC 7591 subset), and only mounted when
+`server.mcp.oauth.enabled` is true — otherwise every request gets a 404. It
+is how MCP clients register themselves; see
+[mcp-http-endpoint.md](mcp-http-endpoint.md). Differences from the admin
+route:
+
+- It creates **public** clients: PKCE only, no `client_secret` is ever
+  issued, and no registration access token is returned.
+- New clients land `pending` and inactive until an admin approves them (see
+  below), unless `server.mcp.oauth.auto_approve_clients` is true.
+- An exact re-registration (same `software_id`, else same `client_name`, plus
+  the same redirect-URI set) returns 200 with the existing `client_id`
+  instead of creating a duplicate; re-registering a disabled client puts it
+  back in the approval queue.
+- It is rate limited per client network
+  (`auth.oauth_rate_limit.registration_rpm` / `registration_burst`);
+  metadata errors return 400 `invalid_client_metadata`.
+
+`POST /register` is a different endpoint: agent registration, not OAuth
+clients.
 
 ## Consent
 

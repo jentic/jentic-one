@@ -3,8 +3,8 @@ package agentops
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -163,24 +163,152 @@ func BrokerTransportError(r *ExecuteResult, retrySafe bool) *ux.CodedError {
 	}
 }
 
-// RetryAfterSeconds parses a Retry-After header (delta-seconds, or an HTTP-date
-// converted to the seconds remaining, floored at zero). ok is false when the
-// header is absent or unparseable, so callers never relay a made-up delay.
+// maxRetryAfterSeconds caps a Retry-After wait at one day, matching
+// jentic_one.shared.http.retry_after.MAX_RETRY_AFTER_S (#1991).
+const maxRetryAfterSeconds = 86400
+
+// RetryAfterSeconds parses a Retry-After header to whole seconds (matching
+// jentic_one.shared.http.retry_after.parse_retry_after): non-negative ASCII
+// decimal delay-seconds (a fraction rounds up; a sign, exponent or non-ASCII
+// digit is rejected), or an HTTP-date converted to the seconds remaining
+// (floored at zero), capped at one day (86400s). ok is false when the header is
+// absent or unparseable, so callers never relay a made-up delay.
 func RetryAfterSeconds(h http.Header) (float64, bool) {
+	return retryAfterSecondsAt(h, time.Now())
+}
+
+func retryAfterSecondsAt(h http.Header, now time.Time) (float64, bool) {
 	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
 		return 0, false
 	}
-	if secs, err := strconv.ParseFloat(v, 64); err == nil {
-		if secs < 0 || math.IsNaN(secs) || math.IsInf(secs, 0) {
-			return 0, false
-		}
-		return secs, true
+	if secs, ok := parseDelaySeconds(v); ok {
+		return float64(secs), true
 	}
-	if when, err := http.ParseTime(v); err == nil {
-		return math.Max(0, math.Ceil(time.Until(when).Seconds())), true
+	if when, err := parseRetryAfterDate(v); err == nil {
+		delta := when.Sub(now)
+		if delta <= 0 {
+			return 0, true
+		}
+		if delta >= maxRetryAfterSeconds*time.Second {
+			return maxRetryAfterSeconds, true
+		}
+		secs := int(delta / time.Second)
+		if delta%time.Second != 0 {
+			secs++
+		}
+		return float64(secs), true
 	}
 	return 0, false
+}
+
+// retryAfterDateCaseFolder matches Python's case-insensitive weekday, month,
+// and GMT/UTC parsing without changing any other date text.
+var retryAfterDateCaseFolder = strings.NewReplacer(
+	"mon", "Mon", "tue", "Tue", "wed", "Wed", "thu", "Thu",
+	"fri", "Fri", "sat", "Sat", "sun", "Sun",
+	"jan", "Jan", "feb", "Feb", "mar", "Mar", "apr", "Apr",
+	"may", "May", "jun", "Jun", "jul", "Jul", "aug", "Aug",
+	"sep", "Sep", "oct", "Oct", "nov", "Nov", "dec", "Dec",
+	"gmt", "GMT", "utc", "UTC",
+)
+
+// parseRetryAfterDate accepts the standard HTTP-date layouts and the numeric,
+// colon-zone, -0000, case-insensitive, and zone-less forms that Python's
+// shared Retry-After parser accepts. A zone-less value is pinned to UTC, never
+// the host's local timezone.
+func parseRetryAfterDate(raw string) (time.Time, error) {
+	candidate := normalizeRetryAfterDate(raw)
+	if candidate == "" {
+		return time.Time{}, http.ErrNotSupported
+	}
+	if when, err := http.ParseTime(candidate); err == nil {
+		return when, nil
+	}
+	return mail.ParseDate(candidate)
+}
+
+func normalizeRetryAfterDate(raw string) string {
+	if head, rest, hasComma := strings.Cut(raw, ","); hasComma {
+		if head == "" || !strings.HasPrefix(rest, " ") || strings.Contains(rest, ",") {
+			return ""
+		}
+	}
+	normalized := retryAfterDateCaseFolder.Replace(strings.ToLower(raw))
+	tokens := strings.Fields(normalized)
+	if len(tokens) < 4 {
+		return ""
+	}
+	isHHMMSS := func(s string) bool {
+		return len(s) == 8 && s[2] == ':' && s[5] == ':' &&
+			isASCIIDigits(s[0:2]) && isASCIIDigits(s[3:5]) && isASCIIDigits(s[6:8])
+	}
+	if isHHMMSS(tokens[len(tokens)-1]) {
+		return normalized + " -0000"
+	}
+	if !isHHMMSS(tokens[len(tokens)-2]) {
+		return ""
+	}
+	last := tokens[len(tokens)-1]
+	if !strings.Contains(raw, ",") && len(tokens) == 5 && len(last) == 4 && isASCIIDigits(last) {
+		return normalized
+	}
+	if last == "GMT" || last == "UTC" {
+		return normalized
+	}
+	if len(last) == 6 && (last[0] == '+' || last[0] == '-') && last[3] == ':' {
+		last = last[:3] + last[4:]
+	}
+	if len(last) != 5 || (last[0] != '+' && last[0] != '-') || !isASCIIDigits(last[1:]) {
+		return ""
+	}
+	hh := (int(last[1]-'0') * 10) + int(last[2]-'0')
+	mm := (int(last[3]-'0') * 10) + int(last[4]-'0')
+	if hh > 23 || mm > 59 {
+		return ""
+	}
+	tokens[len(tokens)-1] = last
+	return strings.Join(tokens, " ")
+}
+
+// parseDelaySeconds parses an unsigned ASCII decimal delay (^[0-9]+(\.[0-9]+)?$),
+// rounding any non-zero fraction up and capping at maxRetryAfterSeconds without
+// overflowing on arbitrarily long digit strings.
+func parseDelaySeconds(raw string) (int, bool) {
+	whole, frac, hasDot := strings.Cut(raw, ".")
+	if !isASCIIDigits(whole) {
+		return 0, false
+	}
+	if hasDot && !isASCIIDigits(frac) {
+		return 0, false
+	}
+	whole = strings.TrimLeft(whole, "0")
+	if len(whole) > 5 { // len("86400") == 5
+		return maxRetryAfterSeconds, true
+	}
+	secs := 0
+	for i := range len(whole) {
+		secs = secs*10 + int(whole[i]-'0')
+	}
+	if strings.TrimLeft(frac, "0") != "" {
+		secs++
+	}
+	if secs > maxRetryAfterSeconds {
+		return maxRetryAfterSeconds, true
+	}
+	return secs, true
+}
+
+func isASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // waitPhrase renders the wait a retry should honour: the broker's Retry-After

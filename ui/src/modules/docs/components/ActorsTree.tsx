@@ -3,14 +3,15 @@
  *
  * The CLI prints every control-plane endpoint grouped by its typical caller and
  * the permission(s) it requires, filterable by `--actor`. This renders the
- * *same* join interactively: pick an actor identity (user / agent)
- * and see exactly which endpoints that actor can be the caller of,
- * grouped into the same caller buckets (Agent-facing / Operator-facing / Any /
- * Public) the CLI uses, each row showing its required permissions.
+ * same join interactively: pick an actor identity (`user` / `agent`) and see
+ * which endpoints that actor can call, grouped into the same four caller
+ * buckets as the CLI (with compact UI headings and separate blurbs), each row
+ * showing its required permissions.
  *
- * Because both this and the CLI consume `/reference/endpoints.json` through the
- * identical filter+group rules (see `lib/actors.ts` ↔ `cli/.../endpoints.go`),
- * the page and the terminal can never disagree about who can call what.
+ * Both surfaces consume `/reference/endpoints.json` with matching filter and
+ * caller-group rules (`ui/src/modules/docs/lib/actors.ts` and
+ * `cli/internal/cli/api/endpoints.go`), keeping actor and bucket membership
+ * aligned between the docs page and the terminal.
  */
 import { useMemo, useState } from 'react';
 import { UserRound, Bot, ChevronRight } from 'lucide-react';

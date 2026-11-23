@@ -34,6 +34,7 @@ from jentic_one.admin.repos import (
     AccessTokenRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
+    TokenLineageRepository,
 )
 from jentic_one.auth.services.oauth_grant_service import revoke_grant_and_sweep_tokens
 
@@ -158,8 +159,7 @@ class OAuthRevocationService:
         # The family sweep is the RFC 7009 §2.1 SHOULD (related access tokens
         # + the refresh token itself); it also covers any grant-less
         # confidential-lineage family.
-        await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-        await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+        await TokenLineageRepository.revoke_family(session, rt.token_family_id)
 
         grant = (
             await OAuthClientGrantRepository.get_by_id(session, rt.oauth_grant_id)

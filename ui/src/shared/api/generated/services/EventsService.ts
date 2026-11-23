@@ -10,7 +10,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class EventsService {
     /**
-     * List Events
+     * List events
      * List events with optional filters.
      * @returns EventListResponse Successful Response
      * @throws ApiError
@@ -94,7 +94,7 @@ export class EventsService {
         });
     }
     /**
-     * Stream Events
+     * Stream events over SSE
      * Stream events as Server-Sent Events.
      *
      * The open stream re-verifies the caller at the first poll or page after each
@@ -114,7 +114,13 @@ export class EventsService {
      * `events:read` or `org:admin` or must rotate their password (`forbidden`),
      * or the check or the event store cannot be answered (`unavailable`).
      * A reconnect is authenticated afresh.
-     * @returns any Successful Response
+     * @returns string An open `text/event-stream` connection in the HTML Server-Sent Events wire format — not a JSON document. The server holds the response open and writes frames until the caller disconnects or the stream closes. Each frame is an `event: <name>` line, an optional `id: <id>` line, one `data: <JSON object>` line, and a blank line. Three frame kinds arrive:
+     *
+     * - **An event frame.** Its `event` is the event's own `type` (e.g. `import.completed`, an open set — retired kinds persist in history), its `id` the event's `evt_…` id (send it back as `Last-Event-ID` to resume), and its `data` the same `EventResponse` object `GET /events/{event_id}` returns.
+     * - **A `heartbeat` frame**, with no `id` and `data` of `{"type": "heartbeat", "sent_at": "<RFC 3339>"}`, which keeps the connection open while no event matches.
+     * - **A final `stream_closed` frame**, with `data` of `{"type": "stream_closed", "reason": "refused" | "forbidden" | "unavailable"}`, after which the server closes the stream; reconnect to continue.
+     *
+     * The response also carries `Cache-Control: no-cache` and `X-Accel-Buffering: no`. Because the `200` and its headers are sent before the first frame, a failure that happens later arrives as a `stream_closed` frame rather than an error status.
      * @throws ApiError
      */
     public static streamEvents({
@@ -159,7 +165,7 @@ export class EventsService {
          * ID of the last event received (`evt_` plus 24 hex characters), to resume a stream after it; ignored if the event is not visible to the caller.
          */
         lastEventId?: (string | null),
-    }): CancelablePromise<any> {
+    }): CancelablePromise<string> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/events/stream',
@@ -186,7 +192,7 @@ export class EventsService {
         });
     }
     /**
-     * Get Event
+     * Get an event
      * Get an event by ID.
      * @returns EventResponse Successful Response
      * @throws ApiError
@@ -209,6 +215,7 @@ export class EventsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `No event with this id is visible to the caller. An event belonging to another actor is indistinguishable from one that does not exist, so a 404 here does not mean the id is wrong — do not retry it.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

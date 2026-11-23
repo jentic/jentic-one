@@ -87,6 +87,12 @@ def _clean_text(text: str) -> str:
     return text.replace("|", "\\|")
 
 
+def _clean_paragraphs(text: str) -> str:
+    """Normalise a section description, keeping blank-line paragraph breaks."""
+    paragraphs = re.split(r"\n\s*\n", text.strip())
+    return "\n\n".join(_clean_text(p) for p in paragraphs if p.strip())
+
+
 def _resolve_ref(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
     """Follow a ``$ref`` into ``$defs`` (returns ``node`` unchanged otherwise)."""
     ref = node.get("$ref")
@@ -282,7 +288,7 @@ def _section_lines(
     lines = [f"## `{name}`", ""]
     section_desc = resolved.get("description") or node.get("description")
     if section_desc:
-        lines.extend([_clean_text(section_desc).replace("\\|", "|"), ""])
+        lines.extend([_clean_paragraphs(section_desc).replace("\\|", "|"), ""])
 
     rows: dict[str, _Row] = {}
     _walk([name], node, defs, required, rows)
@@ -295,6 +301,26 @@ def _section_lines(
         lines.append(f"| `{key}` | {type_str} | {row.default} | `{_env_var(row.path)}` | {desc} |")
     lines.append("")
     return lines
+
+
+def undocumented_keys(schema: dict[str, Any] | None = None) -> list[str]:
+    """Dotted keys whose reference row would render with an empty description.
+
+    Descriptions come only from ``Field(description=...)`` (or a model's own
+    docstring for a model-typed field); ``#`` comments above a field never reach
+    the schema. ``tests/arch/test_config_reference_conformance.py`` fails on any
+    key returned here that is not on its explicit allowlist.
+    """
+    if schema is None:
+        schema = build_config_schema()
+    defs = schema.get("$defs", {})
+    top_required = set(schema.get("required", []))
+    missing: list[str] = []
+    for name, node in schema.get("properties", {}).items():
+        rows: dict[str, _Row] = {}
+        _walk([name], node, defs, name in top_required, rows)
+        missing.extend(key for key, row in rows.items() if not row.description.strip())
+    return missing
 
 
 def build_markdown(schema: dict[str, Any] | None = None) -> str:

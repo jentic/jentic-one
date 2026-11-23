@@ -235,21 +235,6 @@ func validateBaseURL(baseURL string) error {
 	return nil
 }
 
-// BundledSet loads every bundled skill (in BundledNames order), stamping each
-// with the resolved base URL and bundled provenance.
-func BundledSet(baseURL string) ([]Canonical, error) {
-	names := BundledNames()
-	set := make([]Canonical, 0, len(names))
-	for _, name := range names {
-		c, err := Bundled(name, baseURL)
-		if err != nil {
-			return nil, err
-		}
-		set = append(set, c)
-	}
-	return set, nil
-}
-
 // parseSkill reads a skill markdown file into a Canonical. The kind is read
 // explicitly from `metadata.kind` in the frontmatter (defaulting to
 // "canonical" for the jentic skill's back-compat) — it is never inferred from

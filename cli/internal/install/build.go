@@ -3,7 +3,6 @@ package install
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/jentic/jentic-one/cli/internal/gitauth"
 )
 
 const (
@@ -234,6 +235,7 @@ func EnsureUv(w io.Writer) {
 		}
 		cmd = exec.Command("sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh")
 	}
+	cmd.Env = gitauth.ScrubbedEnv()
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
@@ -251,8 +253,8 @@ func EnsureUv(w io.Writer) {
 
 func (p BuildPlan) fetchSource(w io.Writer) error {
 	// credential.helper= disables any inherited helper (keychain, GCM) so git
-	// can't pop its own prompt; auth (if any) comes solely from the header below.
-	common := append([]string{"-c", "credential.helper="}, gitAuthArgs()...)
+	// can't pop its own prompt; auth (if any) comes from gitauth.Env in runGit.
+	common := []string{"-c", "credential.helper="}
 
 	if isGitRepo(p.SourceDir) {
 		// Sync by fetch + hard reset rather than `pull --ff-only`. A fast-forward
@@ -362,23 +364,11 @@ func remoteDefaultBranch(dir string) string {
 	return "main"
 }
 
-// gitAuthArgs returns a `git -c http.extraheader=...` prefix carrying a Basic
-// auth header built from GITHUB_TOKEN, so cloning/pulling the source works for
-// private or access-restricted repos. It returns nil when no token is set (anonymous access).
-// Mirrors the scheme used by tools/install.sh.
-func gitAuthArgs() []string {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return nil
-	}
-	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-	return []string{"-c", "http.extraheader=Authorization: Basic " + basic}
-}
-
 // runGit runs a git subcommand like run, but (1) disables interactive credential
 // prompts so a missing/invalid token fails fast instead of hanging on
-// "Username for ...", and (2) redacts the auth header when echoing the command
-// so the token never lands in the console output or logs.
+// "Username for ...", (2) supplies GITHUB_TOKEN via URL-scoped git config
+// environment variables (gitauth.Env) rather than argv, and (3) redacts any
+// auth header in args when echoing the command.
 func runGit(w io.Writer, dir string, args ...string) error {
 	fmt.Fprintf(w, "\n$ git %s\n", strings.Join(redactGitArgs(args), " "))
 	cmd := exec.Command("git", args...) //nolint:gosec // args are CLI-internal build commands, not user input.
@@ -386,6 +376,7 @@ func runGit(w io.Writer, dir string, args ...string) error {
 	cmd.Stdout = w
 	cmd.Stderr = w
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "GCM_INTERACTIVE=never")
+	cmd.Env = append(cmd.Env, gitauth.Env(os.Getenv("GITHUB_TOKEN"))...)
 	return cmd.Run()
 }
 
@@ -482,6 +473,16 @@ func RenderMigrateWarning(err error) string {
 // RenderStartHeader returns a styled header for the background-start step.
 func RenderStartHeader() string {
 	return headingStyle.Render("Start app (background)")
+}
+
+// RenderPullHeader returns the styled header for pulling the app image, naming
+// the reference being pulled. Shared by the install and update pull routes so
+// the two announce the step identically.
+//
+// The two-space gap after "image:" matches RenderDockerBuildHeader, the other
+// header a Docker install prints, so their value columns line up.
+func RenderPullHeader(image string) string {
+	return headingStyle.Render("Pull app image") + "\n  image:  " + commandStyle.Render(image) + "\n"
 }
 
 // RenderStartWarning returns a styled warning shown when the app could not be

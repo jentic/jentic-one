@@ -9,7 +9,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ExecutionsService {
     /**
-     * List Executions
+     * List executions
      * List execution records with optional filters.
      * @returns ExecutionListResponse Successful Response
      * @throws ApiError
@@ -87,7 +87,7 @@ export class ExecutionsService {
         });
     }
     /**
-     * Get Execution
+     * Get an execution
      * Get an execution record by ID.
      * @returns ExecutionResponse Successful Response
      * @throws ApiError
@@ -110,6 +110,7 @@ export class ExecutionsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `No execution with this id is visible to the caller. An execution belonging to another actor is indistinguishable from one that does not exist, so a 404 here does not mean the id is wrong — do not retry it.`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

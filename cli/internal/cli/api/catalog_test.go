@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -529,5 +530,31 @@ func TestTruncate(t *testing.T) {
 	}
 	if got := truncate("short", 10); got != "short" {
 		t.Errorf("truncate should pass short strings, got %q", got)
+	}
+}
+
+func TestCatalogBrowser_SearchSubmitSetsQuery(t *testing.T) {
+	m := &catalogBrowser{query: "initial"}
+	m.onKey(keyMsg("/"))
+	m.onSearchKey(tea.KeyMsg{Type: tea.KeyEscape})
+	if m.query != "initial" {
+		t.Fatalf("esc should preserve query, got %q", m.query)
+	}
+
+	m.onKey(keyMsg("/"))
+	for range len("initial") {
+		m.onSearchKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	m.onSearchKey(keyMsg("  café"))
+	m.onSearchKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	_, cmd := m.onSearchKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.query != "caf" {
+		t.Errorf("query = %q, want %q", m.query, "caf")
+	}
+	if !m.loading {
+		t.Error("expected loading=true after search submit")
+	}
+	if cmd == nil {
+		t.Error("expected a loadPage command on search submit")
 	}
 }

@@ -36,6 +36,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
@@ -140,7 +141,17 @@ async def list_agents(
     )
 
 
-@router.get("/agents/{agent_id}", summary="Get an agent")
+@router.get(
+    "/agents/{agent_id}",
+    summary="Get an agent",
+    responses=with_responses(
+        not_found(
+            "No such agent, or an agent outside the caller's visibility "
+            "(`actor_not_found`) — a 404 here can mean the agent exists but is not "
+            "visible to you, so retrying will not help"
+        )
+    ),
+)
 async def get_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(allow_expired_password=True),
@@ -158,7 +169,19 @@ async def get_agent(
     return _agent_response(view)
 
 
-@router.patch("/agents/{agent_id}", status_code=200, summary="Update an agent")
+@router.patch(
+    "/agents/{agent_id}",
+    status_code=200,
+    summary="Update an agent",
+    responses=with_responses(
+        not_found(
+            "No such agent, or a caller who is neither the agent's owner nor an "
+            "`org:admin` — anyone else gets 404 (`actor_not_found`), so a 404 here "
+            "can mean the agent exists but is not yours to update"
+        ),
+        conflict("An archived agent cannot be updated (`invalid_transition`)"),
+    ),
+)
 async def update_agent(
     agent_id: AgentIdPath,
     body: AgentPatchRequest,
@@ -171,17 +194,36 @@ async def update_agent(
     agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
     else gets 404). Changing `owner_id` transfers ownership, is
     `org:admin`-only, revokes every active OAuth client grant bound to the
-    agent (so the new owner must re-consent any connected client), and
-    suspends active credential bindings to credentials outside the new
-    owner's ownership. The agent's API key and permissions are unaffected. An
-    archived agent cannot be updated (409). Returns the updated agent.
+    agent (so the new owner must re-consent any connected client), suspends
+    active credential bindings to credentials outside the new owner's
+    ownership, and revokes agent permission grants above the new owner's
+    permission ceiling (grant those permissions to the new owner first to
+    keep them on the agent). The agent's API key is unaffected. An archived
+    agent cannot be updated (409). Returns the updated agent.
     """
     update_data = body.model_dump(exclude_unset=True)
     view = await agent_svc.update_agent(agent_id, update_data=update_data, identity=identity)
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:approve", status_code=200)
+@router.post(
+    "/agents/{agent_id}:approve",
+    summary="Approve an agent",
+    status_code=200,
+    responses=with_responses(
+        not_found(
+            "No such agent, or a caller who is neither the agent's owner nor an "
+            "`org:admin` (and only an `org:admin` for an unowned agent). Returned "
+            "whatever the agent's status (`actor_not_found`), so a 404 here can mean "
+            "the agent exists but is outside the caller's ownership"
+        ),
+        conflict(
+            "Agent is not pending (`invalid_transition`), or an explicit permission "
+            "grant on the agent exceeds the agent owner's permission ceiling "
+            "(`agent_permission_exceeds_owner`)"
+        ),
+    ),
+)
 async def approve_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -193,13 +235,15 @@ async def approve_agent(
     (an unclaimed self-registration) can be approved only by an ``org:admin``,
     who becomes its owner. Any other caller gets a 404, whatever the agent's
     status, so the response does not reveal agents outside the caller's
-    ownership.
+    ownership. Self-requested permissions above the owner's permission ceiling
+    are dropped on approval; an explicit grant above the owner's ceiling
+    fails with 409 (``agent_permission_exceeds_owner``).
     """
     view = await agent_svc.approve(agent_id, identity=identity)
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:claim", status_code=200)
+@router.post("/agents/{agent_id}:claim", summary="Claim an agent", status_code=200)
 async def claim_agent(
     agent_id: AgentIdPath,
     body: ClaimRequest,
@@ -230,7 +274,19 @@ async def claim_agent(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:deny", status_code=200)
+@router.post(
+    "/agents/{agent_id}:deny",
+    summary="Deny an agent",
+    status_code=200,
+    responses=with_responses(
+        not_found(
+            "No such agent, or a caller who is neither the agent's owner nor an "
+            "`org:admin` (and only an `org:admin` for an unowned agent). Returned "
+            "whatever the agent's status (`actor_not_found`), so a 404 here can mean "
+            "the agent exists but is outside the caller's ownership"
+        )
+    ),
+)
 async def deny_agent(
     agent_id: AgentIdPath,
     body: DenyRequest,
@@ -247,7 +303,7 @@ async def deny_agent(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:disable", status_code=204)
+@router.post("/agents/{agent_id}:disable", summary="Disable an agent", status_code=204)
 async def disable_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -258,7 +314,7 @@ async def disable_agent(
     return Response(status_code=204)
 
 
-@router.post("/agents/{agent_id}:enable", status_code=204)
+@router.post("/agents/{agent_id}:enable", summary="Enable an agent", status_code=204)
 async def enable_agent(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -269,7 +325,17 @@ async def enable_agent(
     return Response(status_code=204)
 
 
-@router.delete("/agents/{agent_id}", status_code=204)
+@router.delete(
+    "/agents/{agent_id}",
+    summary="Archive an agent",
+    status_code=204,
+    responses=with_responses(
+        conflict(
+            "Archive on an already-archived agent (`invalid_transition`); "
+            "`purge=true` accepts any status"
+        )
+    ),
+)
 async def archive_agent(
     agent_id: AgentIdPath,
     purge: bool = Query(
@@ -307,7 +373,11 @@ async def archive_agent(
     return Response(status_code=204)
 
 
-@router.get("/agents/{agent_id}/permissions", operation_id="getAgentPermissions")
+@router.get(
+    "/agents/{agent_id}/permissions",
+    summary="List an agent's permissions",
+    operation_id="getAgentPermissions",
+)
 async def get_agent_permissions(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
@@ -318,14 +388,30 @@ async def get_agent_permissions(
     return AgentPermissionsResponse(permissions=permissions)
 
 
-@router.put("/agents/{agent_id}/permissions", operation_id="replaceAgentPermissions")
+@router.put(
+    "/agents/{agent_id}/permissions",
+    summary="Replace an agent's permissions",
+    operation_id="replaceAgentPermissions",
+    responses=with_responses(
+        not_found("Agent not found."),
+        conflict(
+            "Agent is archived, or a newly added permission exceeds the agent owner's "
+            "permission ceiling (`agent_permission_exceeds_owner`)."
+        ),
+    ),
+)
 async def replace_agent_permissions(
     agent_id: AgentIdPath,
     body: AgentPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentPermissionsResponse:
-    """Replace all permissions for an agent."""
+    """Replace all permissions for an agent.
+
+    Newly added permissions must be grantable by the caller (403
+    `agent_permission_not_grantable`) and within the agent owner's permission
+    ceiling (409 `agent_permission_exceeds_owner`).
+    """
     permissions = await agent_svc.replace_permissions(agent_id, body.permissions, identity=identity)
     return AgentPermissionsResponse(permissions=permissions)
 
@@ -348,6 +434,14 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
     "/agents/{agent_id}/credentials",
     operation_id="listAgentCredentials",
     summary="List an agent's credential bindings",
+    responses=with_responses(
+        not_found(
+            "No such agent, or an agent the caller may not read — readable by the "
+            "agent itself, its owner, `org:admin`, and a caller holding "
+            "`agents:read`; 404 otherwise (`actor_not_found`), so a 404 here can "
+            "mean the agent exists but is not visible to you"
+        )
+    ),
 )
 async def list_credentials(
     agent_id: AgentIdPath,
@@ -372,6 +466,16 @@ async def list_credentials(
     status_code=201,
     operation_id="bindAgentCredential",
     summary="Bind a credential to an agent",
+    responses=with_responses(
+        not_found(
+            "The agent is not visible to the caller (`actor_not_found`), or a "
+            "credential that does not exist or that the caller does not own "
+            "(`credential_not_found`)"
+        ),
+        conflict(
+            "The same credential is already bound to this agent (`credential_binding_conflict`)"
+        ),
+    ),
 )
 async def bind_credential(
     agent_id: AgentIdPath,
@@ -400,6 +504,13 @@ async def bind_credential(
     status_code=204,
     operation_id="unbindAgentCredential",
     summary="Suspend or remove a credential binding",
+    responses=with_responses(
+        not_found(
+            "The agent is not visible to the caller (`actor_not_found`), or a "
+            "missing binding (`credential_binding_not_found`) — also returned when "
+            "an agent tries to purge its own binding, which it may only suspend"
+        )
+    ),
 )
 async def unbind_credential(
     agent_id: AgentIdPath,
@@ -437,6 +548,14 @@ async def unbind_credential(
     status_code=200,
     operation_id="resumeAgentCredentialBinding",
     summary="Resume a suspended credential binding",
+    responses=with_responses(
+        not_found(
+            "No binding exists (`credential_binding_not_found`), the agent is not "
+            "visible to the caller (`actor_not_found`), or the credential is not "
+            "owned by the caller — including an agent resuming its own binding "
+            "(`credential_not_found`)"
+        )
+    ),
 )
 async def resume_credential_binding(
     agent_id: AgentIdPath,
@@ -458,7 +577,11 @@ async def resume_credential_binding(
     return _credential_binding_response(binding)
 
 
-@router.post("/agents/{agent_id}:generate-api-key", status_code=200)
+@router.post(
+    "/agents/{agent_id}:generate-api-key",
+    summary="Generate an agent's API key",
+    status_code=200,
+)
 async def generate_agent_api_key(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
@@ -469,7 +592,7 @@ async def generate_agent_api_key(
     return ApiKeyResponse(key=key)
 
 
-@router.put("/agents/{agent_id}/jwks", status_code=200)
+@router.put("/agents/{agent_id}/jwks", summary="Replace an agent's JWKS", status_code=200)
 async def update_agent_jwks(
     agent_id: AgentIdPath,
     body: JwksUpdateRequest,
@@ -486,7 +609,11 @@ async def update_agent_jwks(
     return _agent_response(view)
 
 
-@router.post("/agents/{agent_id}:revoke-api-key", status_code=204)
+@router.post(
+    "/agents/{agent_id}:revoke-api-key",
+    summary="Revoke an agent's API key",
+    status_code=204,
+)
 async def revoke_agent_api_key(
     agent_id: AgentIdPath,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),

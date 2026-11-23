@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from types import TracebackType
+from typing import Any
 
+import httpcore
 import httpx
 
 from jentic_one.shared.config import EgressConfig
@@ -36,6 +39,93 @@ from jentic_one.shared.dns_cache import resolve_host, resolve_host_blocking
 from jentic_one.shared.url_validation import assert_ip_allowed
 
 _IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+class _PinnedOrigin(httpcore.Origin):
+    """Connection-pool origin key that pairs the pinned IP with the logical host.
+
+    HTTPCore's connection pool selects and reuses connections by comparing
+    ``request.url.origin`` via ``Origin.__eq__``, while ``AsyncHTTPConnection``
+    connects its TCP socket to ``self._origin.host`` and negotiates TLS using
+    ``request.extensions["sni_hostname"]``. Including ``logical_host`` in
+    equality keeps connections to distinct logical hostnames that resolve to
+    the same IP and port in separate pool slots while still connecting the
+    socket to the validated pinned IP.
+    """
+
+    def __init__(
+        self,
+        scheme: bytes,
+        host: bytes,
+        port: int,
+        logical_host: str | None,
+    ) -> None:
+        super().__init__(scheme=scheme, host=host, port=port)
+        self.logical_host = logical_host
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, _PinnedOrigin)
+            and super().__eq__(other)
+            and self.logical_host == other.logical_host
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.scheme, self.host, self.port, self.logical_host))
+
+
+class _PinnedURL(httpcore.URL):
+    """HTTPCore URL whose ``origin`` carries the logical hostname for pool isolation."""
+
+    def __init__(self, url: httpcore.URL, *, logical_host: str | None) -> None:
+        super().__init__(
+            scheme=url.scheme,
+            host=url.host,
+            port=url.port,
+            target=url.target,
+        )
+        self._logical_host = logical_host
+
+    @property
+    def origin(self) -> httpcore.Origin:
+        base = super().origin
+        return _PinnedOrigin(
+            scheme=base.scheme,
+            host=base.host,
+            port=base.port,
+            logical_host=self._logical_host,
+        )
+
+
+class _OriginPinningPool:
+    """Wraps an HTTPCore pool so connection reuse keys on logical host and pinned IP."""
+
+    def __init__(self, pool: httpcore.AsyncConnectionPool) -> None:
+        self._pool = pool
+
+    async def handle_async_request(self, request: httpcore.Request) -> httpcore.Response:
+        sni = request.extensions.get("sni_hostname")
+        logical_host = sni.lower() if isinstance(sni, str) and sni else None
+        request.url = _PinnedURL(request.url, logical_host=logical_host)
+        return await self._pool.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._pool.aclose()
+
+    async def __aenter__(self) -> _OriginPinningPool:
+        await self._pool.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        await self._pool.__aexit__(exc_type, exc_value, traceback)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pool, name)
 
 
 class UpstreamHostUnresolvedError(ValueError):
@@ -109,8 +199,23 @@ class DnsPinningTransport(httpx.AsyncBaseTransport):
     """
 
     def __init__(self, inner: httpx.AsyncBaseTransport, egress: EgressConfig | None) -> None:
+        pool = getattr(inner, "_pool", None)
+        if isinstance(pool, httpcore.AsyncConnectionPool):
+            inner._pool = _OriginPinningPool(pool)  # type: ignore[attr-defined]
         self._inner = inner
         self._egress = egress
+
+    async def __aenter__(self) -> DnsPinningTransport:
+        await self._inner.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        await self._inner.__aexit__(exc_type, exc_value, traceback)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host

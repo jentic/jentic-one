@@ -14,11 +14,7 @@ import (
 // registration.
 var configWriterAllowlist = map[string]bool{
 	// V2 writers.
-	"client/config/writer.go": true,
-	"client/auth/tokens.go":   true,
-	"client/auth/keys.go":     true,
-	"client/auth/apikey.go":   true, // API-key credential (0600 secret under XDG state; sibling of tokens.go)
-	"client/auth/atomic.go":   true, // shared atomic writer (temp+fsync+rename) for the 0600 credential files above (F6, review round-3 #7)
+	"client/internal/atomicfile/atomicfile.go": true, // shared SDK atomic writer (temp+fsync+rename)
 
 	// Phase 3 migration writer: copies validated legacy key material into the XDG
 	// layout and drops the MIGRATED marker. It writes SECRET/STATE material (0600
@@ -28,23 +24,19 @@ var configWriterAllowlist = map[string]bool{
 
 	// Shipped writers (grandfathered; each is an atomic temp-file+rename or a
 	// 0600 secret/state write, not an ad-hoc config clobber).
-	"internal/config/file.go":             true, // writeFileAtomic -> config.yaml (the mutator today)
-	"internal/config/manifest.go":         true, // install manifest
-	"internal/profile/store.go":           true, // profile state (atomic)
-	"internal/agentkey/key.go":            true, // Ed25519 key material (0600)
-	"internal/skillgen/apply.go":          true, // rendered skill files (atomic)
-	"internal/mcpcfg/writers.go":          true, // third-party MCP configs (~/.cursor/mcp.json, claude_desktop_config.json, ~/.codex/config.toml) — foreign runtimes' files, NOT jentic config.yaml; merge is idempotent, mode-preserving, and atomic (temp+fsync+rename) (2-E3)
-	"internal/update/update.go":           true, // self-update binary swap (atomic)
-	"internal/update/download.go":         true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
-	"internal/install/start.go":           true, // pid file
-	"internal/install/compose.go":         true, // compose/init-schemas artifacts
-	"internal/install/build.go":           true, // build output tree
-	"internal/cli/cmdcore/updatenudge.go": true, // update-check timestamp (0600)
-	"internal/cli/ctlcmd/install.go":      true, // install writes env/compose out
-	"internal/cli/api/apis.go":            true, // apis export to user-chosen -o path
-	"internal/cli/api/history.go":         true, // history export to user-chosen -o path (redacted JSON, not config)
-	"internal/cli/ctlcmd/update.go":       true, // fetched installer script
-	"internal/cli/ctlcmd/uninstall.go":    true, // backup/restore moves
+	"internal/atomicfile/atomicfile.go":     true, // shared CLI atomic writer (temp+fsync+rename)
+	"internal/config/manifest.go":           true, // install manifest
+	"internal/update/update.go":             true, // self-update binary swap (atomic)
+	"internal/update/download.go":           true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
+	"internal/install/start.go":             true, // pid file
+	"internal/install/compose.go":           true, // compose/init-schemas artifacts
+	"internal/install/build.go":             true, // build output tree
+	"internal/cli/cmdcore/updatenudge.go":   true, // update-check timestamp (0600)
+	"internal/cli/ctlcmd/install_config.go": true, // install writes env/compose out
+	"internal/cli/api/apis.go":              true, // apis export to user-chosen -o path
+	"internal/cli/api/history.go":           true, // history export to user-chosen -o path (redacted JSON, not config)
+	"internal/cli/ctlcmd/update.go":         true, // fetched installer script
+	"internal/cli/ctlcmd/uninstall.go":      true, // backup/restore moves
 }
 
 // Test1E_ConfigMutatorLock asserts every os.WriteFile / os.Rename in production

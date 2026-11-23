@@ -41,8 +41,7 @@ paths label them, never resolve them).
 data was migrated to agents and dropped, and recreating empty tables would
 restore nothing. Rolling back means restoring the admin database (and the
 control database, for the swept ``sva_`` inline rules) from the snapshot
-taken before the upgrade — see "Rollback (theme-8 Phase 4)" in
-``docs/development/releasing.md``.
+taken before the upgrade — see ``docs/operations/upgrade-notes.md`` (0.41.0).
 
 Revision ID: e2f3a4b5c6d7
 Revises: d1e2f3a4b5c6
@@ -116,7 +115,7 @@ _RUNBOOK = (
     "Run the full upgrade — `python -m jentic_one.migrations.run` with no --db or "
     "--target — which migrates, verifies and sweeps the remaining service accounts "
     "before this revision; if its verification refuses, it names the rows to fix. "
-    "See 'Upgrading to 0.41.0' in docs/development/releasing.md."
+    "See docs/operations/upgrade-notes.md (0.41.0)."
 )
 
 #: Cleanup (after the gate): references nothing can resolve once the tables go.
@@ -134,7 +133,7 @@ _IRREVERSIBLE = (
     "e2f3a4b5c6d7 is irreversible: the service-account data was migrated to agents "
     "and dropped; restore the admin database from the pre-upgrade snapshot (and the "
     "control database, for the swept sva_ inline rules). Nothing was changed. See "
-    "'Rollback (theme-8 Phase 4)' in docs/development/releasing.md."
+    "docs/operations/upgrade-notes.md (0.41.0)."
 )
 
 

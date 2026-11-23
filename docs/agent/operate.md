@@ -181,8 +181,13 @@ Then remove everything:
 docker compose -p jentic -f ~/.jentic/docker-compose.yaml down -v   # containers + declared volumes
 docker volume rm jentic_jentic-data 2>/dev/null     # belt-and-suspenders (SQLite)
 docker volume rm jentic_db-data 2>/dev/null         # (Postgres)
-rm -rf ~/.jentic                                    # config, compose, logs, CLI state
+rm -rf ~/.jentic                                    # install config, compose, logs
 ```
+
+The `jentic` agent identity lives outside `~/.jentic` (`~/.config/jentic`,
+`~/.local/state/jentic`); remove it with `jentic reset`. A local agent account an
+older release created (Unix user, ACLs, sudoers entry) also survives this and is
+removed by `jentic reset` too.
 
 To keep the data for a later reinstall, run
 `docker compose -p jentic -f ~/.jentic/docker-compose.yaml down` (no `-v`),

@@ -13,7 +13,30 @@ code is therefore guaranteed to be listed in the document.
 from __future__ import annotations
 
 import pytest
-from tools.config_reference import CONFIG_REFERENCE_PATH, build_markdown
+from tools.config_reference import CONFIG_REFERENCE_PATH, build_markdown, undocumented_keys
+
+# Config keys allowed to render without a description: internal knobs no
+# operator sets (type discriminators, test-only endpoints, telemetry tuning).
+# Any other new key needs a ``Field(description=...)`` instead of an entry here.
+_UNDOCUMENTED_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "credentials.providers.<name>.kind",
+        "vendors.entries.<name>.flows.<n>.kind",
+        "telemetry.endpoint",
+        "telemetry.flush_interval_s",
+        "telemetry.max_batch",
+        "telemetry.queue_max",
+        "telemetry.request_timeout_s",
+        "release_check.repo",
+        "entitlement.endpoint",
+        # unused — removal tracked separately
+        "services.request_timeout_s",
+        "services.retry_max",
+        "services.retry_backoff_s",
+        "runtime.maintenance_mode",
+        "server.mcp.oauth.registration_gc_days",
+    }
+)
 
 
 @pytest.mark.arch
@@ -42,4 +65,14 @@ def test_config_reference_not_drifted() -> None:
     assert regenerated == committed, (
         "docs/reference/config.md is out of date with AppConfig; "
         "run `make config-reference` and commit the result."
+    )
+
+
+@pytest.mark.arch
+def test_every_config_key_has_a_description() -> None:
+    missing = [key for key in undocumented_keys() if key not in _UNDOCUMENTED_ALLOWLIST]
+    assert not missing, (
+        "config keys with no description in docs/reference/config.md (add "
+        "Field(description=...) to each; `#` comments do not reach the schema): "
+        + ", ".join(missing)
     )

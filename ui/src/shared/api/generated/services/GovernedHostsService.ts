@@ -8,7 +8,7 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class GovernedHostsService {
     /**
-     * Get Governed Hosts
+     * Get the caller's governed host set
      * The caller's governed host set (credential-bound hosts) with an ETag digest.
      *
      * **Always self-scoped** — derived from the authenticated identity's own

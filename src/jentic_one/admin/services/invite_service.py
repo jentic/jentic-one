@@ -12,7 +12,7 @@ from jentic_one.admin.repos import (
     UserRepository,
     UserSecretRepository,
 )
-from jentic_one.admin.services._support.passwords import hash_password
+from jentic_one.admin.services._support.passwords import hash_password, run_argon2
 from jentic_one.admin.services._support.tokens import (
     generate_invite_token,
     hash_invite_token,
@@ -117,6 +117,20 @@ class InviteService:
         config = self._ctx.config.admin
         token_hash = hash_invite_token(plaintext, config.invite.pepper.get_secret_value())
 
+        async with self._ctx.admin_db.session() as session:
+            token = await InviteTokenRepository.get_by_token_hash(session, token_hash)
+            if token is None:
+                raise InviteTokenNotFoundError("unknown")
+            user = await UserRepository.get_by_id(session, token.user_id)
+            if user is None or not user.active or user.deleted_at is not None:
+                raise InviteTokenNotFoundError("unknown")
+            if token.redeemed_at is not None:
+                raise InviteTokenAlreadyRedeemedError(token.id)
+            if token.expires_at < datetime.now(UTC):
+                raise InviteTokenExpiredError(token.id)
+
+        password_hash = await run_argon2(hash_password, new_password, config=config.auth)
+
         async with self._ctx.admin_db.transaction() as session:
             token = await InviteTokenRepository.get_by_token_hash(session, token_hash)
             if token is None:
@@ -143,7 +157,6 @@ class InviteService:
                 # Redeemed, reissued or cancelled since the read above.
                 raise InviteTokenAlreadyRedeemedError(token.id)
 
-            password_hash = hash_password(new_password)
             await UserSecretRepository.set_password_hash(
                 session, token.user_id, password_hash=password_hash, created_by=token.user_id
             )

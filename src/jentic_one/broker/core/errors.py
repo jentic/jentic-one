@@ -82,6 +82,12 @@ class UpstreamUrlNotAllowedError(BrokerError):
     """SSRF boundary: private-IP / metadata host / unformable upstream URL (400)."""
 
 
+class RequestOverrideNotAllowedError(BrokerError):
+    """A request-method or request-target override header or query parameter was sent (400)."""
+
+    default_type = "request_override_not_allowed"
+
+
 class UpgradeNotSupportedError(BrokerError):
     """A protocol-upgrade attempt (WebSocket / h2c) the buffered proxy can't carry (426)."""
 
@@ -114,6 +120,16 @@ class IdempotencyUnavailableError(BrokerError):
     in-process backend's ``idem`` namespace is full). The call is refused
     rather than run unclaimed, since an unrecorded claim cannot dedupe a retry.
     """
+
+
+class IdempotencyCompletionError(BrokerError):
+    """The upstream ran, but its idempotent outcome could not be recorded (500).
+
+    This is an indeterminate execution outcome, not a retryable pre-dispatch
+    refusal. It deliberately carries no ``Retry-After`` hint.
+    """
+
+    default_type = "idempotency_completion_failed"
 
 
 class InvalidRevisionPinError(BrokerError):
@@ -156,6 +172,23 @@ class CredentialNotProvisionedError(BrokerError):
     """No credential is provisioned for the resolved API/caller (424)."""
 
 
+class CredentialServerVariableMismatchError(CredentialNotProvisionedError):
+    """A credential covers the API but is scoped to other server-variable values (424).
+
+    Same class of failure as :class:`CredentialNotProvisionedError` — nothing
+    is wrong with the request and a stored dependency does not apply — but a
+    different recovery: a credential already exists, so starting a connect
+    flow cannot help. The body names the variables that disagree and the
+    candidates' own scopes, and the directive asks for a credential for the
+    requested value instead of suggesting ``jentic connect``.
+
+    A **subclass**, so the ~15 call sites that catch
+    :class:`CredentialNotProvisionedError` (and clients branching on the 424
+    family) keep working; it carries its own ``STATUS_BY_ERROR`` entry because
+    that map is an exact-``type()`` lookup and an unmapped subclass renders 500.
+    """
+
+
 class CredentialUndecryptableError(BrokerError):
     """A resolved credential's stored ciphertext cannot be decrypted (424).
 
@@ -176,7 +209,18 @@ class CredentialUndecryptableError(BrokerError):
 
 
 class CredentialNeedsReconnectError(BrokerError):
-    """The OAuth2 grant was revoked/disconnected — the caller must reconnect (401)."""
+    """The stored OAuth2 grant was revoked/disconnected — it must be reconnected (424).
+
+    Same class as :class:`CredentialNotProvisionedError` and
+    :class:`CredentialUndecryptableError`, and the same status: the request is
+    fine and **the caller's own bearer token is valid** — a stored dependency
+    is unusable, because the upstream provider revoked the grant the broker
+    refreshes against. A 424 says exactly that. A 401 would instead tell every
+    HTTP client and SDK to re-authenticate *itself*, which can never clear this
+    condition: the caller would re-mint a token that was never the problem,
+    retry, and fail identically. The ``prompt_human`` directive names the real
+    remedy — reconnect the stored credential.
+    """
 
 
 class CredentialRefreshTransientError(BrokerError):
@@ -219,6 +263,12 @@ class ApprovalHoldUnavailableError(BrokerError):
     """
 
 
+class AsyncCookieEncryptionUnavailableError(BrokerError):
+    """An async or held call carries a Cookie header that cannot be encrypted at rest (503)."""
+
+    default_type = "async_cookie_encryption_unavailable"
+
+
 class CredentialIdentityMismatchError(BrokerError):
     """Bound, but no bound credential's identity covers this API (403).
 
@@ -241,6 +291,17 @@ class CredentialBindingSuspendedError(BrokerError):
     """
 
     default_type = "credential_binding_suspended"
+
+
+class CredentialPendingError(BrokerError):
+    """A bound credential is waiting for its connect flow to finish (403).
+
+    The caller already has the binding; creating another connection or fixing
+    the credential identity cannot make this credential usable. The directive
+    asks the human to complete the pending sign-in and then retry.
+    """
+
+    default_type = "credential_pending"
 
 
 class UpstreamTimeoutError(BrokerError):
@@ -340,3 +401,33 @@ class RunnerUnavailableError(BrokerError):
     agent can retry — distinct from :class:`RunnerSchemeUnsupportedError` (501,
     no such runner at all).
     """
+
+
+class JobNotFoundError(BrokerError):
+    """No broker execution job with this id is visible to the caller (404)."""
+
+    default_type = "job_not_found"
+
+    def __init__(self, job_id: str, *, instance: str | None = None) -> None:
+        super().__init__(f"Job '{job_id}' not found", instance=instance)
+        self.job_id = job_id
+
+
+class JobNotCompletedError(BrokerError):
+    """The job has no stored result to serve — still active or failed with no result row (409)."""
+
+    default_type = "job_not_completed"
+
+    def __init__(self, job_id: str, *, instance: str | None = None) -> None:
+        super().__init__(f"Job '{job_id}' is not completed", instance=instance)
+        self.job_id = job_id
+
+
+class JobResultExpiredError(BrokerError):
+    """The job's stored result is past its retention window (410)."""
+
+    default_type = "job_result_expired"
+
+    def __init__(self, job_id: str, *, instance: str | None = None) -> None:
+        super().__init__(f"Result for job '{job_id}' has expired", instance=instance)
+        self.job_id = job_id

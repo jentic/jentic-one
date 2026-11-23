@@ -56,16 +56,6 @@ func TestReplaceBinaryNoBackupWhenTargetMissing(t *testing.T) {
 	}
 }
 
-func TestAuthArgs(t *testing.T) {
-	if got := authArgs(""); got != nil {
-		t.Errorf("authArgs(\"\") = %v, want nil", got)
-	}
-	got := authArgs("tok123")
-	if len(got) != 2 || got[0] != "-c" || !strings.HasPrefix(got[1], "http.extraheader=Authorization: Basic ") {
-		t.Errorf("authArgs(token) = %v, want -c http.extraheader basic auth", got)
-	}
-}
-
 func TestBackupSQLite_RestoresAfterFailedMigration(t *testing.T) {
 	data := t.TempDir()
 	dbPath := filepath.Join(data, "control.db")

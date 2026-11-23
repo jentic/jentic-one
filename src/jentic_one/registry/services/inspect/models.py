@@ -23,8 +23,11 @@ SUMMARY_LOAD_OPTIONS = InspectLoadOptions(load_spec=False, load_auth=True, load_
 class TagDescription(BaseModel):
     """A tag name paired with its description from the spec."""
 
-    tag: str
-    description: str
+    tag: str = Field(description="Tag the operation is grouped under.", examples=["charges"])
+    description: str = Field(
+        description="The tag's description from the spec.",
+        examples=["Charge objects and the money moved by them."],
+    )
 
 
 class ApiContext(BaseModel):
@@ -36,39 +39,92 @@ class ApiContext(BaseModel):
     be used as an identifier.
     """
 
-    vendor: str
-    name: str
-    version: str
-    display_name: str | None = None
-    description: str | None = None
-    tag_descriptions: list[TagDescription] = []
+    vendor: str = Field(
+        description="Vendor part of the canonical API reference.", examples=["stripe.com"]
+    )
+    name: str = Field(description="Name part of the canonical API reference.", examples=["stripe"])
+    version: str = Field(
+        description="Version part of the canonical API reference.", examples=["2024-04-10"]
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="Human-readable label for the API; never an identifier.",
+        examples=["Stripe"],
+    )
+    description: str | None = Field(
+        default=None,
+        description="The API's description from the spec.",
+        examples=["The Stripe REST API."],
+    )
+    tag_descriptions: list[TagDescription] = Field(
+        default=[], description="Descriptions of the tags this operation is grouped under."
+    )
 
 
 class AuthInstruction(BaseModel):
     """Translated security scheme for consumer presentation."""
 
-    type: str
-    scheme: str | None = None
-    in_location: str | None = None
-    param_name: str | None = None
-    bearer_format: str | None = None
-    open_id_connect_url: str | None = None
-    flows: list[dict[str, object]] | None = None
+    type: str = Field(
+        description="Security scheme type, e.g. `http`, `apiKey`, `oauth2` or `openIdConnect`.",
+        examples=["http"],
+    )
+    scheme: str | None = Field(
+        default=None,
+        description="HTTP authentication scheme, for `type=http`.",
+        examples=["bearer"],
+    )
+    in_location: str | None = Field(
+        default=None,
+        description="Where an API key travels, for `type=apiKey`: `header`, `query` or `cookie`.",
+        examples=["header"],
+    )
+    param_name: str | None = Field(
+        default=None,
+        description="Name of the header, query or cookie parameter carrying an API key.",
+        examples=["Authorization"],
+    )
+    bearer_format: str | None = Field(
+        default=None,
+        description="Hint for the bearer token's format, for `scheme=bearer`.",
+        examples=["JWT"],
+    )
+    open_id_connect_url: str | None = Field(
+        default=None,
+        description="Discovery document URL, for `type=openIdConnect`.",
+        examples=["https://accounts.example.com/.well-known/openid-configuration"],
+    )
+    flows: list[dict[str, object]] | None = Field(
+        default=None,
+        description="The OAuth 2 flows the scheme declares, for `type=oauth2`.",
+    )
 
 
 class InspectLinks(BaseModel):
     """Hypermedia links for an inspect result."""
 
-    self_link: str
+    self_link: str = Field(
+        description="This inspect result.",
+        examples=["https://jentic.example.com/inspect?operation_id=listCharges"],
+    )
 
 
 class OperationParameter(BaseModel):
     """A single declared parameter (query / header / path)."""
 
-    name: str
-    required: bool = False
-    description: str | None = None
-    schema_: dict[str, object] | None = Field(default=None, serialization_alias="schema")
+    name: str = Field(description="The parameter's name.", examples=["limit"])
+    required: bool = Field(
+        default=False, description="Whether the operation requires it.", examples=[False]
+    )
+    description: str | None = Field(
+        default=None,
+        description="The parameter's description from the spec.",
+        examples=["Maximum number of objects to return."],
+    )
+    schema_: dict[str, object] | None = Field(
+        default=None,
+        serialization_alias="schema",
+        description="The parameter's JSON Schema, as the spec declares it.",
+    )
 
 
 class RequestBodySchema(BaseModel):
@@ -78,10 +134,24 @@ class RequestBodySchema(BaseModel):
     (JSON is preferred when the spec offers several).
     """
 
-    required: bool = False
-    description: str | None = None
-    content_type: str | None = None
-    schema_: dict[str, object] | None = Field(default=None, serialization_alias="schema")
+    required: bool = Field(
+        default=False, description="Whether the operation requires a body.", examples=[True]
+    )
+    description: str | None = Field(
+        default=None,
+        description="The body's description from the spec.",
+        examples=["The charge to create."],
+    )
+    content_type: str | None = Field(
+        default=None,
+        description="Media type the `schema` was taken from.",
+        examples=["application/json"],
+    )
+    schema_: dict[str, object] | None = Field(
+        default=None,
+        serialization_alias="schema",
+        description="The body's JSON Schema, as the spec declares it.",
+    )
 
 
 class OperationInputs(BaseModel):
@@ -101,16 +171,44 @@ class OperationInputs(BaseModel):
 class OperationInspectResult(BaseModel):
     """Full structural detail for a resolved operation."""
 
-    type: Literal["operation"] = "operation"
-    operation_id: str
-    method: str
-    url: str
-    name: str | None = None
-    description: str | None = None
-    api: ApiContext
-    inputs: OperationInputs | None = None
-    response_schema: dict[str, object] | None = None
-    auth: list[AuthInstruction] | None = None
-    server: str | None = None
-    raw_spec: dict[str, object] | None = None
-    links: InspectLinks
+    type: Literal["operation"] = Field(
+        default="operation", description="Always `operation`.", examples=["operation"]
+    )
+    operation_id: str = Field(
+        description="The operation's id in its spec.", examples=["listCharges"]
+    )
+    method: str = Field(description="HTTP method of the operation.", examples=["GET"])
+    url: str = Field(
+        description="Upstream URL of the operation.",
+        examples=["https://api.stripe.com/v1/charges"],
+    )
+    name: str | None = Field(
+        default=None,
+        description="The operation's summary from the spec.",
+        examples=["List charges"],
+    )
+    description: str | None = Field(
+        default=None,
+        description="The operation's description from the spec.",
+        examples=["Returns a list of charges."],
+    )
+    api: ApiContext = Field(description="The API the operation belongs to.")
+    inputs: OperationInputs | None = Field(
+        default=None, description="Parameters and request body the operation accepts."
+    )
+    response_schema: dict[str, object] | None = Field(
+        default=None, description="JSON Schema of the operation's success response, when known."
+    )
+    auth: list[AuthInstruction] | None = Field(
+        default=None, description="Security schemes the operation accepts."
+    )
+    server: str | None = Field(
+        default=None,
+        description="Server URL the operation is resolved against.",
+        examples=["https://api.stripe.com"],
+    )
+    raw_spec: dict[str, object] | None = Field(
+        default=None,
+        description="The operation's raw spec fragment; only populated for `detail=full`.",
+    )
+    links: InspectLinks = Field(description="Links for this result.")

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Awaiting approval | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f7f7;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .card {{
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+            max-width: 420px;
+            width: 100%;
+            padding: 32px;
+        }}
+        .logo {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        .logo-text {{
+            font-family: 'Sora', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #0E1A1D;
+            letter-spacing: -0.5px;
+        }}
+        .logo-text span {{
+            color: #689296;
+        }}
+        h1 {{
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #0E1A1D;
+            text-align: center;
+            line-height: 1.4;
+        }}
+        .app-name {{
+            color: #305256;
+            font-weight: 700;
+        }}
+        .description {{
+            color: #689296;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+            margin-bottom: 16px;
+        }}
+        .panel {{
+            background: #f5f7f7;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }}
+        .panel p {{
+            color: #305256;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 10px;
+        }}
+        .panel .hint {{
+            color: #689296;
+            font-size: 12px;
+        }}
+        .client-details {{
+            background: white;
+            border: 1px solid #E4EAEB;
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }}
+        .client-details dt {{
+            color: #689296;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 10px;
+            margin-top: 8px;
+        }}
+        .client-details dt:first-child {{ margin-top: 0; }}
+        .client-details dd {{
+            color: #0E1A1D;
+            font-weight: 600;
+            word-break: break-all;
+        }}
+        .panel a {{
+            color: #305256;
+        }}
+        .copy-row {{
+            display: flex;
+            gap: 8px;
+        }}
+        .copy-row input {{
+            flex: 1;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid #E4EAEB;
+            border-radius: 6px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 12px;
+            color: #305256;
+            background: white;
+        }}
+        .buttons {{
+            display: flex;
+            gap: 12px;
+        }}
+        button {{
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-family: 'Nunito Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        button:disabled {{ opacity: 0.6; cursor: default; }}
+        .buttons button {{ flex: 1; }}
+        .deny {{
+            background: #f5f7f7;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }}
+        .deny:hover {{ background: #E4EAEB; }}
+        .approve {{
+            background: #305256;
+            color: white;
+        }}
+        .approve:hover {{ background: #193238; }}
+        .copy {{
+            background: white;
+            color: #305256;
+            border: 1px solid #E4EAEB;
+        }}
+        .copy:hover {{ background: #E4EAEB; }}
+        .status-line {{
+            text-align: center;
+            font-size: 13px;
+            color: #689296;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">
+            <div class="logo-text">Jentic<span>One</span></div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> is awaiting administrator approval</h1>
+        <p class="description">
+            This page checks automatically and continues the connection
+            as soon as an administrator approves it.
+        </p>
+        <div class="panel" id="anon-panel">
+            <p>Ask your Jentic One admin to approve
+                <span class="app-name">{app_name}</span> in the approval queue:</p>
+            <div class="copy-row">
+                <input id="queue-link" readonly value="{queue_url}">
+                <button type="button" class="copy" id="copy-link">Copy</button>
+            </div>
+        </div>
+        <div class="panel" id="admin-panel" hidden>
+            <p>You are signed in as an administrator &mdash; review before
+                deciding. The name above is self-chosen by the client; these
+                details come from its registration:</p>
+            <dl class="client-details">
+                <dt>Redirect origins</dt>
+                <dd>{client_origins}</dd>
+                <dt>Client ID</dt>
+                <dd>{client_id_text}</dd>
+                {software_id_row}
+            </dl>
+            <p class="hint"><a href="{queue_url}">Open the approval queue</a>
+                for the full registration record.</p>
+            <div class="buttons">
+                <button type="button" class="deny" id="btn-deny">Deny</button>
+                <button type="button" class="approve" id="btn-approve">Approve</button>
+            </div>
+        </div>
+        <div class="status-line" id="approval-status">Waiting for approval&hellip;</div>
+    </div>
+    <script id="approval-config" type="application/json">{config_json}</script>
+    {page_script}
+</body>
+</html>

@@ -103,8 +103,7 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
 
 
 async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
-    """An active agent holding the execute scope, bound to one API-key
-    credential with an allow-GET rule."""
+    """Seed an active agent with execute scope and an allowed credential binding."""
     agent = Agent(name="queued-agent", registered_by="usr_owner", status="active")
     credential = Credential(
         type=StoredCredentialType.API_KEY,
@@ -157,6 +156,17 @@ async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
     return agent_id, credential_id
 
 
+async def _seed_unbound_agent_for_served_api(ctx: Context) -> tuple[str, str]:
+    """Seed an active agent and a credential serving the API, but no binding."""
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent_id)
+        )
+        await session.commit()
+    return agent_id, credential_id
+
+
 def _request(agent_id: str, credential_id: str, *, method: str = "GET") -> QueuedExecutionRequest:
     return QueuedExecutionRequest(
         actor_id=agent_id,
@@ -167,6 +177,9 @@ def _request(agent_id: str, credential_id: str, *, method: str = "GET") -> Queue
         api_name=_API_NAME,
         api_version=_API_VERSION,
         credential_id=credential_id,
+        auth_token_sha256="abcd" * 16,
+        auth_method="jwt",
+        auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
 
@@ -318,10 +331,14 @@ _DENIAL_IDENTITY_KEYS = (
 )
 
 
-async def _denial_events(ctx: Context) -> list[Event]:
+async def _events_of_type(ctx: Context, event_type: str) -> list[Event]:
     async with ctx.admin_db.session() as session:
-        result = await session.execute(select(Event).where(Event.type == EventType.PBAC_DENIED))
+        result = await session.execute(select(Event).where(Event.type == event_type))
         return list(result.scalars())
+
+
+async def _denial_events(ctx: Context) -> list[Event]:
+    return await _events_of_type(ctx, EventType.PBAC_DENIED)
 
 
 async def _deny_by_rule(ctx: Context, agent_id: str) -> None:
@@ -387,6 +404,48 @@ async def test_rule_denial_with_malformed_trace_id_still_records_an_uncorrelated
     assert event.trace_id is None
 
 
+async def test_served_api_without_binding_records_actor_and_operation_denial_evidence(
+    integration_context: Context, clean_tables: None
+) -> None:
+    ctx = integration_context
+    agent_id, credential_id = await _seed_unbound_agent_for_served_api(ctx)
+
+    verdict = await build_queued_execution_authorizer(ctx).authorize(
+        replace(
+            _request(agent_id, credential_id),
+            upstream_url=("https://api.acme.com/v1/pets/secret-id-123?token=QUERYSECRET456"),
+            operation_id="getPet",
+            relative_path="/pets/secret-id-123",
+            operation_path="/pets/{petId}",
+            trace_id=_TRACE_ID,
+        )
+    )
+
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "no_credential_binding"
+    (event,) = await _denial_events(ctx)
+    assert event.trace_id == _TRACE_ID
+    assert event.created_by == agent_id
+    assert event.actor_id == agent_id
+    assert event.actor_type == "agent"
+    assert event.data is not None
+    assert event.data["reason"] == "no_credential_binding"
+    assert event.data["mode"] == "direct"
+    assert {k: event.data[k] for k in _DENIAL_IDENTITY_KEYS} == {
+        "api_vendor": _VENDOR,
+        "api_name": _API_NAME,
+        "api_version": _API_VERSION,
+        "operation_id": "getPet",
+        "operation_method": "GET",
+        "operation_path": "/pets/{petId}",
+    }
+    assert await _events_of_type(ctx, EventType.CREDENTIAL_BINDING_UNSERVED) == []
+    recorded = f"{event.summary} {event.detail} {json.dumps(event.data)}"
+    for secret in ("secret-id-123", "QUERYSECRET456", "SECRET", "X-Api-Key"):
+        assert secret not in recorded
+
+
 async def test_unserved_api_denial_event_carries_trace_id(
     integration_context: Context, clean_tables: None
 ) -> None:
@@ -408,12 +467,9 @@ async def test_unserved_api_denial_event_carries_trace_id(
     )
 
     assert verdict.allowed is False
-    async with ctx.admin_db.session() as session:
-        result = await session.execute(
-            select(Event).where(Event.type == EventType.CREDENTIAL_BINDING_UNSERVED)
-        )
-        (event,) = result.scalars()
+    (event,) = await _events_of_type(ctx, EventType.CREDENTIAL_BINDING_UNSERVED)
     assert event.trace_id == _TRACE_ID
+    assert await _denial_events(ctx) == []
 
 
 class _PetsResolver:
@@ -628,6 +684,9 @@ async def test_rules_are_reauthorized_on_the_server_relative_path(
             api_version=_API_VERSION,
             relative_path=relative_path,
             credential_id=credential_id,
+            auth_token_sha256="abcd" * 16,
+            auth_method="jwt",
+            auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
     )
 
@@ -668,6 +727,9 @@ async def test_encoded_path_is_denied_by_a_deny_rule_on_fallback(
             api_name=_API_NAME,
             api_version=_API_VERSION,
             credential_id=credential_id,
+            auth_token_sha256="abcd" * 16,
+            auth_method="jwt",
+            auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
     )
 
@@ -715,6 +777,9 @@ def _base_path_request(agent_id: str, credential_id: str) -> QueuedExecutionRequ
         api_version=_API_VERSION,
         relative_path="/admin/users",
         credential_id=credential_id,
+        auth_token_sha256="abcd" * 16,
+        auth_method="jwt",
+        auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
 
@@ -819,6 +884,9 @@ async def test_encoded_traversal_is_denied(
             api_name=_API_NAME,
             api_version=_API_VERSION,
             credential_id=credential_id,
+            auth_token_sha256="abcd" * 16,
+            auth_method="jwt",
+            auth_expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
     )
 
@@ -999,6 +1067,9 @@ async def _queue_job(ctx: Context, agent_id: str, credential_id: str) -> str:
                 "api_version": _API_VERSION,
                 "credential_id": credential_id,
                 "operation": {"id": "op_pets", "path": "/v1/pets", "method": "GET"},
+                "auth_token_sha256": "abcd" * 16,
+                "auth_method": "jwt",
+                "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             },
         )
         session.add(job)
@@ -1076,6 +1147,58 @@ async def test_actor_status_resolver_follows_the_owner(
     async with ctx.admin_db.session() as session:
         agent = await session.get(Agent, agent_id)
         assert agent is not None and agent.status == "active"
+
+
+async def test_actor_status_resolver_caps_agent_authority_by_owner_permissions(
+    integration_context: Context, clean_tables: None, owner_id: str
+) -> None:
+    """An owned agent's non-default permission is capped by its owner's live
+    ``user_permission_grants`` in ``ActorStatusResolver.authority``; default
+    agent permissions remain held even when the owner has no grants."""
+    ctx = integration_context
+    agent_id, _ = await _seed_bound_agent(ctx)
+    await _own(ctx, agent_id, owner_id)
+    async with ctx.admin_db.session() as session:
+        session.add(
+            ActorPermissionGrant(actor_id=agent_id, actor_type="agent", permission="config:write")
+        )
+        session.add(UserPermissionGrant(user_id=owner_id, permission="config:write"))
+        await session.commit()
+
+    resolver = ActorStatusResolver(ctx.admin_db)
+    try:
+        before = await resolver.authority(
+            actor_id=agent_id, actor_type="agent", permission="config:write"
+        )
+        assert before.active is True
+        assert before.holds_permission is True
+
+        # Strip config:write from the owner; the agent grant row still exists,
+        # but authority() caps it against the owner's live permissions.
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id == owner_id)
+            )
+            await session.commit()
+
+        after = await resolver.authority(
+            actor_id=agent_id, actor_type="agent", permission="config:write"
+        )
+        assert after.active is True
+        assert after.holds_permission is False
+
+        # Default agent permissions stay held even when the owner has no grants.
+        default_auth = await resolver.authority(
+            actor_id=agent_id, actor_type="agent", permission=BROKER_EXECUTE_PERMISSION
+        )
+        assert default_auth.active is True
+        assert default_auth.holds_permission is True
+    finally:
+        async with ctx.admin_db.session() as session:
+            await session.execute(
+                delete(UserPermissionGrant).where(UserPermissionGrant.user_id == owner_id)
+            )
+            await session.commit()
 
 
 async def test_queued_job_of_an_owned_agent_is_denied_while_the_owner_is_inactive(

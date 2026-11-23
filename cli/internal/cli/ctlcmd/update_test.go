@@ -15,6 +15,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/update"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 	"github.com/spf13/cobra"
 )
@@ -626,7 +627,7 @@ func TestUpdateVerdict(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeVerdict(tt.cli, tt.stack, latest).message(tt.cli, tt.stack, latest)
+			got := computeVerdict(tt.cli, tt.stack, latest, dockerStackImageState{}).message(tt.cli, tt.stack, latest)
 			if got != tt.want {
 				t.Errorf("verdict(cli=%q, stack=%q) = %q, want %q", tt.cli, tt.stack, got, tt.want)
 			}
@@ -949,6 +950,430 @@ func TestUpdateStackDockerNamesPortConflict(t *testing.T) {
 	}
 }
 
+// writeStackCompose writes a compose file whose app and broker run image, the
+// shape `jenticctl install` renders. The recorded image is the only record of
+// how the stack was installed, so it is what an update reads to decide between
+// pulling and building.
+func writeStackCompose(t *testing.T, a *app, image string) {
+	t.Helper()
+	body := "name: jentic\nservices:\n" +
+		"  db:\n    image: postgres:16\n" +
+		"  app:\n    image: " + image + "\n" +
+		"  broker:\n    image: " + image + "\n"
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+}
+
+// stubDockerStack neutralises the Docker-touching steps of updateStackDocker
+// and records which refresh route ran.
+type dockerStackCalls struct {
+	pulled []string
+	builds int
+}
+
+func stubDockerStack(t *testing.T) *dockerStackCalls {
+	t.Helper()
+	// ResolveAppImage consults these, so a developer's environment must not
+	// decide which image the assertions see.
+	t.Setenv(install.AppImageTagEnv, "")
+	t.Setenv(install.AppImageRepoEnv, "")
+	calls := &dockerStackCalls{}
+	origBuild, origPull, origMigrate, origUp := buildStackImages, pullAppImage, runComposeMigrations, composeUp
+	t.Cleanup(func() {
+		buildStackImages, pullAppImage, runComposeMigrations, composeUp = origBuild, origPull, origMigrate, origUp
+	})
+	buildStackImages = func(install.BuildPlan, io.Writer) error { calls.builds++; return nil }
+	pullAppImage = func(_ io.Writer, ref string) error { calls.pulled = append(calls.pulled, ref); return nil }
+	runComposeMigrations = func(io.Writer, string) error { return nil }
+	composeUp = func(io.Writer, string) error { return nil }
+	return calls
+}
+
+// A stack installed from a published image pulls the image for the target ref
+// and is repointed at it — no git clone, no local build. Pins #2011.
+//
+// The expected tag also pins that the image resolves from the ref rather than
+// from the running binary's version: the CLI half swaps the binary on disk and
+// the stack half carries on in the OLD process, whose cmdcore.Version() would
+// resolve the image the stack already runs (or :latest for a dev build).
+func TestUpdateStackDockerPullsForAPulledInstall(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	want := "ghcr.io/jentic/jentic-one-app:0.44.0"
+	if len(calls.pulled) != 1 || calls.pulled[0] != want {
+		t.Errorf("pulled = %v, want exactly [%s]", calls.pulled, want)
+	}
+	if calls.builds != 0 {
+		t.Errorf("builds = %d, want 0 — a pulled install must not build from source", calls.builds)
+	}
+	got, err := install.ComposeAppImage(a.Paths.ComposePath())
+	if err != nil || got != want {
+		t.Errorf("compose app image = (%q, %v), want %q — the stack would keep running the old image", got, err, want)
+	}
+}
+
+// A stack built from source keeps building, and its compose file (already on
+// the fixed local tag) is left alone.
+func TestUpdateStackDockerBuildsForALocalInstall(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, install.AppImageTag)
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	if calls.builds != 1 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want 1 build and no pull", calls.builds, calls.pulled)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != install.AppImageTag {
+		t.Errorf("compose app image = (%q, %v), want %q unchanged", got, err, install.AppImageTag)
+	}
+}
+
+// Updating a pulled stack to a ref with no published image builds from source
+// AND moves the compose file off the published reference — otherwise compose
+// keeps running the old tag and ignores the image just built.
+func TestUpdateStackDockerNonReleaseRefMovesAPulledStackToTheLocalTag(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "main", true, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	if calls.builds != 1 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want 1 build and no pull for a non-release ref", calls.builds, calls.pulled)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != install.AppImageTag {
+		t.Errorf("compose app image = (%q, %v), want %q", got, err, install.AppImageTag)
+	}
+}
+
+// A compose file naming no app image cannot be told apart, so the update builds
+// (which leaves the file alone) instead of guessing a registry tag.
+func TestUpdateStackDockerBuildsWhenNoAppImageIsNamed(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+	if calls.builds != 1 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want 1 build and no pull", calls.builds, calls.pulled)
+	}
+}
+
+// An unparseable compose file fails before any work: every step after the
+// refresh reads the same file and cannot parse it either, so proceeding would
+// cost the operator a full image build and then die anyway.
+func TestUpdateStackDockerFailsFastOnAnUnparseableComposeFile(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services:\n  app: [\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	calls := stubDockerStack(t)
+
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	if err == nil {
+		t.Fatal("updateStackDocker = nil error, want a parse failure")
+	}
+	if !strings.Contains(err.Error(), "compose file") {
+		t.Errorf("error does not name the compose file: %v", err)
+	}
+	if calls.builds != 0 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want no work before the parse failure", calls.builds, calls.pulled)
+	}
+}
+
+// The pull keeps the registry and repository the stack already runs: a mirrored
+// install must not be marched onto the published default, which would violate
+// the operator's registry policy and fail outright on a host that cannot reach
+// ghcr.io.
+func TestUpdateStackDockerPullKeepsAMirrorsRegistry(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "registry.corp/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	if err := a.updateStackDocker(context.Background(), "v0.44.0", false, true); err != nil {
+		t.Fatalf("updateStackDocker: %v", err)
+	}
+
+	want := "registry.corp/jentic-one-app:0.44.0"
+	if len(calls.pulled) != 1 || calls.pulled[0] != want {
+		t.Errorf("pulled = %v, want exactly [%s]", calls.pulled, want)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != want {
+		t.Errorf("compose app image = (%q, %v), want %q", got, err, want)
+	}
+}
+
+// An unpinned non-release ref is a FALLBACK — the tracked ref used when the
+// release lookup fails (rate limit, offline). Converting a published-image
+// stack to a from-source one is permanent and has no undo flag, so a transient
+// network error must not trigger it.
+func TestUpdateStackDockerRefusesToConvertAPulledStackOnAnUnpinnedNonReleaseRef(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	calls := stubDockerStack(t)
+
+	err := a.updateStackDocker(context.Background(), "main", false, true)
+	if err == nil {
+		t.Fatal("updateStackDocker = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "--ref") {
+		t.Errorf("error does not say how to proceed: %v", err)
+	}
+	if calls.builds != 0 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want no work at all", calls.builds, calls.pulled)
+	}
+	if got, _ := install.ComposeAppImage(a.Paths.ComposePath()); got != "ghcr.io/jentic/jentic-one-app:0.43.0" {
+		t.Errorf("compose app image = %q, want the install left untouched", got)
+	}
+}
+
+// A digest-pinned stack names an exact image and there is no way to learn the
+// new digest, so the update refuses rather than downgrading it to a tag.
+func TestUpdateStackDockerRefusesToMoveADigestPinnedStack(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app@sha256:"+strings.Repeat("ab", 32))
+	calls := stubDockerStack(t)
+
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	if err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("err = %v, want a refusal naming the digest pin", err)
+	}
+	if calls.builds != 0 || len(calls.pulled) != 0 {
+		t.Errorf("builds=%d pulled=%v, want no work at all", calls.builds, calls.pulled)
+	}
+}
+
+// A pulled stack updated to a ref with NO published image is refreshed by
+// building, and that build reads the operator's checkout like any other — so
+// the #949 guard must still apply. Reporting "this will pull" for any published
+// stack regardless of the ref skipped it, and the build then silently used the
+// checkout's HEAD instead of the pinned ref.
+func TestDockerStackPullsOnUpdateIsFalseForARefWithNoPublishedImage(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+
+	pulls, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0")
+	if err != nil || !pulls {
+		t.Errorf("release ref: pulls=%v err=%v, want true", pulls, err)
+	}
+	pulls, err = a.dockerStackPullsOnUpdate(config.ModeDocker, "main")
+	if err != nil {
+		t.Fatalf("non-release ref: %v", err)
+	}
+	if pulls {
+		t.Error("non-release ref reports a pull, so the pinned-ref guard would be skipped")
+	}
+}
+
+// An unreadable compose file must surface as the parse failure, not collapse
+// into "false" and be diagnosed as a checkout conflict that is not the problem.
+func TestDockerStackPullsOnUpdateReportsAnUnreadableComposeFile(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte("services:\n  app: [\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	if _, err := a.dockerStackPullsOnUpdate(config.ModeDocker, "v0.44.0"); err == nil {
+		t.Error("dockerStackPullsOnUpdate = nil error, want the parse failure to propagate")
+	}
+}
+
+// The refusals the stack half cannot escape are raised BEFORE the CLI half
+// swaps binaries. Raising them afterwards leaves the CLI ahead of the stack
+// with every retry hitting the same wall and no flag to work around it.
+func TestCheckDockerRefreshPossibleRefusesBeforeTheCLIHalf(t *testing.T) {
+	for _, tc := range []struct {
+		name, image, ref string
+		pinned           bool
+		wantErr          string
+	}{
+		{"digest pin", "ghcr.io/jentic/jentic-one-app@sha256:" + strings.Repeat("ab", 32), "v0.44.0", false, "digest"},
+		{"unpinned non-release", "ghcr.io/jentic/jentic-one-app:0.43.0", "main", false, "--ref"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned)
+			if err == nil {
+				t.Fatalf("checkDockerRefreshPossible = nil error, want a refusal")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A docker-mode manifest whose compose file is gone passed every gate and then
+// hard-errored in the stack half, after the binaries were swapped. Refuse it
+// up front instead.
+func TestCheckDockerRefreshPossibleRefusesAMissingComposeFile(t *testing.T) {
+	a := testApp(t)
+	// testApp creates the install dir but no compose file.
+	err := a.checkDockerRefreshPossible(config.ModeDocker, "v0.44.0", false)
+	if err == nil {
+		t.Fatal("checkDockerRefreshPossible = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "jenticctl install") {
+		t.Errorf("error does not name the remedy: %v", err)
+	}
+}
+
+// fakeRepoRoot builds the minimum tree install.RepoRoot() recognises as a
+// checkout, so a test can make PlanLocalBuild read a local checkout rather than
+// a managed clone (and therefore make PinnedRefIgnored() true).
+//
+// Built rather than located: this package's TestMain deliberately chdirs into a
+// sandbox home, so there is no real checkout above the working directory.
+func fakeRepoRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src", "jentic_one"), 0o755); err != nil {
+		t.Fatalf("mkdir fake checkout: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pyproject.toml"),
+		[]byte("[project]\nname = \"jentic-one\"\n"), 0o600); err != nil {
+		t.Fatalf("write fake pyproject: %v", err)
+	}
+	return root
+}
+
+// A docker stack that cannot be refreshed at all is named as such, not
+// diagnosed as a `--ref`-versus-checkout conflict it does not have.
+//
+// `dockerStackPullsOnUpdate` answers false for a missing compose file, so with
+// `--ref` set and a checkout present the pinned-ref guard would fire first and
+// blame the checkout — while the real problem, 20 lines further on, is that
+// there is no stack to refresh.
+func TestUpdateENamesAMissingComposeStackNotTheCheckout(t *testing.T) {
+	a := testApp(t)
+	m := &config.Manifest{
+		Mode: config.ModeDocker, DB: "sqlite", Ref: "v0.43.0", StackRef: "v0.43.0", CLIVersion: "v0.43.0",
+	}
+	if err := m.Save(a.Paths); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	// No compose file written: docker mode, nothing to refresh.
+	//
+	// $JENTIC_SRC must name a real checkout, or PlanLocalBuild falls back to a
+	// managed clone, PinnedRefIgnored() is false, and the checkout guard never
+	// fires — which would make this test pass whichever order the two run in.
+	t.Setenv(install.SrcEnv, fakeRepoRoot(t))
+	stubDaemonUp(t)
+	f := stubUpdateFlow(t, "v0.44.0")
+
+	err := a.updateE(context.Background(), &updateOptions{yes: true, ref: "v0.44.0", stackOnly: true})
+	if err == nil {
+		t.Fatal("updateE = nil error, want a refusal")
+	}
+	if strings.Contains(err.Error(), "local checkout") {
+		t.Errorf("blamed the checkout instead of the missing stack: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no compose stack") {
+		t.Errorf("error does not name the missing compose stack: %v", err)
+	}
+	if len(f.cliSwaps) != 0 {
+		t.Errorf("cliSwaps = %v, want none before the refusal", f.cliSwaps)
+	}
+}
+
+// A compose shape the repoint cannot rewrite is refused before anything is
+// pulled or built: the cause is static, so discovering it afterwards leaves an
+// image fetched and no retry that behaves differently.
+func TestCheckDockerRefreshPossibleRefusesAnUnwritableComposeShape(t *testing.T) {
+	a := testApp(t)
+	body := "services:\n" +
+		"  app:\n    image: &appimg ghcr.io/jentic/jentic-one-app:0.43.0\n" +
+		"  broker:\n    image: *appimg\n"
+	if err := os.WriteFile(a.Paths.ComposePath(), []byte(body), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	if err := a.checkDockerRefreshPossible(config.ModeDocker, "v0.44.0", false); err == nil {
+		t.Error("checkDockerRefreshPossible = nil error, want the unwritable shape refused")
+	}
+}
+
+// The routes that CAN proceed are not refused up front.
+func TestCheckDockerRefreshPossibleAllowsTheWorkableRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, image, ref string
+		pinned           bool
+	}{
+		{"release pull", "ghcr.io/jentic/jentic-one-app:0.43.0", "v0.44.0", false},
+		{"latest fallback moves", "ghcr.io/jentic/jentic-one-app:latest", "v0.44.0", false},
+		{"pinned conversion", "ghcr.io/jentic/jentic-one-app:0.43.0", "main", true},
+		{"operator tag pin moves with a warning", "ghcr.io/jentic/jentic-one-app:canary", "v0.44.0", false},
+		{"from-source stack", install.AppImageTag, "main", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			if err := a.checkDockerRefreshPossible(config.ModeDocker, tc.ref, tc.pinned); err != nil {
+				t.Errorf("checkDockerRefreshPossible = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// Converting a pulled stack to a from-source one rewrites the compose file for
+// good, so a later failure must say that — not just that an image was rebuilt.
+func TestUpdateStackDockerConversionHintNamesTheComposeRepoint(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	stubDockerStack(t)
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
+
+	err := a.updateStackDocker(context.Background(), "main", true, true)
+	var staged *stackStageError
+	if !errors.As(err, &staged) {
+		t.Fatalf("err = %v, want a stackStageError", err)
+	}
+	if staged.hint != hintDockerConverted {
+		t.Errorf("hint = %q, want the conversion hint", staged.hint)
+	}
+}
+
+// A failure after the image step must name what is actually on disk: the pull
+// route rebuilt nothing, so telling the operator the image was rebuilt sends
+// them looking for the wrong state.
+func TestUpdateStackDockerPullRouteHintNamesTheComposeChangeNotARebuild(t *testing.T) {
+	a := testApp(t)
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	stubDockerStack(t)
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { return errors.New("exit status 1") }
+
+	err := a.updateStackDocker(context.Background(), "v0.44.0", false, true)
+	var staged *stackStageError
+	if !errors.As(err, &staged) {
+		t.Fatalf("err = %v, want a stackStageError", err)
+	}
+	if staged.hint != hintDockerImagePulled {
+		t.Errorf("hint = %q, want the pulled-image hint", staged.hint)
+	}
+	if strings.Contains(staged.hint, "rebuilt") {
+		t.Errorf("hint claims a rebuild that never happened: %q", staged.hint)
+	}
+}
+
 // A compose failure that is not a port conflict keeps its original error.
 func TestWithPortConflictPassesOtherFailuresThrough(t *testing.T) {
 	cause := errors.New("migrations failed: exit status 1")
@@ -965,5 +1390,485 @@ func TestTailBufferKeepsTail(t *testing.T) {
 	_, _ = tb.Write([]byte("Bind for 0.0.0.0:5432 failed: port is already allocated"))
 	if got := tb.String(); len(got) != tailBufferMax || !strings.HasSuffix(got, "port is already allocated") {
 		t.Errorf("tail buffer len=%d, suffix kept=%v", len(got), strings.HasSuffix(got, "port is already allocated"))
+	}
+}
+
+// Pins #2017: when install.json already records the latest release in both
+// cli_version and stack_ref (the state #2011 left behind) while the deployed
+// compose file still runs an older X.Y.Z release tag, `jenticctl update` must
+// detect the mismatch, pull the target release image, run migrations, and
+// repoint the compose file instead of reporting "up to date".
+func TestUpdateRepairsStaleDockerStackImageWhenManifestClaimsCurrent(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, config.ModeDocker, "v0.44.0", "v0.44.0")
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.43.0")
+	stubDaemonUp(t)
+	f := stubUpdateFlow(t, "v0.44.0")
+	useRealStackRebuild(t)
+	calls := stubDockerStack(t)
+	migrations := 0
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { migrations++; return nil }
+
+	// `--check` reports the lagging compose tag rather than claiming up to date.
+	if err := a.updateE(context.Background(), &updateOptions{check: true}); err != nil {
+		t.Fatalf("updateE --check: %v", err)
+	}
+	checkOut := a.Out.(*bytes.Buffer).String()
+	if strings.Contains(checkOut, "Up to date (") {
+		t.Errorf("--check claimed up to date while compose ran 0.43.0:\n%s", checkOut)
+	}
+	if !strings.Contains(checkOut, "Stack update available: 0.43.0 → v0.44.0") {
+		t.Errorf("--check verdict did not name the stale 0.43.0 compose image:\n%s", checkOut)
+	}
+
+	// Full run repairs the stack without re-swapping the current CLI.
+	a.Out.(*bytes.Buffer).Reset()
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("updateE: %v", err)
+	}
+
+	out := a.Out.(*bytes.Buffer).String()
+	if strings.Contains(out, "Up to date (") || strings.Contains(out, "Already up to date") {
+		t.Errorf("claimed up to date while compose still ran 0.43.0:\n%s", out)
+	}
+	if len(f.cliSwaps) != 0 {
+		t.Errorf("cliSwaps = %v, want none when CLI is already at v0.44.0", f.cliSwaps)
+	}
+	want := "ghcr.io/jentic/jentic-one-app:0.44.0"
+	if len(calls.pulled) != 1 || calls.pulled[0] != want {
+		t.Errorf("pulled = %v, want [%s]", calls.pulled, want)
+	}
+	if migrations != 1 {
+		t.Errorf("migrations = %d, want 1", migrations)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != want {
+		t.Errorf("compose app image = (%q, %v), want %q", got, err, want)
+	}
+
+	// Once repaired, a subsequent run is a clean no-op.
+	a.Out.(*bytes.Buffer).Reset()
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("post-repair updateE: %v", err)
+	}
+	afterOut := a.Out.(*bytes.Buffer).String()
+	if !strings.Contains(afterOut, "Up to date (v0.44.0).") || !strings.Contains(afterOut, "Already up to date (v0.44.0); nothing to rebuild.") {
+		t.Errorf("post-repair run did not report up to date:\n%s", afterOut)
+	}
+	if len(calls.pulled) != 1 || migrations != 1 {
+		t.Errorf("post-repair run pulled or migrated again: pulled=%v migrations=%d", calls.pulled, migrations)
+	}
+}
+
+// Pins #2017: inspectDockerStackImage compares only clean X.Y.Z release tags;
+// mutable tags ("latest", "canary"), prerelease tags ("1.2.3-rc.1"), and digest
+// pins ("repo@sha256:..." and "repo:tag@sha256:...") report uncomparable rather
+// than stale.
+func TestInspectDockerStackImage(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	for _, tc := range []struct {
+		name             string
+		mode             string
+		image            string
+		recorded         string
+		wantLags         bool
+		wantAhead        bool
+		wantUncomparable bool
+		wantReleaseTag   string
+	}{
+		{"stale clean semver", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:0.43.0", "v0.44.0", true, false, false, "0.43.0"},
+		{"matching clean semver", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:0.44.0", "v0.44.0", false, false, false, "0.44.0"},
+		{"newer clean semver", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:0.45.0", "v0.44.0", false, true, false, "0.45.0"},
+		{"latest tag is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:latest", "v0.44.0", false, false, true, ""},
+		{"canary tag is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:canary", "v0.44.0", false, false, true, ""},
+		{"prerelease tag is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:1.2.3-rc.1", "v1.2.3", false, false, true, ""},
+		{"prerelease newer base is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:0.45.0-rc1", "v0.44.0", false, false, true, ""},
+		{"digest pin is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app@" + digest, "v0.44.0", false, false, true, ""},
+		{"tag plus digest pin is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app:0.43.0@" + digest, "v0.44.0", false, false, true, ""},
+		{"untagged image is uncomparable", config.ModeDocker, "ghcr.io/jentic/jentic-one-app", "v0.44.0", false, false, true, ""},
+		{"from-source local tag is ignored", config.ModeDocker, install.AppImageTag, "v0.44.0", false, false, false, ""},
+		{"local mode ignores compose file", config.ModeLocal, "ghcr.io/jentic/jentic-one-app:0.43.0", "v0.44.0", false, false, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			writeStackCompose(t, a, tc.image)
+			got := a.inspectDockerStackImage(tc.mode, tc.recorded)
+			if got.lagsRecord != tc.wantLags || got.aheadRecord != tc.wantAhead ||
+				got.uncomparable != tc.wantUncomparable || got.releaseTag != tc.wantReleaseTag {
+				t.Errorf("inspectDockerStackImage(%q, %q) = %+v, want lags=%v ahead=%v uncomparable=%v releaseTag=%q",
+					tc.image, tc.recorded, got, tc.wantLags, tc.wantAhead, tc.wantUncomparable, tc.wantReleaseTag)
+			}
+		})
+	}
+}
+
+// Pins #2017: non-release and prerelease compose tags ("latest", "canary",
+// "1.2.3-rc.1") must not trigger pulls or forward-only migrations when no
+// release update is needed, must not be rewritten to a fixed X.Y.Z tag, and
+// must surface honest uncomparable status rather than claiming "up to date".
+func TestUpdateSkipsUncomparableDockerStackTagsWithoutMisleadingUpToDate(t *testing.T) {
+	for _, tag := range []string{"latest", "canary", "1.2.3-rc.1"} {
+		t.Run(tag, func(t *testing.T) {
+			a := testApp(t)
+			image := "ghcr.io/jentic/jentic-one-app:" + tag
+			saveManifest(t, a, config.ModeDocker, "v0.44.0", "v0.44.0")
+			writeStackCompose(t, a, image)
+			stubDaemonUp(t)
+			f := stubUpdateFlow(t, "v0.44.0")
+			useRealStackRebuild(t)
+			calls := stubDockerStack(t)
+			migrations := 0
+			origMigrate := runComposeMigrations
+			t.Cleanup(func() { runComposeMigrations = origMigrate })
+			runComposeMigrations = func(io.Writer, string) error { migrations++; return nil }
+
+			for _, check := range []bool{true, false} {
+				a.Out.(*bytes.Buffer).Reset()
+				if err := a.updateE(context.Background(), &updateOptions{check: check, yes: true}); err != nil {
+					t.Fatalf("updateE(check=%v): %v", check, err)
+				}
+				out := a.Out.(*bytes.Buffer).String()
+				if strings.Contains(out, "Up to date (") || strings.Contains(out, "Already up to date") {
+					t.Errorf("check=%v claimed up to date for non-release tag %q:\n%s", check, tag, out)
+				}
+				if !strings.Contains(out, "cannot be compared") || !strings.Contains(out, tag) {
+					t.Errorf("check=%v output did not explain that %q cannot be compared:\n%s", check, tag, out)
+				}
+			}
+
+			if len(f.cliSwaps) != 0 || len(calls.pulled) != 0 || calls.builds != 0 || migrations != 0 {
+				t.Errorf("unexpected work for %q: cliSwaps=%v pulled=%v builds=%d migrations=%d",
+					tag, f.cliSwaps, calls.pulled, calls.builds, migrations)
+			}
+			if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != image {
+				t.Errorf("compose app image rewritten to (%q, %v), want %q preserved", got, err, image)
+			}
+		})
+	}
+}
+
+// Pins #2017: a compose stack running a newer clean X.Y.Z tag than the recorded
+// manifest / latest release must not be treated as stale or downgraded.
+func TestUpdateDoesNotDowngradeNewerCleanSemverDockerStackImage(t *testing.T) {
+	a := testApp(t)
+	image := "ghcr.io/jentic/jentic-one-app:0.45.0"
+	saveManifest(t, a, config.ModeDocker, "v0.44.0", "v0.44.0")
+	writeStackCompose(t, a, image)
+	stubDaemonUp(t)
+	f := stubUpdateFlow(t, "v0.44.0")
+	useRealStackRebuild(t)
+	calls := stubDockerStack(t)
+	migrations := 0
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { migrations++; return nil }
+
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("updateE: %v", err)
+	}
+	out := a.Out.(*bytes.Buffer).String()
+	if !strings.Contains(out, "0.45.0") {
+		t.Errorf("output did not surface the 0.45.0 compose image:\n%s", out)
+	}
+	if len(f.cliSwaps) != 0 || len(calls.pulled) != 0 || calls.builds != 0 || migrations != 0 {
+		t.Errorf("unexpected work on newer compose tag: cliSwaps=%v pulled=%v builds=%d migrations=%d",
+			f.cliSwaps, calls.pulled, calls.builds, migrations)
+	}
+	if got, err := install.ComposeAppImage(a.Paths.ComposePath()); err != nil || got != image {
+		t.Errorf("compose app image = (%q, %v), want %q preserved", got, err, image)
+	}
+}
+
+// Pins #943 + #2017 together: if an earlier Docker update repointed the compose
+// file to 0.44.0 and failed in migrations before recording stack_ref (so
+// stack_ref is still v0.43.0), `--check` and `update` must still report the
+// stack as behind rather than letting the repointed compose tag mask the
+// unfinished migration.
+func TestUpdateUnrecordedComposeRepointStillRunsMigrations(t *testing.T) {
+	a := testApp(t)
+	saveManifest(t, a, config.ModeDocker, "v0.44.0", "v0.43.0")
+	writeStackCompose(t, a, "ghcr.io/jentic/jentic-one-app:0.44.0")
+	stubDaemonUp(t)
+	stubUpdateFlow(t, "v0.44.0")
+	useRealStackRebuild(t)
+	stubDockerStack(t)
+	migrations := 0
+	origMigrate := runComposeMigrations
+	t.Cleanup(func() { runComposeMigrations = origMigrate })
+	runComposeMigrations = func(io.Writer, string) error { migrations++; return nil }
+
+	if err := a.updateE(context.Background(), &updateOptions{check: true}); err != nil {
+		t.Fatalf("updateE --check: %v", err)
+	}
+	if checkOut := a.Out.(*bytes.Buffer).String(); !strings.Contains(checkOut, "Stack update available: v0.43.0 → v0.44.0") {
+		t.Errorf("--check masked an unfinished stack migration:\n%s", checkOut)
+	}
+
+	a.Out.(*bytes.Buffer).Reset()
+	if err := a.updateE(context.Background(), &updateOptions{yes: true}); err != nil {
+		t.Fatalf("updateE: %v", err)
+	}
+	if migrations != 1 || recordedStackRef(t, a) != "v0.44.0" {
+		t.Errorf("migrations=%d stack_ref=%q, want 1 and v0.44.0", migrations, recordedStackRef(t, a))
+	}
+}
+
+// Pins #2017: digest-pinned compose images ("repo@sha256:..." and
+// "repo:tag@sha256:...") are never misclassified as stale release tags,
+// `--check` reports honest digest-pinned status instead of "Up to date", and
+// an update run keeps refusing to overwrite the digest pin before any CLI swap.
+func TestUpdatePreservesDigestPinnedDockerStackBehavior(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	for _, tc := range []struct {
+		name, image string
+	}{
+		{"digest only", "ghcr.io/jentic/jentic-one-app@" + digest},
+		{"tag plus digest", "ghcr.io/jentic/jentic-one-app:0.43.0@" + digest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			saveManifest(t, a, config.ModeDocker, "v0.44.0", "v0.44.0")
+			writeStackCompose(t, a, tc.image)
+			before := backdateManifest(t, a)
+			stubDaemonUp(t)
+			f := stubUpdateFlow(t, "v0.44.0")
+			useRealStackRebuild(t)
+			calls := stubDockerStack(t)
+
+			if err := a.updateE(context.Background(), &updateOptions{check: true}); err != nil {
+				t.Fatalf("updateE --check: %v", err)
+			}
+			checkOut := a.Out.(*bytes.Buffer).String()
+			if strings.Contains(checkOut, "Up to date (") {
+				t.Errorf("--check claimed up to date for digest-pinned stack:\n%s", checkOut)
+			}
+			if !strings.Contains(checkOut, "pinned to a digest") {
+				t.Errorf("--check output did not report digest-pinned state:\n%s", checkOut)
+			}
+
+			a.Out.(*bytes.Buffer).Reset()
+			err := a.updateE(context.Background(), &updateOptions{yes: true})
+			if err == nil || !strings.Contains(err.Error(), "digest") {
+				t.Fatalf("updateE err = %v, want digest-pin refusal", err)
+			}
+			if len(f.cliSwaps) != 0 || len(calls.pulled) != 0 || calls.builds != 0 {
+				t.Errorf("work ran on digest-pinned stack: cliSwaps=%v pulled=%v builds=%d",
+					f.cliSwaps, calls.pulled, calls.builds)
+			}
+			if got, cerr := install.ComposeAppImage(a.Paths.ComposePath()); cerr != nil || got != tc.image {
+				t.Errorf("compose app image = (%q, %v), want %q preserved", got, cerr, tc.image)
+			}
+			if !bytes.Equal(manifestBytes(t, a), before) {
+				t.Errorf("manifest changed on refused digest-pinned update:\n%s", manifestBytes(t, a))
+			}
+		})
+	}
+}
+
+func TestAcquireCLIBinaries_ReleaseTagDownloadFailureDoesNotRunInstaller(t *testing.T) {
+	a := testApp(t)
+	origDownload, origFetch := downloadRelease, fetchInstaller
+	t.Cleanup(func() {
+		downloadRelease = origDownload
+		fetchInstaller = origFetch
+	})
+
+	downloadRelease = func(context.Context, update.DownloadRequest) (*update.DownloadResult, error) {
+		return nil, errors.New("asset 404 not found")
+	}
+	installerCalled := false
+	fetchInstaller = func(context.Context, string, string, string) ([]byte, error) {
+		installerCalled = true
+		return nil, errors.New("installer must not be called")
+	}
+
+	_, cleanup, _, err := a.acquireCLIBinaries(context.Background(), "jentic/jentic-one", "v0.31.0")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err == nil {
+		t.Fatal("expected acquireCLIBinaries to fail when release download fails")
+	}
+	if installerCalled {
+		t.Fatal("fetchInstaller seam must not be called when release-tag download fails")
+	}
+	if out := a.Out.(*bytes.Buffer).String(); strings.Contains(out, "building from source") {
+		t.Fatalf("release-tag download failure must not fall back to building from source; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "pass --from-source to build v0.31.0 from git") {
+		t.Fatalf("error should instruct operator to pass --from-source, got: %v", err)
+	}
+}
+
+func TestAcquireCLIBinaries_FromSourceFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script test targets unix")
+	}
+	a := testApp(t)
+	cmd := newUpdateCmd(a)
+	if f := cmd.Flags().Lookup("from-source"); f == nil {
+		t.Fatal("expected --from-source flag on update command")
+	}
+	if f := cmd.Flags().Lookup("allow-unsigned"); f == nil {
+		t.Fatal("expected --allow-unsigned flag on update command")
+	}
+
+	origDownload, origFetch := downloadRelease, fetchInstaller
+	t.Cleanup(func() {
+		downloadRelease = origDownload
+		fetchInstaller = origFetch
+	})
+
+	downloadCalled := false
+	downloadRelease = func(context.Context, update.DownloadRequest) (*update.DownloadResult, error) {
+		downloadCalled = true
+		return nil, errors.New("downloadRelease must not be called when --from-source is set")
+	}
+
+	envLog := filepath.Join(t.TempDir(), "installer.env")
+	fetchInstaller = func(context.Context, string, string, string) ([]byte, error) {
+		script := fmt.Sprintf(
+			"#!/usr/bin/env bash\nset -e\nenv > %q\nmkdir -p \"$JENTIC_INSTALL_DIR\"\nprintf '#!/bin/sh\\necho v0.31.0\\n' > \"$JENTIC_INSTALL_DIR/jenticctl\"\nprintf '#!/bin/sh\\necho v0.31.0\\n' > \"$JENTIC_INSTALL_DIR/jentic\"\nchmod 0755 \"$JENTIC_INSTALL_DIR/jenticctl\" \"$JENTIC_INSTALL_DIR/jentic\"\n",
+			envLog,
+		)
+		return []byte(script), nil
+	}
+
+	t.Setenv("GITHUB_TOKEN", "ghp_kept_for_installer")
+	t.Setenv("JENTIC_BEARER_TOKEN", "bearer_must_be_scrubbed")
+	t.Setenv("JENTIC_MCP_BEARER", "mcp_must_be_scrubbed")
+	t.Setenv("JENTIC_SESSION_ID", "session_must_be_scrubbed")
+	t.Setenv("OTHER_SECRET", "other_secret_must_be_scrubbed")
+
+	ctx := withUpdateOptions(context.Background(), updateOptions{fromSource: true})
+	staged, cleanup, fromDownload, err := a.acquireCLIBinaries(ctx, "jentic/jentic-one", "v0.31.0")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		t.Fatalf("acquireCLIBinaries(--from-source): %v", err)
+	}
+	if downloadCalled {
+		t.Error("downloadRelease was called despite --from-source")
+	}
+	if fromDownload {
+		t.Error("fromDownload = true, want false when --from-source is set")
+	}
+	if staged[ctlBinaryName] == "" || staged[apiBinaryName] == "" {
+		t.Errorf("staged binaries missing: %v", staged)
+	}
+
+	gotEnvBytes, err := os.ReadFile(envLog)
+	if err != nil {
+		t.Fatalf("read installer env: %v", err)
+	}
+	gotEnv := string(gotEnvBytes)
+	if !strings.Contains(gotEnv, "GITHUB_TOKEN=ghp_kept_for_installer") {
+		t.Error("stageCLIBuild should keep GITHUB_TOKEN for installer")
+	}
+	for _, scrubbed := range []string{
+		"JENTIC_BEARER_TOKEN=",
+		"JENTIC_MCP_BEARER=",
+		"JENTIC_SESSION_ID=",
+		"OTHER_SECRET=",
+		"bearer_must_be_scrubbed",
+		"mcp_must_be_scrubbed",
+	} {
+		if strings.Contains(gotEnv, scrubbed) {
+			t.Errorf("stageCLIBuild leaked %q to installer env", scrubbed)
+		}
+	}
+}
+
+func TestDownloadCLIBinaries_ManifestRequireSignatureAndAllowUnsigned(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.Paths.ManifestPath(), []byte(`{"require_signature": true}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	origDownload := downloadRelease
+	t.Cleanup(func() { downloadRelease = origDownload })
+
+	var captured []update.DownloadRequest
+	downloadRelease = func(_ context.Context, req update.DownloadRequest) (*update.DownloadResult, error) {
+		captured = append(captured, req)
+		p := filepath.Join(req.StageDir, req.Binary)
+		if err := os.WriteFile(p, []byte("bin"), 0o755); err != nil {
+			return nil, err
+		}
+		return &update.DownloadResult{BinaryPath: p}, nil
+	}
+
+	ctx := withUpdateOptions(context.Background(), updateOptions{allowUnsigned: true})
+	_, cleanup, err := a.downloadCLIBinaries(ctx, "jentic/jentic-one", "v0.31.0")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		t.Fatalf("downloadCLIBinaries: %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("captured %d DownloadRequests, want 2", len(captured))
+	}
+	for _, req := range captured {
+		if !req.AllowUnsigned {
+			t.Errorf("DownloadRequest(%s).AllowUnsigned = false, want true", req.Binary)
+		}
+		if !req.RequireSignature {
+			t.Errorf("DownloadRequest(%s).RequireSignature = false, want true from manifest", req.Binary)
+		}
+	}
+}
+
+// stubSystemPackage makes the install look owned by a .deb / .rpm / .apk.
+func stubSystemPackage(t *testing.T) {
+	t.Helper()
+	orig := isSystemPackageManaged
+	t.Cleanup(func() { isSystemPackageManaged = orig })
+	isSystemPackageManaged = func(string) bool { return true }
+}
+
+// TestUpdateSystemPackageNeverSwapsCLI pins that a package-installed CLI is
+// never swapped in place: the CLI half is refused before anything runs, while
+// --stack-only and a stack-only lag still refresh the stack.
+func TestUpdateSystemPackageNeverSwapsCLI(t *testing.T) {
+	tests := []struct {
+		name           string
+		cliVersion     string
+		opts           updateOptions
+		wantErr        bool
+		wantStackBuild int
+	}{
+		{"CLI behind: refused", "v0.26.0", updateOptions{yes: true}, true, 0},
+		{"CLI behind, --cli-only: refused", "v0.26.0", updateOptions{yes: true, cliOnly: true}, true, 0},
+		{"CLI behind, --stack-only: stack refreshed", "v0.26.0", updateOptions{yes: true, stackOnly: true}, false, 1},
+		{"CLI current, stack behind: stack refreshed", "v0.28.0", updateOptions{yes: true}, false, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := testApp(t)
+			saveManifest(t, a, config.ModeLocal, tt.cliVersion, "v0.26.0")
+			f := stubUpdateFlow(t, "v0.28.0")
+			stubSystemPackage(t)
+
+			opts := tt.opts
+			err := a.updateE(context.Background(), &opts)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "installed by a system package") {
+				t.Errorf("refusal does not name the system package: %v", err)
+			}
+			if len(f.cliSwaps) != 0 {
+				t.Errorf("in-place CLI swaps = %v, want none", f.cliSwaps)
+			}
+			if len(f.stackBuilds) != tt.wantStackBuild {
+				t.Errorf("stack builds = %v, want %d", f.stackBuilds, tt.wantStackBuild)
+			}
+			if out := a.Out.(*bytes.Buffer).String(); !strings.Contains(out, "system package") {
+				t.Errorf("status does not report the package manager:\n%s", out)
+			}
+		})
 	}
 }

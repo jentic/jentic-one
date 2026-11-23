@@ -141,8 +141,17 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
         "_links",
     }
     assert envelope["status"] == "held"
-    assert envelope["agent_directive"] == HELD_AGENT_DIRECTIVE
     held_id = envelope["held_execution_id"]
+    # The directive is the structured AgentDirective, not bare prose: an agent
+    # switches on `strategy` and acts on `parameters` without parsing English.
+    assert envelope["agent_directive"] == {
+        "strategy": "prompt_human",
+        "parameters": {
+            "held_execution_id": held_id,
+            "review_url": envelope["review_url"],
+        },
+        "human_readable_instruction": HELD_AGENT_DIRECTIVE,
+    }
     assert set(envelope["_links"]) == {"self", "result", "withdraw"}
     assert envelope["_links"]["self"].endswith(f"/executions/holds/{held_id}")
     assert envelope["_links"]["result"].endswith(f"/executions/holds/{held_id}/result")

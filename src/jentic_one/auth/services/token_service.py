@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -17,12 +18,20 @@ from jentic_one.admin.repos import (
     OAuthClientGrantRepository,
     OAuthClientRepository,
     RefreshTokenRepository,
+    TokenLineageRepository,
+    UserPermissionGrantRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import cap_agent_permissions
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import (
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+    compute_effective,
+    effective_user_oauth_scopes,
+)
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
@@ -43,7 +52,28 @@ def _generate_token(prefix: str) -> str:
     return f"{prefix}{secrets.token_urlsafe(32)}"
 
 
-async def _resolve_client_gate(
+def _coerce_utc(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _resolve_family_issued_at(rt: object, default: datetime) -> datetime:
+    family_issued_at = getattr(rt, "family_issued_at", None)
+    if isinstance(family_issued_at, datetime):
+        return _coerce_utc(family_issued_at)
+    created_at = getattr(rt, "created_at", None)
+    if isinstance(created_at, datetime):
+        return _coerce_utc(created_at)
+    return default
+
+
+class _ResolvedAccessTokenIdentity(Identity):
+    """Identity resolved from an ``access_tokens`` row, carrying mint-mode metadata."""
+
+    is_ephemeral: bool = False
+    raw_scopes: tuple[str, ...] | None = None
+
+
+async def resolve_client_gate(
     session: AsyncSession, oauth_client_id: str | None
 ) -> tuple[bool, frozenset[str] | None]:
     """Look up an issuing OAuth client and return (active, scope_ceiling).
@@ -55,7 +85,7 @@ async def _resolve_client_gate(
     outstanding tokens from resolving. ``scope_ceiling`` is the client's
     ``allowed_scopes`` if set (used to filter the token's scopes at
     introspection time), else None. Kept as a module-level helper so the
-    introspect + resolve paths share one shape.
+    exchange, introspect, and resolve paths share one shape.
     """
     if oauth_client_id is None:
         return True, None
@@ -70,10 +100,40 @@ async def _resolve_client_gate(
     return True, ceiling
 
 
+_resolve_client_gate = resolve_client_gate
+
+
 def _apply_scope_ceiling(scopes: list[str], ceiling: frozenset[str] | None) -> list[str]:
     if ceiling is None:
         return scopes
     return [s for s in scopes if s in ceiling]
+
+
+_OWNER_UNSET: object = object()
+
+
+async def _resolve_agent_owner_effective(
+    session: AsyncSession, actor_id: str, owner_id: str | object | None = _OWNER_UNSET
+) -> set[str] | None:
+    if not isinstance(session, AsyncSession) and getattr(
+        UserPermissionGrantRepository.get_grants_for_user, "__module__", ""
+    ).startswith("jentic_one."):
+        return None
+    resolved_owner_id: str | None
+    if owner_id is _OWNER_UNSET:
+        found = await AgentRepository.get_with_owner_active(session, actor_id)
+        if found is None:
+            return None
+        agent, _ = found
+        resolved_owner_id = agent.owner_id
+    else:
+        resolved_owner_id = owner_id if isinstance(owner_id, str) else None
+    if resolved_owner_id is None:
+        return None
+    owner_grants = await UserPermissionGrantRepository.get_grants_for_user(
+        session, resolved_owner_id
+    )
+    return compute_effective({g.permission for g in owner_grants})
 
 
 async def resolve_effective_scopes(
@@ -85,36 +145,46 @@ async def resolve_effective_scopes(
     is_ephemeral: bool,
     client_ceiling: frozenset[str] | None,
     grant_ceiling: frozenset[str] | None,
+    owner_id: str | object | None = _OWNER_UNSET,
 ) -> list[str]:
     """The scope set the live resolvers actually enforce for a token.
 
     Named for what it returns, not for what it reads: the result is a token's
-    OAuth2 scope set, even though the live arm reads internal permission grants to
+    OAuth2 scope set, even though the live arms read internal permission grants to
     compute it. The same applies to :func:`_apply_scope_ceiling` — a ceiling is an
     OAuth2 concept.
 
     Non-ephemeral AGENT tokens draw scopes *live* from
-    ``actor_permission_grants`` — the mint-time snapshot is dead weight for
-    enforcement on these actor types (permission edits take effect immediately by
-    design). Ephemeral mints and USER tokens keep their snapshot. Either
-    starting set is then intersected with the issuing client's
-    ``allowed_scopes`` ceiling and the consent grant's scope set.
+    ``actor_permission_grants``, capped by the owning user's live
+    ``user_permission_grants`` via :func:`cap_agent_permissions`. Ephemeral AGENT
+    mints keep their downscoped snapshot. USER tokens intersect their snapshot
+    with the user's live ``user_permission_grants`` expanded through
+    :func:`effective_user_oauth_scopes` (#1442), so unheld or revoked permissions
+    are never granted. Every starting set is then intersected with the issuing
+    client's ``allowed_scopes`` ceiling and the consent grant's scope set. USER
+    OIDC/offline passthrough scopes are exempt from the client permission ceiling,
+    matching the authorize endpoint.
 
     This is the single source of truth shared by the enforcement path
-    (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1
-    reporting paths (:meth:`TokenService.refresh`,
-    ``AuthorizeService.exchange_code``), so the ``scope`` member a token
-    response reports can never diverge from what the minted token enforces.
-    The broker's ``InProcessTokenResolver`` re-implements the same math over
-    raw SQL (it deliberately imports nothing from ``auth``); the
-    grant-channel integration suite pins all three against each other.
+    (:meth:`TokenService.resolve_access_token`) and the RFC 6749 §5.1 / RFC 7662
+    reporting paths (:meth:`TokenService.refresh`, :meth:`TokenService.introspect`,
+    ``AuthorizeService.exchange_code``), so reported scopes never diverge from
+    what the token enforces. The broker's ``InProcessTokenResolver`` implements
+    the same math over raw SQL.
     """
     scopes = snapshot_scopes
     if not is_ephemeral and actor_type == ActorType.AGENT:
         grants = await ActorPermissionGrantRepository.list_for_actor(
             session, actor_id, actor_type=actor_type
         )
-        scopes = [g.permission for g in grants]
+        owner_effective = await _resolve_agent_owner_effective(session, actor_id, owner_id=owner_id)
+        scopes = cap_agent_permissions([g.permission for g in grants], owner_effective)
+    elif actor_type == ActorType.USER:
+        user_grants = await UserPermissionGrantRepository.get_grants_for_user(session, actor_id)
+        user_ceiling = effective_user_oauth_scopes({g.permission for g in user_grants})
+        scopes = _apply_scope_ceiling(scopes, user_ceiling)
+    if actor_type == ActorType.USER and client_ceiling is not None:
+        client_ceiling = client_ceiling | USER_OAUTH_PASSTHROUGH_SCOPES
     scopes = _apply_scope_ceiling(scopes, client_ceiling)
     return _apply_scope_ceiling(scopes, grant_ceiling)
 
@@ -177,7 +247,14 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         # Delete is terminal: a deleted row is refused even if it reads active.
-        return user is not None and user.active and user.deleted_at is None
+        # Forced password rotation fences opaque USER OAuth tokens until the
+        # required password change clears must_change_password (#1297).
+        return (
+            user is not None
+            and user.active
+            and user.deleted_at is None
+            and not user.must_change_password
+        )
     return False
 
 
@@ -194,6 +271,13 @@ class TokenService:
     @property
     def _refresh_ttl(self) -> int:
         return self._ctx.config.auth.refresh_ttl_seconds
+
+    @property
+    def _refresh_family_max_age(self) -> int | None:
+        max_age = getattr(self._ctx.config.auth, "refresh_family_max_age_seconds", None)
+        if isinstance(max_age, int) and not isinstance(max_age, bool):
+            return max_age
+        return None
 
     async def issue_access_only(
         self,
@@ -257,8 +341,22 @@ class TokenService:
         refresh_hash = _hash_token(refresh_plain)
         family_id = generate_ksuid("tfam")
         now = datetime.now(UTC)
+        max_age = self._refresh_family_max_age
+        refresh_expires_at = now + timedelta(seconds=self._refresh_ttl)
+        if max_age is not None:
+            refresh_expires_at = min(refresh_expires_at, now + timedelta(seconds=max_age))
 
         async def _write(session: AsyncSession) -> None:
+            if actor_type == ActorType.USER:
+                # Reset holds this lock while it fences the user and sweeps tokens.
+                user = await UserRepository.get_by_id_for_update(session, actor_id)
+                if (
+                    user is None
+                    or not user.active
+                    or user.deleted_at is not None
+                    or user.must_change_password
+                ):
+                    raise InvalidGrantError("actor is not active")
             await AccessTokenRepository.create(
                 session,
                 token_hash=access_hash,
@@ -279,7 +377,8 @@ class TokenService:
                 actor_type=actor_type,
                 scopes=scopes,
                 token_family_id=family_id,
-                expires_at=now + timedelta(seconds=self._refresh_ttl),
+                expires_at=refresh_expires_at,
+                family_issued_at=now,
                 created_by=actor_id,
                 oauth_client_id=oauth_client_id,
                 oauth_grant_id=oauth_grant_id,
@@ -335,16 +434,37 @@ class TokenService:
         token_hash = _hash_token(refresh_token)
         reuse_detected = False
         client_mismatch = False
+        family_expired = False
         client_ceiling: frozenset[str] | None = None
         grant_ceiling: frozenset[str] | None = None
+        access_plain = ""
+        refresh_plain = ""
+        scopes: list[str] = []
 
         async with self._ctx.admin_db.transaction() as session:
+            candidate = await RefreshTokenRepository.get_by_hash(session, token_hash)
+            if candidate is not None and candidate.actor_type == ActorType.USER:
+                # Reset locks the user before its token sweep. Take the same
+                # order here, then refresh the token row under its own lock.
+                await UserRepository.get_by_id_for_update(session, candidate.actor_id)
+            elif (
+                candidate is not None
+                and candidate.actor_type == ActorType.AGENT
+                and candidate.oauth_grant_id is None
+            ):
+                # update_jwks locks the agent row before sweeping key-channel
+                # tokens. Take the same order here so a racing rotation either
+                # commits first (and is swept) or waits.
+                lock_call = AgentRepository.get_by_id_for_update(session, candidate.actor_id)
+                if inspect.isawaitable(lock_call):
+                    await lock_call
             rt = await RefreshTokenRepository.get_by_hash(session, token_hash, for_update=True)
 
             if rt is None or rt.revoked_at is not None:
                 raise InvalidGrantError("refresh token not found or revoked")
 
-            if rt.expires_at <= datetime.now(UTC):
+            now = datetime.now(UTC)
+            if rt.expires_at <= now:
                 raise InvalidGrantError("refresh token expired")
 
             if rt.oauth_client_id is not None:
@@ -365,8 +485,7 @@ class TokenService:
                 if client_id is None:
                     raise InvalidGrantError("client authentication required")
                 if client_id != rt.oauth_client_id:
-                    await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                    await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                    await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                     client_mismatch = True
                     await record_audit(
                         session,
@@ -387,8 +506,7 @@ class TokenService:
                     # telemetry must not be lost just because the consent
                     # grant was revoked in the meantime. The grant
                     # gate below still fails rotation closed either way.
-                    await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                    await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                    await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                     reuse_detected = True
                     await record_audit(
                         session,
@@ -401,88 +519,120 @@ class TokenService:
                         origin=None,
                     )
                 else:
-                    if rt.oauth_grant_id is not None:
-                        # Grant re-check on every rotation: a
-                        # revoked consent grant must fail refresh closed even
-                        # if the family's token rows were somehow missed by
-                        # the revoke sweep.
-                        grant = await OAuthClientGrantRepository.get_by_id(
-                            session, rt.oauth_grant_id
+                    family_issued_at = _resolve_family_issued_at(rt, now)
+                    max_age = self._refresh_family_max_age
+                    if max_age is not None and now - family_issued_at > timedelta(seconds=max_age):
+                        await TokenLineageRepository.revoke_family(session, rt.token_family_id)
+                        family_expired = True
+                        await record_audit(
+                            session,
+                            action=AuditAction.REVOKE,
+                            target_type=AuditTargetType.TOKEN,
+                            target_id=rt.token_family_id,
+                            actor_type=rt.actor_type,
+                            actor_id=rt.actor_id,
+                            reason="refresh token family expired",
+                            origin=None,
                         )
-                        if grant is None or grant.status != OAuthGrantStatus.ACTIVE.value:
-                            raise InvalidGrantError("consent grant has been revoked")
-                        grant_ceiling = frozenset(grant.scopes)
+                    else:
+                        if rt.oauth_grant_id is not None:
+                            # Grant re-check on every rotation: a
+                            # revoked consent grant must fail refresh closed even
+                            # if the family's token rows were somehow missed by
+                            # the revoke sweep.
+                            grant = await OAuthClientGrantRepository.get_by_id(
+                                session, rt.oauth_grant_id
+                            )
+                            if grant is None or grant.status != OAuthGrantStatus.ACTIVE.value:
+                                raise InvalidGrantError("consent grant has been revoked")
+                            grant_ceiling = frozenset(grant.scopes)
 
-                    if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
-                        raise InvalidGrantError("actor is not active")
+                        if not await _actor_is_active(session, rt.actor_id, rt.actor_type):
+                            raise InvalidGrantError("actor is not active")
 
-                    access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
-                    refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
-                    snapshot = list(rt.scopes)
-                    # Reported set (RFC 6749 §5.1) — computed the way the
-                    # resolvers will enforce it for the new access token, not
-                    # the family snapshot: for AGENT/SA actors the resolvers
-                    # ignore the snapshot and re-derive live on every request,
-                    # so reporting rt.scopes would over-report scopes revoked
-                    # since the original mint (and under-report ones granted
-                    # since) — the exact #1260 failure mode.
-                    scopes = await resolve_effective_scopes(
-                        session,
-                        actor_id=rt.actor_id,
-                        actor_type=rt.actor_type,
-                        snapshot_scopes=snapshot,
-                        is_ephemeral=False,
-                        client_ceiling=client_ceiling,
-                        grant_ceiling=grant_ceiling,
-                    )
-                    now = datetime.now(UTC)
+                        access_plain = _generate_token(ACCESS_TOKEN_PREFIX)
+                        refresh_plain = _generate_token(REFRESH_TOKEN_PREFIX)
+                        snapshot = list(rt.scopes)
+                        # Reported set (RFC 6749 §5.1) — computed the way the
+                        # resolvers will enforce it for the new access token, not
+                        # the family snapshot: for AGENT/SA actors the resolvers
+                        # ignore the snapshot and re-derive live on every request,
+                        # so reporting rt.scopes would over-report scopes revoked
+                        # since the original mint (and under-report ones granted
+                        # since) — the exact #1260 failure mode.
+                        scopes = await resolve_effective_scopes(
+                            session,
+                            actor_id=rt.actor_id,
+                            actor_type=rt.actor_type,
+                            snapshot_scopes=snapshot,
+                            is_ephemeral=False,
+                            client_ceiling=client_ceiling,
+                            grant_ceiling=grant_ceiling,
+                        )
+                        # For USER tokens, persist narrowed scopes onto rotated rows so
+                        # permissions lost before refresh cannot be widened again on future
+                        # rotations even if re-granted later (#1442). AGENT tokens ignore
+                        # the row snapshot at enforcement and retain the family snapshot.
+                        persisted_scopes = scopes if rt.actor_type == ActorType.USER else snapshot
+                        now = datetime.now(UTC)
+                        refresh_expires_at = now + timedelta(seconds=self._refresh_ttl)
+                        if max_age is not None:
+                            refresh_expires_at = min(
+                                refresh_expires_at,
+                                family_issued_at + timedelta(seconds=max_age),
+                            )
 
-                    await AccessTokenRepository.create(
-                        session,
-                        token_hash=_hash_token(access_plain),
-                        actor_id=rt.actor_id,
-                        actor_type=rt.actor_type,
-                        scopes=snapshot,
-                        token_family_id=rt.token_family_id,
-                        expires_at=now + timedelta(seconds=self.access_ttl_seconds),
-                        created_by=rt.actor_id,
-                        oauth_client_id=rt.oauth_client_id,
-                        oauth_grant_id=rt.oauth_grant_id,
-                    )
-                    new_refresh = await RefreshTokenRepository.create(
-                        session,
-                        token_hash=_hash_token(refresh_plain),
-                        actor_id=rt.actor_id,
-                        actor_type=rt.actor_type,
-                        scopes=snapshot,
-                        token_family_id=rt.token_family_id,
-                        expires_at=now + timedelta(seconds=self._refresh_ttl),
-                        created_by=rt.actor_id,
-                        oauth_client_id=rt.oauth_client_id,
-                        oauth_grant_id=rt.oauth_grant_id,
-                    )
-                    if rt.oauth_grant_id is not None:
-                        # See issue_pair: last_used_at is maintained on the
-                        # token write paths, not per resolved request.
-                        await OAuthClientGrantRepository.touch_last_used(session, rt.oauth_grant_id)
+                        await AccessTokenRepository.create(
+                            session,
+                            token_hash=_hash_token(access_plain),
+                            actor_id=rt.actor_id,
+                            actor_type=rt.actor_type,
+                            scopes=persisted_scopes,
+                            token_family_id=rt.token_family_id,
+                            expires_at=now + timedelta(seconds=self.access_ttl_seconds),
+                            created_by=rt.actor_id,
+                            oauth_client_id=rt.oauth_client_id,
+                            oauth_grant_id=rt.oauth_grant_id,
+                        )
+                        new_refresh = await RefreshTokenRepository.create(
+                            session,
+                            token_hash=_hash_token(refresh_plain),
+                            actor_id=rt.actor_id,
+                            actor_type=rt.actor_type,
+                            scopes=persisted_scopes,
+                            token_family_id=rt.token_family_id,
+                            expires_at=refresh_expires_at,
+                            family_issued_at=family_issued_at,
+                            created_by=rt.actor_id,
+                            oauth_client_id=rt.oauth_client_id,
+                            oauth_grant_id=rt.oauth_grant_id,
+                        )
+                        if rt.oauth_grant_id is not None:
+                            # See issue_pair: last_used_at is maintained on the
+                            # token write paths, not per resolved request.
+                            await OAuthClientGrantRepository.touch_last_used(
+                                session, rt.oauth_grant_id
+                            )
 
-                    await RefreshTokenRepository.consume(
-                        session, rt.id, replaced_by_id=new_refresh.id
-                    )
-                    await record_audit(
-                        session,
-                        action=AuditAction.REFRESH,
-                        target_type=AuditTargetType.TOKEN,
-                        target_id=rt.token_family_id,
-                        actor_type=rt.actor_type,
-                        actor_id=rt.actor_id,
-                        origin=None,
-                    )
+                        await RefreshTokenRepository.consume(
+                            session, rt.id, replaced_by_id=new_refresh.id
+                        )
+                        await record_audit(
+                            session,
+                            action=AuditAction.REFRESH,
+                            target_type=AuditTargetType.TOKEN,
+                            target_id=rt.token_family_id,
+                            actor_type=rt.actor_type,
+                            actor_id=rt.actor_id,
+                            origin=None,
+                        )
 
         if reuse_detected:
             raise InvalidGrantError("refresh token reuse detected")
         if client_mismatch:
             raise InvalidGrantError("client_id mismatch")
+        if family_expired:
+            raise InvalidGrantError("refresh token family expired")
 
         return access_plain, refresh_plain, scopes
 
@@ -515,8 +665,7 @@ class TokenService:
                     return
                 if actor_id is not None and rt.actor_id != actor_id:
                     return
-                await RefreshTokenRepository.revoke_family(session, rt.token_family_id)
-                await AccessTokenRepository.revoke_family(session, rt.token_family_id)
+                await TokenLineageRepository.revoke_family(session, rt.token_family_id)
                 revoked_actor_id = rt.actor_id
                 await record_audit(
                     session,
@@ -558,8 +707,19 @@ class TokenService:
                     and client_active
                     and grant_active
                 )
-                scopes = _apply_scope_ceiling(list(at.scopes), ceiling)
-                scopes = _apply_scope_ceiling(scopes, grant_scopes)
+                scopes = (
+                    await resolve_effective_scopes(
+                        session,
+                        actor_id=at.actor_id,
+                        actor_type=at.actor_type,
+                        snapshot_scopes=list(at.scopes),
+                        is_ephemeral=at.is_ephemeral,
+                        client_ceiling=ceiling,
+                        grant_ceiling=grant_scopes,
+                    )
+                    if active
+                    else []
+                )
                 return {
                     "active": active,
                     "sub": at.actor_id,
@@ -571,6 +731,10 @@ class TokenService:
                 rt = await RefreshTokenRepository.get_by_hash(session, token_hash)
                 if rt is None:
                     return {"active": False}
+                family_issued_at = _resolve_family_issued_at(rt, now)
+                max_age = self._refresh_family_max_age
+                if max_age is not None and now - family_issued_at > timedelta(seconds=max_age):
+                    return {"active": False}
                 client_active, ceiling = await _resolve_client_gate(session, rt.oauth_client_id)
                 grant_active, grant_scopes = await _resolve_grant_gate(session, rt.oauth_grant_id)
                 active = (
@@ -581,8 +745,19 @@ class TokenService:
                     and client_active
                     and grant_active
                 )
-                scopes = _apply_scope_ceiling(list(rt.scopes), ceiling)
-                scopes = _apply_scope_ceiling(scopes, grant_scopes)
+                scopes = (
+                    await resolve_effective_scopes(
+                        session,
+                        actor_id=rt.actor_id,
+                        actor_type=rt.actor_type,
+                        snapshot_scopes=list(rt.scopes),
+                        is_ephemeral=False,
+                        client_ceiling=ceiling,
+                        grant_ceiling=grant_scopes,
+                    )
+                    if active
+                    else []
+                )
                 return {
                     "active": active,
                     "sub": rt.actor_id,
@@ -687,10 +862,11 @@ class TokenService:
                 is_ephemeral=at.is_ephemeral,
                 client_ceiling=client_scope_ceiling,
                 grant_ceiling=grant_scope_ceiling,
+                owner_id=parent_actor_id,
             )
 
         active = at.revoked_at is None and at.expires_at > now and actor_active
-        return Identity(
+        return _ResolvedAccessTokenIdentity(
             sub=at.actor_id,
             actor_name=actor_name,
             actor_type=ActorType(at.actor_type),
@@ -704,4 +880,6 @@ class TokenService:
             parent_actor_id=parent_actor_id,
             oauth_client_id=at.oauth_client_id,
             oauth_grant_id=at.oauth_grant_id,
+            is_ephemeral=at.is_ephemeral,
+            raw_scopes=tuple(at.scopes),
         )

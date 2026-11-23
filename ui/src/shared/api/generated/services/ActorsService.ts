@@ -52,7 +52,7 @@ export class ActorsService {
         });
     }
     /**
-     * Resolve actor names by id
+     * Resolve actor names by ID
      * Resolve user and agent ids to display names.
      *
      * Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,

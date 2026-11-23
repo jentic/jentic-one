@@ -3,7 +3,7 @@
 These assert the handler delegates to the injected ``UpstreamExecutor`` (the
 broker pipeline adapter) instead of issuing its own HTTP, and applies injected
 credentials to the outbound URL/headers — headers **and** query **and** cookies
-— mirroring the sync router's ``_apply_injection``.
+— through the ``shared.http.injection.apply_injection`` the sync router uses.
 
 The lifecycle event write goes through ``emit_event`` → ``EventRepository`` and
 needs a real DB; the handler swallows its failure (best-effort), so a fake
@@ -12,7 +12,9 @@ session that has no real backing is fine for these pure-logic unit tests.
 
 from __future__ import annotations
 
+import base64
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -20,8 +22,12 @@ import pytest
 import structlog
 from sqlalchemy.exc import OperationalError
 
+from jentic_one.shared.config import EncryptionConfig
+from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
+from jentic_one.shared.http.injection import record_upstream_set_cookie
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
+from jentic_one.shared.jobs.hold import INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
     ActorAuthority,
     ExecutionRecordNotPersistedError,
@@ -117,7 +123,9 @@ class _FakeActorStatus:
         self._authority = ActorAuthority(active=active, holds_permission=holds_permission)
         self.calls: list[tuple[str, str, str]] = []
 
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         self.calls.append((actor_id, actor_type, permission))
         return self._authority
 
@@ -131,6 +139,8 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
+        "auth_token_sha256": "abcd" * 16,
+        "auth_method": "access_token",
     }
     base.update(overrides)
     return base
@@ -273,6 +283,178 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("record_write_fails", [False, True])
+async def test_queued_3xx_body_not_persisted_with_query_credential(
+    record_write_fails: bool,
+) -> None:
+    secret = "SECRET-123"  # pragma: allowlist secret
+    upstream = UpstreamExecResult(
+        status_code=307,
+        body=f'<a href="https://api.example.com/next?api_key={secret}">{secret}</a>'.encode(),
+        content_type="text/html",
+        duration_ms=1,
+    )
+    executor: _RecordingExecutor | _RaisingExecutor
+    if record_write_fails:
+        executor = _RaisingExecutor(ExecutionRecordNotPersistedError(upstream))
+    else:
+        executor = _RecordingExecutor(upstream)
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(
+            InjectedAuth(headers={}, query_params={"api_key": secret}, cookies={})
+        ),
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+    )
+
+    result = await handler.execute(
+        "job-redirect",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert result.body["http_status"] == 307
+    assert "body_b64" not in result.body
+    assert result.content_type is None
+
+
+_COOKIE_ENCRYPTION = EncryptionService(
+    EncryptionConfig.model_validate(
+        {
+            "active_id": "v1",
+            "entries": [{"id": "v1", "material": base64.b64encode(b"k" * 32).decode()}],
+        }
+    )
+)
+
+
+@pytest.mark.asyncio
+async def test_handler_appends_cookie_creds_to_the_captured_inbound_cookie() -> None:
+    """An upstream-scoped cookie captured at enqueue reaches that same upstream,
+    with cookie credentials appended rather than replacing it."""
+    for pair in ("sid=agent", "theme=dark"):
+        record_upstream_set_cookie("https://api.example.com/v1/things", f"{pair}; Path=/")
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(
+            InjectedAuth(headers={}, query_params={}, cookies={"session": "csecret"})
+        ),
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+        encryption=_COOKIE_ENCRYPTION,
+    )
+
+    await handler.execute(
+        "job-cookie",
+        SessionScope(_FakeSession()),
+        payload=_payload(
+            **{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent; theme=dark")}
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.headers == {"Cookie": "sid=agent; theme=dark; session=csecret"}
+
+
+@pytest.mark.asyncio
+async def test_handler_without_injector_still_sends_the_scoped_cookie() -> None:
+    record_upstream_set_cookie("https://api.example.com/v1/things", "sid=agent; Path=/")
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor, encryption=_COOKIE_ENCRYPTION)
+
+    await handler.execute(
+        "job-cookie-noinj",
+        SessionScope(_FakeSession()),
+        payload=_payload(**{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent")}),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.headers == {"Cookie": "sid=agent"}
+
+
+@pytest.mark.asyncio
+async def test_handler_without_a_keyset_fails_closed_on_captured_cookie() -> None:
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await handler.execute(
+            "job-cookie-nokey",
+            SessionScope(_FakeSession()),
+            payload=_payload(
+                **{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent")}
+            ),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 503
+    assert result.body["problem"]["type"] == "queued_cookie_undecryptable"
+    assert executor.last_request is None
+    assert any(
+        e["event"] == "queued_execution_cookie_undecryptable"
+        and e.get("reason") == "no_encryption_keyset"
+        for e in logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_handler_with_a_different_key_fails_closed_on_captured_cookie() -> None:
+    """A cookie encrypted under a key the worker no longer holds fails closed
+    without dispatching the request upstream without its cookies."""
+    worker_encryption = EncryptionService(
+        EncryptionConfig.model_validate(
+            {
+                "active_id": "v2",
+                "entries": [{"id": "v2", "material": base64.b64encode(b"z" * 32).decode()}],
+            }
+        )
+    )
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor, encryption=worker_encryption)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await handler.execute(
+            "job-cookie-wrongkey",
+            SessionScope(_FakeSession()),
+            payload=_payload(
+                **{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=agent")}
+            ),
+            created_by="usr_test",
+            actor_type="user",
+        )
+
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 503
+    assert result.body["problem"]["type"] == "queued_cookie_undecryptable"
+    assert executor.last_request is None
+    assert any(
+        e["event"] == "queued_execution_cookie_undecryptable"
+        and e.get("reason") == "decryption_failed"
+        for e in logs
+    )
+
+
+@pytest.mark.asyncio
 async def test_handler_no_injector_sends_no_auth() -> None:
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
@@ -338,8 +520,17 @@ async def test_handler_bounds_injection_to_the_run_time_boundary(
 
 
 @pytest.mark.asyncio
-async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
-    """The re-check sees the actor, operation and enqueue-time selection."""
+@pytest.mark.parametrize(
+    ("auth_method", "auth_expires_at"),
+    [
+        ("access_token", None),
+        ("jwt", datetime.now(UTC) + timedelta(minutes=1)),
+    ],
+)
+async def test_handler_passes_the_enqueue_selection_to_the_authorizer(
+    auth_method: str, auth_expires_at: datetime | None
+) -> None:
+    """The re-check sees the actor, operation, selection, and credential expiry."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
@@ -358,6 +549,8 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
             operation={"id": "listThings", "path": "/v1/things", "method": "GET"},
             credential_id="cred_a",
             toolkit_id=None,
+            auth_method=auth_method,
+            auth_expires_at=auth_expires_at.isoformat() if auth_expires_at else None,
         ),
         created_by="agt_abc123",
         actor_type="agent",
@@ -376,7 +569,40 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
         trace_id="ab" * 16,
         credential_id="cred_a",
         job_id="job_req",
+        auth_token_sha256="abcd" * 16,
+        auth_method=auth_method,
+        auth_expires_at=auth_expires_at,
     )
+
+
+@pytest.mark.asyncio
+async def test_handler_denies_expired_jwt_before_live_actor_read_and_injection() -> None:
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    status = _FakeActorStatus()
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=status,
+    )
+    expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    result = await handler.execute(
+        "job_expired",
+        SessionScope(_FakeSession()),
+        payload=_payload(auth_method="jwt", auth_expires_at=expires_at.isoformat()),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert result.body["http_status"] == 401
+    assert result.body["problem"]["type"] == "unauthorized"
+    assert status.calls == []
+    assert injector.last_trace_id is None
+    assert executor.last_request is None
 
 
 @pytest.mark.asyncio
@@ -666,11 +892,11 @@ async def test_handler_injects_only_after_the_live_read_allows() -> None:
 
     class _OrderedActorStatus(_FakeActorStatus):
         async def authority(
-            self, *, actor_id: str, actor_type: str, permission: str
+            self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
         ) -> ActorAuthority:
             order.append("live_read")
             return await super().authority(
-                actor_id=actor_id, actor_type=actor_type, permission=permission
+                actor_id=actor_id, actor_type=actor_type, permission=permission, **_lineage
             )
 
     class _OrderedInjector(_FakeInjector):

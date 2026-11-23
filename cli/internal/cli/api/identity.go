@@ -99,7 +99,11 @@ func newIdentityRegisterCmd(_ *app) *cobra.Command {
 			if clientName == "" {
 				clientName = state.IdentityName
 			}
-			reg, err := auth.Register(state.BaseURL, clientName, auth.PublicKeyToJWKS(pub))
+			hc, err := clictx.AuthHTTPClient(cmd.Context(), state.CACertPath)
+			if err != nil {
+				return reportCoded(aud, err)
+			}
+			reg, err := auth.RegisterWithClient(hc, state.BaseURL, clientName, auth.PublicKeyToJWKS(pub))
 			if err != nil {
 				return reportCoded(aud, err)
 			}
@@ -216,12 +220,16 @@ func newIdentityAddCmd(_ *app) *cobra.Command {
 					}
 				}
 				if apiKey != "" {
-					if _, ok := cfg.Environments[env]; !ok {
+					environment, ok := cfg.Environments[env]
+					if !ok {
 						return &ux.CodedError{
 							Code:       ux.CodeResolveFailed,
 							Msg:        fmt.Sprintf("environment %q does not exist", env),
 							Actionable: "Create it first with `jentic env add`.",
 						}
+					}
+					if auth.NormalizeOrigin(environment.BaseURL) == "" {
+						return fmt.Errorf("cannot bind API key: environment %q has no base_url", env)
 					}
 				}
 				cfg.Identities[name] = config.Identity{Type: idType}

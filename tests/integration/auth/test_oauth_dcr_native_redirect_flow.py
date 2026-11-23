@@ -34,7 +34,14 @@ from jentic_one.admin.services.errors import InvalidInputError
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.web.errors import service_error_handler
-from jentic_one.auth.web.routers import authorize, oauth, oauth_client_registration
+from jentic_one.auth.web.routers import (
+    approval,
+    authorize,
+    consent,
+    consent_agent,
+    oauth,
+    oauth_client_registration,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.events import EventType
@@ -116,7 +123,10 @@ def _make_app(ctx: Context) -> FastAPI:
     """DCR + authorize + token routers wired to the REAL context."""
     app = FastAPI()
     app.include_router(oauth_client_registration.router)
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
     app.include_router(oauth.router)
     app.add_exception_handler(AuthServiceError, service_error_handler)
     app.state.ctx = ctx

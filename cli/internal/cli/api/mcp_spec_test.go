@@ -88,10 +88,10 @@ func TestMCPToolSurfaceSpec_PinnedAtDocsReference(t *testing.T) {
 		})
 	}
 	doc := map[string]any{
-		"$comment": "Generated from the Go stdio server's toolSpecs() — the phase-1 " +
-			"tool-surface source of truth (master §3.2). Regenerate with " +
+		"$comment": "Generated from the Go stdio server's toolSpecs() — the " +
+			"tool-surface source of truth. Regenerate with " +
 			"UPDATE_MCP_SPEC=1 go test ./internal/cli/api -run TestMCPToolSurfaceSpec. " +
-			"Consumed by the phase-3 /mcp mount (src/jentic_one/mcp) and its drift tests.",
+			"Consumed by the HTTP /mcp mount (src/jentic_one/mcp) and its drift tests.",
 		"schema_version": mcpSchemaVersion,
 		"tools":          tools,
 	}

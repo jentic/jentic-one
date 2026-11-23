@@ -7,10 +7,11 @@
  * second line; the raw action, ids, IP and client are one click away in the
  * detail pane (`?audit_id=`).
  *
- * Deep-link aware: the call/job records link here with
- * `?show=audit&trace_id=…` or `&target_type=…&target_id=…`; this source reads
- * those as filters, and each row's trace/job links BACK into the API calls /
- * Jobs sources — closing the cross-reference loop in both directions.
+ * Deep-link aware: the job record links here with
+ * `?show=audit&target_type=…&target_id=…`, and a `?show=audit&trace_id=…` link
+ * reads as a trace filter. Audit rows carry no trace for an API call, so a trace
+ * filter normally comes up empty and its empty state points to API calls for
+ * that trace. Each row's trace/job links BACK into the API calls / Jobs sources.
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
@@ -212,6 +213,21 @@ export function AuditTab() {
 						}
 						onRetry={() => query.refetch()}
 						retrying={query.isFetching}
+					/>
+				) : showEmpty && traceId ? (
+					<EmptyState
+						icon={<ShieldAlert className="h-8 w-8" />}
+						title="No audit entries for this trace"
+						description="API calls aren't recorded in the audit log."
+						action={
+							<AppLink
+								href={monitorHref({ show: 'calls', traceId })}
+								className="text-primary inline-flex items-center gap-1 text-sm font-medium hover:underline"
+							>
+								Open this trace in API calls
+								<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+							</AppLink>
+						}
 					/>
 				) : showEmpty ? (
 					<EmptyState

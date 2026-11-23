@@ -260,3 +260,74 @@ async def test_legacy_row_without_a_stored_server_is_unresolved(
     assert result is not None
     assert result.server_variables == {}
     assert result.server_variables_unresolved is True
+
+
+async def test_encoded_host_placeholder_routes_like_the_literal_one(
+    ingest_context: Context, clean_registry: None
+) -> None:
+    """A percent-encoded host placeholder routes as the literal one does (#2089).
+
+    ``test_enum_path_variable_routes_every_value`` already pins
+    ``%7Bregion%7D`` as a supported spelling in the **path**, because the
+    lookup decodes the path. The host takes the same spelling from the same
+    clients and must resolve to the same operation with the same defaults.
+    """
+    server = {
+        "url": "https://bedrock-runtime.{region}.amazonaws.com",
+        "variables": {"region": {"default": "us-east-1"}},
+    }
+    await Ingestor(ingest_context).ingest(
+        _spec(vendor="amazonaws-com", server=server), created_by="usr_test"
+    )
+
+    async with ingest_context.registry_db.session() as session:
+        svc = RegistryService(session)
+        literal = await svc.resolve_operation(
+            method="GET", url="https://bedrock-runtime.{region}.amazonaws.com/widgets"
+        )
+        encoded = await svc.resolve_operation(
+            method="GET", url="https://bedrock-runtime.%7Bregion%7D.amazonaws.com/widgets"
+        )
+
+    assert literal is not None
+    assert encoded is not None
+    assert encoded.operation.id == literal.operation.id
+    assert encoded.server_variables == literal.server_variables == {}
+    assert encoded.server_variable_defaults == literal.server_variable_defaults
+    assert encoded.server_variable_defaults == {"region": "us-east-1"}
+
+
+async def test_free_form_host_near_miss_is_indistinguishable_from_an_unknown_host(
+    ingest_context: Context, clean_registry: None
+) -> None:
+    """A near miss and a wholly unknown host both resolve to ``None`` (#2089).
+
+    A free-form host variable is deliberately indexed only as its default and
+    as the literal template (``_variable_options``), so a caller-picked label
+    cannot route — that part is by design and
+    ``test_free_form_host_variable_routes_only_default_and_template`` pins it.
+    The gap this test records is **diagnostic**: the registry reports the same
+    "no match" for a host that matches a registered templated host apart from
+    one variable as for a host it has never heard of, so the caller cannot
+    tell a wrong region from a missing API and is sent to search for an API it
+    already has.
+    """
+    server = {
+        "url": "https://bedrock-runtime.{region}.amazonaws.com",
+        "variables": {"region": {"default": "us-east-1"}},
+    }
+    await Ingestor(ingest_context).ingest(
+        _spec(vendor="amazonaws-com", server=server), created_by="usr_test"
+    )
+
+    async with ingest_context.registry_db.session() as session:
+        svc = RegistryService(session)
+        near_miss = await svc.resolve_operation(
+            method="GET", url="https://bedrock-runtime.eu-west-1.amazonaws.com/widgets"
+        )
+        unknown_host = await svc.resolve_operation(
+            method="GET", url="https://widgets.unregistered.example.org/widgets"
+        )
+
+    assert near_miss is None
+    assert unknown_host is None

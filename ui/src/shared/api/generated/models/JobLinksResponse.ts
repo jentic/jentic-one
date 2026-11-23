@@ -11,7 +11,7 @@ export type JobLinksResponse = {
      */
     execution?: (string | null);
     /**
-     * URL of the job result; null until the job has completed.
+     * URL of the job result when an unexpired result is stored; null otherwise.
      */
     result?: (string | null);
     /**

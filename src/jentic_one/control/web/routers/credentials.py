@@ -61,6 +61,7 @@ from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
     AuthCodeConnectChallengeResponse,
     ConnectChallengeResponse,
+    ConnectFlowStatusResponse,
     ConnectRequestBody,
     CredentialAgentListResponse,
     CredentialAgentResponse,
@@ -96,7 +97,7 @@ from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import public_base_url
-from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import conflict, not_found, problem, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 router = APIRouter()
@@ -315,6 +316,10 @@ async def oauth_callback(
         description="OAuth error code from the identity provider when authorization failed.",
         openapi_examples=ex.example("access_denied"),
     ),
+    account_id: str | None = Query(
+        default=None,
+        description="Connected account identifier returned by hosted connect providers.",
+    ),
     ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
     session_svc: ConnectSessionService = Depends(get_connect_session_service),
@@ -381,6 +386,7 @@ async def oauth_callback(
         raw_state=state,
         session_id=peeked.session_id if peeked is not None else None,
         code=code,
+        account_id=account_id,
         error=error,
         binding=binding,
         svc=svc,
@@ -398,6 +404,7 @@ async def _complete_oauth_callback(
     raw_state: str,
     session_id: str | None,
     code: str | None,
+    account_id: str | None = None,
     error: str | None,
     binding: str | None,
     svc: ConnectService,
@@ -464,7 +471,7 @@ async def _complete_oauth_callback(
         _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
         return _oauth_callback_success()
 
-    callback = ConnectCallback(code=code, error=error)
+    callback = ConnectCallback(code=code, account_id=account_id, error=error)
 
     try:
         credential_id = await svc.complete(raw_state, callback, browser_binding=binding)
@@ -952,7 +959,13 @@ async def get_rule_set(
     "/permission-rule-sets/{rule_set_id}",
     operation_id="updatePermissionRuleSet",
     summary="Rename or re-describe a permission rule set",
-    responses=not_found(),
+    responses={
+        **not_found(),
+        **conflict(
+            "Another rule set in the same scope already uses the new name "
+            "(`rule_set_name_conflict`). Nothing was renamed."
+        ),
+    },
 )
 async def update_rule_set(
     rule_set_id: Annotated[
@@ -1117,11 +1130,47 @@ async def delete_credential(
     return Response(status_code=204)
 
 
+@router.get(
+    "/credentials/{credential_id}/connect/{flow_id}/status",
+    summary="Read OAuth connect flow status",
+    responses=not_found(),
+    response_model=ConnectFlowStatusResponse,
+)
+async def get_connect_flow_status(
+    credential_id: Annotated[
+        str,
+        Path(description="ID of the credential.", openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    ],
+    flow_id: Annotated[
+        str,
+        Path(
+            description="Opaque identifier returned by begin connect.",
+            openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+        ),
+    ],
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: ConnectService = Depends(get_connect_service),
+) -> ConnectFlowStatusResponse:
+    """Read one flow's committed outcome, not a credential-wide timestamp."""
+    return ConnectFlowStatusResponse(
+        status=await svc.get_flow_status(credential_id, flow_id, identity=identity)
+    )
+
+
 @router.post(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
-    responses=with_responses(not_found(), conflict("Credential is not connectable")),
-    response_model=None,
+    responses=with_responses(
+        {
+            403: problem("Connecting this credential requires human review"),
+            422: problem("Request validation failed or scope widening requires review"),
+        },
+        not_found(),
+        conflict("Credential is not connectable"),
+    ),
+    response_model=ConnectChallengeResponse,
 )
 async def connect_credential(
     credential_id: Annotated[
@@ -1135,7 +1184,14 @@ async def connect_credential(
     svc: ConnectService = Depends(get_connect_service),
     ctx: Context = Depends(get_ctx),
 ) -> ConnectChallengeResponse | JSONResponse:
-    """Initiate the OAuth connect flow for a credential.
+    """Initiate the OAuth connect flow for a write-owned credential.
+
+    Requires write ownership of the credential (creator or ``org:admin``);
+    an agent that can only read the credential through owner delegation must
+    use the reviewed connect-session flow (403 ``connect_requires_review``).
+    Requested ``scopes`` may only narrow the credential's stored scopes;
+    widening scopes requires a connect session (422
+    ``scope_widening_requires_review``).
 
     Discriminates on the provider's returned challenge: OAuth2
     authorization-code providers return an ``authorize_url`` for popup
@@ -1169,9 +1225,12 @@ async def connect_credential(
             response, request, ctx, binding, authorize_url=challenge.authorize_url
         )
         return AuthCodeConnectChallengeResponse(
-            authorize_url=challenge.authorize_url, state=challenge.state
+            authorize_url=challenge.authorize_url,
+            state=challenge.state,
+            flow_id=challenge.flow_id,
         )
     return DeviceAuthorizationConnectChallengeResponse(
+        flow_id=challenge.flow_id,
         user_code=challenge.user_code,
         verification_uri=challenge.verification_uri,
         verification_uri_complete=challenge.verification_uri_complete,

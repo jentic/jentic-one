@@ -20,10 +20,7 @@ over plaintext to a non-loopback broker).
 from __future__ import annotations
 
 import json
-import math
 import uuid as uuid_mod
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from http import HTTPStatus
 from importlib.metadata import PackageNotFoundError, version
 from ipaddress import ip_address
@@ -40,6 +37,7 @@ from jentic_one.mcp.envelopes import (
     SCHEMA_VERSION,
     ToolError,
 )
+from jentic_one.shared.http.retry_after import parse_retry_after
 from jentic_one.shared.redaction import redact_value
 
 logger = structlog.get_logger(__name__)
@@ -442,35 +440,19 @@ def retry_safe(method: str, idempotency_key: str | None) -> bool:
     return bool((idempotency_key or "").strip()) or method.upper() in ("GET", "HEAD")
 
 
-def retry_after_seconds(headers: httpx.Headers) -> float | None:
-    """Parse ``Retry-After`` (Go: ``agentops.RetryAfterSeconds``).
+def retry_after_seconds(headers: httpx.Headers, *, now_epoch: float | None = None) -> int | None:
+    """The broker's ``Retry-After`` in whole seconds (Go: ``agentops.RetryAfterSeconds``).
 
-    Delta-seconds, or an HTTP-date converted to the seconds remaining (floored
-    at zero). ``None`` when absent or unparseable, so no made-up delay is relayed.
+    Parsed by the same :func:`~jentic_one.shared.http.retry_after.parse_retry_after`
+    the broker uses: delay-seconds (a fraction rounds up, a sign or exponent is
+    rejected), or an HTTP-date converted to the seconds remaining (floored at
+    zero), capped at one day. ``None`` when absent or unparseable, so no made-up
+    delay is relayed. ``now_epoch`` supports deterministic date parsing.
     """
-    value = headers.get("Retry-After", "").strip()
-    if not value:
-        return None
-    try:
-        seconds = float(value)
-    except ValueError:
-        pass
-    else:
-        if seconds < 0 or not math.isfinite(seconds):
-            return None
-        return int(seconds) if seconds.is_integer() else seconds
-    try:
-        when = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=UTC)
-    return max(0, math.ceil((when - datetime.now(UTC)).total_seconds()))
+    return parse_retry_after(headers.get("Retry-After"), now_epoch=now_epoch)
 
 
-def _broker_transport_actionable(
-    recovery: str, *, retryable: bool, retry_after: float | None
-) -> str:
+def _broker_transport_actionable(recovery: str, *, retryable: bool, retry_after: int | None) -> str:
     """MCP-lane recovery prose for a broker transport failure (Go:
     ``brokerTransportToolHint``)."""
     wait = "Wait briefly" if retry_after is None else f"Wait retry_after_s ({retry_after}s)"
@@ -499,7 +481,12 @@ def _broker_transport_actionable(
 
 
 def classify_broker_transport_error(
-    status: int, headers: httpx.Headers, body: bytes, *, retry_safe: bool
+    status: int,
+    headers: httpx.Headers,
+    body: bytes,
+    *,
+    retry_safe: bool,
+    now_epoch: float | None = None,
 ) -> ToolError | None:
     """Broker transport-failure classification (Go: ``agentops.BrokerTransportError``
     + ``executeBrokerTransportError``), #1531.
@@ -513,7 +500,8 @@ def classify_broker_transport_error(
 
     The origin header decides, never the body: it must say ``broker``. A vendor
     5xx the broker mirrored is stamped ``upstream`` and is the caller's data,
-    and a missing header keeps the same pass-through reading.
+    and a missing header keeps the same pass-through reading. ``now_epoch``
+    supports deterministic Retry-After date parsing.
     """
     if (status < 500 and status != 429) or _error_origin(headers) != "broker":
         return None
@@ -529,7 +517,7 @@ def classify_broker_transport_error(
     problem_type = raw_type if isinstance(raw_type, str) else ""
     recovery = broker_transport_recovery(status, problem_type)
     retryable = broker_transport_retryable(recovery, retry_safe=retry_safe)
-    retry_after = retry_after_seconds(headers)
+    retry_after = retry_after_seconds(headers, now_epoch=now_epoch)
     details: dict[str, Any] = {"http_status": status, "origin": "broker", "retryable": retryable}
     if problem_type:
         details["problem_type"] = problem_type
@@ -715,6 +703,13 @@ def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> st
         parameters = directive.get("parameters")
         if isinstance(parameters, dict) and parameters.get("suggested_command"):
             return "request_connection"
+    # A rules denial is change-shaped: its directive carries the edit to ask
+    # for (``parameters.edit``), so the pointer names the tool that asks
+    # rather than sending the agent to re-read an identity it already knows.
+    if directive is not None:
+        parameters = directive.get("parameters")
+        if isinstance(parameters, dict) and isinstance(parameters.get("edit"), dict):
+            return "request_access_change"
     return "whoami"
 
 
@@ -977,8 +972,8 @@ async def send_to_broker(
     # Protected headers merge LAST so a model-supplied ``headers`` tool-arg
     # can never override the caller's bearer or the ``jentic-mcp/`` UA the
     # broker derives ``Origin.MCP`` from (case-insensitive duplicates are
-    # dropped first — two spellings must not ride the wire). NOTE: the Go twin
-    # (``agentops/execute.go``) still merges the other way — follow-up filed.
+    # dropped first — two spellings must not ride the wire). The Go twin
+    # (``agentops/execute.go``) merges the same way round.
     for protected in ("authorization", "user-agent"):
         for key in [k for k in request_headers if k.lower() == protected]:
             del request_headers[key]

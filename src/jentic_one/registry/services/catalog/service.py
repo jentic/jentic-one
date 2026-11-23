@@ -875,17 +875,27 @@ class CatalogService:
         was persisted.
         """
         async with self._ctx.registry_db.session() as session:
-            if entry.api_id:
-                by_catalog_id = await ApiRepository.identity_for_catalog_api_id(
-                    session, entry.api_id
-                )
-                if by_catalog_id is not None:
-                    return by_catalog_id
-            if not entry.registered or not entry.spec_url:
-                return None
-            return await ApiRevisionRepository.registered_identity_for_source_url(
-                session, entry.spec_url
-            )
+            return await self._registered_identity_in(session, entry)
+
+    @staticmethod
+    async def _registered_identity_in(
+        session: Any, entry: CatalogEntryView
+    ) -> tuple[str, str] | None:
+        """``_registered_identity`` on the caller's session.
+
+        The single row selection both the import source and the A4b supersede gate key
+        on, so the gate checks for a live overlay on the identity the re-import lands
+        on (#1078).
+        """
+        if entry.api_id:
+            by_catalog_id = await ApiRepository.identity_for_catalog_api_id(session, entry.api_id)
+            if by_catalog_id is not None:
+                return by_catalog_id
+        if not entry.registered or not entry.spec_url:
+            return None
+        return await ApiRevisionRepository.registered_identity_for_source_url(
+            session, entry.spec_url
+        )
 
     async def _derived_api_name(self, entry: CatalogEntryView) -> str:
         """The clash-aware ``api_name`` seed for a first import of ``entry``."""
@@ -920,12 +930,19 @@ class CatalogService:
         find the locally-served current revision and asks whether that revision *is* a
         confirmed overlay's materialization. Only that case is a supersede; a plain
         catalog-origin current revision imports normally.
+
+        The lookup is scoped to the registered identity the re-import lands on
+        (``_registered_identity_in``, the same row selection ``_import_source_for``
+        uses), so a sibling row serving the same ``spec_url`` (e.g. a vendor-doubled row
+        and its clean identity, #1078) cannot make the gate and the ingest disagree. Only
+        a first import, with no registered identity, uses the unscoped lookup.
         """
         if not entry.spec_url:
             return None
         async with self._ctx.registry_db.session() as session:
+            registered = await self._registered_identity_in(session, entry)
             current = await ApiRevisionRepository.current_revision_for_source_url(
-                session, entry.spec_url
+                session, entry.spec_url, identity=registered
             )
             if current is None:
                 return None
@@ -986,8 +1003,8 @@ class CatalogService:
         silently reverting the operator's fix.
 
         If the re-import would change the server hosts of an API with bound credentials,
-        only a caller holding ``credentials:write`` makes it current; otherwise the worker
-        keeps the new revision as a draft for operator review (see
+        only an organisation admin makes it current; otherwise the worker keeps the new
+        revision as a draft for an organisation admin to review and promote (see
         ``registry/ingest/host_change_guard.py``).
         """
         entry = await self.get(api_id)
@@ -996,10 +1013,11 @@ class CatalogService:
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
         if may_approve_host_change(identity.permissions):
-            # Server-host change guard: an operator (``credentials:write``) may let a
-            # re-import that changes the API's server hosts become current even when
-            # the API has bound credentials. Everyone else gets such a revision held
-            # as a draft for review. Server-set only; client schemas cannot carry it.
+            # Server-host change guard: an organisation admin may let a re-import that
+            # changes the API's server hosts become current even when the API has
+            # bound credentials. Everyone else gets such a revision held as a draft
+            # for an organisation admin to review and promote. Server-set only; client
+            # schemas cannot carry it.
             source["host_change_approved"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:

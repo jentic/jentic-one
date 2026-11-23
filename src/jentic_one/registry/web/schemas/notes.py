@@ -8,6 +8,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from jentic_one.registry.services.schemas import NoteCreate, NoteUpdate
+from jentic_one.registry.services.schemas import NoteResource as ServiceNoteResource
+from jentic_one.shared.schemas.api_reference import APIReference
 from jentic_one.shared.web import openapi_examples as ex
 
 _EX_NOTE_BODY = (
@@ -87,6 +90,22 @@ class NoteResource(BaseModel):
             raise ValueError(msg)
         return self
 
+    def to_service_model(self) -> ServiceNoteResource:
+        return ServiceNoteResource(
+            api=(
+                APIReference(
+                    vendor=self.api.vendor,
+                    name=self.api.name,
+                    version=self.api.version,
+                )
+                if self.api is not None
+                else None
+            ),
+            operation_id=self.operation_id,
+            execution_id=self.execution_id,
+            credential_id=self.credential_id,
+        )
+
 
 class NoteCreateRequest(BaseModel):
     """Payload for creating a new note."""
@@ -119,6 +138,17 @@ class NoteCreateRequest(BaseModel):
         description="ID of an execution the note relates to; null if none.",
         examples=[ex.EXECUTION_ID],
     )
+
+    def to_service_model(self) -> NoteCreate:
+        return NoteCreate(
+            resource=self.resource.to_service_model(),
+            type=self.type.value if self.type is not None else None,
+            body=self.body,
+            confidence=self.confidence.value if self.confidence is not None else None,
+            confidence_source="client",
+            source=self.source.value if self.source is not None else None,
+            related_execution_id=self.related_execution_id,
+        )
 
 
 class NoteUpdateRequest(BaseModel):
@@ -160,6 +190,9 @@ class NoteUpdateRequest(BaseModel):
             raise ValueError(msg)
         return self
 
+    def to_service_model(self) -> NoteUpdate:
+        return NoteUpdate.model_validate(self.model_dump(exclude_unset=True, mode="json"))
+
 
 class NoteResourceResponse(BaseModel):
     """Polymorphic reference to the resource a note is attached to (response side)."""
@@ -188,8 +221,13 @@ class NoteLinksResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    self_link: str = Field(serialization_alias="self")
-    resource: str | None = None
+    self_link: str = Field(
+        serialization_alias="self", examples=[f"{ex.BASE_URL}/notes/{ex.NOTE_ID}"]
+    )
+    resource: str | None = Field(
+        default=None,
+        examples=[f"{ex.BASE_URL}/inspect?operation_id={ex.REGISTRY_OPERATION_ID}"],
+    )
 
 
 class NoteResponse(BaseModel):
@@ -197,18 +235,21 @@ class NoteResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    note_id: str
-    resource: NoteResourceResponse
-    type: NoteType | None
-    body: str
-    confidence: NoteConfidence | None
-    confidence_source: str
-    source: NoteSource | None
-    created_by: str
-    related_execution_id: str | None
-    revision: int
-    created_at: datetime
-    updated_at: datetime
+    note_id: str = Field(examples=[ex.NOTE_ID])
+    # ``NoteResourceResponse._serialize`` emits one resource field, so the model
+    # serialises to a bare object with no properties the example composer can
+    # read; the example for it has to be written here.
+    resource: NoteResourceResponse = Field(examples=[{"operation_id": ex.REGISTRY_OPERATION_ID}])
+    type: NoteType | None = Field(examples=[NoteType.auth_quirk])
+    body: str = Field(examples=[_EX_NOTE_BODY])
+    confidence: NoteConfidence | None = Field(examples=[NoteConfidence.observed])
+    confidence_source: str = Field(examples=["client"])
+    source: NoteSource | None = Field(examples=[NoteSource.agent])
+    created_by: str = Field(examples=[ex.AGENT_ID])
+    related_execution_id: str | None = Field(examples=[ex.EXECUTION_ID])
+    revision: int = Field(examples=[3])
+    created_at: datetime = Field(examples=["2026-01-15T09:30:00Z"])
+    updated_at: datetime = Field(examples=["2026-01-20T14:05:00Z"])
     links: NoteLinksResponse = Field(serialization_alias="_links")
 
 
@@ -216,5 +257,5 @@ class NoteListResponse(BaseModel):
     """Cursor-paginated list of notes."""
 
     data: list[NoteResponse]
-    has_more: bool
-    next_cursor: str | None = None
+    has_more: bool = Field(examples=[True])
+    next_cursor: str | None = Field(default=None, examples=[ex.CURSOR])

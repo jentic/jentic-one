@@ -30,12 +30,15 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """JWT token response after successful authentication."""
+    """Access token response after successful authentication."""
 
     access_token: str = Field(
         json_schema_extra=SENSITIVE,
-        description="Signed JWT to send as a bearer token on subsequent requests.",
-        examples=["example-access-token"],  # pragma: allowlist secret
+        description="Opaque bearer access token (prefixed `at_`) to send as "
+        "`Authorization: Bearer <token>` on subsequent requests. It is not a JWT: it is a "
+        "random string validated server-side by lookup, so it carries no readable claims "
+        "and its expiry is `expires_in`, not a decodable field.",
+        examples=["at_example-access-token"],  # pragma: allowlist secret
     )
     token_type: str = Field(description="Token type; always `bearer`.", examples=["bearer"])
     expires_in: int = Field(description="Lifetime of the access token in seconds.", examples=[3600])

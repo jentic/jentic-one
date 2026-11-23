@@ -8,8 +8,9 @@ import functools
 import importlib
 import inspect
 import re
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -253,6 +254,14 @@ def instrument_databases(ctx: Context) -> None:
         SQLAlchemyInstrumentor().instrument(engines=engines, skip_dep_check=True)
 
 
+@dataclass
+class _BackgroundHandle:
+    """Running background service paired with its asyncio task."""
+
+    service: Any
+    task: asyncio.Task[None]
+
+
 def _start_worker(
     ctx: Context,
     enabled_apps: set[str],
@@ -262,7 +271,7 @@ def _start_worker(
     execution_authorizer: Any | None = None,
     actor_status: Any | None = None,
     repeated_failure_counter: RepeatedFailureCounter | None = None,
-) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
+) -> _BackgroundHandle | None:
     """Start the background worker if the admin DB is available.
 
     ``enabled_apps`` is the set of surfaces this process actually serves (from
@@ -294,9 +303,9 @@ def _start_worker(
     the broker's shared-state gate in front of the repeated-failure scan
     (``None`` scans on every failed job).
 
-    Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
+    Returns the ``_BackgroundHandle`` so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
-    client/runners down — see ``_stop_worker``.
+    client/runners down — see ``_stop_background``.
     """
     if not ctx.has_db("admin"):
         return None
@@ -335,13 +344,13 @@ def _start_worker(
     )
     task = asyncio.create_task(worker.run())
     _logger.info("worker_loop_task_started")
-    return worker, task
+    return _BackgroundHandle(worker, task)
 
 
 def _start_expiry_scanner(
     ctx: Context,
     enabled_apps: set[str],
-) -> tuple[CredentialExpiryScanner, asyncio.Task[None]] | None:
+) -> _BackgroundHandle | None:
     """Start the credential-expiry scanner when the control surface runs it.
 
     The sweep reads OAuth token expiries from the **control** DB and writes
@@ -362,27 +371,13 @@ def _start_expiry_scanner(
     )
     task = asyncio.create_task(scanner.run())
     _logger.info("credential_expiry_scanner_task_started")
-    return scanner, task
-
-
-async def _stop_expiry_scanner(
-    handle: tuple[CredentialExpiryScanner, asyncio.Task[None]] | None,
-) -> None:
-    """Signal and cancel the credential-expiry scanner (best-effort)."""
-    if handle is None:
-        return
-    scanner, task = handle
-    scanner.stop()
-    if not task.done():
-        task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
-        await asyncio.wait_for(task, timeout=5.0)
+    return _BackgroundHandle(scanner, task)
 
 
 def _start_catalog_update_scanner(
     ctx: Context,
     enabled_apps: set[str],
-) -> tuple[CatalogUpdateScanner, asyncio.Task[None]] | None:
+) -> _BackgroundHandle | None:
     """Start the Flow-3 catalog update-notify scanner when the registry runs it.
 
     The sweep reads sweep candidates + check rows from the **registry** DB and emits
@@ -400,21 +395,7 @@ def _start_catalog_update_scanner(
     scanner = CatalogUpdateScanner(ctx)
     task = asyncio.create_task(scanner.run())
     _logger.info("catalog_update_scanner_task_started")
-    return scanner, task
-
-
-async def _stop_catalog_update_scanner(
-    handle: tuple[CatalogUpdateScanner, asyncio.Task[None]] | None,
-) -> None:
-    """Signal and cancel the catalog update-notify scanner (best-effort)."""
-    if handle is None:
-        return
-    scanner, task = handle
-    scanner.stop()
-    if not task.done():
-        task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
-        await asyncio.wait_for(task, timeout=5.0)
+    return _BackgroundHandle(scanner, task)
 
 
 def _start_connect_poll_scanner(
@@ -422,7 +403,7 @@ def _start_connect_poll_scanner(
     enabled_apps: set[str],
     *,
     catalog_auto_importer: CatalogAutoImportProtocol | None = None,
-) -> tuple[ConnectPollScanner, asyncio.Task[None]] | None:
+) -> _BackgroundHandle | None:
     """Start the connect-session polling scanner when the control surface runs it.
 
     Drives the device-flow vendor poll loop server-side so the HTTP
@@ -445,41 +426,54 @@ def _start_connect_poll_scanner(
     scanner = ConnectPollScanner(ctx, catalog_auto_importer=catalog_auto_importer)
     task = asyncio.create_task(scanner.run())
     _logger.info("connect_poll_scanner_task_started")
-    return scanner, task
+    return _BackgroundHandle(scanner, task)
 
 
-async def _stop_connect_poll_scanner(
-    handle: tuple[ConnectPollScanner, asyncio.Task[None]] | None,
+async def _stop_background(
+    handle: _BackgroundHandle | None,
+    *,
+    drain: bool = False,
 ) -> None:
-    """Signal and cancel the connect-poll scanner (best-effort)."""
-    if handle is None:
-        return
-    scanner, task = handle
-    scanner.stop()
-    if not task.done():
-        task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
-        await asyncio.wait_for(task, timeout=5.0)
+    """Signal, optionally drain, and cancel a background service task.
 
-
-async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
-    """Gracefully drain then stop the worker (teardown step 2).
-
-    Drains first (so the in-flight job finishes or is safely reclaimable) **before**
-    the surface lifespan closes the shared ``httpx`` client/runners — otherwise a
-    mid-flight job would crash with ``PoolClosed``. A job that doesn't finish within
-    the drain budget is left ``RUNNING`` and reclaimed via its visibility timeout on
-    restart, so no work is dropped.
+    Waits via ``asyncio.wait`` rather than ``wait_for`` wrapped in
+    ``contextlib.suppress(CancelledError)`` so the task's own exception or
+    cancellation is not re-raised while an outer cancellation of the shutdown
+    caller still propagates.
     """
     if handle is None:
         return
-    worker, task = handle
-    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
-        await worker.drain()
-    if not task.done():
-        task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
-        await asyncio.wait_for(task, timeout=5.0)
+    if drain:
+        await handle.service.drain()
+    handle.service.stop()
+    handle.task.cancel()
+    await asyncio.wait({handle.task}, timeout=5.0)
+
+
+@asynccontextmanager
+async def _background_services(
+    app: FastAPI,
+    ctx: Context,
+    enabled_apps: set[str],
+    *,
+    worker_kwargs: Mapping[str, Any] | None = None,
+) -> AsyncGenerator[None]:
+    """Start and stop the background worker and periodic scanners."""
+    worker_handle = _start_worker(ctx, enabled_apps, **(worker_kwargs or {}))
+    expiry_handle = _start_expiry_scanner(ctx, enabled_apps)
+    catalog_handle = _start_catalog_update_scanner(ctx, enabled_apps)
+    connect_poll_handle = _start_connect_poll_scanner(
+        ctx,
+        enabled_apps,
+        catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+    )
+    try:
+        yield
+    finally:
+        await _stop_background(connect_poll_handle)
+        await _stop_background(catalog_handle)
+        await _stop_background(expiry_handle)
+        await _stop_background(worker_handle, drain=True)
 
 
 async def _start_telemetry(
@@ -672,39 +666,37 @@ def create_surface_app(
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
             # extra_lifespan).
-            worker_task = _start_worker(
-                ctx,
-                enabled_apps,
-                upstream_executor=getattr(app.state, "broker_upstream_executor", None),
-                credential_injector=getattr(app.state, "broker_credential_injector", None),
-                execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
-                actor_status=getattr(app.state, "broker_actor_status", None),
-                repeated_failure_counter=getattr(
-                    app.state, "broker_repeated_failure_counter", None
-                ),
-            )
-            scanner_task = _start_expiry_scanner(ctx, enabled_apps)
-            catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
-            connect_poll_task = _start_connect_poll_scanner(
-                ctx,
-                enabled_apps,
-                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
-            )
             try:
-                yield
+                async with _background_services(
+                    app,
+                    ctx,
+                    enabled_apps,
+                    worker_kwargs={
+                        "upstream_executor": getattr(app.state, "broker_upstream_executor", None),
+                        "credential_injector": getattr(
+                            app.state, "broker_credential_injector", None
+                        ),
+                        "execution_authorizer": getattr(
+                            app.state, "broker_execution_authorizer", None
+                        ),
+                        "actor_status": getattr(app.state, "broker_actor_status", None),
+                        "repeated_failure_counter": getattr(
+                            app.state, "broker_repeated_failure_counter", None
+                        ),
+                    },
+                ):
+                    try:
+                        yield
+                    finally:
+                        # Drain step 1: signal the admission gate (if any) to
+                        # report unready + stamp Connection: close, so the LB deregisters
+                        # this instance *before* we drain in-flight work and tear down the
+                        # worker (step 2) and — in extra_lifespan's exit — the shared
+                        # client/runners (step 4). Strict order: unready → worker → client.
+                        gate = getattr(app.state, "broker_admission_gate", None)
+                        if gate is not None and hasattr(gate, "start_draining"):
+                            gate.start_draining()
             finally:
-                # Drain step 1: signal the admission gate (if any) to
-                # report unready + stamp Connection: close, so the LB deregisters
-                # this instance *before* we drain in-flight work and tear down the
-                # worker (step 2) and — in extra_lifespan's exit — the shared
-                # client/runners (step 4). Strict order: unready → worker → client.
-                gate = getattr(app.state, "broker_admission_gate", None)
-                if gate is not None and hasattr(gate, "start_draining"):
-                    gate.start_draining()
-                await _stop_connect_poll_scanner(connect_poll_task)
-                await _stop_catalog_update_scanner(catalog_scanner_task)
-                await _stop_expiry_scanner(scanner_task)
-                await _stop_worker(worker_task)
                 # Work requests handed off after their response (it may write to
                 # the databases) drains before ctx.shutdown() closes them.
                 await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
@@ -844,7 +836,7 @@ def _include_control_plane_routes(
     app.get(
         "/health",
         operation_id="getHealth",
-        summary="Health",
+        summary="Liveness probe",
         tags=["System"],
         # Keep the wire body exactly ``{"status", "version"}`` — the
         # lockout-only ``reason`` member is never emitted as null.
@@ -987,21 +979,10 @@ def create_combined_app(
         async with contextlib.AsyncExitStack() as lifespan_stack:
             for lifespan_factory in container.extra_lifespans:
                 await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
-            worker_task = _start_worker(ctx, set(apps))
-            scanner_task = _start_expiry_scanner(ctx, set(apps))
-            catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-            connect_poll_task = _start_connect_poll_scanner(
-                ctx,
-                set(apps),
-                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
-            )
             try:
-                yield
+                async with _background_services(app, ctx, set(apps), worker_kwargs={}):
+                    yield
             finally:
-                await _stop_connect_poll_scanner(connect_poll_task)
-                await _stop_catalog_update_scanner(catalog_scanner_task)
-                await _stop_expiry_scanner(scanner_task)
-                await _stop_worker(worker_task)
                 await background_tasks.drain(ctx.config.services.background_task_drain_timeout_s)
                 await _stop_telemetry(telemetry_handle)
                 await _run_shutdown_handlers(app)

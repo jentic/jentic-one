@@ -23,7 +23,7 @@ from jentic_one.auth.web.flow import (
     sign_payload,
     verify_payload,
 )
-from jentic_one.auth.web.routers import authorize
+from jentic_one.auth.web.routers import approval, authorize, consent, consent_agent
 from jentic_one.auth.web.routers.authorize import (
     _callback_uri,
     _is_allowed_redirect_uri,
@@ -235,7 +235,10 @@ def test_callback_requires_browser_binding_cookie_and_enforces_single_use_state(
     """/oauth/callback rejects missing or mismatched browser-binding cookies
     without burning the state, and rejects a second callback with the same state."""
     app = FastAPI()
+    app.include_router(approval.router)
     app.include_router(authorize.router)
+    app.include_router(consent.router)
+    app.include_router(consent_agent.router)
 
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(
@@ -271,7 +274,7 @@ def test_callback_requires_browser_binding_cookie_and_enforces_single_use_state(
 
     with (
         patch("jentic_one.auth.web.flow.OAuthClientService") as mock_client_svc_cls,
-        patch("jentic_one.auth.web.routers.authorize.AuthorizeService") as mock_svc_cls,
+        patch("jentic_one.auth.web.deps.AuthorizeService") as mock_svc_cls,
     ):
         mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=None)
         mock_svc = MagicMock()

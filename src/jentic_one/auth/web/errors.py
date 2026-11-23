@@ -8,9 +8,11 @@ import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from jentic_one.admin.services.errors import PasswordHasherBusyError
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
+    AgentPermissionExceedsOwnerError,
     ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
     CredentialBindingConflictError,
@@ -65,8 +67,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),
     OwnerTransferForbiddenError: (403, "owner_transfer_forbidden"),
+    AgentPermissionExceedsOwnerError: (409, "agent_permission_exceeds_owner"),
     PermissionNotGrantableError: (403, "agent_permission_not_grantable"),
     UnknownPermissionError: (422, "unknown_agent_permission"),
+    PasswordHasherBusyError: (503, "password_hasher_busy"),
 }
 
 
@@ -76,11 +80,13 @@ def _rate_limit_response_hook(
     status_code: int,
     response: JSONResponse,
 ) -> JSONResponse:
-    """Propagate Retry-After on 429 and bump the rate-limited-requests metric."""
+    """Propagate Retry-After on 429/503 and bump the rate-limited-requests metric."""
     if isinstance(exc, RateLimitExceededError):
         retry_after_s = max(1, math.ceil(exc.retry_after))
         response.headers["Retry-After"] = str(retry_after_s)
         _rate_limit_counter.add(1, {"path": request.url.path})
+    elif isinstance(exc, PasswordHasherBusyError):
+        response.headers["Retry-After"] = str(exc.retry_after_s)
     return response
 
 

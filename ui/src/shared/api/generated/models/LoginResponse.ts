@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * JWT token response after successful authentication.
+ * Access token response after successful authentication.
  */
 export type LoginResponse = {
     /**
-     * Signed JWT to send as a bearer token on subsequent requests.
+     * Opaque bearer access token (prefixed `at_`) to send as `Authorization: Bearer <token>` on subsequent requests. It is not a JWT: it is a random string validated server-side by lookup, so it carries no readable claims and its expiry is `expires_in`, not a decodable field.
      */
     access_token: string;
     /**

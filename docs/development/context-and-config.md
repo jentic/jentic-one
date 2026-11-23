@@ -42,6 +42,8 @@ Database passwords use `pydantic.SecretStr` — they are automatically redacted 
 `Context` is the central object that holds the resolved config and manages database engines/sessions.
 
 ```python
+from pathlib import Path
+
 from sqlalchemy import text
 
 from jentic_one.shared import Context, load_config
@@ -87,18 +89,28 @@ Define models by subclassing the base for the target database (`RegistryBase`, `
 ```python
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
 
-from jentic_one.shared.db.base import RegistryBase  # or ControlBase, AdminBase
+from jentic_one.shared.db.base import AuditableMixin, ControlBase  # or RegistryBase, AdminBase
+from jentic_one.shared.db.ids import generate_ksuid
 
 
-class MyModel(RegistryBase):
-    __tablename__ = "my_table"
+class Widget(AuditableMixin, ControlBase):
+    __tablename__ = "widgets"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255))
+    id: Mapped[str] = mapped_column(
+        String(30),
+        primary_key=True,
+        default=lambda: generate_ksuid("wgt"),
+        server_default=func.generate_ksuid("wgt"),
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
 ```
 
-See the ORM model definitions under `src/jentic_one/*/repos/` for full conventions and the per-database entity breakdown.
+`AuditableMixin` adds `created_at`/`updated_at`. New tables need `created_at`
+and the KSUID `id` default (`tests/arch/test_orm_conventions.py` enforces both).
+The models live under `src/jentic_one/<surface>/core/schema/` — read those for
+the full conventions and the per-database entity breakdown.
 
 ## Migrations (Alembic)
 

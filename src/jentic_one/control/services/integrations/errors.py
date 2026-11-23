@@ -55,10 +55,6 @@ class ConfirmationForbiddenError(ConnectSessionServiceError):
     """Caller is not permitted to confirm this session (e.g. agent confirming own session)."""
 
 
-class AgentRequiredError(ConnectSessionServiceError):
-    """Caller is a USER/SA but agent_id was not supplied."""
-
-
 class AgentNotFoundError(ConnectSessionServiceError):
     """The ``agent_id`` to bind does not exist in the admin DB."""
 
@@ -385,6 +381,22 @@ class EditOpenError(PointsAtAccessError):
         self.session_id = session_id
 
 
+class TooManyRevisionsError(ConnectSessionServiceError):
+    """The session holds as many revisions as it may, so it cannot change again.
+
+    Only a human decision moves it from here: a fresh ask for the same binding
+    is refused while this one is open, so the message says what is true of the
+    session and leaves the next step to the surface that renders it.
+    """
+
+    def __init__(self, session_id: str, limit: int) -> None:
+        super().__init__(
+            f"this request has been changed {limit} times, as many as one request holds"
+        )
+        self.session_id = session_id
+        self.limit = limit
+
+
 class RevisionChangedError(ConnectSessionServiceError):
     """The confirm names a revision that is no longer the session's current one."""
 
@@ -468,6 +480,15 @@ class SessionClosedError(PointsAtAccessError):
             f"session {session_id!r} is closed and cannot be amended; start a new request"
         )
         self.session_id = session_id
+
+
+class DeviceFlowInProgressError(ConnectSessionServiceError):
+    """A standalone device flow owns the credential's shared transient state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a standalone device connection is already in progress for this credential"
+        )
 
 
 class ConnectOpenError(ConnectSessionServiceError):

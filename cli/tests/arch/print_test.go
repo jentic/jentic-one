@@ -137,3 +137,54 @@ func Test1B2_SingleSlogSetDefault(t *testing.T) {
 			"bootstrap (impl/3.2 §2d) regressed or moved; this guard must not pass vacuously")
 	}
 }
+
+// Test1B3_HumanRenderNeutralizesControls ensures human.go render functions
+// pass dynamic strings through TerminalSafe before writing to the terminal.
+func Test1B3_HumanRenderNeutralizesControls(t *testing.T) {
+	pkgs := loadCLI(t)
+
+	required := map[string]bool{
+		"renderMapList":    false,
+		"renderResultLine": false,
+		"fieldValue":       false,
+		"ReportError":      false,
+	}
+	sawHumanFile := false
+
+	forEachFile(pkgs, func(pkgPath string) bool {
+		return underPrefixes(pkgPath, "internal/cli/ux")
+	}, func(_ *packages.Package, file *ast.File, path string) {
+		if baseName(path) != "human.go" {
+			return
+		}
+		sawHumanFile = true
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			if _, tracked := required[fn.Name.Name]; !tracked {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "TerminalSafe" {
+					required[fn.Name.Name] = true
+				}
+				return true
+			})
+		}
+	})
+
+	if !sawHumanFile {
+		t.Fatal("internal/cli/ux/human.go not found — guard must not pass vacuously")
+	}
+	for fnName, called := range required {
+		if !called {
+			t.Errorf("internal/cli/ux/human.go:%s does not call TerminalSafe", fnName)
+		}
+	}
+}

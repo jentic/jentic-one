@@ -18,9 +18,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
+from pydantic import ValidationError
 
 from jentic_one.control.services.integrations.connect_session_service import (
     AuthCodeConfirmResult,
@@ -54,6 +56,7 @@ from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.connect_limits import install_connect_limiters
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
+from jentic_one.control.web.schemas.integrations import AmendSessionRequest
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError
@@ -787,3 +790,18 @@ def test_confirm_shares_connect_rate_limit_bucket() -> None:
     assert "Retry-After" in third.headers
     assert third.headers["content-type"].startswith("application/problem+json")
     assert third.json()["type"] == "rate_limit_exceeded"
+
+
+def test_an_amend_of_nothing_but_nulls_is_refused() -> None:
+    """``{"reason": null}`` carried a field but asked for nothing.
+
+    Every such call appended a revision, so a caller could grow a session's
+    chain without ever changing what it asks for.
+    """
+    with pytest.raises(ValidationError):
+        AmendSessionRequest.model_validate({"reason": None})
+    with pytest.raises(ValidationError):
+        AmendSessionRequest.model_validate({"reason": None, "requested_scopes": None})
+    # One field carrying a value is a change, including clearing the rules.
+    assert AmendSessionRequest.model_validate({"reason": "why"}).reason == "why"
+    assert AmendSessionRequest.model_validate({"requested_scopes": []}).requested_scopes == []

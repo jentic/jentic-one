@@ -16,6 +16,22 @@ from sqlalchemy.sql.elements import BindParameter
 
 from jentic_one.shared.db.locks import lock_credential_bindings
 from jentic_one.shared.db.types import UTCDateTime
+from jentic_one.shared.pagination import Cursor
+
+
+class RuleSetBoundAgentRow(NamedTuple):
+    """Result row for agents bound through a rule set, with the credential each uses.
+
+    ``agent_owner_id`` rides along because visibility of these rows is decided
+    per credential, by the caller's relationship to each one, which no single
+    SQL predicate can express.
+    """
+
+    agent_id: str
+    agent_name: str
+    agent_status: str
+    agent_owner_id: str | None
+    credential_id: str
 
 
 class CredentialBoundAgentRow(NamedTuple):
@@ -31,6 +47,7 @@ class CredentialBoundAgentRow(NamedTuple):
     # Why the binding is suspended (e.g. ``api_deleted``); None when active or
     # suspended by hand.
     suspended_reason: str | None = None
+    agent_owner_id: str | None = None
 
 
 class AgentVisibility(NamedTuple):
@@ -155,7 +172,7 @@ class PrerequisiteRepository:
         session: AsyncSession,
         *,
         credential_id: str,
-        cursor: tuple[datetime, str] | None = None,
+        cursor: Cursor | None = None,
         limit: int = 50,
         visible_to: AgentVisibility | None = None,
     ) -> list[CredentialBoundAgentRow]:
@@ -173,11 +190,10 @@ class PrerequisiteRepository:
         params: dict[str, object] = {"credential_id": credential_id, "limit": limit}
         bind_params: list[BindParameter[Any]] = []
         if cursor is not None:
-            cursor_ts, cursor_id = cursor
             conditions.append(
                 "(b.bound_at < :cursor_ts OR (b.bound_at = :cursor_ts AND b.id < :cursor_id))"
             )
-            params.update(cursor_ts=cursor_ts, cursor_id=cursor_id)
+            params.update(cursor_ts=cursor.timestamp, cursor_id=cursor.id)
             # Typed so SQLite compares against the stored timestamp format.
             bind_params.append(bindparam("cursor_ts", type_=UTCDateTime()))
         if visible_to is not None:
@@ -187,7 +203,7 @@ class PrerequisiteRepository:
 
         stmt = text(
             "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id, "
-            "b.suspended_reason "
+            "b.suspended_reason, a.owner_id "
             "FROM agent_credential_bindings b "
             "JOIN agents a ON a.id = b.agent_id "
             f"WHERE {' AND '.join(conditions)} "
@@ -200,6 +216,44 @@ class PrerequisiteRepository:
         typed = stmt.columns(bound_at=UTCDateTime(), suspended=Boolean())
         result = await session.execute(typed, params)
         return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
+
+    @staticmethod
+    async def list_agents_for_rule_set(
+        session: AsyncSession,
+        *,
+        rule_set_id: str,
+        limit: int = 50,
+        visible_to: AgentVisibility | None = None,
+    ) -> list[RuleSetBoundAgentRow]:
+        """Agents whose binding points at a shared rule set, on any credential.
+
+        Changing the set is one write to rows every one of those bindings
+        reads, so a review of such a change names them: the credential the
+        edit was opened on is only part of its reach. ``visible_to`` narrows
+        the rows exactly as :meth:`list_agents_for_credential` does; a caller
+        whose visibility differs per credential passes ``None`` and decides
+        row by row, from the credential and owner each row carries.
+        """
+        conditions = ["b.rule_set_id = :rule_set_id"]
+        params: dict[str, object] = {"rule_set_id": rule_set_id, "limit": limit}
+        bind_params: list[BindParameter[Any]] = []
+        if visible_to is not None:
+            conditions.append("(a.id = :self_id OR a.owner_id IN :owner_ids)")
+            params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
+            bind_params.append(bindparam("owner_ids", expanding=True))
+
+        stmt = text(
+            "SELECT a.id, a.name, a.status, a.owner_id, b.credential_id "
+            "FROM agent_credential_bindings b "
+            "JOIN agents a ON a.id = b.agent_id "
+            f"WHERE {' AND '.join(conditions)} "
+            "ORDER BY b.bound_at DESC, b.id DESC "
+            "LIMIT :limit"
+        )
+        if bind_params:
+            stmt = stmt.bindparams(*bind_params)
+        result = await session.execute(stmt, params)
+        return [RuleSetBoundAgentRow(*row) for row in result.fetchall()]
 
     @staticmethod
     async def get_agent_credential_binding(

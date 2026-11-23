@@ -9,6 +9,7 @@ import { CredentialsService } from '@/shared/api';
 import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
 	ConnectChallengeResponse,
+	ConnectFlowStatusResponse,
 	ConnectRequestBody,
 	CredentialAgentListResponse,
 	CredentialCreateRequest,
@@ -63,11 +64,8 @@ export function deleteCredential(credentialId: string): Promise<void> {
 
 /** POST /credentials/{id}/connect — begin the OAuth connect flow.
  *
- * The wire response is a discriminated union (authorization_code carries
- * `authorize_url` / `state`; device_code carries `user_code` /
- * `verification_uri`). The generated client type is stale (models only the
- * authorization_code shape), so we cast through the hand-authored union in
- * `./types` until `make openapi` rewires the codegen. */
+ * The generated union leaves the discriminator and authorization-code flow ID
+ * optional, so this boundary narrows both through the domain union in `./types`. */
 export function connectCredential(
 	credentialId: string,
 	body: ConnectRequestBody = {},
@@ -76,6 +74,14 @@ export function connectCredential(
 		credentialId,
 		requestBody: body,
 	}) as unknown as Promise<ConnectChallengeResponse>;
+}
+
+/** Read one flow's committed completion without inferring it from credential timestamps. */
+export function getConnectFlowStatus(
+	credentialId: string,
+	flowId: string,
+): Promise<ConnectFlowStatusResponse> {
+	return CredentialsService.getConnectFlowStatus({ credentialId, flowId });
 }
 
 /** GET /credentials/providers — discovery metadata for configured providers. */

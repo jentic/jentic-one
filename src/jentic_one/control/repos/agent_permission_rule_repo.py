@@ -19,10 +19,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.shared.db.locks import advisory_xact_lock
 
 
 class AgentPermissionRuleRepository:
     """Data access layer for AgentPermissionRule entities — flush-only, never commits."""
+
+    @staticmethod
+    async def acquire_binding_lock(
+        session: AsyncSession, agent_id: str, credential_id: str
+    ) -> None:
+        """Serialise the writers that replace one binding's rules.
+
+        ``replace_user_rules`` deletes and re-inserts, so two writers that each
+        checked the rules before writing would both pass and the later one
+        would silently revert the earlier. Held with the caller's transaction,
+        and paired with a re-read of the rules inside it.
+
+        On PostgreSQL this is ``pg_advisory_xact_lock`` (released at commit or
+        rollback). On SQLite it is a no-op: every write transaction opens with
+        ``BEGIN IMMEDIATE``, which already serialises writers to the file.
+        """
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"agent_permission_rules:{agent_id}:{credential_id}",
+        )
 
     @staticmethod
     async def list_rules(

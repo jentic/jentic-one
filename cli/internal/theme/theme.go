@@ -45,7 +45,6 @@ var (
 	Success = Themes["dark"].Styles().Success
 	Warn    = Themes["dark"].Styles().Warn
 	Error   = Themes["dark"].Styles().Error
-	Info    = Themes["dark"].Styles().Info
 	Accent  = Themes["dark"].Styles().Accent
 )
 

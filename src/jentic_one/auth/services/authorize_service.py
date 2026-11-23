@@ -6,8 +6,10 @@ import hashlib
 import hmac as hmac_mod
 import secrets
 from base64 import urlsafe_b64encode
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,10 +26,12 @@ from jentic_one.admin.repos import (
     AgentRepository,
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
+    InviteTokenRepository,
     OAuthClientGrantRepository,
     OAuthClientRepository,
     UserPermissionGrantRepository,
     UserRepository,
+    UserSecretRepository,
 )
 from jentic_one.auth.core.id_token import issue_id_token
 from jentic_one.auth.core.idp import (
@@ -38,13 +42,23 @@ from jentic_one.auth.core.idp import (
     get_admission_policy,
     get_default_idp_grants,
 )
-from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
+from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.auth.services.errors import (
+    ConsentAgentNotEligibleError,
+    InvalidGrantError,
+    UserNotAdmittedError,
+)
+from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
+from jentic_one.auth.services.schemas.agents import AgentCreatePayload
 from jentic_one.auth.services.token_service import (
     TokenService,
+    resolve_client_gate,
     resolve_effective_scopes,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import USER_OAUTH_PASSTHROUGH_SCOPES
 from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
@@ -54,6 +68,7 @@ from jentic_one.shared.models import (
     InviteState,
     OAuthClientApprovalStatus,
 )
+from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
 
@@ -110,6 +125,78 @@ class PendingAgentRef:
 
     id: str
     name: str
+
+
+def candidate_agent_scopes(
+    requested: list[str],
+    allowlist: frozenset[str] | None,
+) -> list[str]:
+    """The scopes an agent-bound grant could carry: requested ∩ client allowlist.
+
+    User-channel passthrough scopes (``openid``, ``offline_access``, and friends)
+    are stripped first: agent-bound grants carry platform permissions only, so
+    passthrough scopes must never enter the granted set. Order follows the request.
+
+    This is the half of the grant-scope rule that does not depend on which
+    agent the user picks, so the consent page shows exactly this list per
+    agent option and :func:`effective_agent_scopes` starts from it — one
+    function, so the page can never advertise a scope the grant would drop.
+    """
+    candidates = [s for s in requested if s not in USER_OAUTH_PASSTHROUGH_SCOPES]
+    if allowlist is None:
+        return candidates
+    return [s for s in candidates if s in allowlist]
+
+
+def effective_agent_scopes(
+    requested: list[str],
+    allowlist: frozenset[str] | None,
+    agent_permissions: frozenset[str],
+) -> list[str]:
+    """The grant-scope intersection: requested ∩ client allowlist ∩ the agent's
+    live permissions.
+
+    Named for what it returns — a set of OAuth2 scopes for the grant row — even
+    though the third operand is read from ``actor_permission_grants``.
+
+    The first two operands come from :func:`candidate_agent_scopes` (which the
+    consent page also calls), so the page and the grant row agree by
+    construction; the agent's live permission set is the ceiling applied on
+    top. Order follows the request.
+    """
+    candidates = candidate_agent_scopes(requested, allowlist)
+    return [s for s in candidates if s in agent_permissions]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentConsentApproval:
+    """Outcome of :meth:`AuthorizeService.approve_agent_consent`.
+
+    Either ``error`` is set (the browser-facing ``/error?error=…`` code; no
+    grant was minted) or ``grant_id`` + ``scopes`` describe the minted grant.
+    """
+
+    grant_id: str | None = None
+    scopes: tuple[str, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentAgentCreateResult:
+    """Outcome of :meth:`AuthorizeService.create_agent_from_consent`.
+
+    - ``reenter_consent`` — re-enter the consent page (an ACTIVE agent was
+      created, an agent already existed, or a parallel submit won the slot);
+    - ``await_approval`` — a PENDING agent was created (``agent_id`` /
+      ``agent_name``); the caller parks the user on the awaiting page;
+    - ``error`` — nothing was created; ``error`` is the browser-facing
+      ``/error?error=…`` code.
+    """
+
+    outcome: Literal["reenter_consent", "await_approval", "error"]
+    error: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
 
 
 class AuthorizeService:
@@ -416,6 +503,191 @@ class AuthorizeService:
             agent = await AgentRepository.get_by_id(session, agent_id)
         return None if agent is None else agent.status
 
+    async def approve_agent_consent(
+        self,
+        *,
+        user_id: str,
+        client_id: str,
+        client_name: str,
+        allowed_scopes: list[str] | None,
+        agent_id: str | None,
+        scope: str,
+    ) -> AgentConsentApproval:
+        """Validate the agent picked on the consent page and mint its grant.
+
+        The browser's selection is never trusted: the agent must be one of
+        the consenting user's own ACTIVE agents (the picker's own predicate),
+        and the requested ∩ allowlist ∩ agent-permissions scope intersection
+        is recomputed here. The grant row (+ audit + ``oauth_grant.created``)
+        is minted through :class:`OAuthGrantService`. Every failure returns an
+        ``error`` code and mints nothing.
+        """
+        grant_service = OAuthGrantService(self._ctx)
+        if not agent_id:
+            _logger.warning("oauth_consent_agent_missing", client_id=client_id)
+            return AgentConsentApproval(error="invalid_agent_selection")
+
+        options = await self.list_consentable_agents(user_id)
+        selected = next((o for o in options if o.id == agent_id), None)
+        if selected is None:
+            # Not the user's own active agent — covers unknown ids, other users'
+            # agents, and pending/disabled/archived agents in one predicate.
+            _logger.warning("oauth_consent_agent_invalid", client_id=client_id)
+            return AgentConsentApproval(error="invalid_agent_selection")
+
+        requested = [s.strip() for s in scope.split() if s.strip()]
+        allowlist = frozenset(allowed_scopes) if allowed_scopes is not None else None
+        effective = effective_agent_scopes(requested, allowlist, selected.permissions)
+        if not effective:
+            _logger.warning(
+                "oauth_consent_no_grantable_scopes", client_id=client_id, agent_id=agent_id
+            )
+            return AgentConsentApproval(error="no_grantable_scopes")
+
+        try:
+            grant_id = await grant_service.create_grant(
+                user_id=user_id,
+                oauth_client_id=client_id,
+                agent_id=selected.id,
+                scopes=effective,
+                client_name=client_name,
+            )
+        except ConsentAgentNotEligibleError:
+            # The mint-time lock + re-check refused: the agent was transferred,
+            # archived, or disabled between the picker validation above and the
+            # grant write. Same user-facing posture as a failed picker
+            # validation — the human error page, never a code redirect or a 500.
+            _logger.warning(
+                "oauth_consent_agent_invalid_at_mint", client_id=client_id, agent_id=agent_id
+            )
+            return AgentConsentApproval(error="invalid_agent_selection")
+        return AgentConsentApproval(grant_id=grant_id, scopes=tuple(effective))
+
+    async def create_agent_from_consent(
+        self,
+        *,
+        claims: IdpClaims | None,
+        local_user_id: str | None,
+        user_email: str,
+        origin: Origin,
+        agent_name: str,
+        client_id: str,
+        claim_create_slot: Callable[[], Awaitable[bool]],
+    ) -> ConsentAgentCreateResult:
+        """Create the consenting user's first agent from the consent page.
+
+        The caller has already verified + burned the signed create blob,
+        re-validated the consent handle and the client approval+active gate,
+        and validated ``agent_name``. This runs the workflow:
+
+        1. resolve the user — a local-login handle names it; an IdP handle is
+           resolved read-only and, when deferred provisioning left no row,
+           provisioned here (an affirmative user action, unlike rendering);
+        2. re-check the zero-agents predicate — an agent appearing in between
+           creates nothing;
+        3. claim the per-subject create slot (``claim_create_slot``) — exactly
+           one of N parallel submits proceeds;
+        4. decide the arm with the same effective-permission math as POST
+           /agents' ``agents:write`` gate — ACTIVE when the user holds it,
+           otherwise PENDING (the POST /register posture);
+        5. create the agent through :class:`AgentService` (owner = the
+           consenting user, default agent permissions, same audit + event).
+
+        ``claim_create_slot`` is injected rather than reached from
+        ``self._ctx`` because the atomic marker it sets lives in the app's
+        shared auth-state backend (``app.state.auth_state_backend``), which
+        ``Context`` does not expose; see
+        :func:`jentic_one.auth.web.consent_state.claim_agent_create_slot` for
+        the only production implementation. Keeping it a parameter also lets
+        the workflow be exercised without a web layer.
+        """
+        agent_service = AgentService(self._ctx)
+        if local_user_id:
+            user_id = local_user_id
+        else:
+            resolved = await self.resolve_existing_user_id(claims) if claims else None
+            if resolved is None:
+                if claims is None:
+                    # The handle's subject key guarantees claims exist on this
+                    # arm; belt and braces for a malformed handle.
+                    _logger.warning("oauth_consent_missing_claims", client_id=client_id)
+                    return ConsentAgentCreateResult(outcome="error", error="invalid_consent")
+                # Deferred provisioning: same admission policy + audit as the
+                # consent approve arm — never at render.
+                try:
+                    resolved = await self.provision_from_claims(claims)
+                except UserNotAdmittedError:
+                    _logger.warning("oauth_user_not_admitted", client_id=client_id)
+                    return ConsentAgentCreateResult(outcome="error", error="access_denied")
+                except InvalidGrantError:
+                    _logger.warning("oauth_provision_failed", client_id=client_id, exc_info=True)
+                    return ConsentAgentCreateResult(outcome="error", error="server_error")
+            user_id = resolved
+
+        # Idempotency/race re-check: if an agent appeared between the form render
+        # and this submit (another tab, an admin, a parallel submit), create
+        # nothing — just re-enter consent. The predicate is ownership of ANY
+        # agent row, in any status, matching the render arm: a user whose agents
+        # were disabled or archived by an admin is not first-run, and this
+        # submit must not mint them a fresh ACTIVE agent past that action.
+        if await self.owner_has_any_agents(user_id):
+            _logger.info(
+                "oauth_consent_agent_create_skipped_existing", client_id=client_id, user_id=user_id
+            )
+            return ConsentAgentCreateResult(outcome="reenter_consent")
+
+        # The plain read above cannot see a parallel submit that has not
+        # committed yet — the atomic per-subject slot claim can (security
+        # review): exactly one of N concurrent submits proceeds to create.
+        if not await claim_create_slot():
+            _logger.info(
+                "oauth_consent_agent_create_lost_race", client_id=client_id, user_id=user_id
+            )
+            return ConsentAgentCreateResult(outcome="reenter_consent")
+
+        # The hybrid arm split (security review): decided HERE, after the
+        # subject is provisioned, with the same effective-permission math as
+        # POST /agents' agents:write gate — this public mid-flow door must
+        # not out-privilege the SPA's.
+        can_create_active = await self.user_can_create_active_agent(user_id)
+        create_status = ActorStatus.ACTIVE if can_create_active else ActorStatus.PENDING
+        # Owner is ALWAYS the consenting user resolved from the server-side
+        # handle — the form carries no owner input. permissions=None applies the
+        # platform's DEFAULT_AGENT_PERMISSIONS on the ACTIVE arm, exactly like the
+        # SPA path (the PENDING arm defers scopes to approve(), exactly like
+        # /register); the service records the same REGISTER audit +
+        # agent.created event either way.
+        identity = Identity(
+            sub=user_id,
+            email=user_email,
+            actor_type=ActorType.USER,
+            origin=origin,
+        )
+        try:
+            view = await agent_service.create(
+                AgentCreatePayload(name=agent_name, description=None, permissions=None),
+                owner_id=user_id,
+                identity=identity,
+                status=create_status,
+            )
+        except DatabaseIntegrityError:
+            # The owner FK refused (user row vanished mid-flow) — the shared
+            # browser-facing error, never a raw 500.
+            _logger.warning("oauth_consent_agent_create_failed", client_id=client_id)
+            return ConsentAgentCreateResult(outcome="error", error="server_error")
+        _logger.info(
+            "oauth_consent_agent_created",
+            client_id=client_id,
+            agent_id=view.id,
+            user_id=user_id,
+            status=create_status.value,
+        )
+        if can_create_active:
+            return ConsentAgentCreateResult(outcome="reenter_consent")
+        return ConsentAgentCreateResult(
+            outcome="await_approval", agent_id=view.id, agent_name=view.name
+        )
+
     async def issue_authorization_code(
         self,
         *,
@@ -454,6 +726,13 @@ class AuthorizeService:
         ttl = self._auth_config.auth_code_ttl_seconds
 
         async with self._ctx.admin_db.transaction() as session:
+            # Password reset takes this lock before consuming outstanding codes.
+            user = await UserRepository.get_by_id_for_update(session, user_id)
+            if user is None or not user.active or user.deleted_at is not None:
+                raise InvalidGrantError("user is not active")
+            if user.must_change_password:
+                raise InvalidGrantError("user password rotation required")
+
             auth_code = await AuthorizationCodeRepository.create(
                 session,
                 code_hash=code_hash,
@@ -562,14 +841,14 @@ class AuthorizeService:
 
         Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
         the effective set the minted access token will actually enforce,
-        reported per RFC 6749 §5.1: for grant-bearing (agent-channel) codes it
-        is recomputed at exchange time the way the live resolvers enforce it
-        (agent live grants ∩ client ceiling ∩ consent-grant scopes, via
-        :func:`resolve_effective_scopes`); for plain codes it is the
-        authorize-time snapshot. Grant-bearing codes mint actor=AGENT tokens
-        bound to the consent grant and return ``id_token=None`` (D11 — no OIDC
-        identity on the agent channel); plain codes keep the act-as-user path
-        with an id_token.
+        reported per RFC 6749 §5.1. Grant-bearing (agent-channel) codes use
+        agent live grants ∩ client ceiling ∩ consent-grant scopes; plain USER
+        codes intersect the stored request with live USER grants and the client
+        ceiling. Both resolve through :func:`resolve_effective_scopes` at
+        exchange time. Grant-bearing codes mint actor=AGENT tokens bound to the
+        consent grant and return ``id_token=None`` (D11 — no OIDC identity on
+        the agent channel); plain codes keep the act-as-user path with an
+        id_token.
         """
         code_hash = _hash_code(code)
         now = datetime.now(UTC)
@@ -577,6 +856,9 @@ class AuthorizeService:
         grant_agent_id: str | None = None
         grant_scopes: list[str] = []
         grant_effective_scopes: list[str] = []
+        user_effective_scopes: list[str] = []
+        user_active = True
+        user_client_active = True
 
         async with self._ctx.admin_db.transaction() as session:
             auth_code = await AuthorizationCodeRepository.get_by_hash(
@@ -661,8 +943,31 @@ class AuthorizeService:
                 )
 
             user = await UserRepository.get_by_id(session, auth_code.user_id)
+            user_fenced = user is None or user.must_change_password
 
-            if user is not None:
+            if auth_code.grant_id is None:
+                user_active = (
+                    user is not None
+                    and user.active
+                    and user.deleted_at is None
+                    and not user.must_change_password
+                )
+                user_client_active, user_client_ceiling = await resolve_client_gate(
+                    session, oauth_client_id
+                )
+                if user is not None and user_active and user_client_active:
+                    code_scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
+                    user_effective_scopes = await resolve_effective_scopes(
+                        session,
+                        actor_id=user.id,
+                        actor_type=ActorType.USER,
+                        snapshot_scopes=code_scopes,
+                        is_ephemeral=False,
+                        client_ceiling=user_client_ceiling,
+                        grant_ceiling=None,
+                    )
+
+            if user is not None and not user_fenced and user_active and user_client_active:
                 await record_audit(
                     session,
                     action=AuditAction.LOGIN,
@@ -676,6 +981,13 @@ class AuthorizeService:
 
         if user is None:
             raise InvalidGrantError("user not found")
+        if user.must_change_password:
+            raise InvalidGrantError("user password rotation required")
+        if auth_code.grant_id is None:
+            if not user_active:
+                raise InvalidGrantError("user is not active")
+            if not user_client_active:
+                raise InvalidGrantError("issuing OAuth client is not active")
 
         if grant_id is not None and grant_agent_id is not None:
             # Actor = the grant's AGENT, scopes = the consent-time grant set
@@ -698,9 +1010,11 @@ class AuthorizeService:
             )
             return access_token, refresh_token, None, grant_effective_scopes
 
-        scopes = auth_code.scopes.split() if auth_code.scopes else ["openid"]
         access_token, refresh_token = await self._token_svc.issue_pair(
-            user.id, ActorType.USER, scopes, oauth_client_id=oauth_client_id
+            user.id,
+            ActorType.USER,
+            user_effective_scopes,
+            oauth_client_id=oauth_client_id,
         )
 
         id_token = issue_id_token(
@@ -712,14 +1026,10 @@ class AuthorizeService:
             nonce=auth_code.nonce,
         )
 
-        # Reported (§5.1) as granted at authorize time, deliberately: the user
-        # channel's set may include OIDC passthrough scopes (openid/email/…)
-        # that are consumed by the id_token and never enforced as platform
-        # permissions, and enforcement additionally intersects the *live*
-        # client ceiling at resolve time. Standard OIDC posture — the scope
-        # member tells the client what its authorization covers (including
-        # the identity scopes), not the platform-permission subset.
-        return access_token, refresh_token, id_token, scopes
+        # Reported (RFC 6749 §5.1) from the same live intersection the resolvers
+        # enforce: user live permission grants (implication-expanded), capped by
+        # any registered client ceiling, with OIDC/offline passthrough preserved.
+        return access_token, refresh_token, id_token, user_effective_scopes
 
     async def _resolve_or_create_user(self, claims: IdpClaims) -> str:
         """Resolve external identity to existing user or create a new one.
@@ -729,6 +1039,10 @@ class AuthorizeService:
         a local account, the login is rejected (fail closed) rather than linked
         or silently creating a duplicate — emails are unique, so a duplicate is
         impossible and a takeover via unverified email must not be allowed.
+
+        Linking an existing account cancels its active invite tokens, clears any
+        invite-set local password, revokes its login sessions, transitions
+        ``invite_state`` to ``accepted``, and records an update audit entry.
 
         Handles the race condition where concurrent callbacks for the same
         external_subject both pass the initial lookup — the UniqueConstraint
@@ -782,6 +1096,18 @@ class AuthorizeService:
                             "Email is not verified by the identity provider and is "
                             "already associated with an existing account"
                         )
+                    for token in await InviteTokenRepository.get_active_for_user(
+                        session, existing_user.id
+                    ):
+                        await InviteTokenRepository.redeem(session, token.id)
+                    if existing_user.invite_state == InviteState.REDEEMED:
+                        await UserSecretRepository.clear_password_hash(session, existing_user.id)
+                    await UserRepository.revoke_login_sessions(session, existing_user.id)
+                    await UserRepository.update(
+                        session,
+                        existing_user.id,
+                        invite_state=InviteState.ACCEPTED,
+                    )
                     await ExternalIdentityRepository.create(
                         session,
                         provider=provider,
@@ -793,12 +1119,12 @@ class AuthorizeService:
                     )
                     await record_audit(
                         session,
-                        action=AuditAction.CREATE,
+                        action=AuditAction.UPDATE,
                         target_type=AuditTargetType.USER,
                         target_id=existing_user.id,
                         actor_type=ActorType.USER,
                         actor_id=existing_user.id,
-                        reason=f"linked external identity ({provider})",
+                        reason="linked external identity; local password and invites cleared",
                         origin=None,
                     )
                     return existing_user.id

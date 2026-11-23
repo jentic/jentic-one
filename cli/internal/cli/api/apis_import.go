@@ -67,7 +67,7 @@ func newApisImportCmd(_ *app) *cobra.Command {
 	cmd.Flags().StringVar(&vendor, "vendor", "", "Override the vendor for the imported API")
 	cmd.Flags().StringVar(&name, "name", "", "Override the API name")
 	cmd.Flags().StringVar(&version, "version", "", "Override the API version")
-	cmd.Flags().StringVar(&submittedBy, "submitted-by", "", "Attribution for who submitted this import (default: server infers from the caller)")
+	cmd.Flags().StringVar(&submittedBy, "submitted-by", "", "Attribute this import to another principal (org:admin only; otherwise the server attributes it to the caller)")
 	planFlags(cmd)
 	return cmd
 }
@@ -86,7 +86,7 @@ func buildImportSource(arg, vendor, name, version, submittedBy string) (control.
 
 	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		src := control.ApiSourceUrl{
-			Type:        control.Url,
+			Type:        control.ApiSourceUrlTypeUrl,
 			Url:         arg,
 			Vendor:      optPtr(vendor),
 			ApiName:     optPtr(name),
@@ -104,7 +104,7 @@ func buildImportSource(arg, vendor, name, version, submittedBy string) (control.
 		return item, fmt.Errorf("reading %s: %w", arg, err)
 	}
 	src := control.ApiSourceInline{
-		Type:        control.Inline,
+		Type:        control.ApiSourceInlineTypeInline,
 		Filename:    filepath.Base(arg),
 		Content:     string(data),
 		Vendor:      optPtr(vendor),

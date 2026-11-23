@@ -309,12 +309,9 @@ class MonitoringService:
     def _resolve_window(since: int | None, until: int | None) -> tuple[int, int]:
         """Resolve optional epoch bounds to ``(since, until)``; defaults to the last 24h."""
         current_ts = int(datetime.now(tz=UTC).timestamp())
-        # Round the fallback UP to the next minute boundary: requests arriving
-        # within the same 60s window still share an identical cache key, but —
-        # because every aggregate filters `started_at < until` strictly — the
-        # current partial minute is INCLUDED. Flooring here made executions
-        # invisible to the volume chart / KPI for up to a minute while the
-        # executions feed (no upper bound) already listed them (#913).
+        # Round the fallback UP to the next minute boundary so strict
+        # `started_at < until` filtering includes the current partial minute
+        # while requests within the minute share a stable cache key (#913).
         stable_now_ts = (current_ts // 60 + 1) * 60
         resolved_until = until if until is not None else stable_now_ts
         resolved_since = since if since is not None else resolved_until - 86400
@@ -370,15 +367,14 @@ class MonitoringService:
     def _compute_trend_points(window_seconds: int, bucket_seconds: int) -> int:
         """Number of per-entity trend segments for a window.
 
-        One segment per aggregate bucket tier (24h → 24 hourly, 7d → 28
-        six-hour, 30d → 30 daily) instead of a fixed 12: equal twelfths of a
-        multi-day window (e.g. 14h for 7d) can never line up with calendar
-        days, which made the volume chart's day axis span more days than the
-        window. When the window is an exact multiple of the bucket size,
-        day-aligned bounds put segments exactly on day boundaries; a
-        DST-stretched window drifts slightly but stays re-bucketable into
-        day bars client-side. Capped so a pathologically wide window can't
-        inflate the payload.
+        Uses one segment per aggregate bucket tier (24h → 24 hourly, 7d → 28
+        six-hour, 30d → 30 daily) to preserve bucket and calendar-day alignment,
+        whereas equal twelfths of a multi-day window (e.g. 14h for 7d) would not
+        align with calendar days. When the window is an exact multiple of the
+        bucket size, day-aligned bounds put segments directly on day boundaries;
+        a DST-stretched window drifts slightly but stays re-bucketable into day
+        bars client-side. Capped so a pathologically wide window cannot inflate
+        the payload.
         """
         return max(1, min(60, round(window_seconds / bucket_seconds)))
 
@@ -448,9 +444,10 @@ class MonitoringService:
                 filters=repo_filters,
             )
 
-        # Deliberately outside the snapshot: `active_now` counts the jobs a
-        # worker is running at the moment of the request, so reading it at the
-        # window's snapshot would report a figure already known to be stale.
+        # Read outside the historical aggregate's snapshot so `active_now`
+        # describes worker state at sampling time rather than at that snapshot.
+        # The complete `UsageStats`, including this sample, is then cached and
+        # may be re-served for up to 30 seconds.
         async with self._ctx.admin_db.read_session() as session:
             active_now = await MonitoringRepository.active_now(session, filters=repo_filters)
 

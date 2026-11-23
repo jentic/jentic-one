@@ -17,7 +17,7 @@ A route passes when one of these holds:
 - it is listed in ``NON_IDENTITY_AUTH`` (authenticates with a non-platform
   credential, e.g. an RFC 7592 Registration-Access-Token);
 - its operationId is in ``PUBLIC_OPERATION_IDS``
-  (``src/jentic_one/shared/web/openapi_meta.py``), each entry carrying a ``#``
+  (``src/jentic_one/shared/web/openapi_meta/operation_ids.py``), each entry carrying a ``#``
   justification comment directly above it;
 - it is schema-hidden and listed in :data:`SCHEMA_HIDDEN_PUBLIC_OPERATIONS`
   with a justification, or it is a broker liveness/readiness probe
@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import ast
 import inspect
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,24 +43,23 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute, _IncludedRouter
 
-from jentic_one.__main__ import _build_app, _build_context
-from jentic_one.broker.web import deps as broker_deps
+from jentic_one.composition import build_app, build_context
 from jentic_one.mcp.app import McpChallengePlaceholder, McpMount
 from jentic_one.shared.config import load_config
 from jentic_one.shared.web import static as static_module
 from jentic_one.shared.web.deps import get_current_identity
 from jentic_one.shared.web.endpoint_permissions import (
     NON_IDENTITY_AUTH,
-    _is_identity_dependency,
     _normalise_path,
 )
 from jentic_one.shared.web.endpoint_reference import _BROKER_PUBLIC_PATHS
-from jentic_one.shared.web.openapi_meta import PUBLIC_OPERATION_IDS, generate_operation_id
+from jentic_one.shared.web.openapi_meta import PUBLIC_OPERATION_IDS
+from jentic_one.testing.introspect import RouteFact, route_facts
 
 from .conftest import SRC_ROOT
 
 REPO_ROOT = SRC_ROOT.parent.parent
-OPENAPI_META = SRC_ROOT / "shared" / "web" / "openapi_meta.py"
+OPENAPI_META = SRC_ROOT / "shared" / "web" / "openapi_meta" / "operation_ids.py"
 GATE_CONFIG = REPO_ROOT / "config" / "local-sqlite.yaml"
 
 #: Every deployment shape ``jentic-one serve`` can build: the combined
@@ -74,15 +73,6 @@ APP_SHAPES: dict[str, list[str]] = {
     "registry": ["registry"],
     "broker": ["broker"],
 }
-
-#: Broker identity dependencies. The broker validates credentials with its own
-#: composite token validator rather than ``get_current_identity``; each of these
-#: calls ``require_broker_identity`` (401 on a missing/invalid credential).
-_BROKER_AUTH_DEPENDENCIES: tuple[Callable[..., Any], ...] = (
-    broker_deps.require_broker_identity,
-    broker_deps.require_execute_permission,
-    broker_deps.require_execute_within_rate_limit,
-)
 
 #: Schema-hidden (``include_in_schema=False``) public routes that are not in
 #: ``PUBLIC_OPERATION_IDS``. They never appear in an OpenAPI document, so the
@@ -190,93 +180,58 @@ def _location(endpoint: Any) -> str:
     return f"{shown}:{line} ({getattr(target, '__qualname__', '?')})"
 
 
-def _walk(
-    routes: list[Any], prefix: str = "", include_deps: tuple[Any, ...] = (), in_schema: bool = True
-) -> Iterator[tuple[str, Any, tuple[Any, ...], bool]]:
-    """Flatten an app's routes, threading include-level prefix/dependencies/schema flags.
-
-    ``include_router(prefix=..., dependencies=..., include_in_schema=...)`` stores
-    those on the ``_IncludedRouter`` wrapper rather than on the child routes, so
-    they are accumulated here.
-    """
+def _walk(routes: list[Any], prefix: str = "") -> Iterator[tuple[str, Any]]:
+    """Flatten an app's routes, threading include-level prefix."""
     for route in routes:
         if isinstance(route, _IncludedRouter):
             context = route.include_context
             yield from _walk(
                 route.original_router.routes,
                 prefix + context.prefix,
-                include_deps + tuple(d.dependency for d in context.dependencies),
-                in_schema and bool(context.include_in_schema),
             )
         else:
-            yield prefix, route, include_deps, in_schema
+            yield prefix, route
 
 
-def _dependency_calls(route: APIRoute) -> Iterator[Any]:
-    stack = list(route.dependant.dependencies)
-    while stack:
-        dep = stack.pop()
-        yield dep.call
-        stack.extend(dep.dependencies)
+def _route_endpoints_by_key(app: FastAPI) -> dict[tuple[str, str], tuple[str, Any]]:
+    """Map ``(method, path)`` to ``(location, endpoint)`` for diagnostic formatting."""
+    by_key: dict[tuple[str, str], tuple[str, Any]] = {}
+    for prefix, route in _walk(app.routes):
+        path = _normalise_path(prefix + getattr(route, "path", ""))
+        if not isinstance(route, APIRoute):
+            endpoint = getattr(route, "endpoint", None) or getattr(route, "app", None)
+            loc = _location(endpoint) if endpoint is not None else type(route).__name__
+            by_key.setdefault(("*", path), (loc, endpoint))
+            continue
+        loc = _location(route.endpoint)
+        for method in sorted((route.methods or set()) - {"HEAD", "OPTIONS"}):
+            by_key.setdefault((method, path), (loc, route.endpoint))
+    return by_key
 
 
-def _auth_via(calls: list[Any], key: tuple[str, str]) -> str | None:
-    if any(_is_identity_dependency(call) for call in calls):
-        return "get_current_identity"
-    if any(call is dep for call in calls for dep in _BROKER_AUTH_DEPENDENCIES):
-        return "broker identity dependency"
-    if key in NON_IDENTITY_AUTH:
-        return "NON_IDENTITY_AUTH"
-    return None
+def _record_from_fact(
+    fact: RouteFact,
+    shape: str,
+    by_key: dict[tuple[str, str], tuple[str, Any]],
+) -> RouteRecord:
+    loc, endpoint = by_key.get((fact.method, fact.path), (fact.module, None))
+    return RouteRecord(
+        shape=shape,
+        method=fact.method,
+        path=fact.path,
+        operation_id=fact.operation_id,
+        in_schema=fact.in_schema,
+        auth_via=fact.auth_via,
+        location=loc,
+        opaque=fact.opaque,
+        endpoint=endpoint if fact.opaque else None,
+    )
 
 
 def collect_route_records(app: FastAPI, shape: str) -> list[RouteRecord]:
     """Classify every route the app serves (one record per HTTP method)."""
-    spec_ids: dict[tuple[str, str], str] = {}
-    for path, item in app.openapi().get("paths", {}).items():
-        for method, operation in item.items():
-            if isinstance(operation, dict) and "operationId" in operation:
-                spec_ids[(method.upper(), path)] = operation["operationId"]
-
-    records: list[RouteRecord] = []
-    for prefix, route, include_deps, include_in_schema in _walk(app.routes):
-        path = _normalise_path(prefix + getattr(route, "path", ""))
-        if not isinstance(route, APIRoute):
-            endpoint = getattr(route, "endpoint", None) or getattr(route, "app", None)
-            records.append(
-                RouteRecord(
-                    shape=shape,
-                    method="*",
-                    path=path,
-                    operation_id=None,
-                    in_schema=False,
-                    auth_via=None,
-                    location=_location(endpoint) if endpoint is not None else type(route).__name__,
-                    opaque=True,
-                    endpoint=endpoint,
-                )
-            )
-            continue
-        calls = [*include_deps, *_dependency_calls(route)]
-        in_schema = include_in_schema and route.include_in_schema
-        for method in sorted((route.methods or set()) - {"HEAD", "OPTIONS"}):
-            key = (method, path)
-            # Schema-visible routes take the id the spec actually carries; hidden
-            # ones get the id the app's generate_unique_id_function would assign.
-            op_id = spec_ids.get(key) if in_schema else None
-            op_id = op_id or route.operation_id or generate_operation_id(route)
-            records.append(
-                RouteRecord(
-                    shape=shape,
-                    method=method,
-                    path=path,
-                    operation_id=op_id,
-                    in_schema=in_schema,
-                    auth_via=_auth_via(calls, key),
-                    location=_location(route.endpoint),
-                )
-            )
-    return records
+    by_key = _route_endpoints_by_key(app)
+    return [_record_from_fact(fact, shape, by_key) for fact in route_facts(app)]
 
 
 @pytest.fixture(scope="module")
@@ -293,7 +248,7 @@ def route_records(tmp_path_factory: pytest.TempPathFactory) -> list[RouteRecord]
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(static_module, "_resolve_static_dir", lambda: bundle)
         for shape, apps in APP_SHAPES.items():
-            app = _build_app(_build_context(config, apps), apps)
+            app = build_app(build_context(config, apps), apps)
             records.extend(collect_route_records(app, shape))
     return records
 
@@ -301,8 +256,8 @@ def route_records(tmp_path_factory: pytest.TempPathFactory) -> list[RouteRecord]
 _FIX_AUTH = (
     "Fix: add `identity: Identity = get_current_identity(required_permissions=[...])` "
     "to the handler. If the route is intentionally public, add its operationId to "
-    "PUBLIC_OPERATION_IDS in src/jentic_one/shared/web/openapi_meta.py with a `#` "
-    "comment directly above the entry saying why it is safe unauthenticated (or, "
+    "PUBLIC_OPERATION_IDS in src/jentic_one/shared/web/openapi_meta/operation_ids.py with a "
+    "`#` comment directly above the entry saying why it is safe unauthenticated (or, "
     "for a schema-hidden route, to SCHEMA_HIDDEN_PUBLIC_OPERATIONS in this file)."
 )
 
@@ -399,7 +354,9 @@ def public_operation_id_entries(source: str) -> list[tuple[str, int]]:
                 for elt in ast.walk(value)
                 if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
             ]
-    raise AssertionError("PUBLIC_OPERATION_IDS assignment not found in openapi_meta.py")
+    raise AssertionError(
+        "PUBLIC_OPERATION_IDS assignment not found in openapi_meta/operation_ids.py"
+    )
 
 
 def find_unjustified_public_entries(source: str, filename: str) -> list[str]:

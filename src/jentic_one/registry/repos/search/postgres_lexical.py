@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Float, cast, func, literal, literal_column, select, tuple_
+from sqlalchemy import Float, cast, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -25,6 +25,7 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.repos.search.filters import search_filter_clause
 from jentic_one.registry.repos.search.protocol import SearchCursor, SearchHit
 from jentic_one.registry.repos.search.registry import register_strategy
+from jentic_one.shared.db.keyset import asc_keyset_predicate
 
 # The text-search configuration must reach Postgres as a ``regconfig``, not a
 # bound VARCHAR: ``to_tsvector`` / ``websearch_to_tsquery`` only overload on
@@ -72,8 +73,7 @@ class PostgresLexicalStrategy:
 
         if cursor is not None:
             stmt = stmt.where(
-                tuple_(distance, Operation.id)
-                > tuple_(literal(cursor.distance), literal(cursor.operation_id))
+                asc_keyset_predicate(distance, Operation.id, cursor.distance, cursor.operation_id)
             )
 
         stmt = stmt.order_by(distance.asc(), Operation.id.asc()).limit(limit)

@@ -8,7 +8,8 @@
 //   - Create returns the redacted credential PLUS a one-time `secret` object.
 //   - Read/list/patch return `CredentialRedactedResponse` (secrets never returned);
 //     type-specific projection (location/field_name/hint) lives inside `details`.
-//   - OAuth connect: POST /credentials/{id}/connect -> { authorize_url, state }.
+//   - OAuth connect: POST /credentials/{id}/connect returns an authorization-code
+//     or device challenge with an exact per-flow completion identifier.
 import {
 	CredentialLocation,
 	CredentialType,
@@ -20,6 +21,7 @@ import {
 	type BasicAuthUpdateRequest,
 	type BearerTokenCreateRequest,
 	type BearerTokenUpdateRequest,
+	type ConnectFlowStatusResponse,
 	type ConnectRequestBody,
 	type CredentialAgentListResponse,
 	type CredentialAgentResponse,
@@ -44,6 +46,7 @@ export type {
 	BasicAuthUpdateRequest,
 	BearerTokenCreateRequest,
 	BearerTokenUpdateRequest,
+	ConnectFlowStatusResponse,
 	ConnectRequestBody,
 	CredentialAgentListResponse,
 	CredentialAgentResponse,
@@ -58,18 +61,17 @@ export type {
 	Sigv4UpdateRequest,
 };
 
-// Hand-authored ConnectChallenge shim (the generated
-// `ConnectChallengeResponse` still models only the authorization_code case).
-// The wire response for `POST /credentials/{id}/connect` is a discriminated
-// union tagged by `kind`. Regenerate via `make openapi` once the spec has
-// been re-emitted and this shim can be removed.
+// The generated connect union leaves `kind` and the authorization-code
+// `flow_id` optional. The polling contract requires both, so narrow them here.
 export interface AuthCodeChallengeResponse {
 	kind: 'authorization_code';
+	flow_id: string;
 	authorize_url: string;
 	state: string;
 }
 export interface DeviceAuthorizationChallengeResponse {
 	kind: 'device_authorization';
+	flow_id: string;
 	user_code: string;
 	verification_uri: string;
 	verification_uri_complete: string | null;

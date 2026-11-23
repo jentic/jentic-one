@@ -14,7 +14,9 @@ from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import UserDeletedError, UserNotFoundError
+from jentic_one.shared.db.keyset import apply_desc_keyset
 from jentic_one.shared.models import AuthProvider, InviteState
+from jentic_one.shared.pagination import Cursor
 
 
 def _invite_state_clause(invite_state: InviteState) -> ColumnElement[bool]:
@@ -213,13 +215,13 @@ class UserRepository:
         session: AsyncSession,
         *,
         limit: int = 50,
-        cursor: datetime | None = None,
+        cursor: Cursor | None = None,
         invite_state: InviteState | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[User]:
-        stmt = select(User).order_by(User.created_at.desc()).limit(limit)
-        if cursor is not None:
-            stmt = stmt.where(User.created_at < cursor)
+        """Users ordered by ``(created_at, id) DESC``, keyset-paginated after ``cursor``."""
+        stmt = select(User).order_by(User.created_at.desc(), User.id.desc()).limit(limit)
+        stmt = apply_desc_keyset(stmt, User.created_at, User.id, cursor)
         if invite_state is not None:
             stmt = stmt.where(_invite_state_clause(invite_state))
         if filters is not None:

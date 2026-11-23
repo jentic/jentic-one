@@ -8,12 +8,16 @@ upstream teardown) and the web edge's ``guarded_body`` / ``open_streaming_respon
 from __future__ import annotations
 
 import asyncio
+import types
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import httpx
 import pytest
+from starlette.responses import Response
+from starlette.types import Message, Scope
 
+import jentic_one.broker.web.streaming as streaming_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, StreamingResult
 from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
@@ -26,6 +30,9 @@ from jentic_one.broker.core.errors import (
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.streaming import guarded_body, open_streaming_response
+from jentic_one.shared.broker.execution import StreamingOutcome
+from jentic_one.shared.http.injection import apply_injection
+from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.resilience.circuit import _FAIL_PREFIX
 from jentic_one.shared.schemas import OperationInfo
@@ -203,6 +210,30 @@ async def test_guarded_body_client_disconnect_tears_down_upstream() -> None:
 
 
 @pytest.mark.asyncio
+async def test_guarded_body_duration_ms_keeps_sub_millisecond_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins #1715: the outcome's ``duration_ms`` is fractional ms, not whole ms.
+
+    It feeds the ``broker.upstream.duration`` histogram on the streaming path;
+    an ``int()`` here would collapse its sub-millisecond buckets.
+    """
+    monkeypatch.setattr(streaming_mod, "time", types.SimpleNamespace(perf_counter=lambda: 10.0019))
+    result = StreamingResult(
+        status_code=200, headers={}, content_type=None, aiter=_slow_iter([b"x"], delay_s=0.0)
+    )
+    stack = AsyncExitStack()
+    await stack.enter_async_context(_FakeStreamCtx(result).open())
+    outcome = StreamingOutcome(execution_id="exec-1", http_status=200, started_at_perf=10.0)
+
+    async for _ in guarded_body(result, stack, transfer_deadline_s=0, outcome=outcome):
+        pass
+
+    assert isinstance(outcome.duration_ms, float)
+    assert outcome.duration_ms == pytest.approx(1.9)
+
+
+@pytest.mark.asyncio
 async def test_open_streaming_response_sets_metadata_headers() -> None:
     result = StreamingResult(
         status_code=503,
@@ -237,6 +268,166 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "upstream"
     # x-vendor passed through; content-length not present (chunked transfer).
     assert resp.headers["x-vendor"] == "v"
+
+
+@pytest.mark.asyncio
+async def test_open_streaming_response_preserves_repeated_set_cookie_fields() -> None:
+    cookie_1 = "c1=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/"
+    cookie_2 = "c2=2; Path=/; HttpOnly"
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[
+                ("content-type", "application/json"),
+                ("set-cookie", cookie_1),
+                ("set-cookie", cookie_2),
+            ],
+            content=b"{}",
+        )
+
+    ctx_req = ExecuteRequestContext(
+        upstream_url="https://api.example.com/x",
+        method="GET",
+        trace_id="t",
+        operation=OperationInfo(id="op"),
+        api_vendor="vendor",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        runner = HttpRunner(client)
+        resp = await open_streaming_response(
+            runner,
+            RunnerRequest(method="GET", url="https://api.example.com/x"),
+            ctx_req,
+            "exec-stream-cookies",
+            transfer_deadline_s=0,
+        )
+
+    assert resp.headers.getlist("set-cookie") == [cookie_1, cookie_2]
+
+
+async def _collect_response(response: Response) -> tuple[list[Message], bytes]:
+    messages: list[Message] = []
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        messages.append(message)
+
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [],
+        "client": ("127.0.0.1", 1234),
+        "server": ("broker.example", 443),
+    }
+    await response(scope, receive, send)
+    body = b"".join(
+        message.get("body", b"") for message in messages if message["type"] == "http.response.body"
+    )
+    return messages, body
+
+
+@pytest.mark.asyncio
+async def test_streaming_3xx_body_dropped_when_query_credential() -> None:
+    secret = "SECRET-123"  # pragma: allowlist secret
+    target_url, _ = apply_injection(
+        {},
+        "https://api.example.com/items",
+        InjectedAuth(headers={}, query_params={"api_key": secret}, cookies={}),
+    )
+    stream = _RecordingStream([f'<a href="{target_url}">{secret}</a>'.encode()])
+    result = StreamingResult(
+        status_code=307,
+        headers={
+            "location": target_url,
+            "content-type": "text/html",
+            "content-encoding": "gzip",
+        },
+        content_type="text/html",
+        aiter=stream.__aiter__(),
+    )
+    fake = _FakeStreamCtx(result)
+
+    class _Runner:
+        def stream(self, _req: RunnerRequest) -> object:
+            return fake.open()
+
+    ctx_req = ExecuteRequestContext(
+        upstream_url=target_url,
+        method="GET",
+        trace_id="t",
+        operation=OperationInfo(id="op"),
+        api_vendor="vendor",
+    )
+    response = await open_streaming_response(
+        _Runner(),  # type: ignore[arg-type]
+        RunnerRequest(method="GET", url=target_url),
+        ctx_req,
+        "exec-redirect",
+        transfer_deadline_s=0,
+    )
+
+    _, body = await _collect_response(response)
+
+    assert body == b""
+    assert stream.consumed == 0
+    assert fake.closed is True
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://api.example.com/items"
+    assert response.headers[JenticHeader.UPSTREAM_STATUS.value] == "307"
+    assert "content-type" not in response.headers
+    assert "content-encoding" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_streaming_2xx_body_untouched_with_query_credential() -> None:
+    secret = "SECRET-123"  # pragma: allowlist secret
+    target_url, _ = apply_injection(
+        {},
+        "https://api.example.com/items",
+        InjectedAuth(headers={}, query_params={"api_key": secret}, cookies={}),
+    )
+    result = StreamingResult(
+        status_code=200,
+        headers={"content-type": "text/plain"},
+        content_type="text/plain",
+        aiter=_slow_iter([b"ok"], delay_s=0.0),
+    )
+    fake = _FakeStreamCtx(result)
+
+    class _Runner:
+        def stream(self, _req: RunnerRequest) -> object:
+            return fake.open()
+
+    response = await open_streaming_response(
+        _Runner(),  # type: ignore[arg-type]
+        RunnerRequest(method="GET", url=target_url),
+        ExecuteRequestContext(
+            upstream_url=target_url,
+            method="GET",
+            trace_id="t",
+            operation=OperationInfo(id="op"),
+            api_vendor="vendor",
+        ),
+        "exec-success",
+        transfer_deadline_s=0,
+    )
+
+    _, body = await _collect_response(response)
+
+    assert body == b"ok"
+    assert fake.closed is True
+    assert response.headers["content-type"] == "text/plain"
 
 
 # --- circuit-breaker streaming decorator --------------------------------------

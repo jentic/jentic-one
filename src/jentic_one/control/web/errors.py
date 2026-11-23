@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 
 from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
+    ConnectRequiresReviewError,
+    ConnectScopeWideningError,
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
@@ -35,6 +37,7 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmKindMismatchError,
     ConnectOpenError,
     ConnectSessionServiceError,
+    DeviceFlowInProgressError,
     EditBindingNotFoundError,
     EditConflictedError,
     EditOpenError,
@@ -66,6 +69,7 @@ from jentic_one.control.services.integrations.errors import (
     SessionClosedError,
     SessionNotFoundError,
     TooManyOpenSessionsError,
+    TooManyRevisionsError,
     UnknownApiError,
     UnknownRuleError,
     UnpinnedServerHostError,
@@ -105,6 +109,8 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RuleSetInUseError: (409, "rule_set_in_use"),
     RuleSetAccessDeniedError: (403, "rule_set_access_denied"),
     RuleSetAttachDeniedError: (403, "rule_set_attach_denied"),
+    ConnectRequiresReviewError: (403, "connect_requires_review"),
+    ConnectScopeWideningError: (422, "scope_widening_requires_review"),
 }
 
 _CREDENTIAL_SAFE_DETAILS: dict[type[Exception], str] = {
@@ -117,8 +123,44 @@ _CREDENTIAL_SAFE_DETAILS: dict[type[Exception], str] = {
     ),
 }
 
+#: Recovery guidance when an agent tries to directly connect a credential it
+#: can only read through delegation.
+_CONNECT_REQUIRES_REVIEW_INSTRUCTION = (
+    "Connecting an owner's credential requires human review; "
+    "use request_access_change / `jentic connect` so your human approves."
+)
+
+
+def connect_requires_review_directive(*, credential_id: str) -> dict[str, object]:
+    """The directive pointing an agent at the reviewed connect-session flow."""
+    return {
+        "strategy": "prompt_human",
+        "parameters": {
+            "credential_id": credential_id,
+            "suggested_command": f"jentic access edit {credential_id}",
+        },
+        "human_readable_instruction": _CONNECT_REQUIRES_REVIEW_INSTRUCTION,
+    }
+
+
+def _credential_response_hook(
+    request: Request, exc: Exception, status_code: int, response: JSONResponse
+) -> JSONResponse:
+    if not isinstance(exc, ConnectRequiresReviewError):
+        return response
+    content: dict[str, object] = json.loads(bytes(response.body))
+    content["agent_directive"] = connect_requires_review_directive(credential_id=exc.credential_id)
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        media_type="application/problem+json",
+    )
+
+
 credential_service_error_handler = make_service_error_handler(
-    _ERROR_MAP, safe_details=_CREDENTIAL_SAFE_DETAILS
+    _ERROR_MAP,
+    response_hook=_credential_response_hook,
+    safe_details=_CREDENTIAL_SAFE_DETAILS,
 )
 
 
@@ -158,6 +200,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RulesRequiredError: (422, "rules_required"),
     ConfirmKindMismatchError: (400, "confirm_kind_mismatch"),
     TooManyOpenSessionsError: (429, "too_many_open_sessions"),
+    TooManyRevisionsError: (409, "too_many_revisions"),
     RecentlyRejectedError: (429, "recently_rejected"),
     ExistingCredentialNotFoundError: (404, "existing_credential_not_found"),
     InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
@@ -173,6 +216,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RevisionRequiredError: (422, "revision_required"),
     SessionClosedError: (409, "session_closed"),
     ConnectOpenError: (409, "connect_open"),
+    DeviceFlowInProgressError: (409, "device_flow_in_progress"),
     AmendFieldsMismatchError: (422, "amend_fields_mismatch"),
     ScopesNotSupportedError: (422, "scopes_not_supported"),
     ScopeChangeForbiddenError: (403, "scope_change_forbidden"),
@@ -272,6 +316,8 @@ def _connect_session_response_hook(
         extra["variables"] = exc.variables
     elif isinstance(exc, TooManyOpenSessionsError):
         extra.update(scope=exc.scope, limit=exc.limit)
+    elif isinstance(exc, TooManyRevisionsError):
+        extra["limit"] = exc.limit
     elif isinstance(exc, ConfirmKindMismatchError):
         extra["allowed_kinds"] = exc.allowed
     elif isinstance(exc, RecentlyRejectedError):

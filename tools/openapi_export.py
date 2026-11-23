@@ -20,6 +20,7 @@ Run directly::
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -79,13 +80,92 @@ def build_control_plane_spec() -> dict[str, Any]:
     return spec
 
 
+# Keywords whose presence makes a union branch something other than a plain
+# type: a branch that composes or references another schema cannot be folded
+# into a type array.
+_COMPOSITION_KEYWORDS = frozenset({"allOf", "anyOf", "oneOf", "$ref"})
+
+
+def _nullable_union_branch(branches: Any) -> dict[str, Any] | None:
+    """The sole plain-typed branch of a ``<type> | null`` union, else ``None``.
+
+    A union qualifies only when, after dropping its ``{type: 'null'}`` members,
+    exactly one branch remains and that branch is a plain typed schema. A
+    ``$ref`` branch, a composed branch, or a union of two real types stays as
+    it is — a type array cannot carry their constraints.
+    """
+    if not isinstance(branches, list):
+        return None
+    if not any(isinstance(b, dict) and b.get("type") == "null" for b in branches):
+        return None
+    typed = [b for b in branches if not (isinstance(b, dict) and b.get("type") == "null")]
+    if len(typed) != 1:
+        return None
+    branch = typed[0]
+    if not isinstance(branch, dict) or not isinstance(branch.get("type"), str):
+        return None
+    if _COMPOSITION_KEYWORDS & branch.keys():
+        return None
+    return branch
+
+
+def collapse_nullable_unions(spec: dict[str, Any]) -> int:
+    """Fold every ``<type> | null`` union into an OpenAPI 3.1 type array, in place.
+
+    Pydantic renders ``Optional[X]`` as ``anyOf: [{type: X}, {type: 'null'}]``.
+    The document is OpenAPI 3.1 (JSON Schema 2020-12), where ``type`` accepts a
+    list, so ``type: [X, 'null']`` says the same thing in one node — one fewer
+    indirection for a reader, and one fewer schema for a client generator.
+
+    The surviving branch's own keywords (``format``, ``maxLength``, ``items``,
+    ``properties``, ``examples``, …) move up beside the new ``type``, so no
+    constraint is lost. A keyword already present on the parent wins: the parent
+    describes the whole union and is the more specific statement.
+
+    Returns the number of unions collapsed.
+    """
+    collapsed = 0
+
+    def walk(node: Any) -> None:
+        nonlocal collapsed
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+        for keyword in ("anyOf", "oneOf"):
+            branch = _nullable_union_branch(node.get(keyword))
+            if branch is None:
+                continue
+            del node[keyword]
+            node["type"] = [branch.pop("type"), "null"]
+            for key, value in branch.items():
+                node.setdefault(key, value)
+            collapsed += 1
+            break
+        for value in node.values():
+            walk(value)
+
+    walk(spec)
+    return collapsed
+
+
 def published_spec(spec: dict[str, Any]) -> dict[str, Any]:
     """The checked-in YAML artefact: ``spec`` with placeholder deployment hosts.
 
     ``ui/openapi.json`` keeps the same-origin server: it is the SPA client's
     codegen input, and the generator bakes ``servers[0]`` into ``OpenAPI.BASE``.
+
+    Nullable unions are collapsed here only. ``ui/openapi.json`` feeds
+    ``npm run codegen``, and a type array changes the TypeScript the generator
+    emits; keeping the transform on this artefact leaves that diff as a separate
+    decision. ``spec`` is deep-copied, so callers that derive both artefacts
+    from one document are unaffected.
     """
-    return {**spec, "servers": PUBLISHED_SERVERS}
+    published = copy.deepcopy(spec)
+    collapse_nullable_unions(published)
+    return {**published, "servers": PUBLISHED_SERVERS}
 
 
 def ui_client_spec(spec: dict[str, Any]) -> dict[str, Any]:

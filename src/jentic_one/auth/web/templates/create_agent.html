@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Create an agent | Jentic One</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="{fonts_url}" rel="stylesheet">
+    <style>{page_css}</style>
+</head>
+<body>
+    <div class="card">
+        {logo_block}
+        <div class="user-info">
+            <div class="label">Signed in as</div>
+            <div class="email">{user_email}</div>
+        </div>
+        <h1><span class="app-name">{app_name}</span> connects through an agent
+            &mdash; create your first one to continue</h1>
+        <div class="origin">{redirect_origin}</div>
+        <p class="description">
+            An agent is the identity this application will act as on
+            Jentic One: it belongs to you and carries its own set of
+            permissions, separate from your account. You don't have one
+            yet &mdash; name it to continue.
+        </p>
+        {error_block}
+        <form method="post" action="/oauth/consent/agent">
+            <label class="field-label" for="agent_name">Agent name</label>
+            <input type="text" id="agent_name" name="agent_name" value="{agent_name}"
+                   maxlength="255" required autofocus autocomplete="off"
+                   placeholder="e.g. my-assistant">
+            <input type="hidden" name="consent_token" value="{consent_token}">
+            <input type="hidden" name="create_state" value="{create_state}">
+            <button type="submit" class="primary block">Create agent and continue</button>
+        </form>
+        <div class="footer">
+            {approval_note}<br>
+            You will still review and approve the connection on the
+            next screen.
+        </div>
+    </div>
+</body>
+</html>

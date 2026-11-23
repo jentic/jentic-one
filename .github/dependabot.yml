@@ -34,11 +34,13 @@ updates:
       python:
         patterns: ["*"]
 
-  # The Docker base images are digest-pinned (ARG defaults in
-  # deploy/docker/python-base.Dockerfile) for reproducible builds; this
-  # keeps those digests fresh so the published image doesn't accumulate
-  # already-patched base CVEs between manual bumps. The image-scan CI job
-  # (ci.yml) is the enforcement half: it fails on fixable HIGH/CRITICAL.
+  # Covers the `FROM …@sha256:` pins the docker updater can parse, which today
+  # is postgres-mirror.Dockerfile. The app image's bases are ARG defaults
+  # (PYTHON_IMAGE / NODE_IMAGE / UBUNTU_IMAGE in python-base.Dockerfile and
+  # app.multiarch.Dockerfile); the updater reads FROM instructions only, so
+  # those three are bumped by hand — see the "To bump" note in
+  # app.multiarch.Dockerfile. The image-scan CI job (ci.yml) is the enforcement
+  # half: it fails on fixable HIGH/CRITICAL.
   - package-ecosystem: "docker"
     directory: "/deploy/docker"
     schedule:

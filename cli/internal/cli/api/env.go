@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -34,6 +35,9 @@ func newEnvCmd(app *app) *cobra.Command {
 	return cmd
 }
 
+// purgeEnvironmentCredentials is a package-private seam for pre-commit failure tests.
+var purgeEnvironmentCredentials = auth.PurgeEnvironmentCredentials
+
 func newEnvAddCmd(_ *app) *cobra.Command {
 	var (
 		baseURL   string
@@ -48,7 +52,9 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 			"derived from --url (Control Plane and Broker often live on different\n" +
 			"domains). `jentic register` seeds broker_url automatically for a loopback\n" +
 			"install; set it explicitly here for a remote broker or to fix an existing\n" +
-			"environment (use --force to replace one of the same name).",
+			"environment (use --force to replace one of the same name). Replacing an\n" +
+			"environment with a different Control Plane or Broker origin purges its\n" +
+			"cached credentials and identity registrations before saving.",
 		Example: "  # Local install: point both the control plane and broker at loopback (http).\n" +
 			"  jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force\n" +
 			"  # Remote: broker on its own host.\n" +
@@ -58,23 +64,56 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())
 
+			// NAME GUARD: names become key/token file stems (client/auth
+			// Stem, path-traversal guard) — validate at creation.
+			if !config.ValidName(name) {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("invalid environment name %q (allowed: ^[a-z0-9][a-z0-9-]{0,63}$)", name),
+					Actionable: "Choose a name of lowercase letters, digits and hyphens.",
+				})
+			}
+
+			before, err := config.Load()
+			if err != nil {
+				return reportCoded(aud, err)
+			}
+			existing, exists := before.Environments[name]
+			previousBaseOrigin := auth.NormalizeOrigin(existing.BaseURL)
+			previousBrokerOrigin := auth.NormalizeOrigin(existing.BrokerURL)
+			originChanged := force && exists &&
+				(previousBaseOrigin != auth.NormalizeOrigin(baseURL) || previousBrokerOrigin != auth.NormalizeOrigin(brokerURL))
+			if originChanged {
+				// Purge before persistence so a removal failure leaves the old origin and
+				// registrations intact. A later config-write failure can only cause
+				// conservative credential loss, never disclosure to the new origin.
+				if err := purgeEnvironmentCredentials(name); err != nil {
+					return reportCoded(aud, err)
+				}
+			}
+
 			if err := config.MutateConfig(func(cfg *config.Config) error {
-				// NAME GUARD: names become key/token file stems (client/auth
-				// Stem, path-traversal guard) — validate at creation.
-				if !config.ValidName(name) {
-					return &ux.CodedError{
-						Code:       ux.CodeMissingArgument,
-						Msg:        fmt.Sprintf("invalid environment name %q (allowed: ^[a-z0-9][a-z0-9-]{0,63}$)", name),
-						Actionable: "Choose a name of lowercase letters, digits and hyphens.",
-					}
+				current, currentExists := cfg.Environments[name]
+				if force && (currentExists != exists || (exists &&
+					(auth.NormalizeOrigin(current.BaseURL) != previousBaseOrigin ||
+						auth.NormalizeOrigin(current.BrokerURL) != previousBrokerOrigin))) {
+					return fmt.Errorf("environment %q changed while the update was being prepared; retry the command", name)
 				}
 				// OVERWRITE GUARD: env add on an existing name would silently wipe
 				// fields no flag expresses — fail unless --force.
-				if _, exists := cfg.Environments[name]; exists && !force {
+				if currentExists && !force {
 					return &ux.CodedError{
 						Code:       ux.CodeMissingArgument,
 						Msg:        fmt.Sprintf("environment %q already exists", name),
 						Actionable: "Pass --force to replace it, or choose a different name.",
+					}
+				}
+				if originChanged {
+					for idName, ident := range cfg.Identities {
+						if ident.Environments != nil {
+							delete(ident.Environments, name)
+							cfg.Identities[idName] = ident
+						}
 					}
 				}
 				cfg.Environments[name] = config.Env{
@@ -87,14 +126,18 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 				return reportCoded(aud, err)
 			}
 
+			fields := map[string]any{
+				"base_url":   baseURL,
+				"broker_url": brokerURL,
+			}
+			if originChanged {
+				fields["credentials_purged"] = true
+			}
 			aud.Render(ux.Result{
 				Status:   ux.StatusAdded,
 				Resource: "environment",
 				Name:     name,
-				Fields: map[string]any{
-					"base_url":   baseURL,
-					"broker_url": brokerURL,
-				},
+				Fields:   fields,
 			})
 			return nil
 		},
@@ -143,8 +186,17 @@ func newEnvDeleteCmd(_ *app) *cobra.Command {
 			return ok
 		},
 		references: contextsReferencingEnv,
+		beforeRemove: func(_ *config.Config, name string) error {
+			return purgeEnvironmentCredentials(name)
+		},
 		remove: func(cfg *config.Config, name string) {
 			delete(cfg.Environments, name)
+			for idName, ident := range cfg.Identities {
+				if ident.Environments != nil {
+					delete(ident.Environments, name)
+					cfg.Identities[idName] = ident
+				}
+			}
 		},
 	})
 }

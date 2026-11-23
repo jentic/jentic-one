@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
@@ -25,6 +24,7 @@ class RefreshTokenRepository:
         token_family_id: str,
         expires_at: datetime,
         created_by: str,
+        family_issued_at: datetime | None = None,
         oauth_client_id: str | None = None,
         oauth_grant_id: str | None = None,
     ) -> RefreshToken:
@@ -35,6 +35,7 @@ class RefreshTokenRepository:
             scopes=scopes,
             token_family_id=token_family_id,
             expires_at=expires_at,
+            family_issued_at=family_issued_at,
             created_by=created_by,
             oauth_client_id=oauth_client_id,
             oauth_grant_id=oauth_grant_id,
@@ -49,7 +50,7 @@ class RefreshTokenRepository:
     ) -> RefreshToken | None:
         stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
         if for_update:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -64,64 +65,21 @@ class RefreshTokenRepository:
         await session.flush()
 
     @staticmethod
-    async def revoke_family(session: AsyncSession, token_family_id: str) -> None:
-        stmt = (
-            update(RefreshToken)
-            .where(RefreshToken.token_family_id == token_family_id)
-            .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        await session.execute(stmt)
-        await session.flush()
+    async def revoke_key_channel_for_agent(session: AsyncSession, agent_id: str) -> int:
+        """Revoke every live key-channel refresh token held by ``agent_id``.
 
-    @staticmethod
-    async def revoke_by_grant(session: AsyncSession, oauth_grant_id: str) -> int:
-        """Revoke every live refresh token minted under one consent grant."""
-        stmt = (
-            update(RefreshToken)
-            .where(RefreshToken.oauth_grant_id == oauth_grant_id)
-            .where(RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def revoke_by_client(session: AsyncSession, oauth_client_id: str) -> int:
-        """Revoke every live refresh token carrying one client's lineage.
-
-        The client hard-delete sweep — see
-        :meth:`AccessTokenRepository.revoke_by_client`. Returns rows revoked.
+        Key-channel tokens have ``oauth_grant_id IS NULL`` (minted via JWT-bearer
+        assertion exchange). Grant-channel tokens came from user consent and stay
+        untouched on key rotation.
         """
         stmt = (
             update(RefreshToken)
-            .where(RefreshToken.oauth_client_id == oauth_client_id)
+            .where(RefreshToken.actor_id == agent_id)
+            .where(RefreshToken.actor_type == "agent")
+            .where(RefreshToken.oauth_grant_id.is_(None))
             .where(RefreshToken.revoked_at.is_(None))
             .values(revoked_at=datetime.now(UTC))
         )
         result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def delete_expired(session: AsyncSession, before: datetime) -> int:
-        stmt = delete(RefreshToken).where(RefreshToken.expires_at < before)
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
-
-    @staticmethod
-    async def delete_for_actor(
-        session: AsyncSession, actor_id: str, *, grant_ids: Sequence[str] = ()
-    ) -> int:
-        """Delete every token held by ``actor_id`` or minted under one of ``grant_ids``.
-
-        The agent-purge sweep (any revocation state). Returns the row count.
-        """
-        predicate = RefreshToken.actor_id == actor_id
-        if grant_ids:
-            predicate = or_(predicate, RefreshToken.oauth_grant_id.in_(list(grant_ids)))
-        result = await session.execute(delete(RefreshToken).where(predicate))
         await session.flush()
         return int(result.rowcount)  # type: ignore[attr-defined]

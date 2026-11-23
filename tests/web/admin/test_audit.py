@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -175,3 +176,18 @@ def test_get_other_users_entry_is_not_found(
     resp = unauthed_client.get(f"/audit/{other[0]['id']}", headers=headers)
     assert resp.status_code == 404
     assert resp.json()["type"] == "audit_entry_not_found"
+
+
+#: Cursors that base64-decode to JSON of the wrong shape (#1956).
+_WRONG_SHAPE_CURSORS = [
+    base64.b64encode(raw.encode()).decode()
+    for raw in ("null", "[1]", '{"t": 1, "id": "x"}', '{"t": "2024-01-01", "id": 1}')
+]
+
+
+@pytest.mark.parametrize("cursor", _WRONG_SHAPE_CURSORS)
+def test_list_wrong_shape_cursor_returns_400(authed_client: TestClient, cursor: str) -> None:
+    """A tampered cursor is a 400 ``invalid_cursor``, never a 500."""
+    resp = authed_client.get("/audit", params={"cursor": cursor})
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_cursor"

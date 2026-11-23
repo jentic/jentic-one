@@ -13,20 +13,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
-const heldBody = `{
+var heldBody = `{
 	"status": "held",
 	"held_execution_id": "held_held1",
 	"review_url": "http://ui.local/app/agents/approvals/held_held1",
 	"expires_at": "2026-10-10T12:00:00Z",
-	"agent_directive": "This call needs human approval.",
+	"agent_directive": ` + strconv.Quote(heldAgentDirective) + `,
 	"_links": {
 		"self": "http://ui.local/executions/holds/held_held1",
 		"result": "http://ui.local/executions/holds/held_held1/result",
 		"withdraw": "http://ui.local/executions/holds/held_held1:withdraw"
-	}
+	},
+	"unknown_future_field": {"preserve": "this"}
 }`
 
 // heldStack is one httptest server playing the broker (every path outside
@@ -36,23 +39,34 @@ const heldBody = `{
 // /executions/holds/{id}/result answers result (with resultType), or
 // resultStatus when non-zero, or 409 when empty.
 type heldStack struct {
-	heldPolls    int32
-	state        string
-	status       string
-	result       string
-	resultType   string
-	resultStatus int
-	holdStatus   int  // non-zero: GET /executions/holds/{id} answers this status instead
-	holdDrop     bool // GET /executions/holds/{id} drops the connection after the first poll
-	noReviewURL  bool // GET /executions/holds/{id} omits review_url
-	brokerHits   atomic.Int32
-	polls        atomic.Int32
-	jobsHits     atomic.Int32
+	heldPolls     int32
+	state         string
+	status        string
+	result        string
+	resultType    string
+	resultStatus  int
+	holdStatus    int  // non-zero: GET /executions/holds/{id} answers this status instead
+	holdDrop      bool // GET /executions/holds/{id} drops the connection after the first poll
+	noReviewURL   bool // GET /executions/holds/{id} omits review_url
+	upstreamHeld  bool
+	foreignReview bool
+	reviewOrigin  string
+	brokerHits    atomic.Int32
+	polls         atomic.Int32
+	jobsHits      atomic.Int32
 }
 
 func (s *heldStack) serve(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reviewOrigin := srv.URL
+		if s.foreignReview {
+			reviewOrigin = "http://ui.local"
+		}
+		if s.reviewOrigin != "" {
+			reviewOrigin = s.reviewOrigin
+		}
 		switch {
 		case r.URL.Path == "/executions/holds/held_held1/result":
 			if s.resultStatus != 0 || s.result == "" {
@@ -89,7 +103,7 @@ func (s *heldStack) serve(t *testing.T) *httptest.Server {
 				"agent_id": "agt_1", "api_vendor": "example.com", "api_name": "orders", "api_version": "1",
 				"credential_id": "cred_1", "method": "POST", "path": "/v1/orders",
 				"execution_id": "exec_9", "expires_at": "2026-10-10T12:00:00Z",
-				"created_at": "2026-10-09T12:00:00Z", "review_url": reviewURL,
+				"created_at": "2026-10-09T12:00:00Z", "review_url": reviewOrigin + "/app/agents/approvals/held_held1",
 				"_links": map[string]any{"self": "/executions/holds/held_held1"},
 			}
 			if s.noReviewURL {
@@ -104,8 +118,11 @@ func (s *heldStack) serve(t *testing.T) *httptest.Server {
 			s.brokerHits.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Preference-Applied", "respond-async")
+			if s.upstreamHeld {
+				w.Header().Set("Jentic-Upstream-Status", "202")
+			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(heldBody))
+			_, _ = w.Write([]byte(strings.ReplaceAll(heldBody, "http://ui.local", reviewOrigin)))
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -152,9 +169,14 @@ func envelopeOf(t *testing.T, stdout string) map[string]any {
 
 const reviewURL = "http://ui.local/app/agents/approvals/held_held1"
 
+func reviewURLFor(srv *httptest.Server) string {
+	return srv.URL + "/app/agents/approvals/held_held1"
+}
+
 func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 	s := &heldStack{}
 	srv := s.serve(t)
+	reviewURL := reviewURLFor(srv)
 	stdout, stderr, err := runHeld(t, srv, "execute", "POST:/v1/orders", "-d", `{"n":1}`, "--json")
 
 	code, coded := exitOf(t, err)
@@ -177,6 +199,9 @@ func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 	if env["status"] != float64(202) || body["status"] != "held" || body["held_execution_id"] != "held_held1" {
 		t.Errorf("stdout envelope = %v", env)
 	}
+	if body["agent_directive"] != heldAgentDirective {
+		t.Errorf("trusted held directive = %q, want the broker directive %q", body["agent_directive"], heldAgentDirective)
+	}
 	for _, want := range []string{"needs human approval", "held execution: held_held1", reviewURL, "jentic executions poll held_held1"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
@@ -184,6 +209,197 @@ func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 	}
 	if s.polls.Load() != 0 {
 		t.Errorf("without --wait the hold is never polled (polled %d times)", s.polls.Load())
+	}
+}
+
+func TestExecuteCLI_UpstreamHeldShapeRendersAsResponse(t *testing.T) {
+	s := &heldStack{upstreamHeld: true}
+	srv := s.serve(t)
+	stdout, stderr, err := runHeld(t, srv, "execute", "POST:/v1/orders", "--json")
+	if err != nil {
+		t.Fatalf("an upstream 202 is response data, got %v", err)
+	}
+	env := envelopeOf(t, stdout)
+	body, _ := env["body"].(map[string]any)
+	if env["status"] != float64(http.StatusAccepted) || body["status"] != "held" || body["held_execution_id"] != "held_held1" {
+		t.Errorf("stdout envelope = %v, want the upstream body relayed", env)
+	}
+	if strings.Contains(stderr, "open:") || strings.Contains(stderr, "Held —") {
+		t.Errorf("upstream response must not render a review prompt:\n%s", stderr)
+	}
+	if s.polls.Load() != 0 {
+		t.Errorf("upstream response triggered %d hold polls", s.polls.Load())
+	}
+}
+
+func TestExecuteCLI_ForeignReviewURLWarnsInsteadOfOpening(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "immediate", args: []string{"execute", "POST:/v1/orders", "--json"}},
+		{name: "wait timeout", args: []string{"execute", "POST:/v1/orders", "--wait", "--timeout", "0", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &heldStack{heldPolls: 1 << 20, foreignReview: true}
+			srv := s.serve(t)
+			stdout, stderr, err := runHeld(t, srv, tc.args...)
+			code, coded := exitOf(t, err)
+			if code != ux.ExitTimeoutPending || coded.Details["review_url"] != reviewURL {
+				t.Fatalf("exit %d details %v, want the held execution with its original response data", code, coded.Details)
+			}
+			if strings.Contains(stderr, "open:") || !strings.Contains(stderr, "review_url did not come from the configured Jentic instance") {
+				t.Errorf("stderr must warn without an open instruction:\n%s", stderr)
+			}
+			if strings.Contains(coded.Actionable, "Show the user the review_url") {
+				t.Errorf("actionable step must not promote the untrusted URL: %q", coded.Actionable)
+			}
+
+			env := envelopeOf(t, stdout)
+			body, ok := env["body"].(map[string]any)
+			if !ok {
+				t.Fatalf("stdout body = %T, want the held response object", env["body"])
+			}
+			wantDirective := untrustedReviewInstruction +
+				" When they reply, run `jentic executions poll held_held1` once for the result. Do not re-send the call."
+			directive, _ := body["agent_directive"].(string)
+			if directive != wantDirective {
+				t.Errorf("stdout agent_directive = %q, want non-promoting warning and poll recovery %q", directive, wantDirective)
+			}
+			if strings.Contains(strings.ToLower(directive), "show the user") || strings.Contains(directive, reviewURL) {
+				t.Errorf("stdout agent_directive promotes the rejected URL: %q", directive)
+			}
+			if body["review_url"] != reviewURL || body["held_execution_id"] != "held_held1" ||
+				body["expires_at"] != "2026-10-10T12:00:00Z" {
+				t.Errorf("stdout held response data was not preserved: %v", body)
+			}
+			if extension, _ := body["unknown_future_field"].(map[string]any); extension["preserve"] != "this" {
+				t.Errorf("unknown held response field was not preserved: %v", body["unknown_future_field"])
+			}
+		})
+	}
+}
+
+func TestHeldRefConfigureTrustResolvesEffectiveBroker(t *testing.T) {
+	defaultBrokerURL := config.DefaultBrokerScheme + "://" + config.DefaultBrokerHost
+	for _, tc := range []struct {
+		name             string
+		configuredBroker string
+		brokerScheme     string
+		brokerHost       string
+		reviewURL        string
+		wantBroker       string
+		wantTrusted      bool
+	}{
+		{
+			name:        "zero values use the canonical default",
+			reviewURL:   defaultBrokerURL + "/review",
+			wantBroker:  defaultBrokerURL,
+			wantTrusted: true,
+		},
+		{
+			name:             "configured broker takes precedence over the default",
+			configuredBroker: "https://configured.corp",
+			reviewURL:        "https://configured.corp/review",
+			wantBroker:       "https://configured.corp",
+			wantTrusted:      true,
+		},
+		{
+			name:             "configured broker does not trust the default",
+			configuredBroker: "https://configured.corp",
+			reviewURL:        defaultBrokerURL + "/review",
+			wantBroker:       "https://configured.corp",
+		},
+		{
+			name:             "complete explicit pair overrides configured broker",
+			configuredBroker: "https://configured.corp",
+			brokerScheme:     "https",
+			brokerHost:       "flags.corp",
+			reviewURL:        "https://flags.corp/review",
+			wantBroker:       "https://flags.corp",
+			wantTrusted:      true,
+		},
+		{
+			name:             "explicit pair does not trust overridden configured broker",
+			configuredBroker: "https://configured.corp",
+			brokerScheme:     "https",
+			brokerHost:       "flags.corp",
+			reviewURL:        "https://configured.corp/review",
+			wantBroker:       "https://flags.corp",
+		},
+		{
+			name:         "scheme without host fails closed",
+			brokerScheme: "https",
+			reviewURL:    defaultBrokerURL + "/review",
+		},
+		{
+			name:       "host without scheme fails closed",
+			brokerHost: "127.0.0.1:8100",
+			reviewURL:  defaultBrokerURL + "/review",
+		},
+		{
+			name:             "malformed explicit pair fails closed without configured fallback",
+			configuredBroker: "https://configured.corp",
+			brokerScheme:     "https",
+			brokerHost:       "bad host",
+			reviewURL:        "https://configured.corp/review",
+			wantBroker:       "https://bad host",
+		},
+		{
+			name:             "malformed configured broker fails closed without default fallback",
+			configuredBroker: "://bad",
+			reviewURL:        defaultBrokerURL + "/review",
+			wantBroker:       "://bad",
+		},
+		{
+			name:             "control origin remains trusted with malformed broker target",
+			configuredBroker: "://bad",
+			reviewURL:        "https://control.corp/review",
+			wantBroker:       "://bad",
+			wantTrusted:      true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := activeCtx("https://control.corp")
+			clictx.ActiveContext(ctx).BrokerURL = tc.configuredBroker
+			ref := &heldRef{ReviewURL: tc.reviewURL}
+			ref.configureTrust(ctx, tc.brokerScheme, tc.brokerHost)
+			if ref.brokerURL != tc.wantBroker {
+				t.Errorf("broker URL = %q, want %q", ref.brokerURL, tc.wantBroker)
+			}
+			if got := ref.trustedReviewURL(); got != tc.wantTrusted {
+				t.Errorf("trustedReviewURL() = %v, want %v", got, tc.wantTrusted)
+			}
+		})
+	}
+}
+
+func TestExecuteHeld_TrustsEffectiveBrokerFlags(t *testing.T) {
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected control-plane request %s", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(control.Close)
+	s := &heldStack{}
+	broker := s.serve(t)
+	app := testApp(t)
+	seedRegistered(t, app, "default", control.URL)
+	out, errBuf := new(bytes.Buffer), new(bytes.Buffer)
+	app.Out, app.Err = out, errBuf
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(errBuf)
+	root.SetArgs([]string{
+		"execute", "POST:/v1/orders", "--json",
+		"--broker-scheme", "http", "--broker-host", broker.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if code, _ := exitOf(t, err); code != ux.ExitTimeoutPending {
+		t.Fatalf("exit %d, want the held execution", code)
+	}
+	if want := "open: " + reviewURLFor(broker); !strings.Contains(errBuf.String(), want) {
+		t.Errorf("stderr missing %q for the effective broker origin:\n%s", want, errBuf.String())
 	}
 }
 
@@ -260,6 +476,7 @@ func TestExecuteWaitDeniedExits2WithTheReason(t *testing.T) {
 func TestExecuteWaitTimeoutExits3WithTheHeldEnvelope(t *testing.T) {
 	s := &heldStack{heldPolls: 1 << 20}
 	srv := s.serve(t)
+	reviewURL := reviewURLFor(srv)
 	stdout, stderr, err := runHeld(t, srv, "execute", "GET:/v1/items", "--wait", "--timeout", "1", "--json")
 	code, coded := exitOf(t, err)
 	if code != ux.ExitTimeoutPending || !strings.Contains(coded.Msg, "after waiting 1s") {
@@ -437,9 +654,36 @@ func TestExecutionsPoll(t *testing.T) {
 	}
 }
 
+func TestExecutionsPollTrustsCanonicalDefaultBroker(t *testing.T) {
+	t.Setenv("JENTIC_BROKER_URL", "")
+	s := &heldStack{heldPolls: 1 << 20, reviewOrigin: "https://127.0.0.1:8100"}
+	srv := s.serve(t)
+	reviewURL := "https://127.0.0.1:8100/app/agents/approvals/held_held1"
+	_, stderr, err := runHeld(t, srv, "executions", "poll", "held_held1", "--timeout", "0", "--json")
+
+	code, coded := exitOf(t, err)
+	if code != ux.ExitTimeoutPending || coded.Details["review_url"] != reviewURL {
+		t.Fatalf("exit %d details %v, want the held execution with its review URL", code, coded.Details)
+	}
+	if !strings.Contains(coded.Actionable, "Show the user the review_url ("+reviewURL+")") {
+		t.Errorf("actionable = %q, want trusted review-link recovery for the canonical default broker", coded.Actionable)
+	}
+	untrustedWarning := "review_url did not come from the configured Jentic instance"
+	if strings.Contains(coded.Actionable, untrustedWarning) {
+		t.Errorf("actionable rejects the canonical default broker review URL: %q", coded.Actionable)
+	}
+	if !strings.Contains(stderr, "open: "+reviewURL) || strings.Contains(stderr, untrustedWarning) {
+		t.Errorf("stderr must open the trusted default-broker review URL without a warning:\n%s", stderr)
+	}
+	if s.brokerHits.Load() != 0 || s.polls.Load() != 1 {
+		t.Errorf("broker hits = %d, polls = %d; want one control-plane poll and no broker call", s.brokerHits.Load(), s.polls.Load())
+	}
+}
+
 func TestExecutionsPollTimeoutOnAPendingHoldExits3(t *testing.T) {
 	s := &heldStack{heldPolls: 1 << 20}
 	srv := s.serve(t)
+	reviewURL := reviewURLFor(srv)
 	_, stderr, err := runHeld(t, srv, "executions", "poll", "held_held1", "--timeout", "20ms")
 	code, coded := exitOf(t, err)
 	if code != ux.ExitTimeoutPending || coded.Details["held_execution_id"] != "held_held1" ||
@@ -497,6 +741,7 @@ func TestExecutionsPollRejectsATimeoutAboveTheMaximum(t *testing.T) {
 func TestExecutionsPollTransportErrorKeepsTheHeldExecution(t *testing.T) {
 	s := &heldStack{heldPolls: 1 << 20, holdDrop: true}
 	srv := s.serve(t)
+	reviewURL := reviewURLFor(srv)
 	_, stderr, err := runHeld(t, srv, "executions", "poll", "held_held1", "--timeout", "5s")
 	code, coded := exitOf(t, err)
 	if code != ux.ExitError || coded.Code != ux.CodeTransportError {
@@ -522,6 +767,7 @@ func TestExecutionsPollTransportErrorKeepsTheHeldExecution(t *testing.T) {
 func TestExecuteWaitTransportErrorKeepsTheReviewURLFromTheHeldEnvelope(t *testing.T) {
 	s := &heldStack{heldPolls: 1 << 20, holdStatus: http.StatusBadGateway}
 	srv := s.serve(t)
+	reviewURL := reviewURLFor(srv)
 	_, stderr, err := runHeld(t, srv, "execute", "GET:/v1/items", "--wait", "--json")
 	_, coded := exitOf(t, err)
 	if coded == nil || coded.Details["held_execution_id"] != "held_held1" || coded.Details["review_url"] != reviewURL ||

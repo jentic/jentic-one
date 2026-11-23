@@ -4,7 +4,8 @@ Drives the router's async branch (``_handle_async``) with a real Context and
 admin DB, then runs the stored job through the worker's ``ExecutionHandler``
 and the broker's ``PipelineExecutor`` against a real local HTTP upstream. The
 JSON body must arrive with its ``Content-Type`` and the vendor version header,
-while the caller's ``Authorization`` and ``Cookie`` never reach the job payload.
+and the caller's ``Cookie`` with it (#1957), while the caller's ``Authorization``
+never reaches the job payload and the cookie is stored only as ciphertext.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -30,12 +32,23 @@ from jentic_one.broker.web.routers.execute import _handle_async
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.http.injection import (
+    clear_upstream_cookie_scopes,
+    record_upstream_set_cookie,
+)
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.models import ActorType
 
 pytestmark = pytest.mark.integration
 
-_AGENT = Identity(sub="agnt_replayhdr", actor_type=ActorType.AGENT, permissions=[])
+_AGENT = Identity(
+    sub="agnt_replayhdr",
+    actor_type=ActorType.AGENT,
+    permissions=[],
+    auth_token_sha256="abcd" * 16,
+    auth_method="jwt",
+    expires_at=datetime.now(UTC) + timedelta(hours=1),
+)
 _BODY = b'{"parent": {"page_id": "p1"}}'
 
 
@@ -79,6 +92,7 @@ async def upstream() -> AsyncGenerator[_Upstream, None]:
 @pytest.fixture()
 async def clean(integration_context: Context) -> AsyncGenerator[None, None]:
     async def _truncate() -> None:
+        clear_upstream_cookie_scopes()
         async with integration_context.admin_db.transaction() as session:
             await session.execute(delete(Job).where(Job.created_by == _AGENT.sub))
             await session.execute(
@@ -133,6 +147,7 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
         api_name="notion",
         api_version="1",
     )
+    record_upstream_set_cookie(ctx_req.upstream_url, "sid=agent-session; Path=/v1")
 
     response = await _handle_async(_request(_BODY), ctx_req, ctx, _AGENT)
     assert response.status_code == 202
@@ -157,6 +172,7 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
             executor=PipelineExecutor(registry),
             # The test upstream listens on loopback, which the default policy blocks.
             egress=EgressConfig(allowed_private_subnets=["127.0.0.0/8"]),
+            encryption=ctx.encryption,
         )
         result = await handler.execute(
             job_id,
@@ -173,5 +189,5 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
     assert head["content-type"] == "application/json"
     assert head["notion-version"] == "2022-06-28"
     assert "authorization" not in head
-    assert "cookie" not in head
+    assert head["cookie"] == "sid=agent-session"
     assert upstream.bodies[0] == _BODY

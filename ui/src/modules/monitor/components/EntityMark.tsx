@@ -14,11 +14,14 @@ export function EntityMark({
 	tone,
 	label,
 	lens,
+	initials,
 	className,
 }: {
 	tone: EntityTone;
 	label: string;
 	lens: UsageLens;
+	/** The row's own letters (an agent's fleet initials), over the label's. */
+	initials?: string;
 	className?: string;
 }) {
 	return (
@@ -32,7 +35,9 @@ export function EntityMark({
 			)}
 			style={{ backgroundColor: tone.tile, color: tone.ink }}
 		>
-			{label === 'Other' && tone.tone == null ? '+' : entityInitials(lens, label)}
+			{label === 'Other' && tone.tone == null
+				? '+'
+				: (initials ?? entityInitials(lens, label))}
 		</span>
 	);
 }

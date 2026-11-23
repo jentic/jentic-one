@@ -7,7 +7,7 @@
 
 ```bash
 make install   # Full dev setup: sync deps + install lefthook hooks
-make check     # Run lint + typecheck + score + tests
+make check     # Run lint (incl. mypy) + secrets audit + arch tests + score
 ```
 
 ## Rules & Guides
@@ -42,13 +42,13 @@ in [`tests/arch/`](tests/arch/) and the scoped rules under
 | `test-smoke`        | Run smoke tests (requires running services)       |
 | `cov`               | Run tests with coverage report                    |
 | `score`             | Score OpenAPI specs (opt-in: `JENTIC_SCORE_API_KEY`) |
-| `check`             | Run lint, score, secrets audit, unit + arch tests |
+| `check`             | Run lint, secrets audit, arch tests, and score (no unit tests) |
 | `hooks`             | Install lefthook git hooks (pre-commit + commit-msg) |
 | `clean`             | Remove caches and build artifacts                 |
 | `start-fixtures`    | Start Docker database fixtures                    |
 | `stop-fixtures`     | Stop Docker database fixtures                     |
 | `destroy-fixtures`  | Remove Docker database fixtures and volumes       |
-| `start-app`         | Start combined app (all surfaces)                 |
+| `start-app`         | Start combined app (registry, admin, control, auth); broker is `start-broker` |
 | `start-registry`    | Start registry surface standalone                 |
 | `start-admin`       | Start admin surface standalone                    |
 | `start-control`     | Start control surface standalone                  |

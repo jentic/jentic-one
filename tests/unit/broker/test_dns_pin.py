@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+import contextlib
+import ipaddress
 import socket
+import ssl
+import subprocess
+import tempfile
 import threading
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import httpx
 import pytest
 
 from jentic_one.broker.adapters.egress import DnsPinningTransport, resolve_and_validate
 from jentic_one.broker.adapters.http_client import build_client
+from jentic_one.broker.adapters.runners.base import RunnerRequest
+from jentic_one.broker.adapters.runners.http import HttpRunner
+from jentic_one.broker.adapters.runners.retry import RetryRunner
+from jentic_one.shared import egress as egress_module
 from jentic_one.shared.config import EgressConfig, UpstreamClientConfig
 from jentic_one.shared.egress import UpstreamHostUnresolvedError
 
@@ -243,3 +256,255 @@ async def test_transport_resolves_off_the_event_loop(monkeypatch: pytest.MonkeyP
         await client.get("https://api.example.com/x")
     assert calls and calls[0] != loop_thread
     assert inner.seen is not None
+
+
+@dataclass
+class _MultiSniServer:
+    """Loopback TLS HTTP/1.1 server routing requests by the connection's TLS SNI."""
+
+    port: int
+    client_ssl: ssl.SSLContext
+    handshakes: list[str] = field(default_factory=list)
+    received: list[tuple[str | None, str, str | None, str | None, str]] = field(
+        default_factory=list
+    )
+    fail_once_paths: set[str] = field(default_factory=set)
+
+
+@contextlib.contextmanager
+def _run_multi_sni_tls_server(*hostnames: str) -> Iterator[_MultiSniServer]:
+    """Start a loopback TLS server with per-hostname certificates and SNI tracking."""
+    with tempfile.TemporaryDirectory(prefix="jentic-dns-pin-sni-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        contexts: dict[str, ssl.SSLContext] = {}
+        client_ssl = ssl.create_default_context()
+        for name in hostnames:
+            cert, key = tmp / f"{name}.crt", tmp / f"{name}.key"
+            subprocess.run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    str(key),
+                    "-out",
+                    str(cert),
+                    "-days",
+                    "1",
+                    "-subj",
+                    f"/CN={name}",
+                    "-addext",
+                    f"subjectAltName=DNS:{name}",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server_context.load_cert_chain(cert, key)
+            contexts[name] = server_context
+            client_ssl.load_verify_locations(cafile=str(cert))
+
+        handshakes: list[str] = []
+        received: list[tuple[str | None, str, str | None, str | None, str]] = []
+        fail_once_paths: set[str] = set()
+        conn_sni: dict[int, str] = {}
+
+        def _select_cert(
+            sock: ssl.SSLObject, server_name: str, _context: ssl.SSLContext
+        ) -> int | None:
+            handshakes.append(server_name)
+            conn_sni[id(sock)] = server_name
+            sock.context = contexts[server_name]
+            return None
+
+        primary = contexts[hostnames[0]]
+        primary.sni_callback = _select_cert
+
+        class _Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def _handle(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(length).decode("utf-8") if length else ""
+                host = self.headers.get("Host")
+                authorization = self.headers.get("Authorization")
+                sni = conn_sni.get(id(self.connection))
+                received.append((sni, self.path, host, authorization, raw_body))
+                if self.path in fail_once_paths:
+                    fail_once_paths.remove(self.path)
+                    self.send_response(503)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                payload = (
+                    f"backend={sni};path={self.path};host={host};"
+                    f"auth={authorization};body={raw_body}"
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_GET(self) -> None:
+                self._handle()
+
+            def do_POST(self) -> None:
+                self._handle()
+
+            def log_message(self, format: str, *args: object) -> None:
+                del format, args
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        server.socket = primary.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield _MultiSniServer(
+                port=int(server.server_address[1]),
+                client_ssl=client_ssl,
+                handshakes=handshakes,
+                received=received,
+                fail_once_paths=fail_once_paths,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_transport_isolates_connection_pool_across_https_origins_sharing_pinned_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two HTTPS origins pinned to the same IP establish distinct TLS connections by hostname."""
+
+    async def _resolve_loopback(_host: str, _egress: EgressConfig | None) -> ipaddress.IPv4Address:
+        return ipaddress.IPv4Address("127.0.0.1")
+
+    monkeypatch.setattr(egress_module, "resolve_and_validate_async", _resolve_loopback)
+
+    with _run_multi_sni_tls_server("a.test", "b.test") as srv:
+        inner = httpx.AsyncHTTPTransport(verify=srv.client_ssl, http2=False)
+        transport = DnsPinningTransport(inner, None)
+        async with httpx.AsyncClient(transport=transport) as client:
+            first = await client.post(
+                f"https://a.test:{srv.port}/first",
+                headers={"Authorization": "Bearer secret-a"},
+                content=b"body-from-a",
+            )
+            await first.aread()
+
+            second = await client.post(
+                f"https://b.test:{srv.port}/second",
+                headers={"Authorization": "Bearer secret-b"},
+                content=b"body-from-b",
+            )
+            await second.aread()
+
+            # A third request to a.test reuses the idle connection for a.test
+            # without triggering another TLS handshake.
+            third = await client.get(
+                f"https://a.test:{srv.port}/third",
+                headers={"Authorization": "Bearer secret-a-2"},
+            )
+            await third.aread()
+
+        assert srv.handshakes == ["a.test", "b.test"]
+        assert first.text == (
+            f"backend=a.test;path=/first;host=a.test:{srv.port};"
+            "auth=Bearer secret-a;body=body-from-a"
+        )
+        assert second.text == (
+            f"backend=b.test;path=/second;host=b.test:{srv.port};"
+            "auth=Bearer secret-b;body=body-from-b"
+        )
+        assert third.text == (
+            f"backend=a.test;path=/third;host=a.test:{srv.port};auth=Bearer secret-a-2;body="
+        )
+        assert srv.received == [
+            ("a.test", "/first", f"a.test:{srv.port}", "Bearer secret-a", "body-from-a"),
+            ("b.test", "/second", f"b.test:{srv.port}", "Bearer secret-b", "body-from-b"),
+            ("a.test", "/third", f"a.test:{srv.port}", "Bearer secret-a-2", ""),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_shared_runner_isolates_sync_streaming_and_retries_across_two_actors_and_upstreams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two broker callers sharing one client cannot cross-route credentials across upstreams."""
+
+    async def _resolve_loopback(_host: str, _egress: EgressConfig | None) -> ipaddress.IPv4Address:
+        return ipaddress.IPv4Address("127.0.0.1")
+
+    monkeypatch.setattr(egress_module, "resolve_and_validate_async", _resolve_loopback)
+
+    with _run_multi_sni_tls_server("a.test", "b.test") as srv:
+        srv.fail_once_paths.add("/retry-b")
+        inner = httpx.AsyncHTTPTransport(verify=srv.client_ssl, http2=False)
+        transport = DnsPinningTransport(inner, EgressConfig(dns_pinning_enabled=True))
+        async with httpx.AsyncClient(transport=transport, follow_redirects=False) as shared_client:
+            runner = RetryRunner(
+                HttpRunner(shared_client),
+                max_attempts=2,
+                base_backoff_s=0.0,
+                max_backoff_s=0.0,
+            )
+
+            # Actor 1 executes a sync call against a.test, leaving an idle connection.
+            res_actor_1 = await runner.run(
+                RunnerRequest(
+                    method="POST",
+                    url=f"https://a.test:{srv.port}/sync-a",
+                    headers={"Authorization": "Bearer actor1-cred-a"},
+                    body=b"actor1-payload",
+                    timeout_s=5.0,
+                )
+            )
+            assert res_actor_1.status_code == 200
+            assert b"backend=a.test;" in res_actor_1.body
+            assert b"auth=Bearer actor1-cred-a;body=actor1-payload" in res_actor_1.body
+
+            # Actor 2 streams from b.test over the same shared client.
+            streamed_chunks: list[bytes] = []
+            async with runner.stream(
+                RunnerRequest(
+                    method="POST",
+                    url=f"https://b.test:{srv.port}/stream-b",
+                    headers={"Authorization": "Bearer actor2-cred-b"},
+                    body=b"actor2-stream",
+                    timeout_s=5.0,
+                )
+            ) as stream_res:
+                assert stream_res.status_code == 200
+                async for chunk in stream_res.aiter:
+                    streamed_chunks.append(chunk)
+            stream_body = b"".join(streamed_chunks)
+            assert b"backend=b.test;" in stream_body
+            assert b"auth=Bearer actor2-cred-b;body=actor2-stream" in stream_body
+
+            # Actor 2 executes a retried GET against b.test (first 503, second 200).
+            retry_res = await runner.run(
+                RunnerRequest(
+                    method="GET",
+                    url=f"https://b.test:{srv.port}/retry-b",
+                    headers={"Authorization": "Bearer actor2-cred-b-retry"},
+                    body=None,
+                    timeout_s=5.0,
+                )
+            )
+            assert retry_res.status_code == 200
+            assert b"backend=b.test;" in retry_res.body
+            assert b"auth=Bearer actor2-cred-b-retry;" in retry_res.body
+
+        assert srv.handshakes == ["a.test", "b.test"]
+        assert [entry[0] for entry in srv.received] == [
+            "a.test",
+            "b.test",
+            "b.test",
+            "b.test",
+        ]

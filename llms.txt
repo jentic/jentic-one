@@ -27,10 +27,11 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 - [Agent install runbook](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/install.md): the install an agent executes directly — preflight, config and compose generation, migrations, first admin (human gate), agent registration (human gate), verification. Companions: [operate](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/operate.md), [troubleshoot](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/troubleshoot.md), [harden](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/agent/harden.md).
 - [CLI binaries](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/cli.md): downloading and cosign-verifying the released `jentic` and `jenticctl` binaries for every platform, or installing via Homebrew/winget/Scoop.
 - [Installation overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/README.md): the human-facing guides — Docker with external Postgres, systemd, Helm, AWS — plus artifact verification and air-gapped transfer.
-- [CLI reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/cli/README.md): what `jenticctl` and `jentic` each own, the full command groups, and the agent loop of `search`, `inspect`, `execute`.
+- [CLI overview](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/cli/README.md): what `jenticctl` and `jentic` each own, the command groups, and onboarding (local vs remote broker URLs).
+- [CLI reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/cli.md): every `jentic` and `jenticctl` command with its usage, flags, and examples, generated from the cobra command tree.
 - [Build & deploy architecture](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/deploy/README.md): how the images, Helm charts and Terraform layouts are built — one image, runtime surfaces, digest pins, multi-arch.
 - [AWS Marketplace install](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/installation/aws-marketplace.md): running the listed product on EKS — storage and IRSA prerequisites, the zero-touch Helm install, upgrades, and how the runtime license check behaves.
-- [Local development setup](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/local-setup.md): running from source with `make install`, `make dev` and `make check`.
+- [Local development setup](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/local-setup.md): running from source — prerequisites, `make install`, `make dev` or `make start-local`, and common failures.
 
 ## Security
 
@@ -48,6 +49,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 - [Control plane OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/control/control.openapi.yaml) and [Broker OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/broker/broker.openapi.yaml): the two machine-readable API descriptions, for calling an instance over raw HTTP instead of through the CLI.
 - [Agent skill](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/skills/jentic/SKILL.md): the instructions installed into an agent runtime by `jentic skill init` (or `jentic setup`), describing the identity, discover, request access, execute loop.
 - [Context and configuration](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/context-and-config.md): how a deployment is configured, and what an agent's execution context carries.
+- [Importing APIs](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/importing-apis.md): importing from the public catalog or your own OpenAPI description, how relative server URLs resolve, revisions and promote, and import errors.
 - [Overlays](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/guides/overlays.md): correcting or adapting an imported API description without editing the original.
 
 ## APIs to run against
@@ -58,6 +60,7 @@ A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, gener
 ## Project
 
 - [CONTRIBUTING.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/CONTRIBUTING.md): development workflow, commit conventions and the checks a change has to pass.
+- [Testing](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/testing.md): the Python test tiers and the generated-artifact drift checks.
 - [Issues](https://github.com/jentic/jentic-one/issues) and [Discussions](https://github.com/jentic/jentic-one/discussions): bug reports and feature requests, and questions about running it.
 - [SUPPORT.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/SUPPORT.md): what community support covers for a self-hosted deployment.
 - [Releases](https://github.com/jentic/jentic-one/releases) and [CHANGELOG.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/CHANGELOG.md): what shipped in each version.

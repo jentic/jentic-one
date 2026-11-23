@@ -44,6 +44,10 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
+from jentic_one.control.services.integrations.edits import EditRequest
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION, ORG_ADMIN
@@ -192,6 +196,30 @@ async def test_unbind_disable_revoke_and_credential_delete_immediately_invalidat
         operation_id=None,
     )
     assert eval_denied.verdict == RuleVerdict.DENY
+
+    # A connect-session edit is the other way rules are written, and it must
+    # evict the same cache: an operator narrowing access this way cannot be
+    # left serving the old policy until the TTL lapses.
+    await ConnectSessionService(integration_context).create_edit_session(
+        credential_id=cred.credential_id,
+        agent_id=agent.id,
+        identity=_OWNER,
+        request=EditRequest(
+            set_rules=[
+                {"effect": "allow", "methods": ["GET"], "path": "/items", "match_mode": "exact"}
+            ]
+        ),
+        apply=True,
+    )
+    eval_after_edit = await rule_evaluator.evaluate(
+        agent_id=agent.id,
+        credential_id=cred.credential_id,
+        rule_set_id=None,
+        method="GET",
+        path="/items",
+        operation_id=None,
+    )
+    assert eval_after_edit.verdict == RuleVerdict.ALLOW
 
     # 3. Suspend (unbind) the binding -> deriver cache invalidated immediately.
     await agent_svc.unbind_credential(
@@ -365,9 +393,18 @@ async def test_user_disable_delete_and_enable_immediately_invalidate_broker_cach
     await users.disable(user_id, identity=admin)
     await assert_live(False)
 
-    # Re-enabling evicts the negative verdicts cached while disabled.
+    # Re-enabling evicts the negative verdicts cached while disabled for the
+    # user and its owned agents; the user's pre-disable opaque OAuth token stays
+    # revoked (swept on disable), while the owned agent's API key resumes.
     await users.enable(user_id, identity=admin)
-    await assert_live(True)
+    assert await actor_status.is_active(actor_id=user_id, actor_type="user") is True
+    assert await actor_status.is_active(actor_id=agent.id, actor_type="agent") is True
+    assert (await token_validator.validate(api_key)).sub == agent.id
+    with pytest.raises(TokenValidationError):
+        await token_validator.validate(user_token)
+    fresh_user_token = await _issue_user_access_token(ctx, user_id)
+    assert (await token_validator.validate(fresh_user_token)).sub == user_id
+    user_token = fresh_user_token
 
     await users.delete(user_id, identity=admin)
     await assert_live(False)
