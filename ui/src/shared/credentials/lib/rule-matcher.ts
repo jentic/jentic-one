@@ -194,17 +194,29 @@ function isConditionLess(r: CompiledRule): boolean {
 	return r.methods == null && r.path == null && r.operations == null;
 }
 
-function ruleMatches(
-	r: CompiledRule,
-	req: { method: string; path: string; operation_id: string | null },
-): boolean {
-	if (r.methods != null && !r.methods.has(req.method.toUpperCase())) return false;
-	if (r.path != null && !matcherMatches(r.path, req.path)) return false;
-	if (r.operations != null) {
-		if (req.operation_id == null) return false;
-		if (!r.operations.has(req.operation_id)) return false;
-	}
-	return true;
+/**
+ * A request as the broker reads it: the method, the path, and the operation it
+ * resolved to — by its registry id and, when the spec declares one, its
+ * `operationId`. `ambiguous` says another API the credential covers declares
+ * the same `operationId`, so a rule naming it can't say which one it means.
+ */
+export interface RuleRequest {
+	method: string;
+	path: string;
+	operation_id: string | null;
+	spec_operation_id?: string | null;
+	ambiguous?: boolean;
+}
+
+/** How a rule's methods and path, then its operations, meet the request. */
+function ruleMatch(r: CompiledRule, req: RuleRequest): 'match' | 'ambiguous' | 'no' {
+	if (r.methods != null && !r.methods.has(req.method.toUpperCase())) return 'no';
+	if (r.path != null && !matcherMatches(r.path, req.path)) return 'no';
+	if (r.operations == null) return 'match';
+	if (req.operation_id != null && r.operations.has(req.operation_id)) return 'match';
+	const specId = req.spec_operation_id;
+	if (specId != null && r.operations.has(specId)) return req.ambiguous ? 'ambiguous' : 'match';
+	return 'no';
 }
 
 /** The effect an ordered rule list resolves to for one request. */
@@ -218,7 +230,7 @@ export type RuleOutcome = PermissionRule['effect'];
  */
 export function evaluateRuleEffect(
 	rules: readonly PermissionRule[],
-	req: { method: string; path: string; operation_id: string | null },
+	req: RuleRequest,
 ): RuleOutcome {
 	return explainRules(rules, req).effect;
 }
@@ -229,10 +241,7 @@ export function evaluateRuleEffect(
  * ``deny`` refuses and a matching ``require-approval`` holds the call for a
  * reviewer, so neither runs it outright. Default-deny when nothing matches.
  */
-export function evaluateRules(
-	rules: readonly PermissionRule[],
-	req: { method: string; path: string; operation_id: string | null },
-): boolean {
+export function evaluateRules(rules: readonly PermissionRule[], req: RuleRequest): boolean {
 	return explainRules(rules, req).allowed;
 }
 
@@ -249,14 +258,24 @@ export interface RuleVerdict {
 }
 
 /** Evaluate like {@link evaluateRuleEffect}, and say which rule decided. */
-export function explainRules(
-	rules: readonly PermissionRule[],
-	req: { method: string; path: string; operation_id: string | null },
-): RuleVerdict {
+export function explainRules(rules: readonly PermissionRule[], req: RuleRequest): RuleVerdict {
 	for (let i = 0; i < rules.length; i += 1) {
 		const compiled = compileRule(rules[i]!);
 		if (isConditionLess(compiled) && compiled.effect !== 'deny') continue;
-		if (ruleMatches(compiled, req)) {
+		const match = ruleMatch(compiled, req);
+		// An ambiguous `operationId`, as the broker settles it: a Deny still
+		// denies, an Ask stops the call with no hold (default-deny), and an
+		// Allow grants nothing — the next rule decides.
+		if (match === 'ambiguous') {
+			if (compiled.effect === 'deny') {
+				return { allowed: false, effect: 'deny', matched: true, ruleIndex: i };
+			}
+			if (compiled.effect === 'require-approval') {
+				return { allowed: false, effect: 'deny', matched: false, ruleIndex: null };
+			}
+			continue;
+		}
+		if (match === 'match') {
 			return {
 				allowed: compiled.effect === 'allow',
 				effect: compiled.effect,

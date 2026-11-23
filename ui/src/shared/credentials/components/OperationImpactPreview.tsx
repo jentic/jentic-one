@@ -23,6 +23,7 @@ import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { Badge, Label, MethodBadge } from '@/shared/ui';
 import { EffectBadge, effectBadgeProps } from '@/shared/credentials/components/EffectBadge';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import { useOperationsWithSpecIds } from '@/shared/credentials/api/action-identity-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import { operationText } from '@/shared/credentials/lib/actionRules';
@@ -138,6 +139,9 @@ export function countOperations(
 	return counts;
 }
 
+/** Stable empty list, so a missing read doesn't re-run the matchers. */
+const NO_OPS: readonly VendorOperation[] = [];
+
 /**
  * How a binding's rules treat an API's operations — allowed, ask, denied, as
  * the preview's group headers count them — over the operation list, with the
@@ -156,13 +160,16 @@ export function useAllowedOperationCount(
 	opts: { enabled?: boolean } = {},
 ): OperationCounts | null | undefined {
 	const ready = !!api && !!api.name && !!api.version;
-	const ops = useVendorOperations(api ?? undefined, { enabled: (opts.enabled ?? true) && ready });
+	const enabled = (opts.enabled ?? true) && ready;
+	const ops = useVendorOperations(api ?? undefined, { enabled });
 	const unavailable = ops.isError || (ops.isFetched && ops.data === null);
+	// Rules may name an operation by its spec `operationId`, so read those too.
+	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, { enabled });
 	return useMemo(() => {
 		if (!ready || unavailable) return null;
 		if (ops.data == null || rules === undefined) return undefined;
-		return countOperations(rules, ops.data.data);
-	}, [ready, unavailable, ops.data, rules]);
+		return countOperations(rules, items);
+	}, [ready, unavailable, ops.data, rules, items]);
 }
 
 /**
@@ -206,7 +213,8 @@ export function OperationImpactPreview({
 	showTotals?: boolean;
 }) {
 	const ops = useVendorOperations(api ?? undefined, { enabled: !!api });
-	const items = useMemo(() => ops.data?.data ?? [], [ops.data]);
+	// Rules may name an operation by its spec `operationId`, so read those too.
+	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, { enabled: !!api });
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
 	// Flat top-level grouping by first path segment. A deep hierarchical
@@ -223,6 +231,7 @@ export function OperationImpactPreview({
 				method: op.method,
 				path: op.path,
 				operation_id: op.operation_id,
+				spec_operation_id: op.spec_operation_id,
 			});
 			const entry: EvaluatedOp = { op, coverage };
 			const key = firstPathSegment(op.path);

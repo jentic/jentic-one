@@ -15,6 +15,7 @@ import {
 	type ApiImportResponse,
 	type ApiListResponse,
 	type ApiResponse,
+	type ApiRevisionListResponse,
 	type CatalogListResponse,
 } from '@/shared/api';
 
@@ -48,6 +49,38 @@ export function getApiSpec(
 		name,
 		version,
 	}) as unknown as Promise<Record<string, unknown>>;
+}
+
+/** GET /apis/{vendor}/{name}/{version}/revisions — one page of the API's revisions. */
+export function listApiRevisions(
+	vendor: string,
+	name: string,
+	version: string,
+): Promise<ApiRevisionListResponse> {
+	return ApIsService.listApiRevisions({ vendor, name, version, limit: 50 });
+}
+
+/**
+ * GET …/revisions/{revision_id}/openapi — one revision's document, as stored;
+ * null when the revision has none (404), which is an answer, not a failure.
+ */
+export async function getApiRevisionSpec(
+	vendor: string,
+	name: string,
+	version: string,
+	revisionId: string,
+): Promise<Record<string, unknown> | null> {
+	try {
+		return (await ApiSpecService.getApiRevisionSpec({
+			vendor,
+			name,
+			version,
+			revisionId,
+		})) as Record<string, unknown>;
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 404) return null;
+		throw error;
+	}
 }
 
 export interface ListCatalogParams {

@@ -70,6 +70,7 @@ export type { PreviewOperationResponse } from '@/shared/api/generated/models/Pre
 export type { ApiImportResponse } from '@/shared/api/generated/models/ApiImportResponse';
 export type { ApiListResponse } from '@/shared/api/generated/models/ApiListResponse';
 export type { ApiResponse } from '@/shared/api/generated/models/ApiResponse';
+export type { ApiRevisionListResponse } from '@/shared/api/generated/models/ApiRevisionListResponse';
 
 // Execution models (Monitor's calls view, agent activity).
 export type { ExecutionResponse } from '@/shared/api/generated/models/ExecutionResponse';

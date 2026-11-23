@@ -364,6 +364,8 @@ export interface VendorOperation {
 	path: string;
 	name?: string | null;
 	description?: string | null;
+	/** The revision the operation belongs to — the API's current one. */
+	revision_id?: string;
 }
 
 export interface VendorOperationsProgress {

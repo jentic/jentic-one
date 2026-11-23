@@ -1,14 +1,72 @@
 /**
  * Action rules in human terms. An action rule names the operations it matches
- * by operation id — opaque ids the broker matches on, meaningless to a reader.
- * These helpers resolve them against the API's operation list into what each
- * action IS (method, path template, summary), and say so honestly while the
- * list is still loading, when there is no list to read, or when an id is no
- * longer in the API's current version.
+ * by id — opaque to a reader, and in one of two forms the broker matches on:
+ * the registry id (`op_…`), new with every revision of the API, or the spec's
+ * `operationId` (`createOrder`), which survives a re-import. These helpers
+ * resolve both against the API's operation list into what each action IS
+ * (method, path template, summary), and say so honestly while the list is
+ * still loading, when there is no list to read, or when an id is no longer in
+ * the API's current version — naming what it was, when an earlier version
+ * tells.
  *
- * Display only: nothing here decides what a rule matches.
+ * Display and choice only: nothing here decides what a rule matches.
  */
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
+import { actionAt } from '@/shared/credentials/lib/specOperationIds';
+
+/**
+ * An operation of the catalog, with what its spec says about it. The `spec_*`
+ * and `action_key` fields are set once the API's current document is read.
+ */
+export interface ActionOperation extends VendorOperation {
+	/** The stored spec `operationId`; null when it has none stored whole. */
+	spec_operation_id?: string | null;
+	/** The id a rule set here names it by: its `operationId` when that is
+	 * unique across what the credential covers, else its registry id. */
+	action_key?: string;
+	/** Another API the credential covers declares the same `operationId`
+	 * (their names, joined). */
+	ambiguous_with?: string | null;
+	/** Every id a rule set here writes for it, when that is more than its
+	 * `action_key`: an ambiguous action, named in each API that declares it. */
+	action_keys?: readonly string[];
+}
+
+/** What an id of an earlier revision named. */
+export interface PastActionRef {
+	method: string;
+	path: string;
+	summary: string | null;
+}
+
+/** `op_` and 40 hex characters: the registry's id, new in every revision. */
+export function isRegistryOperationId(id: string): boolean {
+	return /^op_[0-9a-f]{40}$/.test(id);
+}
+
+/** The id a rule set here names `op` by. */
+export function actionKeyOf(op: ActionOperation): string {
+	return op.action_key ?? op.operation_id;
+}
+
+/** Every id a rule set here writes for `op` (see {@link ActionOperation.action_keys}). */
+export function actionKeysOf(op: ActionOperation): readonly string[] {
+	return op.action_keys ?? [actionKeyOf(op)];
+}
+
+/**
+ * The ids that name one of this API's ambiguous actions in another covered
+ * API — the same action, written beside this API's id so a rule holds
+ * whichever API a call resolves to. A save or a removal from this panel moves
+ * them with the action, rather than keeping them as another API's.
+ */
+export function twinActionIds(catalog: ActionCatalog): Set<string> {
+	const twins = new Set<string>();
+	for (const op of catalog.operations) {
+		for (const id of op.action_keys ?? []) if (id !== op.operation_id) twins.add(id);
+	}
+	return twins;
+}
 
 /**
  * The API's operation list as far as it is known.
@@ -20,7 +78,15 @@ import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
  */
 export interface ActionCatalog {
 	status: 'loading' | 'ready' | 'unavailable';
-	operations: readonly VendorOperation[];
+	operations: readonly ActionOperation[];
+	/**
+	 * Whether the stored `operationId`s of the API's operations are known
+	 * (read, or there are none to read). Until then an id in that form can't
+	 * be proven gone. Absent reads as known.
+	 */
+	specIdsKnown?: boolean;
+	/** What ids of the API's earlier revisions named, when they were read. */
+	past?: ReadonlyMap<string, PastActionRef>;
 	/**
 	 * The other APIs the same rule list governs. Rules belong to the binding
 	 * (agent × credential), and a credential that reaches several APIs shares
@@ -36,7 +102,9 @@ export interface SiblingActionCatalog {
 	/** How the API reads to a person ("Archive"). */
 	title: string;
 	status: ActionCatalog['status'];
-	operations: readonly VendorOperation[];
+	operations: readonly ActionOperation[];
+	/** As {@link ActionCatalog.specIdsKnown}. */
+	specIdsKnown?: boolean;
 }
 
 /** One operation id of a rule, resolved as far as the catalog allows. */
@@ -52,9 +120,21 @@ export type ActionEntry =
 			generated?: boolean;
 			/** The other API the action belongs to; absent for this API's own. */
 			api?: { key: string; title: string };
+			/** The id is an `operationId` another API the credential covers
+			 * declares too: the broker can't tell which one the rule means. */
+			ambiguousWith?: string;
 	  }
-	/** The list is complete and this id isn't in it: the API changed under the rule. */
-	| { kind: 'missing'; id: string }
+	/**
+	 * The list is complete and this id isn't in it: the API changed under the
+	 * rule. `was` names the action when an earlier version has it, and `now` is
+	 * the current operation at the same method and path, when there is one.
+	 */
+	| {
+			kind: 'missing';
+			id: string;
+			was?: PastActionRef;
+			now?: { key: string; keys: readonly string[]; method: string; path: string };
+	  }
 	/** Not resolved yet (still loading) or not resolvable (no list). */
 	| { kind: 'unresolved'; id: string };
 
@@ -79,8 +159,44 @@ export function catalogComplete(catalog: ActionCatalog): boolean {
 }
 
 /** Every operation the catalog knows: this API's, then each other API's. */
-export function catalogOperations(catalog: ActionCatalog): readonly VendorOperation[] {
+export function catalogOperations(catalog: ActionCatalog): readonly ActionOperation[] {
 	return [...catalog.operations, ...(catalog.elsewhere ?? []).flatMap((s) => s.operations)];
+}
+
+/** Every id an operation answers to: its registry id, and its `operationId`. */
+function idsOf(op: ActionOperation): string[] {
+	return op.spec_operation_id ? [op.operation_id, op.spec_operation_id] : [op.operation_id];
+}
+
+/** An operation list indexed by every id its operations answer to. */
+function indexById(ops: readonly ActionOperation[]): Map<string, ActionOperation> {
+	const byId = new Map<string, ActionOperation>();
+	for (const op of ops) for (const id of idsOf(op)) byId.set(id, op);
+	return byId;
+}
+
+/**
+ * Every id that names each of this API's operations, by its registry id: the
+ * registry id, its `operationId`, and any id of an earlier revision that named
+ * the same method and path. Setting an action replaces all of them, so a rule
+ * never holds the same action twice — and a re-set retires the stale id.
+ */
+export function actionAliases(catalog: ActionCatalog): Map<string, ReadonlySet<string>> {
+	const pastAt = new Map<string, string[]>();
+	for (const [id, was] of catalog.past ?? []) {
+		const at = actionAt(was.method, was.path);
+		pastAt.set(at, [...(pastAt.get(at) ?? []), id]);
+	}
+	return new Map(
+		catalog.operations.map((op) => [
+			op.operation_id,
+			new Set([
+				...idsOf(op),
+				...(op.action_keys ?? []),
+				...(pastAt.get(actionAt(op.method, op.path)) ?? []),
+			]),
+		]),
+	);
 }
 
 /**
@@ -92,13 +208,14 @@ export function describeActions(
 	operationIds: readonly string[],
 	catalog: ActionCatalog,
 ): ActionsDescription {
-	const byId = new Map(catalog.operations.map((op) => [op.operation_id, op]));
+	const byId = indexById(catalog.operations);
 	const elsewhere = catalog.elsewhere ?? [];
-	const siblingById = elsewhere.map((s) => ({
-		s,
-		byId: new Map(s.operations.map((op) => [op.operation_id, op])),
-	}));
+	const siblingById = elsewhere.map((s) => ({ s, byId: indexById(s.operations) }));
 	const complete = catalogComplete(catalog);
+	// An `operationId` is provably gone only once every list's ids are known.
+	const specIdsKnown =
+		catalog.specIdsKnown !== false && elsewhere.every((s) => s.specIdsKnown !== false);
+	const nowAt = new Map(catalog.operations.map((op) => [actionAt(op.method, op.path), op]));
 	const ids = [...new Set(operationIds)];
 	const entries: ActionEntry[] = ids.map((id) => {
 		const own = byId.get(id);
@@ -106,6 +223,7 @@ export function describeActions(
 		const op = own ?? sib?.byId.get(id);
 		if (op) {
 			const plain = operationText(op);
+			const ambiguous = id === op.spec_operation_id ? op.ambiguous_with : null;
 			return {
 				kind: 'found',
 				id,
@@ -114,9 +232,27 @@ export function describeActions(
 				summary: plain.text,
 				...(plain.generated && { generated: true }),
 				...(sib && { api: { key: sib.s.key, title: sib.s.title } }),
+				...(ambiguous && { ambiguousWith: ambiguous }),
 			};
 		}
-		return complete ? { kind: 'missing', id } : { kind: 'unresolved', id };
+		if (!complete || (!isRegistryOperationId(id) && !specIdsKnown)) {
+			return { kind: 'unresolved', id };
+		}
+		const was = catalog.past?.get(id);
+		const current = was ? nowAt.get(actionAt(was.method, was.path)) : undefined;
+		return {
+			kind: 'missing',
+			id,
+			...(was && { was }),
+			...(current && {
+				now: {
+					key: actionKeyOf(current),
+					keys: actionKeysOf(current),
+					method: current.method,
+					path: current.path,
+				},
+			}),
+		};
 	});
 	entries.sort((a, b) => {
 		const byKind = ENTRY_ORDER[a.kind] - ENTRY_ORDER[b.kind];
@@ -185,7 +321,9 @@ export function actionLine(entry: ActionEntry): string {
 			return entry.api ? `${line} — on ${entry.api.title}` : line;
 		}
 		case 'missing':
-			return 'An action not in this version of the API';
+			return entry.was
+				? `${entry.was.method} ${entry.was.path}${entry.was.summary ? ` · ${entry.was.summary}` : ''} — from an earlier version`
+				: 'An action not in this version of the API';
 		default:
 			return 'An action not resolved yet';
 	}
@@ -241,10 +379,10 @@ export function siblingActions(
 	groups: { allow: readonly string[]; ask: readonly string[]; deny: readonly string[] },
 	catalog: ActionCatalog,
 ): SiblingActions[] {
-	const own = new Set(catalog.operations.map((op) => op.operation_id));
+	const own = new Set([...catalog.operations.flatMap(idsOf), ...twinActionIds(catalog)]);
 	const out: SiblingActions[] = [];
 	for (const s of catalog.elsewhere ?? []) {
-		const theirs = new Set(s.operations.map((op) => op.operation_id));
+		const theirs = new Set(s.operations.flatMap(idsOf));
 		const count = (ids: readonly string[]): number =>
 			new Set(ids.filter((id) => !own.has(id) && theirs.has(id))).size;
 		const row = {
@@ -257,6 +395,166 @@ export function siblingActions(
 		if (row.allow + row.ask + row.deny > 0) out.push(row);
 	}
 	return out;
+}
+
+type Groups = { allow: readonly string[]; ask: readonly string[]; deny: readonly string[] };
+const GROUP_KEYS = ['deny', 'ask', 'allow'] as const;
+
+/** Each id this API's current operations answer to, mapped to the operation's registry id. */
+function currentIds(catalog: ActionCatalog): Map<string, string> {
+	const out = new Map<string, string>();
+	for (const op of catalog.operations) for (const id of idsOf(op)) out.set(id, op.operation_id);
+	return out;
+}
+
+/**
+ * The groups as the By action list reads them: every id this API's current
+ * operations answer to becomes the operation's registry id (the list's row
+ * key). Other ids — another API's, or a stale one — stay as they are, so they
+ * never show as a row's choice.
+ */
+export function viewActionGroups(
+	groups: Groups,
+	catalog: ActionCatalog,
+): { allow: string[]; ask: string[]; deny: string[] } {
+	const canon = currentIds(catalog);
+	const out = { allow: [] as string[], ask: [] as string[], deny: [] as string[] };
+	const seen = new Set<string>();
+	for (const g of GROUP_KEYS) {
+		for (const id of groups[g]) {
+			const key = canon.get(id) ?? id;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out[g].push(key);
+		}
+	}
+	return { allow: out.allow, ask: out.ask, deny: out.deny };
+}
+
+/**
+ * The stored groups after the By action list changed its view of them
+ * (`before` → `after`, both from {@link viewActionGroups}). An action whose
+ * choice changed is written by the id a rule set here uses
+ * ({@link actionKeyOf}), and every other id that named it — its other current
+ * id, and any id of an earlier revision for the same method and path — is
+ * retired. Every action left as it was keeps exactly the ids it was saved with.
+ */
+export function storeActionChoices(
+	stored: Groups,
+	before: Groups,
+	after: Groups,
+	catalog: ActionCatalog,
+): { allow: string[]; ask: string[]; deny: string[] } {
+	const was = accessOf(before);
+	const now = accessOf(after);
+	const changed = new Set<string>();
+	for (const id of new Set([...was.keys(), ...now.keys()])) {
+		if (was.get(id) !== now.get(id)) changed.add(id);
+	}
+	const aliases = actionAliases(catalog);
+	const opById = new Map(catalog.operations.map((op) => [op.operation_id, op]));
+	const retire = new Set<string>();
+	for (const id of changed) {
+		retire.add(id);
+		for (const alias of aliases.get(id) ?? []) retire.add(alias);
+	}
+	const out = {
+		allow: stored.allow.filter((id) => !retire.has(id)),
+		ask: stored.ask.filter((id) => !retire.has(id)),
+		deny: stored.deny.filter((id) => !retire.has(id)),
+	};
+	for (const id of changed) {
+		const g = now.get(id);
+		if (!g) continue;
+		const op = opById.get(id);
+		out[g].push(...(op ? actionKeysOf(op) : [id]));
+	}
+	return out;
+}
+
+/** Each id's group, as {@link accessMap} reads it (Deny, then Ask, then Allow). */
+function accessOf(groups: Groups): Map<string, (typeof GROUP_KEYS)[number]> {
+	const map = new Map<string, (typeof GROUP_KEYS)[number]>();
+	for (const g of GROUP_KEYS) for (const id of groups[g]) if (!map.has(id)) map.set(id, g);
+	return map;
+}
+
+/**
+ * How many actions two stored sets of choices treat differently — by action,
+ * not by id: re-setting a stale Deny to Deny is one change (the id it is held
+ * by changes), not two.
+ */
+export function changedActionChoices(a: Groups, b: Groups, catalog: ActionCatalog): number {
+	const canon = new Map<string, string>();
+	for (const [reg, ids] of actionAliases(catalog)) for (const id of ids) canon.set(id, reg);
+	const state = (groups: Groups): Map<string, string> => {
+		const byAction = new Map<string, string[]>();
+		for (const g of GROUP_KEYS) {
+			for (const id of groups[g]) {
+				const key = canon.get(id) ?? id;
+				byAction.set(key, [...(byAction.get(key) ?? []), `${g}:${id}`]);
+			}
+		}
+		return new Map([...byAction].map(([k, v]) => [k, v.sort().join(' ')]));
+	};
+	const x = state(a);
+	const y = state(b);
+	let n = 0;
+	for (const key of new Set([...x.keys(), ...y.keys()])) if (x.get(key) !== y.get(key)) n += 1;
+	return n;
+}
+
+/**
+ * The action rules brought up to the API's current version: every id this
+ * API's current operations answer to is rewritten to the id a rule set here
+ * would use (its `operationId` where unique), and every stale id whose action
+ * the current version still has, to that action. The effect stays the one the
+ * id was saved with. `left` counts the stale ids that name nothing current
+ * (removed or renamed), which only a person can resolve.
+ */
+export function actionsAtThisVersion<
+	G extends { allow: readonly string[]; ask: readonly string[]; deny: readonly string[] },
+>(
+	groups: G,
+	catalog: ActionCatalog,
+): { groups: { allow: string[]; ask: string[]; deny: string[] }; changed: number; left: number } {
+	const byId = indexById(catalog.operations);
+	const stale = new Map<string, readonly string[] | null>();
+	for (const e of describeActions([...groups.allow, ...groups.ask, ...groups.deny], catalog)
+		.entries) {
+		if (e.kind === 'missing') stale.set(e.id, e.now?.keys ?? null);
+	}
+	let changed = 0;
+	let left = 0;
+	const seen = new Set<string>();
+	const move = (ids: readonly string[]): string[] => {
+		const out: string[] = [];
+		const held = new Set(ids);
+		for (const id of ids) {
+			const op = byId.get(id);
+			let to: readonly string[] = [id];
+			if (op) to = actionKeysOf(op);
+			else if (stale.has(id)) {
+				const now = stale.get(id);
+				if (now) to = now;
+				else left += 1;
+			}
+			// Rewritten: it names the action some other way, or misses a copy.
+			if (to.some((key) => !held.has(key))) changed += 1;
+			for (const key of to) {
+				if (seen.has(key)) continue;
+				seen.add(key);
+				out.push(key);
+			}
+		}
+		return out;
+	};
+	// Deny first: an id that lands in two effects keeps the one the By action
+	// list reads it as (`accessMap`: Deny, then Ask, then Allow).
+	const deny = move(groups.deny);
+	const ask = move(groups.ask);
+	const allow = move(groups.allow);
+	return { groups: { allow, ask, deny }, changed, left };
 }
 
 /** "Archive, Top Stories and Search". */

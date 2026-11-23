@@ -29,7 +29,11 @@
 
 import RandExp from 'randexp';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { evaluateRuleEffect, type RuleOutcome } from '@/shared/credentials/lib/rule-matcher';
+import {
+	evaluateRuleEffect,
+	type RuleOutcome,
+	type RuleRequest,
+} from '@/shared/credentials/lib/rule-matcher';
 
 /**
  * Convert an OpenAPI-style path template to a JS RegExp that matches any
@@ -579,7 +583,12 @@ export interface TemplateEvaluation {
  */
 export function evaluateTemplateOp(
 	rules: readonly PermissionRule[],
-	op: { method: string; path: string; operation_id: string | null },
+	op: {
+		method: string;
+		path: string;
+		operation_id: string | null;
+		spec_operation_id?: string | null;
+	},
 ): TemplateEvaluation {
 	for (const rule of rules) {
 		// Skip condition-less allow / require-approval rules (backend rejects
@@ -597,8 +606,10 @@ export function evaluateTemplateOp(
 			if (!upper.includes(op.method.toUpperCase())) continue;
 		}
 		if (rule.operations && rule.operations.length > 0) {
-			if (op.operation_id == null) continue;
-			if (!rule.operations.includes(op.operation_id)) continue;
+			const named =
+				(op.operation_id != null && rule.operations.includes(op.operation_id)) ||
+				(op.spec_operation_id != null && rule.operations.includes(op.spec_operation_id));
+			if (!named) continue;
 		}
 		if (rule.path != null && rule.path !== '') {
 			if (!ruleAppliesToTemplate(rule, op.path)) continue;
@@ -717,7 +728,7 @@ export function sampleTemplatePaths(
  */
 export function classifyOpCoverage(
 	rules: readonly PermissionRule[],
-	op: { method: string; path: string; operation_id: string | null },
+	op: RuleRequest,
 	maxExamples: number = 2,
 ): OpCoverage {
 	const samples = sampleTemplatePaths(op.path, rules);
@@ -732,6 +743,8 @@ export function classifyOpCoverage(
 			method: op.method,
 			path: sample,
 			operation_id: op.operation_id,
+			spec_operation_id: op.spec_operation_id,
+			ambiguous: op.ambiguous,
 		});
 		outcomes.add(outcome);
 		if (byOutcome[outcome].length < maxExamples) byOutcome[outcome].push(sample);

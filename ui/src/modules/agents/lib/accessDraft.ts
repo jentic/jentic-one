@@ -20,6 +20,7 @@ import {
 import {
 	actionOwner,
 	describeActions,
+	twinActionIds,
 	type ActionCatalog,
 	type ActionEntry,
 } from '@/shared/credentials/lib/actionRules';
@@ -139,10 +140,13 @@ export function siblingActionIds(
 	catalog: ActionCatalog,
 ): Set<string> {
 	const ids = saved.flatMap((r) => r.operations ?? []);
+	// Another API's copy of one of this API's ambiguous actions moves with it.
+	const twins = twinActionIds(catalog);
 	return new Set(
 		describeActions(ids, catalog)
 			.entries.filter((e) => e.kind === 'unresolved' || actionOwner(e, catalog) === 'other')
-			.map((e) => e.id),
+			.map((e) => e.id)
+			.filter((id) => !twins.has(id)),
 	);
 }
 

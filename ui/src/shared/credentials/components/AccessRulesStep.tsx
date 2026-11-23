@@ -27,7 +27,15 @@ import {
 	type MutableRefObject,
 	type ReactNode,
 } from 'react';
-import { ChevronRight, FlaskConical, ListChecks, Loader2, ScanEye, Trash2 } from 'lucide-react';
+import {
+	AlertTriangle,
+	ChevronRight,
+	FlaskConical,
+	ListChecks,
+	Loader2,
+	ScanEye,
+	Trash2,
+} from 'lucide-react';
 import {
 	Button,
 	DetailsLine,
@@ -41,11 +49,7 @@ import { useVendorOperationsProgress } from '@/shared/credentials/api/vendors-ho
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
 import { ActionList } from '@/shared/credentials/components/ActionList';
-import {
-	ActionChecklist,
-	changedChoices,
-	choiceCounts,
-} from '@/shared/credentials/components/ActionChecklist';
+import { ActionChecklist, choiceCounts } from '@/shared/credentials/components/ActionChecklist';
 import {
 	UnappliedChoicesDialog,
 	type UnappliedChoices,
@@ -60,11 +64,18 @@ import { DraftRuleTester } from '@/shared/credentials/components/RuleRequestTest
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
+	actionKeysOf,
 	actionOwner,
+	changedActionChoices,
 	describeActions,
 	siblingActions,
+	storeActionChoices,
+	twinActionIds,
+	viewActionGroups,
 	siblingActionsLine,
 	type ActionCatalog,
+	type ActionEntry,
+	type ActionOperation,
 	type SiblingActions,
 } from '@/shared/credentials/lib/actionRules';
 import {
@@ -179,10 +190,13 @@ export function AccessRulesStep({
 	const ops = opsLoad.operations;
 	const opsComplete = opsLoad.complete;
 	// The same read, as the catalog that names the action rule's ids.
+	const ruleIds = useMemo(() => customRules.flatMap((r) => r.operations ?? []), [customRules]);
 	const actionCatalog = useActionCatalog(apiReference, {
 		enabled: wantsOps,
 		pending: operationsPending,
 		siblings,
+		reach,
+		ruleIds,
 	});
 	const pathSuggestions = useMemo<readonly string[]>(
 		() => Array.from(new Set(ops.map((op) => op.path))).sort(),
@@ -236,7 +250,20 @@ export function AccessRulesStep({
 	// By action is STAGED: choices land in `staged` and become rules on Apply.
 	const [staged, setStaged] = useState<ActionGroups | null>(null);
 	const shownGroups = staged ?? groups;
-	const unapplied = staged ? changedChoices(staged, groups) : 0;
+	const unapplied = staged ? changedActionChoices(staged, groups, actionCatalog) : 0;
+	// The list reads each action by its row's registry id, whichever id the
+	// rule holds it by; a change it makes is stored by the id a rule set here
+	// uses, retiring the action's other ids (`storeActionChoices`).
+	const shownView = useMemo(
+		() => viewActionGroups(shownGroups, actionCatalog),
+		[shownGroups, actionCatalog],
+	);
+	const appliedView = useMemo(
+		() => viewActionGroups(groups, actionCatalog),
+		[groups, actionCatalog],
+	);
+	const onChecklistChange = (next: ActionGroups): void =>
+		setStaged(storeActionChoices(shownGroups, shownView, next, actionCatalog));
 	// Applied choices show as rule cards; the operations list then folds behind
 	// a line that says how many are still unset, until Edit or the line opens it.
 	const hasActionRules = (['deny', 'ask', 'allow'] as const).some((g) => groups[g].length > 0);
@@ -245,16 +272,16 @@ export function AccessRulesStep({
 	const unsetCount = useMemo(
 		() =>
 			choiceCounts(
-				groups,
+				appliedView,
 				ops.map((op) => op.operation_id),
 			).unset,
-		[groups, ops],
+		[appliedView, ops],
 	);
 	/** Editing one action rule: By action filtered to its ids. */
 	const [editing, setEditing] = useState<keyof ActionGroups | null>(null);
 	const editingIds = useMemo(
-		() => (editing ? new Set(groups[editing]) : null),
-		[editing, groups],
+		() => (editing ? new Set(appliedView[editing]) : null),
+		[editing, appliedView],
 	);
 	const apply = (): PermissionRule[] => {
 		const next = staged ? joinCustomRules(pathRules, staged) : customRules;
@@ -339,10 +366,13 @@ export function AccessRulesStep({
 			// save keeps them whatever happens here, so the trash must not seem to
 			// take them. It removes this API's own, and is absent on a rule that
 			// holds none of them.
+			// Another API's copy of one of this API's ambiguous actions goes with it.
+			const twins = twinActionIds(actionCatalog);
 			const theirs = new Set(
 				describeActions(groups[g], actionCatalog)
 					.entries.filter((e) => actionOwner(e, actionCatalog) === 'other')
-					.map((e) => e.id),
+					.map((e) => e.id)
+					.filter((id) => !twins.has(id)),
 			);
 			const own = groups[g].filter((id) => !theirs.has(id));
 			return (
@@ -375,6 +405,16 @@ export function AccessRulesStep({
 											},
 									);
 								}
+					}
+					onRename={(renames): void =>
+						onCustomRulesChange(
+							joinCustomRules(pathRules, {
+								...groups,
+								[g]: [
+									...new Set(groups[g].flatMap((id) => renames.get(id) ?? [id])),
+								],
+							}),
+						)
 					}
 					testId={`${p}-action-rule${g === 'allow' ? '' : `-${g}`}`}
 				/>
@@ -545,9 +585,9 @@ export function AccessRulesStep({
 											ops={ops}
 											complete={opsComplete}
 											failed={!opsComplete && opsQuery.isError}
-											value={shownGroups}
-											applied={groups}
-											onChange={setStaged}
+											value={shownView}
+											applied={appliedView}
+											onChange={onChecklistChange}
 											disabled={disabled}
 											testId={`${p}-actions`}
 											only={editingIds}
@@ -696,6 +736,7 @@ export function AccessRulesStep({
 										describeMatch={describeMatch}
 										paths={pathSuggestions}
 										disabled={disabled}
+										operations={actionCatalog.operations}
 									/>
 								</div>
 							</ExpandReveal>
@@ -833,6 +874,7 @@ function ActionRuleRow({
 	disabled,
 	onEdit,
 	onRemove,
+	onRename,
 	testId,
 }: {
 	operations: readonly string[];
@@ -843,9 +885,54 @@ function ActionRuleRow({
 	onEdit?: () => void;
 	/** Absent when nothing on the rule is this API's to remove. */
 	onRemove?: () => void;
+	/** Rewrites the rule's ids, each `from` → its `to` ids (an ambiguous
+	 * `operationId` to the registry id of the action in every API declaring it). */
+	onRename?: (renames: ReadonlyMap<string, readonly string[]>) => void;
 	testId: string;
 }) {
 	const description = useMemo(() => describeActions(operations, catalog), [operations, catalog]);
+	// An Ask or Allow naming an `operationId` another covered API declares too:
+	// the broker can't tell which one is meant, so the Ask refuses the call and
+	// the Allow grants nothing. (A Deny still denies, so it needs no warning.)
+	const ambiguous =
+		effect === 'deny'
+			? []
+			: description.entries.filter(
+					(e): e is Extract<typeof e, { kind: 'found' }> =>
+						e.kind === 'found' && !!e.ambiguousWith,
+				);
+	// One of this API's ambiguous actions named by its registry id here but not
+	// in every other API that declares it: a call the broker resolves to one of
+	// those skips the rule — for a Deny or an Ask, it then falls through.
+	const ops = catalog.operations;
+	const opsById = useMemo(() => {
+		const map = new Map<string, ActionOperation>();
+		for (const op of ops) {
+			map.set(op.operation_id, op);
+			if (op.spec_operation_id) map.set(op.spec_operation_id, op);
+		}
+		return map;
+	}, [ops]);
+	const partial = description.entries.filter(
+		(e): e is Extract<ActionEntry, { kind: 'found' }> => {
+			const op = e.kind === 'found' && !e.api ? opsById.get(e.id) : undefined;
+			return (
+				op?.action_keys != null &&
+				e.id === op.operation_id &&
+				op.action_keys.some((key) => !operations.includes(key))
+			);
+		},
+	);
+	const fixable = [...ambiguous, ...partial];
+	/** Each flagged id, to the action's id in every API that declares it. */
+	const renamesFor = (entries: readonly ActionEntry[]): Map<string, readonly string[]> => {
+		const renames = new Map<string, readonly string[]>();
+		for (const e of entries) {
+			const op = opsById.get(e.id);
+			if (op) renames.set(e.id, actionKeysOf(op));
+		}
+		return renames;
+	};
 	return (
 		<div
 			className="bg-surface-tonal flex flex-col gap-1.5 rounded-md px-2.5 py-2 text-xs"
@@ -892,6 +979,83 @@ function ActionRuleRow({
 				className="-mx-1"
 				data-testid={`${testId}-actions`}
 			/>
+			{partial.length > 0 && ambiguous.length === 0 && (
+				<RuleWarning
+					testId={`${testId}-partial`}
+					action={
+						onRename && {
+							label: `Name ${partial.length === 1 ? 'it' : 'them'} in each API`,
+							disabled,
+							onClick: () => onRename(renamesFor(partial)),
+						}
+					}
+				>
+					{partial.length === 1
+						? `This rule names ${partial[0]!.method} ${partial[0]!.path} in this API only, but ${opsById.get(partial[0]!.id)?.ambiguous_with ?? 'another API'} has the same action and this credential reaches it too`
+						: `This rule names ${partial.length.toLocaleString()} actions in this API only, though other APIs this credential reaches have them too`}
+					: a call the broker resolves there skips this rule.
+				</RuleWarning>
+			)}
+			{ambiguous.length > 0 && (
+				<RuleWarning
+					testId={`${testId}-ambiguous`}
+					action={
+						onRename && {
+							label: `Name ${ambiguous.length === 1 ? 'it' : 'them'} in each API`,
+							disabled,
+							// Every flagged id of the rule, the partly named included.
+							onClick: () => onRename(renamesFor(fixable)),
+						}
+					}
+				>
+					{ambiguous.length === 1
+						? `${ambiguous[0]!.id} is also an action of ${ambiguous[0]!.ambiguousWith}, which this credential reaches too`
+						: `${ambiguous.length.toLocaleString()} of these actions are also actions of other APIs this credential reaches`}
+					. The broker can&apos;t tell which one this rule means, so{' '}
+					{effect === 'allow'
+						? 'this Allow grants nothing'
+						: 'this Ask refuses the call instead of holding it'}
+					.
+				</RuleWarning>
+			)}
+		</div>
+	);
+}
+
+/**
+ * A warning on an action rule card: what is wrong in a line or two, then the
+ * one action that fixes it as a button of its own — as the read view's stale
+ * warning does, so the fix never reads as part of the sentence.
+ */
+function RuleWarning({
+	testId,
+	action,
+	children,
+}: {
+	testId: string;
+	action?: { label: string; disabled: boolean; onClick: () => void };
+	children: ReactNode;
+}) {
+	return (
+		<div
+			className="bg-warning/10 text-foreground flex items-start gap-2 rounded-md px-2.5 py-2"
+			data-testid={testId}
+		>
+			<AlertTriangle className="text-warning mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+			<div className="min-w-0 space-y-2">
+				<p className="leading-snug">{children}</p>
+				{action && (
+					<Button
+						size="xs"
+						variant="tonal"
+						disabled={action.disabled}
+						onClick={action.onClick}
+						data-testid={`${testId}-fix`}
+					>
+						{action.label}
+					</Button>
+				)}
+			</div>
 		</div>
 	);
 }
