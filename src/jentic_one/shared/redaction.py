@@ -14,8 +14,10 @@ Two complementary strategies:
   ``api_key``, ``set-cookie``, ``client_secret`` …) regardless of their value
   shape.
 * **Value-based** — free-text strings are scanned for embedded auth material
-  (``Bearer <token>``, ``Basic <b64>``) so a credential that lands in an
-  otherwise-innocuous field (an error message, a URL) is still masked.
+  (``Bearer <token>``, ``Basic <b64>``, compact JWTs, bare platform tokens such
+  as ``jak_``/``at_`` keys, common provider key shapes such as ``sk-`` and
+  ``AKIA`` keys) so a credential that lands in an otherwise-innocuous field (an
+  error message, a URL) is still masked.
 
 Both are applied recursively across nested dicts / lists / tuples so the whole
 ``event_dict`` is covered, not just its top level.
@@ -86,6 +88,30 @@ _VALUE_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (
         re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+"),
         REDACTED,
+    ),
+    # Bare platform tokens: agent API keys (``jak_``), client secrets (``jcs_``),
+    # OAuth access/refresh tokens (``at_``/``rt_``) and registration access
+    # tokens (``rat_``). Each is the prefix plus ``secrets.token_urlsafe(32)``,
+    # exactly 43 URL-safe base64 characters, so the match is anchored on that
+    # length with no identifier character on either side. That keeps ordinary
+    # words and identifiers (``created_at_x``, ``format_v2``, a 27-character
+    # KSUID behind a short prefix) out of it. The prefix is kept so a log still
+    # says which kind of token was masked.
+    (
+        re.compile(r"(?<![A-Za-z0-9_-])(jak|jcs|at|rt|rat)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"),
+        rf"\1_{REDACTED}",
+    ),
+    # Common upstream provider key shapes. ``sk-`` keys (``sk-...``,
+    # ``sk-proj-...``, ``sk-ant-...``) need a long body that contains a digit,
+    # so kebab-case words that happen to start with ``sk-`` are left alone. AWS
+    # access key ids are ``AKIA``/``ASIA`` plus 16 uppercase alphanumerics.
+    (
+        re.compile(r"(?<![A-Za-z0-9_-])sk-(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,}"),
+        f"sk-{REDACTED}",
+    ),
+    (
+        re.compile(r"(?<![A-Za-z0-9])(AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])"),
+        rf"\1{REDACTED}",
     ),
 )
 
