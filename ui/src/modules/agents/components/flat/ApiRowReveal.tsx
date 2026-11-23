@@ -49,6 +49,7 @@ import {
 	type ApiRowActivity,
 } from '@/modules/agents/lib/apiRowActivity';
 import { isBlockedStatus, type TileStatus } from '@/modules/agents/lib/tileStatus';
+import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 
 /** How many of the row's newest calls the list shows. */
 const RECENT_CALLS_SHOWN = 3;
@@ -456,7 +457,9 @@ function AccessSection({
 				: null,
 		[tile.vendor, tile.apiName, tile.version],
 	);
-	const coverage = useAllowedOperationCount(apiReference, editorRules);
+	const coverage = useAllowedOperationCount(apiReference, editorRules, {
+		reach: apiScopeReach(tile.scope),
+	});
 	// Names an action rule's operation ids; the same operations read as `coverage`.
 	const hasActions = operatorRules?.some((r) => r.operations?.length) ?? false;
 	const actionCatalog = useActionCatalog(apiReference, { enabled: hasActions });

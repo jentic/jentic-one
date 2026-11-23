@@ -26,6 +26,7 @@ import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import { useOperationsWithSpecIds } from '@/shared/credentials/api/action-identity-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
+import type { ScopeReach } from '@/shared/credentials/lib/accessPresets';
 import { operationText } from '@/shared/credentials/lib/actionRules';
 import { PlainText } from '@/shared/credentials/components/PlainText';
 import {
@@ -157,14 +158,17 @@ const NO_OPS: readonly VendorOperation[] = [];
 export function useAllowedOperationCount(
 	api: OpsApiReference | null,
 	rules: readonly PermissionRule[] | undefined,
-	opts: { enabled?: boolean } = {},
+	opts: { enabled?: boolean; reach?: ScopeReach } = {},
 ): OperationCounts | null | undefined {
 	const ready = !!api && !!api.name && !!api.version;
 	const enabled = (opts.enabled ?? true) && ready;
 	const ops = useVendorOperations(api ?? undefined, { enabled });
 	const unavailable = ops.isError || (ops.isFetched && ops.data === null);
 	// Rules may name an operation by its spec `operationId`, so read those too.
-	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, { enabled });
+	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, {
+		enabled,
+		reach: opts.reach,
+	});
 	return useMemo(() => {
 		if (!ready || unavailable) return null;
 		if (ops.data == null || rules === undefined) return undefined;
@@ -199,9 +203,13 @@ export function OperationImpactPreview({
 	rules,
 	label = 'What this credential lets an agent do',
 	showTotals = true,
+	reach,
 }: {
 	api: OpsApiReference | null;
 	rules: readonly PermissionRule[];
+	/** How far the credential reaches: with it, a rule naming a shared
+	 * `operationId` is read as the broker reads it (see `RuleRequest`). */
+	reach?: ScopeReach;
 	/**
 	 * Section label above the preview. Overridable for callers where
 	 * the default copy doesn't fit (the Agents page's per-binding editor
@@ -214,7 +222,10 @@ export function OperationImpactPreview({
 }) {
 	const ops = useVendorOperations(api ?? undefined, { enabled: !!api });
 	// Rules may name an operation by its spec `operationId`, so read those too.
-	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, { enabled: !!api });
+	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, {
+		enabled: !!api,
+		reach,
+	});
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
 	// Flat top-level grouping by first path segment. A deep hierarchical
@@ -232,6 +243,7 @@ export function OperationImpactPreview({
 				path: op.path,
 				operation_id: op.operation_id,
 				spec_operation_id: op.spec_operation_id,
+				ambiguous: op.ambiguous,
 			});
 			const entry: EvaluatedOp = { op, coverage };
 			const key = firstPathSegment(op.path);

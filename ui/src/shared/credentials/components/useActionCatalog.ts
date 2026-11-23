@@ -171,6 +171,7 @@ export function useActionCatalog(
 		return {
 			...own,
 			specIdsKnown: spec.known,
+			keysSettled: spec.known && covered.status !== 'loading',
 			...(past.data && { past: past.data }),
 			...(elsewhere && { elsewhere }),
 		};
@@ -183,6 +184,7 @@ export function useActionCatalog(
 		noList,
 		enabled,
 		spec.known,
+		covered.status,
 		past.data,
 		elsewhere,
 	]);

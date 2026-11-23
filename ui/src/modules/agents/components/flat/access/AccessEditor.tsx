@@ -83,6 +83,7 @@ export function AccessEditor({
 				rules={draftRules}
 				catalog={catalog}
 				apiReference={apiReference}
+				reach={reach}
 				source="draft"
 			/>
 			<div
@@ -213,6 +214,7 @@ export function AccessEditor({
 			</div>
 			<EffectiveAccess
 				apiReference={apiReference}
+				reach={reach}
 				rules={draftRules}
 				source="draft"
 				systemRuleCount={systemRuleCount}

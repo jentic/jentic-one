@@ -14,7 +14,11 @@ import {
 	useAllowedOperationCount,
 	type OpsApiReference,
 } from '@/shared/credentials/components';
-import { presetForRules, splitCustomRules } from '@/shared/credentials/lib/accessPresets';
+import {
+	presetForRules,
+	splitCustomRules,
+	type ScopeReach,
+} from '@/shared/credentials/lib/accessPresets';
 import {
 	actionCount,
 	actionLine,
@@ -74,6 +78,8 @@ export interface AccessSummaryProps {
 	/** Names the rules' actions, so only this API's are counted. */
 	catalog: ActionCatalog;
 	apiReference: OpsApiReference | null;
+	/** How far the credential reaches, so a shared `operationId` counts as the broker reads it. */
+	reach?: ScopeReach;
 	/** Whose rules these are: the saved ones, or the draft being edited. */
 	source: 'saved' | 'draft';
 	/** Before the sentence (e.g. the attached rule set's name). */
@@ -87,11 +93,12 @@ export function AccessSummary({
 	rules,
 	catalog,
 	apiReference,
+	reach,
 	source,
 	prefix,
 	action,
 }: AccessSummaryProps) {
-	const counts = useAllowedOperationCount(apiReference, rules);
+	const counts = useAllowedOperationCount(apiReference, rules, { reach });
 	return (
 		<div className="flex flex-wrap items-start gap-3">
 			<div className="min-w-0 flex-1 space-y-1.5">
@@ -146,6 +153,8 @@ export interface AccessReadViewProps {
 	catalog: ActionCatalog;
 	/** Null when the API isn't imported: there are no actions to list. */
 	apiReference: OpsApiReference | null;
+	/** How far the credential reaches (see `AccessSummary`). */
+	reach?: ScopeReach;
 	/** The Edit access verb; absent when the viewer may not change the rules. */
 	onEdit?: () => void;
 	/** Why the rules can't be changed here, when they can't. */
@@ -183,6 +192,7 @@ export function AccessReadView({
 	rules,
 	catalog,
 	apiReference,
+	reach,
 	onEdit,
 	lockedReason,
 	ruleSetName,
@@ -296,6 +306,7 @@ export function AccessReadView({
 				rules={rules}
 				catalog={catalog}
 				apiReference={apiReference}
+				reach={reach}
 				source="saved"
 				prefix={ruleSetName ? `Shared rule set “${ruleSetName}”. ` : undefined}
 				action={
@@ -309,6 +320,7 @@ export function AccessReadView({
 			{ruleSetPanel}
 			<EffectiveAccess
 				apiReference={apiReference}
+				reach={reach}
 				rules={rules}
 				source="saved"
 				systemRuleCount={systemRuleCount}
@@ -322,11 +334,13 @@ export function AccessReadView({
  * and the platform's safety rules that also apply. */
 export function EffectiveAccess({
 	apiReference,
+	reach,
 	rules,
 	source,
 	systemRuleCount,
 }: {
 	apiReference: OpsApiReference | null;
+	reach?: ScopeReach;
 	rules: readonly PermissionRule[];
 	source: 'saved' | 'draft';
 	systemRuleCount: number;
@@ -336,6 +350,7 @@ export function EffectiveAccess({
 			{apiReference && (
 				<OperationImpactPreview
 					api={apiReference}
+					reach={reach}
 					rules={rules}
 					showTotals={false}
 					label={

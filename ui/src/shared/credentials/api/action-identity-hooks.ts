@@ -12,6 +12,7 @@ import {
 	storedOperationIds,
 } from '@/shared/credentials/lib/specOperationIds';
 import { getApiRevisionSpec, getApiSpec, listApiRevisions, listApis } from './apis';
+import { apiPickerKeys } from './apis-hooks';
 
 /** The API's coordinates (all three set, or nothing to read). */
 export interface ActionApiReference {
@@ -122,27 +123,36 @@ function combineRevisionIds(
 
 /**
  * The operation list with each operation's stored `operationId`
- * (`spec_operation_id`), for matching rules that name operations by it. The
- * list itself is returned until the revision's document is read.
+ * (`spec_operation_id`), for matching rules that name operations by it — and,
+ * given how far the credential reaches (`reach`), whether another covered API
+ * declares the same one (`ambiguous`), so a match on it is read the way the
+ * broker reads it. The list itself is returned until the revision's document
+ * is read.
  */
 export function useOperationsWithSpecIds<
 	T extends { method: string; path: string; revision_id?: string },
 >(
 	api: ActionApiReference | null | undefined,
 	ops: readonly T[],
-	opts: { enabled?: boolean } = {},
-): ReadonlyArray<T & { spec_operation_id?: string | null }> {
-	const spec = useRevisionOperationIds(api, ops[0]?.revision_id, opts);
-	return useMemo(
-		() =>
-			spec.ids.size === 0
-				? ops
-				: ops.map((op) => ({
-						...op,
-						spec_operation_id: spec.ids.get(actionAt(op.method, op.path)) ?? null,
-					})),
-		[ops, spec],
-	);
+	opts: { enabled?: boolean; reach?: 'vendor-wide' | 'any-version' | 'pinned' } = {},
+): ReadonlyArray<T & { spec_operation_id?: string | null; ambiguous?: boolean }> {
+	const enabled = opts.enabled ?? true;
+	const spec = useRevisionOperationIds(api, ops[0]?.revision_id, { enabled });
+	const covered = useCoveredOperationIds(api, opts.reach, {
+		enabled: enabled && opts.reach !== undefined && spec.ids.size > 0,
+	});
+	return useMemo(() => {
+		if (spec.ids.size === 0) return ops;
+		const shared = covered.status === 'ready' ? covered.elsewhere : null;
+		return ops.map((op) => {
+			const specId = spec.ids.get(actionAt(op.method, op.path)) ?? null;
+			return {
+				...op,
+				spec_operation_id: specId,
+				...(specId && shared?.has(specId) && { ambiguous: true }),
+			};
+		});
+	}, [ops, spec, covered]);
 }
 
 /**
@@ -214,6 +224,42 @@ export type CoveredOperationIds =
 
 const NONE_ELSEWHERE: CoveredOperationIds = { status: 'ready', elsewhere: new Map() };
 
+/** One other covered API's `operationId`s, from its current revision's document. */
+async function declaredOperationIds(
+	vendor: string,
+	name: string,
+	version: string,
+	revision: string,
+): Promise<Array<{ specId: string; registryId: string }>> {
+	// The current revision's own document, which its operations (and their
+	// registry ids) were parsed from.
+	const doc =
+		(await getApiRevisionSpec(vendor, name, version, revision)) ??
+		(await getApiSpec(vendor, name, version));
+	const ids: Array<{ specId: string; registryId: string }> = [];
+	for (const x of specActions(doc)) {
+		if (!x.operationId) continue;
+		ids.push({
+			specId: x.operationId,
+			registryId: await registryOperationId(revision, x.path, x.method),
+		});
+	}
+	return ids;
+}
+
+/** Module-level, so `useQueries` sees one `combine` and keeps its result stable. */
+function combineDeclared(
+	results: ReadonlyArray<{
+		data?: Array<{ specId: string; registryId: string }>;
+		isError: boolean;
+	}>,
+): { ids: Array<Array<{ specId: string; registryId: string }> | undefined>; failed: boolean } {
+	return {
+		ids: results.map((r) => r.data),
+		failed: results.some((r) => r.isError),
+	};
+}
+
 /**
  * For a credential that isn't pinned to one API and version, the broker reads
  * an `operationId` against every live API the credential covers: one that
@@ -221,9 +267,12 @@ const NONE_ELSEWHERE: CoveredOperationIds = { status: 'ready', elsewhere: new Ma
  * refuses and an Allow grants nothing. This reads the OTHER live APIs the
  * scope covers — the vendor's, or the same API's other versions — and the
  * `operationId`s each declares, with each one's registry id in that API's
- * current revision: a rule for an ambiguous action names every one of them,
- * so it holds whichever API a call resolves to. A pinned scope covers no
- * other API.
+ * current revision. A pinned scope covers no other API.
+ *
+ * The list of covered APIs lives under the APIs-list key, so an import or a
+ * promote (`invalidateApiLists`) refreshes it; each API's ids are keyed by its
+ * current revision, whose document never changes, so a new revision is a
+ * fresh read and an unchanged one is never read twice.
  */
 export function useCoveredOperationIds(
 	api: ActionApiReference | null | undefined,
@@ -232,67 +281,63 @@ export function useCoveredOperationIds(
 ): CoveredOperationIds {
 	const asked = (opts.enabled ?? true) && ready(api);
 	const wanted = asked && reach !== undefined && reach !== 'pinned';
-	const query = useQuery({
-		queryKey: [...KEY, 'covered', api?.vendor, reach === 'any-version' ? api?.name : null],
-		queryFn: async () => {
-			const { vendor, name } = api as { vendor: string; name: string };
-			const list = await listApis({ vendor, limit: 100 });
-			const others = list.data.filter(
-				(a) =>
-					a.current_revision_id != null &&
-					(reach !== 'any-version' || a.api.name === name),
-			);
-			if (others.length > MAX_COVERED_APIS || list.has_more) return null;
-			const declared: Array<{
-				key: string;
-				title: string;
-				ids: Array<{ specId: string; registryId: string }>;
-			}> = [];
-			for (const a of others) {
-				const { vendor: v, name: n, version } = a.api;
-				const revision = a.current_revision_id as string;
-				// The current revision's own document, which its operations (and
-				// their registry ids) were parsed from.
-				const doc =
-					(await getApiRevisionSpec(v, n, version, revision)) ??
-					(await getApiSpec(v, n, version));
-				const ids: Array<{ specId: string; registryId: string }> = [];
-				for (const x of specActions(doc)) {
-					if (!x.operationId) continue;
-					ids.push({
-						specId: x.operationId,
-						registryId: await registryOperationId(revision, x.path, x.method),
-					});
-				}
-				declared.push({
-					key: `${n}@${version}`,
-					title: `${a.display_name || n} v${version}`,
-					ids,
-				});
-			}
-			return declared;
-		},
+	const list = useQuery({
+		queryKey: [...apiPickerKeys.apisList(), 'covered', api?.vendor],
+		queryFn: () => listApis({ vendor: api!.vendor, limit: 100 }),
 		enabled: wanted,
-		staleTime: STALE_MS,
+		staleTime: 30_000,
 	});
 	const self = api ? `${api.name}@${api.version}` : '';
+	const others = useMemo(() => {
+		if (!list.data) return null;
+		if (list.data.has_more) return 'too-many' as const;
+		const live = list.data.data.filter(
+			(a) =>
+				a.current_revision_id != null &&
+				(reach !== 'any-version' || a.api.name === api?.name) &&
+				`${a.api.name}@${a.api.version}` !== self,
+		);
+		return live.length > MAX_COVERED_APIS ? ('too-many' as const) : live;
+	}, [list.data, reach, api?.name, self]);
+	const declared = useQueries({
+		queries: (Array.isArray(others) ? others : []).map((a) => ({
+			queryKey: [
+				...KEY,
+				'declared',
+				a.api.vendor,
+				a.api.name,
+				a.api.version,
+				a.current_revision_id,
+			],
+			queryFn: () =>
+				declaredOperationIds(
+					a.api.vendor,
+					a.api.name,
+					a.api.version,
+					a.current_revision_id as string,
+				),
+			enabled: wanted,
+			staleTime: Infinity,
+		})),
+		combine: combineDeclared,
+	});
 	return useMemo<CoveredOperationIds>(() => {
 		// A host that doesn't say how far the credential reaches can't vouch
 		// for any `operationId` being unique.
 		if (asked && reach === undefined) return { status: 'unknown' };
 		if (!wanted) return NONE_ELSEWHERE;
-		if (query.isError || query.data === null) return { status: 'unknown' };
-		if (!query.data) return { status: 'loading' };
+		if (list.isError || others === 'too-many' || declared.failed) return { status: 'unknown' };
+		if (!others || declared.ids.some((ids) => ids === undefined)) return { status: 'loading' };
 		const elsewhere = new Map<string, SharedOperationId>();
-		for (const other of query.data) {
-			if (other.key === self) continue;
-			for (const { specId, registryId } of other.ids) {
+		others.forEach((other, i) => {
+			const title = `${other.display_name || other.api.name} v${other.api.version}`;
+			for (const { specId, registryId } of declared.ids[i] ?? []) {
 				const shared = elsewhere.get(specId) ?? { titles: [], ids: [] };
-				if (!shared.titles.includes(other.title)) shared.titles.push(other.title);
+				if (!shared.titles.includes(title)) shared.titles.push(title);
 				shared.ids.push(registryId);
 				elsewhere.set(specId, shared);
 			}
-		}
+		});
 		return { status: 'ready', elsewhere };
-	}, [asked, reach, wanted, query.isError, query.data, self]);
+	}, [asked, reach, wanted, list.isError, others, declared]);
 }

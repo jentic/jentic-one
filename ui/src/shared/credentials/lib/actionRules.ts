@@ -55,6 +55,23 @@ export function actionKeysOf(op: ActionOperation): readonly string[] {
 }
 
 /**
+ * The ids a rule of `effect` writes for `op`. A Deny on an ambiguous action
+ * keeps its shared `operationId`: the broker still denies an ambiguous name,
+ * and the name survives re-imports where each API's registry id does not. An
+ * Ask or an Allow can't — the broker would refuse it or grant nothing — so it
+ * names the action's registry id in each API that declares it.
+ */
+export function actionKeysFor(
+	op: ActionOperation,
+	effect: 'allow' | 'ask' | 'deny',
+): readonly string[] {
+	if (effect === 'deny' && op.ambiguous_with && op.spec_operation_id) {
+		return [op.spec_operation_id];
+	}
+	return actionKeysOf(op);
+}
+
+/**
  * The ids that name one of this API's ambiguous actions in another covered
  * API — the same action, written beside this API's id so a rule holds
  * whichever API a call resolves to. A save or a removal from this panel moves
@@ -87,6 +104,13 @@ export interface ActionCatalog {
 	specIdsKnown?: boolean;
 	/** What ids of the API's earlier revisions named, when they were read. */
 	past?: ReadonlyMap<string, PastActionRef>;
+	/**
+	 * False while the ids a rule set here would write are still being worked
+	 * out — the spec's `operationId`s, or which other covered APIs share them.
+	 * A choice made then could name an action in one API only. Absent reads as
+	 * settled.
+	 */
+	keysSettled?: boolean;
 	/**
 	 * The other APIs the same rule list governs. Rules belong to the binding
 	 * (agent × credential), and a credential that reaches several APIs shares
@@ -467,7 +491,7 @@ export function storeActionChoices(
 		const g = now.get(id);
 		if (!g) continue;
 		const op = opById.get(id);
-		out[g].push(...(op ? actionKeysOf(op) : [id]));
+		out[g].push(...(op ? actionKeysFor(op, g) : [id]));
 	}
 	return out;
 }
@@ -519,24 +543,33 @@ export function actionsAtThisVersion<
 	catalog: ActionCatalog,
 ): { groups: { allow: string[]; ask: string[]; deny: string[] }; changed: number; left: number } {
 	const byId = indexById(catalog.operations);
-	const stale = new Map<string, readonly string[] | null>();
+	const nowAt = new Map(catalog.operations.map((op) => [actionAt(op.method, op.path), op]));
+	// A stale id, to the current operation at the same method and path (null: none).
+	const stale = new Map<string, ActionOperation | null>();
 	for (const e of describeActions([...groups.allow, ...groups.ask, ...groups.deny], catalog)
 		.entries) {
-		if (e.kind === 'missing') stale.set(e.id, e.now?.keys ?? null);
+		if (e.kind === 'missing') {
+			stale.set(e.id, e.now ? (nowAt.get(actionAt(e.now.method, e.now.path)) ?? null) : null);
+		}
+	}
+	// Another API's copy of one of this API's ambiguous actions, to that action.
+	const twinOf = new Map<string, ActionOperation>();
+	for (const op of catalog.operations) {
+		for (const id of op.action_keys ?? []) if (id !== op.operation_id) twinOf.set(id, op);
 	}
 	let changed = 0;
 	let left = 0;
 	const seen = new Set<string>();
-	const move = (ids: readonly string[]): string[] => {
+	const move = (ids: readonly string[], effect: 'allow' | 'ask' | 'deny'): string[] => {
 		const out: string[] = [];
 		const held = new Set(ids);
 		for (const id of ids) {
-			const op = byId.get(id);
+			const op = byId.get(id) ?? twinOf.get(id);
 			let to: readonly string[] = [id];
-			if (op) to = actionKeysOf(op);
+			if (op) to = actionKeysFor(op, effect);
 			else if (stale.has(id)) {
 				const now = stale.get(id);
-				if (now) to = now;
+				if (now) to = actionKeysFor(now, effect);
 				else left += 1;
 			}
 			// Rewritten: it names the action some other way, or misses a copy.
@@ -551,10 +584,72 @@ export function actionsAtThisVersion<
 	};
 	// Deny first: an id that lands in two effects keeps the one the By action
 	// list reads it as (`accessMap`: Deny, then Ask, then Allow).
-	const deny = move(groups.deny);
-	const ask = move(groups.ask);
-	const allow = move(groups.allow);
+	const deny = move(groups.deny, 'deny');
+	const ask = move(groups.ask, 'ask');
+	const allow = move(groups.allow, 'allow');
 	return { groups: { allow, ask, deny }, changed, left };
+}
+
+type FoundEntry = Extract<ActionEntry, { kind: 'found' }>;
+
+/**
+ * What is wrong with one action rule's ambiguous actions — the ones whose
+ * `operationId` another API the credential covers declares too.
+ *
+ * - `shared`: an Ask or Allow names the shared `operationId`. The broker
+ *   can't tell which API it means, so the Ask refuses the call and the Allow
+ *   grants nothing.
+ * - `partial`: it names the action's registry id in some of those APIs only;
+ *   a call the broker resolves to another one skips the rule.
+ * - `byCode`: a Deny names the action by registry ids. It holds today, but
+ *   the ids change with a re-import, where the shared name (which a Deny can
+ *   use) would not.
+ */
+export interface RuleAmbiguity {
+	shared: FoundEntry[];
+	partial: FoundEntry[];
+	byCode: FoundEntry[];
+	/** Each flagged id to what a rule of this effect should hold instead
+	 * (`actionKeysFor`); an id the fix makes redundant maps to nothing. */
+	renames: Map<string, readonly string[]>;
+}
+
+export function ruleAmbiguity(
+	ids: readonly string[],
+	effect: 'allow' | 'ask' | 'deny',
+	catalog: ActionCatalog,
+): RuleAmbiguity {
+	const own = new Map<string, ActionOperation>();
+	for (const op of catalog.operations) {
+		own.set(op.operation_id, op);
+		if (op.spec_operation_id) own.set(op.spec_operation_id, op);
+	}
+	const twinOf = new Map<string, ActionOperation>();
+	for (const op of catalog.operations) {
+		for (const id of op.action_keys ?? []) if (id !== op.operation_id) twinOf.set(id, op);
+	}
+	const held = new Set(ids);
+	const out: RuleAmbiguity = { shared: [], partial: [], byCode: [], renames: new Map() };
+	const flagged = new Set<ActionOperation>();
+	for (const e of describeActions(ids, catalog).entries) {
+		if (e.kind !== 'found' || e.api) continue;
+		const op = own.get(e.id);
+		if (!op?.ambiguous_with) continue;
+		if (e.id === op.spec_operation_id) {
+			if (effect === 'deny') continue;
+			out.shared.push(e);
+		} else if (effect === 'deny') {
+			out.byCode.push(e);
+		} else if ((op.action_keys ?? []).some((key) => !held.has(key))) {
+			out.partial.push(e);
+		} else continue;
+		flagged.add(op);
+	}
+	for (const op of flagged) {
+		const mine = ids.filter((id) => own.get(id) === op || twinOf.get(id) === op);
+		mine.forEach((id, i) => out.renames.set(id, i === 0 ? actionKeysFor(op, effect) : []));
+	}
+	return out;
 }
 
 /** "Archive, Top Stories and Search". */

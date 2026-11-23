@@ -64,18 +64,16 @@ import { DraftRuleTester } from '@/shared/credentials/components/RuleRequestTest
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
-	actionKeysOf,
 	actionOwner,
 	changedActionChoices,
 	describeActions,
+	ruleAmbiguity,
 	siblingActions,
 	storeActionChoices,
 	twinActionIds,
 	viewActionGroups,
 	siblingActionsLine,
 	type ActionCatalog,
-	type ActionEntry,
-	type ActionOperation,
 	type SiblingActions,
 } from '@/shared/credentials/lib/actionRules';
 import {
@@ -262,6 +260,9 @@ export function AccessRulesStep({
 		() => viewActionGroups(groups, actionCatalog),
 		[groups, actionCatalog],
 	);
+	// Until the ids a choice writes are known, a choice could name an action in
+	// one API only — so the list waits, briefly, with a note.
+	const keysPending = actionCatalog.keysSettled === false;
 	const onChecklistChange = (next: ActionGroups): void =>
 		setStaged(storeActionChoices(shownGroups, shownView, next, actionCatalog));
 	// Applied choices show as rule cards; the operations list then folds behind
@@ -588,11 +589,25 @@ export function AccessRulesStep({
 											value={shownView}
 											applied={appliedView}
 											onChange={onChecklistChange}
-											disabled={disabled}
+											disabled={disabled || keysPending}
 											testId={`${p}-actions`}
 											only={editingIds}
 											header={editingHeader}
 										/>
+										{keysPending && (
+											<p
+												role="status"
+												className="text-muted-foreground flex items-center gap-1.5 px-1 text-xs"
+												data-testid={`${p}-keys-pending`}
+											>
+												<Loader2
+													className="h-3 w-3 animate-spin motion-reduce:animate-none"
+													aria-hidden="true"
+												/>
+												Checking whether other APIs this credential reaches
+												share these actions…
+											</p>
+										)}
 										<div
 											className="flex flex-wrap items-center gap-2"
 											data-testid={`${p}-apply-row`}
@@ -709,6 +724,7 @@ export function AccessRulesStep({
 								<div className="pt-1 pb-2 pl-2">
 									<OperationImpactPreview
 										api={apiReference}
+										reach={reach}
 										rules={draftRules}
 										label="Allowed and denied, by path"
 									/>
@@ -867,6 +883,13 @@ function SiblingActionsNote({
  * An action rule as a read-only row, unnumbered (it is checked before every
  * path rule). "Edit" opens By action filtered to its ids.
  */
+/** A rule's effect, as the By action group it belongs to. */
+const GROUP_OF_EFFECT: Record<string, 'allow' | 'ask' | 'deny'> = {
+	allow: 'allow',
+	'require-approval': 'ask',
+	deny: 'deny',
+};
+
 function ActionRuleRow({
 	operations,
 	effect,
@@ -891,48 +914,20 @@ function ActionRuleRow({
 	testId: string;
 }) {
 	const description = useMemo(() => describeActions(operations, catalog), [operations, catalog]);
-	// An Ask or Allow naming an `operationId` another covered API declares too:
-	// the broker can't tell which one is meant, so the Ask refuses the call and
-	// the Allow grants nothing. (A Deny still denies, so it needs no warning.)
-	const ambiguous =
-		effect === 'deny'
-			? []
-			: description.entries.filter(
-					(e): e is Extract<typeof e, { kind: 'found' }> =>
-						e.kind === 'found' && !!e.ambiguousWith,
-				);
-	// One of this API's ambiguous actions named by its registry id here but not
-	// in every other API that declares it: a call the broker resolves to one of
-	// those skips the rule — for a Deny or an Ask, it then falls through.
-	const ops = catalog.operations;
-	const opsById = useMemo(() => {
-		const map = new Map<string, ActionOperation>();
-		for (const op of ops) {
-			map.set(op.operation_id, op);
-			if (op.spec_operation_id) map.set(op.spec_operation_id, op);
-		}
-		return map;
-	}, [ops]);
-	const partial = description.entries.filter(
-		(e): e is Extract<ActionEntry, { kind: 'found' }> => {
-			const op = e.kind === 'found' && !e.api ? opsById.get(e.id) : undefined;
-			return (
-				op?.action_keys != null &&
-				e.id === op.operation_id &&
-				op.action_keys.some((key) => !operations.includes(key))
-			);
-		},
+	// The rule's ambiguous actions (another covered API declares the same
+	// `operationId`), and what fixes them (`ruleAmbiguity`).
+	const group = GROUP_OF_EFFECT[effect] ?? 'allow';
+	const issues = useMemo(
+		() => ruleAmbiguity(operations, group, catalog),
+		[operations, group, catalog],
 	);
-	const fixable = [...ambiguous, ...partial];
-	/** Each flagged id, to the action's id in every API that declares it. */
-	const renamesFor = (entries: readonly ActionEntry[]): Map<string, readonly string[]> => {
-		const renames = new Map<string, readonly string[]>();
-		for (const e of entries) {
-			const op = opsById.get(e.id);
-			if (op) renames.set(e.id, actionKeysOf(op));
-		}
-		return renames;
+	const fix = onRename && {
+		disabled: disabled || catalog.keysSettled === false,
+		onClick: () => onRename(issues.renames),
 	};
+	const opOf = (e: { id: string }) =>
+		catalog.operations.find((op) => op.operation_id === e.id || op.spec_operation_id === e.id);
+	const otherOf = (e: { id: string }): string => opOf(e)?.ambiguous_with ?? 'another API';
 	return (
 		<div
 			className="bg-surface-tonal flex flex-col gap-1.5 rounded-md px-2.5 py-2 text-xs"
@@ -979,45 +974,55 @@ function ActionRuleRow({
 				className="-mx-1"
 				data-testid={`${testId}-actions`}
 			/>
-			{partial.length > 0 && ambiguous.length === 0 && (
-				<RuleWarning
-					testId={`${testId}-partial`}
-					action={
-						onRename && {
-							label: `Name ${partial.length === 1 ? 'it' : 'them'} in each API`,
-							disabled,
-							onClick: () => onRename(renamesFor(partial)),
-						}
-					}
-				>
-					{partial.length === 1
-						? `This rule names ${partial[0]!.method} ${partial[0]!.path} in this API only, but ${opsById.get(partial[0]!.id)?.ambiguous_with ?? 'another API'} has the same action and this credential reaches it too`
-						: `This rule names ${partial.length.toLocaleString()} actions in this API only, though other APIs this credential reaches have them too`}
-					: a call the broker resolves there skips this rule.
-				</RuleWarning>
-			)}
-			{ambiguous.length > 0 && (
+			{issues.shared.length > 0 ? (
 				<RuleWarning
 					testId={`${testId}-ambiguous`}
 					action={
-						onRename && {
-							label: `Name ${ambiguous.length === 1 ? 'it' : 'them'} in each API`,
-							disabled,
-							// Every flagged id of the rule, the partly named included.
-							onClick: () => onRename(renamesFor(fixable)),
+						fix && {
+							...fix,
+							label: `Name ${issues.shared.length === 1 ? 'it' : 'them'} in each API`,
 						}
 					}
 				>
-					{ambiguous.length === 1
-						? `${ambiguous[0]!.id} is also an action of ${ambiguous[0]!.ambiguousWith}, which this credential reaches too`
-						: `${ambiguous.length.toLocaleString()} of these actions are also actions of other APIs this credential reaches`}
+					{issues.shared.length === 1
+						? `${issues.shared[0]!.id} is also an action of ${issues.shared[0]!.ambiguousWith}, which this credential reaches too`
+						: `${issues.shared.length.toLocaleString()} of these actions are also actions of other APIs this credential reaches`}
 					. The broker can&apos;t tell which one this rule means, so{' '}
 					{effect === 'allow'
 						? 'this Allow grants nothing'
 						: 'this Ask refuses the call instead of holding it'}
 					.
 				</RuleWarning>
-			)}
+			) : issues.partial.length > 0 ? (
+				<RuleWarning
+					testId={`${testId}-partial`}
+					action={
+						fix && {
+							...fix,
+							label: `Name ${issues.partial.length === 1 ? 'it' : 'them'} in each API`,
+						}
+					}
+				>
+					{issues.partial.length === 1
+						? `This rule names ${issues.partial[0]!.method} ${issues.partial[0]!.path} in this API only, but ${otherOf(issues.partial[0]!)} has the same action and this credential reaches it too`
+						: `This rule names ${issues.partial.length.toLocaleString()} actions in this API only, though other APIs this credential reaches have them too`}
+					: a call the broker resolves there skips this rule.
+				</RuleWarning>
+			) : issues.byCode.length > 0 ? (
+				<RuleWarning
+					testId={`${testId}-by-code`}
+					action={fix && { ...fix, label: 'Use the shared name' }}
+				>
+					{issues.byCode.length === 1
+						? `This Deny names ${issues.byCode[0]!.method} ${issues.byCode[0]!.path} by registry id, which changes when an API is re-imported`
+						: `This Deny names ${issues.byCode.length.toLocaleString()} actions by registry id, which changes when an API is re-imported`}
+					. A Deny can use{' '}
+					{issues.byCode.length === 1
+						? `its shared name, ${opOf(issues.byCode[0]!)?.spec_operation_id ?? 'the operationId'},`
+						: 'their shared names'}{' '}
+					instead: the broker still denies a shared name, and a name survives re-imports.
+				</RuleWarning>
+			) : null}
 		</div>
 	);
 }

@@ -139,7 +139,9 @@ export function useAccessDraft({
 
 	// Only with every list whole is an id provably stale (`describeActions`).
 	const atThisVersion = useMemo(() => {
-		if (awaitingCatalog || catalog.status !== 'ready') return null;
+		if (awaitingCatalog || catalog.status !== 'ready' || catalog.keysSettled === false) {
+			return null;
+		}
 		const { pathRules, groups } = splitCustomRules(savedRules);
 		const next = actionsAtThisVersion(groups, catalog);
 		return next.changed > 0
