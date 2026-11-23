@@ -1253,6 +1253,37 @@ describe('AccessRulesStep', () => {
 		expect(verdict).toHaveTextContent('set by action (Allow)');
 	});
 
+	it('Try a request reads the method and path as the operation, so action rules decide it untyped', async () => {
+		stubOperations();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Host
+				initial="custom"
+				withApi
+				tester
+				initialRules={[
+					{
+						effect: 'require-approval',
+						methods: null,
+						path: null,
+						operations: ['createItem'],
+					},
+					{ effect: 'allow', methods: ['POST'], path: '/items', match_mode: 'prefix' },
+				]}
+			/>,
+		);
+		await expectTotals('0 allowed · 1 ask · 1 denied (not set)');
+		await user.click(screen.getByRole('button', { name: /Try a request/ }));
+		const tester = screen.getByTestId('t-tester');
+		await user.selectOptions(within(tester).getByRole('combobox'), 'POST');
+		await user.type(within(tester).getByLabelText('Request path'), '/items');
+		// No operation id typed: the broker resolves POST /items to Create item.
+		await user.click(within(tester).getByRole('button', { name: 'Test' }));
+		const verdict = await within(tester).findByTestId('rule-verdict');
+		expect(verdict).not.toHaveTextContent('Allowed');
+		expect(verdict).toHaveTextContent('set by action (Ask)');
+	});
+
 	it('flags a path rule that only matches actions already set by action', async () => {
 		stubOperations();
 		renderWithProviders(
