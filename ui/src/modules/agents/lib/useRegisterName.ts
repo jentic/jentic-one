@@ -12,11 +12,8 @@
  * each opening fresh.
  */
 import { useCallback, useMemo, useState } from 'react';
-import {
-	agentNameError,
-	duplicateAgentName,
-	suggestAgentName,
-} from '@/modules/agents/lib/agentName';
+import { duplicateAgentName, suggestAgentName } from '@/modules/agents/lib/agentName';
+import { registerNameError } from '@/modules/agents/lib/registerCommand';
 
 export interface RegisterNameOptions {
 	/** Every agent name in the org, archived and denied ones included. */
@@ -29,13 +26,30 @@ export interface RegisterNameOptions {
 	listening?: boolean;
 }
 
+/**
+ * Every name typed into a register command this session, across the landing
+ * and the New agent panel. An arrival carrying one of them is the operator's
+ * own, wherever they typed it — closing the panel mid-flow must not make the
+ * landing warn about the agent the operator named a moment ago.
+ */
+const typedRegisterNames = new Set<string>();
+
+/** Whether `name` was typed into a register command this session (trim, case-insensitive). */
+export function registerNameWasTyped(name: string): boolean {
+	return typedRegisterNames.has(name.trim().toLowerCase());
+}
+
 export function useRegisterName({
 	names,
 	rosterRead,
 	base,
 	listening = true,
 }: RegisterNameOptions) {
-	const [typed, setTyped] = useState<string | null>(null);
+	const [typed, setTypedState] = useState<string | null>(null);
+	const setTyped = useCallback((name: string | null) => {
+		if (name && name.trim()) typedRegisterNames.add(name.trim().toLowerCase());
+		setTypedState(name);
+	}, []);
 	const [settled, setSettled] = useState<string | null>(null);
 	const [wasListening, setWasListening] = useState(listening);
 	if (listening !== wasListening) {
@@ -51,14 +65,15 @@ export function useRegisterName({
 	const reset = useCallback(() => {
 		setTyped(null);
 		setSettled(null);
-	}, []);
+	}, [setTyped]);
 	return {
 		/** What the name field shows. */
 		name,
 		setName: setTyped as (name: string) => void,
 		/** The name the displayed command registers with: the field's, or the
-		 * suggestion while the field is blank. */
-		commandName: agentNameError(name) ? suggestion : name.trim(),
+		 * suggestion while the field is blank or holds a name the CLI would refuse
+		 * (the field says so; the command stays one that runs). */
+		commandName: registerNameError(name) ? suggestion : name.trim(),
 		/** The existing agent name the field duplicates, or `null`. */
 		duplicateOf,
 		reset,

@@ -25,11 +25,9 @@ test('Agents renders the first-run landing against an empty backend, console cle
 	await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 
 	// No agents → the zero-agents landing; the header's create button keeps its label.
+	await expect(page.getByRole('heading', { name: 'Connect your first agent' })).toBeVisible();
 	await expect(
-		page.getByRole('heading', { name: 'Let your agent register itself' }),
-	).toBeVisible();
-	await expect(
-		page.getByRole('heading', { name: 'Prefer to set it up yourself?' }),
+		page.getByRole('radiogroup', { name: 'How to connect your first agent' }),
 	).toBeVisible();
 	await expect(page.getByRole('button', { name: 'New agent' })).toHaveAttribute(
 		'data-emphasis',
@@ -41,18 +39,27 @@ test('Agents renders the first-run landing against an empty backend, console cle
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('the first-run create button opens the New agent panel on "Create here"', async ({ page }) => {
+test('the first-run landing opens the New agent panel on the chosen way in', async ({ page }) => {
 	await page.goto('/app');
-	await expect(
-		page.getByRole('heading', { name: 'Let your agent register itself' }),
-	).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Connect your first agent' })).toBeVisible();
 
-	// The manual route opens the real panel (real router, real guard); closing it
-	// creates nothing, so the workspace stays in first run for the specs after.
-	await page.getByRole('button', { name: 'New agent' }).click();
+	// The real panel (real router, real guard); closing it creates nothing, so the
+	// workspace stays in first run for the specs after.
 	const sheet = page.getByRole('dialog', { name: 'New agent' });
+	await page.getByRole('button', { name: 'New agent' }).click();
 	await expect(sheet).toBeVisible();
-	await expect(sheet.getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+	await expect(sheet.getByRole('tab', { name: 'Register from the CLI' })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
+	await page.keyboard.press('Escape');
+	await expect(sheet).toHaveCount(0);
+
+	// The manual route: "Create it here", then Continue.
+	await page.getByRole('radio', { name: /Create it here/ }).click();
+	await page.getByRole('button', { name: /^Continue/ }).click();
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('tab', { name: 'Create it here' })).toHaveAttribute(
 		'aria-selected',
 		'true',
 	);

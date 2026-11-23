@@ -69,9 +69,13 @@ describe('AgentKeysSheet — the dock API key surface', () => {
 		).toBeInTheDocument();
 		await user.click(sheet.getByRole('button', { name: 'Generate API key for support-agent' }));
 
-		expect(
-			await screen.findByRole('dialog', { name: 'API key generated' }),
-		).toBeInTheDocument();
+		const reveal = await screen.findByRole('dialog', { name: 'API key generated' });
+		// Where the key goes, with the identity command for this agent — and no
+		// warning against the one path an agent created here has.
+		expect(within(reveal).getByTestId('api-key-identity-command')).toHaveTextContent(
+			"jentic identity add support-agent --env jentic --api-key '<api-key>'",
+		);
+		expect(reveal).not.toHaveTextContent(/not the recommended pattern/);
 	});
 
 	it('confirms before regenerating an existing API key', async () => {

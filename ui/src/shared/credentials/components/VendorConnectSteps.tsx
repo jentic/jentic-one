@@ -23,6 +23,7 @@ import {
 } from '@/shared/ui';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
+import { useActionCatalog } from '@/shared/credentials/components/useActionCatalog';
 import {
 	DefaultRulePreviewRow,
 	RuleListEditor,
@@ -146,6 +147,8 @@ export function RulesStep({
 		if (!rows) return EMPTY_PATHS;
 		return Array.from(new Set(rows.map((op) => op.path))).sort();
 	}, [opsQuery.data]);
+	// Names an agent-requested rule's operation ids as the actions they are.
+	const actionCatalog = useActionCatalog(apiReference, { enabled: !!apiReference });
 
 	const handleContinue = (): void => {
 		if (isEmpty && requireRule) return;
@@ -175,6 +178,7 @@ export function RulesStep({
 					pathSuggestions={pathSuggestions}
 					opTemplates={pathSuggestions}
 					opsLoaded={pathSuggestions.length > 0}
+					actionCatalog={actionCatalog}
 					requestedRules={requestedRules}
 					emptyStateContent={
 						requireRule ? undefined : (

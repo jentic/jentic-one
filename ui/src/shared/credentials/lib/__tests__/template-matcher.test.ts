@@ -3,11 +3,64 @@ import {
 	classifyOpCoverage,
 	evaluateTemplateOp,
 	generateRuleExamples,
+	operationForRequest,
 	ruleAppliesToTemplate,
 	ruleNarrowsTemplate,
 	sampleTemplatePaths,
 	templateToRegex,
 } from '@/shared/credentials/lib/template-matcher';
+
+describe('ruleAppliesToTemplate — placeholders in the RULE path', () => {
+	it('a prefix rule written with {name} placeholders applies as the broker reads it: wildcards', () => {
+		const rule = {
+			effect: 'allow',
+			match_mode: 'prefix',
+			path: '/{year}/{month}.json',
+		} as never;
+		expect(ruleAppliesToTemplate(rule, '/{year}/{month}.json')).toBe(true);
+		expect(ruleAppliesToTemplate(rule, '/2024/{month}.json')).toBe(true);
+		expect(ruleAppliesToTemplate(rule, '/archive/{year}.json')).toBe(true);
+		expect(ruleAppliesToTemplate(rule, '/search')).toBe(false);
+	});
+});
+
+describe('operationForRequest', () => {
+	const ops = [
+		{ operation_id: 'listOrders', method: 'get', path: '/anything/orders' },
+		{ operation_id: 'createOrder', method: 'post', path: '/anything/orders' },
+		{ operation_id: 'getOrder', method: 'get', path: '/anything/orders/{orderId}' },
+		{
+			operation_id: 'getOrderEvents',
+			method: 'get',
+			path: '/anything/orders/{orderId}/events',
+		},
+		{ operation_id: 'getLatest', method: 'get', path: '/anything/orders/latest' },
+	];
+
+	it('reads a request as the operation whose method and path template it instantiates', () => {
+		expect(operationForRequest(ops, 'POST', '/anything/orders')?.operation_id).toBe(
+			'createOrder',
+		);
+		expect(operationForRequest(ops, 'get', '/anything/orders/42')?.operation_id).toBe(
+			'getOrder',
+		);
+		expect(operationForRequest(ops, 'GET', '/anything/orders/42/events')?.operation_id).toBe(
+			'getOrderEvents',
+		);
+	});
+
+	it('prefers a literal template over a parameterised one, as the broker does', () => {
+		expect(operationForRequest(ops, 'GET', '/anything/orders/latest')?.operation_id).toBe(
+			'getLatest',
+		);
+	});
+
+	it('is null for a method or path no operation has', () => {
+		expect(operationForRequest(ops, 'DELETE', '/anything/orders')).toBeNull();
+		expect(operationForRequest(ops, 'GET', '/anything/customers')).toBeNull();
+		expect(operationForRequest(ops, 'GET', '/anything/orders/42/notes')).toBeNull();
+	});
+});
 
 /**
  * The UI's ops preview evaluates rules against op TEMPLATES (with

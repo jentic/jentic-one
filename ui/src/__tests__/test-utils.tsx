@@ -145,9 +145,28 @@ export async function checkA11y(
 	}
 	const target = options.modal ? modals[modals.length - 1] : container;
 	const results = await axe.run(target);
-	const critical = results.violations.filter(
-		(v) => v.impact === 'critical' || v.impact === 'serious',
-	);
+	// `[data-a11y-decorative]` subtrees (aria-hidden illustrations, WCAG 1.4.3 incidental
+	// text) are exempt from `color-contrast` only; every other rule still applies there.
+	const decorative = [...target.querySelectorAll('[data-a11y-decorative]')];
+	// axe only populates `element` when run with `elementRef`, so resolve each
+	// finding through its CSS target path instead.
+	const isDecorative = (node: { target: unknown[] }) => {
+		const sel = node.target.filter((t): t is string => typeof t === 'string').join(' ');
+		if (!sel) return false;
+		let el: Element | null = null;
+		try {
+			el = document.querySelector(sel);
+		} catch {
+			return false;
+		}
+		return el != null && decorative.some((d) => d.contains(el));
+	};
+	const violations = results.violations.flatMap((v) => {
+		if (v.id !== 'color-contrast') return [v];
+		const nodes = v.nodes.filter((n) => !isDecorative(n));
+		return nodes.length > 0 ? [{ ...v, nodes }] : [];
+	});
+	const critical = violations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
 	if (critical.length > 0) {
 		const summary = critical
 			.map(

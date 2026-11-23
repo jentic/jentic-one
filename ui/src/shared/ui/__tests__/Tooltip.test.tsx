@@ -1,7 +1,6 @@
-import { renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
+import { act, fireEvent, renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
-import { Tooltip, quietHoverUntilPointerMoves } from '@/shared/ui/Tooltip';
-import { fireEvent } from '@testing-library/react';
+import { Tooltip, TOOLTIP_DELAY_MS, quietHoverUntilPointerMoves } from '@/shared/ui/Tooltip';
 
 describe('Tooltip', () => {
 	it('renders its trigger children', () => {
@@ -37,6 +36,22 @@ describe('Tooltip', () => {
 		expect(screen.queryByRole('tooltip')).toBeNull();
 	});
 
+	it('a tap opens the bubble on a touch screen, a tap away closes it; a mouse press is not a tap', async () => {
+		renderWithProviders(
+			<Tooltip content="why this is disabled">
+				<span>touch-trigger</span>
+			</Tooltip>,
+		);
+		const trigger = screen.getByText('touch-trigger');
+		fireEvent.pointerDown(trigger, { pointerType: 'touch' });
+		expect(await screen.findByRole('tooltip')).toHaveTextContent('why this is disabled');
+		fireEvent.pointerDown(document.body, { pointerType: 'touch' });
+		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+		// A mouse press opens nothing: hover already owns that bubble.
+		fireEvent.pointerDown(trigger, { pointerType: 'mouse' });
+		expect(screen.queryByRole('tooltip')).toBeNull();
+	});
+
 	it('holds a hover open after quietHoverUntilPointerMoves until the pointer moves', async () => {
 		renderWithProviders(
 			<Tooltip content="the full value" delayMs={0}>
@@ -48,15 +63,12 @@ describe('Tooltip', () => {
 		const trigger = screen.getByText('trigger');
 		fireEvent.mouseEnter(trigger);
 		expect(screen.queryByRole('tooltip')).toBeNull();
-		// The pointer moves over it: the held hover opens, with no leave and
-		// re-enter needed.
+		fireEvent.pointerMove(document.body);
+		expect(screen.queryByRole('tooltip')).toBeNull();
+		// The pointer moves over it: the hold is lifted, and the hover opens with
+		// no leave and re-enter needed.
 		fireEvent.pointerMove(trigger);
 		expect(await screen.findByRole('tooltip')).toHaveTextContent('the full value');
-		fireEvent.mouseLeave(trigger);
-		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
-		// Unheld, a plain enter opens as before.
-		fireEvent.mouseEnter(trigger);
-		expect(await screen.findByRole('tooltip')).toBeInTheDocument();
 	});
 
 	it('shows content on keyboard focus (a11y) and wires aria-describedby', async () => {
@@ -164,5 +176,43 @@ describe('Tooltip', () => {
 		expect(ids).toHaveLength(2);
 		const tipNode = document.getElementById(ids.find((id) => id !== 'prior-desc') ?? '');
 		expect(tipNode).toHaveTextContent('tip');
+	});
+
+	it('opens on a pointer that moves over it, not on one it appears under', () => {
+		renderWithProviders(
+			<Tooltip interactiveChild content="Save the credential first">
+				<button type="button">Add</button>
+			</Tooltip>,
+		);
+		const wrapper = screen.getByRole('button', { name: 'Add' }).parentElement as HTMLElement;
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		try {
+			// A trigger rendered under a resting pointer gets an enter, never a move.
+			fireEvent.mouseEnter(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS + 100));
+			expect(screen.queryByRole('tooltip')).toBeNull();
+
+			// The pointer moving over it is a hover: it opens after the delay.
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS - 1));
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(1));
+			expect(screen.getByRole('tooltip')).toHaveTextContent('Save the credential first');
+
+			// Escape dismisses it, and moving on over the same trigger keeps it shut…
+			fireEvent.keyDown(document, { key: 'Escape' });
+			expect(screen.queryByRole('tooltip')).toBeNull();
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS + 100));
+			expect(screen.queryByRole('tooltip')).toBeNull();
+
+			// …until the pointer leaves and comes back.
+			fireEvent.mouseLeave(wrapper);
+			fireEvent.pointerMove(wrapper);
+			act(() => void vi.advanceTimersByTime(TOOLTIP_DELAY_MS));
+			expect(screen.getByRole('tooltip')).toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

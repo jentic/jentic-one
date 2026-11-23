@@ -1,11 +1,11 @@
 /**
- * The "Can call" cards grid's shared geometry, used by `ApiCard`, the grid's
- * dashed "+ Add API" tile and the grid itself, so every cell is exactly the same
+ * The "Can call" cards grid's shared geometry, used by `ApiCard` and the
+ * grid itself, so every cell is exactly the same
  * size and the status rows line up across the grid.
  */
 
 /**
- * ONE fixed height for every card and the add tile (a fixed `h-`, never
+ * ONE fixed height for every card (a fixed `h-`, never
  * `min-h-`): 10px padding + a 28px name row + a 16px credential row + an 18px
  * status row, with the 20px left over split evenly between the rows.
  */

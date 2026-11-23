@@ -67,6 +67,12 @@ export class IntegrationsApiError extends Error {
 	}
 }
 
+/** A credential write refused because the credential no longer exists (404) —
+ * deleted since the caller read it. */
+export function isCredentialGone(error: unknown): boolean {
+	return error instanceof IntegrationsApiError && error.status === 404;
+}
+
 /** Problem+json members every problem carries; the rest are extensions. */
 const PROBLEM_MEMBERS = new Set(['type', 'title', 'detail', 'status', 'instance']);
 
@@ -358,6 +364,13 @@ export interface VendorOperation {
 	path: string;
 	name?: string | null;
 	description?: string | null;
+	/** The revision the operation belongs to — the API's current one. */
+	revision_id?: string;
+}
+
+export interface VendorOperationsProgress {
+	data: VendorOperation[];
+	complete: boolean;
 }
 
 export interface VendorOperationsPage {
@@ -403,11 +416,13 @@ async function listVendorOperations(
  *
  * Returns ``null`` (like the single-page variant) when the API hasn't
  * imported yet; the SPA continues polling.
+ * ``onPage`` receives a fresh array after each page (``complete`` on the last).
  */
 export async function listAllVendorOperations(
 	vendor: string,
 	name: string,
 	version: string,
+	onPage?: (progress: VendorOperationsProgress) => void,
 ): Promise<VendorOperationsPage | null> {
 	// Server caps ``limit`` at 200 (see ``list_api_operations``).
 	const PAGE_SIZE = 200;
@@ -429,7 +444,9 @@ export async function listAllVendorOperations(
 		);
 		if (page == null) return null;
 		collected.push(...page.data);
-		if (!page.has_more || !page.next_cursor) {
+		const complete = !page.has_more || !page.next_cursor;
+		onPage?.({ data: [...collected], complete });
+		if (complete) {
 			return { data: collected, has_more: false, next_cursor: null };
 		}
 		cursor = page.next_cursor;

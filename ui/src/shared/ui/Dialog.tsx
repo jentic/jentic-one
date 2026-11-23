@@ -80,16 +80,28 @@ export function Dialog({
 		}
 	}, [open]);
 
+	// A dialog rendered inside this one (a confirm over a form) fires its own
+	// `cancel` and `close`; the DOM doesn't bubble them, but React delivers them
+	// up its tree, so each handler acts only on this element's own events —
+	// Escape on the inner dialog must leave the outer one, and its draft, alone.
+	const own = (e: React.SyntheticEvent<HTMLDialogElement>): boolean =>
+		e.target === dialogRef.current;
+
 	// The browser can close a modal on its own (Esc without a `cancel` event, per
 	// the close-watcher rules): keep the owner's `open` in step when it does. A
 	// `close` the effect above triggers (owner already set `open` false), or one
 	// that lands while the element is open again, is not a native dismissal.
-	const handleNativeClose = useCallback(() => {
-		if (openRef.current && !dialogRef.current?.open) onClose();
-	}, [onClose]);
+	const handleNativeClose = useCallback(
+		(e: React.SyntheticEvent<HTMLDialogElement>) => {
+			if (!own(e)) return;
+			if (openRef.current && !dialogRef.current?.open) onClose();
+		},
+		[onClose],
+	);
 
 	const handleCancel = useCallback(
 		(e: React.SyntheticEvent<HTMLDialogElement>) => {
+			if (!own(e)) return;
 			e.preventDefault();
 			onClose();
 		},

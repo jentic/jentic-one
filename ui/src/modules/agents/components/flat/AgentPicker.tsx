@@ -5,13 +5,14 @@
  *
  * A modal `Dialog` holding a combobox: the filter field owns focus and points
  * at the highlighted row through `aria-activedescendant`; the rows are grouped
- * "Waiting for approval" then "Agents". Arrows move, Enter switches, Esc clears
- * the filter first and then closes (the dialog hands focus back to its opener).
+ * "Waiting for approval", "Agents", then a folded "Archived". Arrows move, Enter
+ * switches, Esc clears the filter first and then closes (focus returns to the opener).
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Check, Filter } from 'lucide-react';
+import { Check, ChevronRight, Filter } from 'lucide-react';
 import {
 	AgentBadge,
+	Button,
 	Dialog,
 	Kbd,
 	SearchInput,
@@ -50,11 +51,7 @@ export function AgentPicker({
 			open={open}
 			onClose={onClose}
 			title="Switch agent"
-			subtitle={
-				incomplete
-					? `At least ${plural(agents.length, 'agent')}`
-					: plural(agents.length, 'agent')
-			}
+			subtitle={pickerSubtitle(agents, incomplete)}
 			size="md"
 			className="sm:max-w-[30rem]"
 		>
@@ -73,6 +70,13 @@ export function AgentPicker({
 			)}
 		</Dialog>
 	);
+}
+
+function pickerSubtitle(agents: readonly AgentEntity[], incomplete: boolean): string {
+	const archived = agents.filter((a) => a.status === 'archived').length;
+	const live = plural(agents.length - archived, 'agent');
+	const head = incomplete ? `At least ${live}` : live;
+	return archived > 0 ? `${head} · ${archived} archived` : head;
 }
 
 function PickerBody({
@@ -101,6 +105,11 @@ function PickerBody({
 		return () => cancelAnimationFrame(raf);
 	}, []);
 
+	// Folded unless the current agent is archived; a query searches them too.
+	const [archivedOpen, setArchivedOpen] = useState(
+		() => agents.find((a) => a.id === selectedId)?.status === 'archived',
+	);
+	const searching = query.trim() !== '';
 	const groups = useMemo(() => {
 		const matched = agents.filter((a) => matchesAgent(a, query));
 		return [
@@ -109,10 +118,22 @@ function PickerBody({
 				label: 'Waiting for approval',
 				rows: matched.filter((a) => a.status === 'pending'),
 			},
-			{ key: 'agents', label: 'Agents', rows: matched.filter((a) => a.status !== 'pending') },
+			{
+				key: 'agents',
+				label: 'Agents',
+				rows: matched.filter((a) => a.status !== 'pending' && a.status !== 'archived'),
+			},
 		].filter((g) => g.rows.length > 0);
 	}, [agents, query]);
-	const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
+	const archived = useMemo(
+		() => agents.filter((a) => a.status === 'archived' && matchesAgent(a, query)),
+		[agents, query],
+	);
+	const archivedShown = archived.length > 0 && (archivedOpen || searching);
+	const flat = useMemo(
+		() => [...groups.flatMap((g) => g.rows), ...(archivedShown ? archived : [])],
+		[groups, archived, archivedShown],
+	);
 
 	// The highlight starts on the current agent, then on the first match.
 	const [activeId, setActiveId] = useState<string | null>(selectedId);
@@ -201,6 +222,49 @@ function PickerBody({
 						))}
 					</div>
 				))}
+				{archived.length > 0 && (
+					<div
+						role="group"
+						aria-labelledby={`${baseId}-archived`}
+						data-testid="picker-archived"
+						className={cn('pb-1.5', groups.length > 0 && 'mt-1 pt-1.5')}
+					>
+						<Button
+							variant="ghost"
+							size="xs"
+							id={`${baseId}-archived`}
+							aria-expanded={archivedShown}
+							disabled={searching}
+							onClick={() => setArchivedOpen((v) => !v)}
+							className="text-foreground-faint enabled:hover:text-foreground-sub h-8 w-full justify-start gap-1.5 px-2.5 text-[11px] font-semibold tracking-[0.04em] uppercase active:scale-100 disabled:cursor-default disabled:opacity-100 disabled:hover:bg-transparent"
+						>
+							<ChevronRight
+								aria-hidden="true"
+								className={cn(
+									'size-3.5 transition-transform duration-150 motion-reduce:transition-none',
+									archivedShown && 'rotate-90',
+								)}
+							/>
+							Archived
+							<span className="bg-surface-chip text-foreground-sub ml-0.5 rounded-full px-1.5 py-0.5 font-mono text-[10px] leading-none tracking-normal">
+								{archived.length}
+							</span>
+						</Button>
+						{archivedShown &&
+							archived.map((a) => (
+								<PickerRow
+									key={a.id}
+									id={optionId(a.id)}
+									agent={a}
+									apiCount={apiCounts.get(a.id)}
+									active={a.id === active?.id}
+									current={a.id === selectedId}
+									onHover={() => setActiveId(a.id)}
+									onChoose={() => onChoose(a.id)}
+								/>
+							))}
+					</div>
+				)}
 			</div>
 			{flat.length === 0 && (
 				<p role="status" className="text-foreground-sub px-2.5 py-3 text-sm">
@@ -260,8 +324,9 @@ function PickerRow({
 			onMouseMove={onHover}
 			onClick={onChoose}
 			className={cn(
-				'flex h-9 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-[13.5px] font-medium',
+				'flex h-9 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-sm font-medium',
 				active ? 'bg-surface-chip text-foreground-name' : 'text-foreground-sub',
+				agent.status === 'archived' && 'text-foreground-sub',
 			)}
 		>
 			<AgentBadge id={agent.id} name={agent.name} size="xs" shape="circle" />
@@ -269,8 +334,7 @@ function PickerRow({
 				dir="auto"
 				className={cn(
 					'min-w-0 flex-1 truncate',
-					(agent.status === 'rejected' || agent.status === 'archived') &&
-						'line-through decoration-from-font',
+					agent.status === 'archived' && 'line-through decoration-from-font',
 				)}
 			>
 				{agent.name}

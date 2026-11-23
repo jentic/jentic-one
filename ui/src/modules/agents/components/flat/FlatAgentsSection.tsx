@@ -16,6 +16,7 @@
  * the roster is empty.
  */
 import {
+	Fragment,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -69,7 +70,7 @@ import {
 	LifecycleDialogs,
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
-import { NewAgentPanel } from '@/modules/agents/components/flat/NewAgentPanel';
+import { NewAgentPanel, type NewAgentTab } from '@/modules/agents/components/flat/NewAgentPanel';
 import { FirstAgentLanding } from '@/modules/agents/components/flat/FirstAgentLanding';
 import {
 	AgentNotFound,
@@ -77,6 +78,7 @@ import {
 	AgentsSessionEnded,
 } from '@/modules/agents/components/flat/AgentAccessStates';
 import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import type { NewAgentPlacement } from '@/modules/agents/lib/newAgentPlacement';
 import { useFirstAgentLanding } from '@/modules/agents/lib/useFirstAgentLanding';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
 import {
@@ -101,6 +103,40 @@ const EMPTY_BATCH: PreflightItem[] = [];
 const EMPTY_PICKS: SelectedApi[] = [];
 const NO_HELD_CALLS: readonly HeldCall[] = [];
 
+/** Where this tab keeps the unfinished Add-APIs batches (agent id → items). */
+const QUEUE_BATCHES_KEY = 'agents.setupQueue';
+
+/** The batches this tab stored, or none — storage that is missing, denied or
+ * holds something unreadable reads as "nothing waiting", never as an error. */
+function readStoredQueueBatches(): Record<string, PreflightItem[]> {
+	if (typeof window === 'undefined') return {};
+	try {
+		const raw = window.sessionStorage.getItem(QUEUE_BATCHES_KEY);
+		if (!raw) return {};
+		const parsed: unknown = JSON.parse(raw);
+		if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+		const batches: Record<string, PreflightItem[]> = {};
+		for (const [agentId, items] of Object.entries(parsed as Record<string, unknown>)) {
+			if (Array.isArray(items) && items.length > 0)
+				batches[agentId] = items as PreflightItem[];
+		}
+		return batches;
+	} catch {
+		return {};
+	}
+}
+
+/** Store `batches` for this tab; nothing waiting clears the entry. Never throws. */
+function writeStoredQueueBatches(batches: Record<string, PreflightItem[]>): void {
+	if (typeof window === 'undefined') return;
+	try {
+		if (Object.keys(batches).length === 0) window.sessionStorage.removeItem(QUEUE_BATCHES_KEY);
+		else window.sessionStorage.setItem(QUEUE_BATCHES_KEY, JSON.stringify(batches));
+	} catch {
+		/* storage unavailable (private mode / quota): the batch lives for this mount only */
+	}
+}
+
 interface FlatAgentsSectionProps {
 	createOpen: boolean;
 	setCreateOpen: (open: boolean) => void;
@@ -108,6 +144,19 @@ interface FlatAgentsSectionProps {
 	filter: string;
 	/** Whether the zero-agents landing is on screen — the header labels itself by it. */
 	onLandingChange: (showing: boolean) => void;
+	/** Whether the strip (with its `+ New agent`) is on screen; else the header draws one. */
+	onStripChange?: (showing: boolean) => void;
+	/** Where `New agent` lives (`lib/newAgentPlacement`): the strip, or the page header. */
+	newAgentPlacement: NewAgentPlacement;
+}
+
+/** Before paint, so the header's and the strip's New agent never both show or both hide. */
+function StripShown({ onChange }: { onChange?: (showing: boolean) => void }) {
+	useLayoutEffect(() => {
+		onChange?.(true);
+		return () => onChange?.(false);
+	}, [onChange]);
+	return null;
 }
 
 export function FlatAgentsSection({
@@ -115,6 +164,8 @@ export function FlatAgentsSection({
 	setCreateOpen,
 	filter,
 	onLandingChange,
+	onStripChange,
+	newAgentPlacement,
 }: FlatAgentsSectionProps) {
 	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
 	// after a create it names an agent the roster hasn't refetched yet.
@@ -152,11 +203,15 @@ export function FlatAgentsSection({
 	// The signal names the agent, not a boolean: a boolean would open the tray
 	// over whichever agent was on screen before. `queue` holds APIs the operator
 	// already chose (the landing's GitHub), which skip the tray for the queue.
+	// `fromNewAgent`: just finished in the New agent panel; the tray's way out reads "Skip for now".
 	const [addApisFor, setAddApisFor] = useState<{
 		agentId: string;
 		queue: SelectedApi[];
+		fromNewAgent?: boolean;
 	} | null>(null);
 	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
+	// The landing's choice; reset on close, so the header's button opens the default tab.
+	const [createTab, setCreateTab] = useState<NewAgentTab>('register');
 
 	const agentParam = searchParams.get('agent');
 	const approve = useApproveAgent();
@@ -249,8 +304,15 @@ export function FlatAgentsSection({
 	}, [fallbackId, selectAgent, isRenderedPathCurrent]);
 
 	/** The unfinished Add-APIs batch per agent. Held here, not in
-	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */
-	const [queueBatches, setQueueBatches] = useState<Record<string, PreflightItem[]>>({});
+	 *  `SelectedAgentPanel`, which unmounts on a tab switch — and in this tab's
+	 *  session storage, so leaving the page (Library, a reload) doesn't lose the
+	 *  picks Resume setup promised to keep. `stillOwedItems` prunes what got
+	 *  bound meanwhile when the batch is read back. */
+	const [queueBatches, setQueueBatches] =
+		useState<Record<string, PreflightItem[]>>(readStoredQueueBatches);
+	useEffect(() => {
+		writeStoredQueueBatches(queueBatches);
+	}, [queueBatches]);
 	const setQueueBatchFor = useCallback((agentId: string, items: PreflightItem[]) => {
 		setQueueBatches((prev) => {
 			if (items.length === 0) {
@@ -261,14 +323,6 @@ export function FlatAgentsSection({
 			return { ...prev, [agentId]: items };
 		});
 	}, []);
-
-	function handleAgentCreated(agent: AgentEntity, opts: { addApis: boolean }) {
-		// Selected either way: the operator just named this agent. The fleet view
-		// shows once the roster has it.
-		selectAgent(agent.id);
-		setAddApisFor(opts.addApis ? { agentId: agent.id, queue: [] } : null);
-		landing.finishedElsewhere(agent.id);
-	}
 
 	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
 	const { agents: pendingAgents, atLeast: pendingAtLeast } = usePendingAgents();
@@ -420,16 +474,37 @@ export function FlatAgentsSection({
 	// Before paint, so the header's label never disagrees with the body.
 	useLayoutEffect(() => onLandingChange(landingShown), [landingShown, onLandingChange]);
 
-	// Rendered by every branch below: the header's "New agent" flips `createOpen`
+	// The org's first agent (panel over the zero-agents landing) gets the GitHub step in
+	// the panel; over a fleet it goes to the tray. Read as the panel opens.
+	const [firstApiAtOpen, setFirstApiAtOpen] = useState(false);
+	const [createWasOpen, setCreateWasOpen] = useState(false);
+	if (createOpen !== createWasOpen) {
+		setCreateWasOpen(createOpen);
+		if (createOpen) setFirstApiAtOpen(landingShown);
+	}
+	/** An agent finished over a fleet: the panel has handed its sheet to the tray. */
+	function handToAddApis(agent: AgentEntity) {
+		selectAgent(agent.id);
+		setAddApisFor({ agentId: agent.id, queue: [], fromNewAgent: true });
+		landing.finishedElsewhere(agent.id);
+	}
+
+	// Rendered by every branch below: the strip's (or header's) "New agent" flips `createOpen`
 	// from outside, and a loading roster would otherwise swallow the click. The
 	// lifecycle confirms serve the landing, the panel and the fleet.
+	// Keyed, so every branch renders the same mounted panel: the first agent swaps the
+	// landing for the fleet behind it, and the panel must keep the agent it made.
 	const overlays = (
-		<>
+		<Fragment key="agent-overlays">
 			<NewAgentPanel
 				open={createOpen}
-				onClose={() => setCreateOpen(false)}
-				onCreated={handleAgentCreated}
-				initialName={landingShown ? landing.commandName : undefined}
+				onClose={() => {
+					setCreateOpen(false);
+					setCreateTab('register');
+				}}
+				offerFirstApi={firstApiAtOpen}
+				onToAddApis={handToAddApis}
+				initialTab={createTab}
 				approve={approve}
 				deny={deny}
 				onDeny={({ id, name }) => setConfirm({ kind: 'deny', id, name })}
@@ -450,7 +525,7 @@ export function FlatAgentsSection({
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				mutations={{ deny, disable, archive }}
 			/>
-		</>
+		</Fragment>
 	);
 
 	if (rosterWithheld) {
@@ -524,7 +599,10 @@ export function FlatAgentsSection({
 			<>
 				{/* Agents is the app's home, so an empty fleet is a fresh workspace. */}
 				<FirstAgentLanding
-					onCreateAgent={() => setCreateOpen(true)}
+					onCreateAgent={(tab) => {
+						setCreateTab(tab);
+						setCreateOpen(true);
+					}}
 					agent={landingAgent}
 					onApprove={() => {
 						if (landingAgent) approve.mutate(landingAgent.id);
@@ -595,7 +673,11 @@ export function FlatAgentsSection({
 						waitingCounts={waitingCounts}
 						filter={filter}
 						incomplete={isError || Boolean(hasNextPage)}
+						onNewAgent={
+							newAgentPlacement === 'rail-end' ? () => setCreateOpen(true) : undefined
+						}
 					/>
+					{newAgentPlacement === 'rail-end' && <StripShown onChange={onStripChange} />}
 					{panelAgent && (
 						<SelectedAgentPanel
 							key={panelKey}
@@ -622,6 +704,10 @@ export function FlatAgentsSection({
 									? addApisFor.queue
 									: EMPTY_PICKS
 							}
+							autoOpenFromNewAgent={
+								addApisFor?.agentId === panelAgent.id &&
+								addApisFor.fromNewAgent === true
+							}
 							onAutoOpenAddApisConsumed={clearAddApisFor}
 							queueBatch={queueBatches[panelAgent.id] ?? EMPTY_BATCH}
 							onQueueBatchChange={setQueueBatchFor}
@@ -634,6 +720,7 @@ export function FlatAgentsSection({
 								onStuckChange: setCardStuck,
 							}}
 							onSwitchAgent={openPicker}
+							onOpenActivity={() => setDockSurface('activity')}
 						/>
 					)}
 				</div>

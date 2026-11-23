@@ -18,14 +18,22 @@
  * * fetch returned data → the grouped preview below.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { Badge, Label, MethodBadge } from '@/shared/ui';
 import { EffectBadge, effectBadgeProps } from '@/shared/credentials/components/EffectBadge';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import { useOperationsWithSpecIds } from '@/shared/credentials/api/action-identity-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { classifyOpCoverage, type OpCoverage } from '@/shared/credentials/lib/template-matcher';
+import type { ScopeReach } from '@/shared/credentials/lib/accessPresets';
+import { operationText } from '@/shared/credentials/lib/actionRules';
+import { PlainText } from '@/shared/credentials/components/PlainText';
+import {
+	classifyOpCoverage,
+	evaluateTemplateOp,
+	type OpCoverage,
+} from '@/shared/credentials/lib/template-matcher';
 
 export interface OpsApiReference {
 	vendor: string;
@@ -95,10 +103,51 @@ function firstPathSegment(path: string): string {
 	return `/${nextSlash === -1 ? rest : rest.slice(0, nextSlash)}`;
 }
 
+/** An API's operations by what a rule set does with them. */
+export interface OperationCounts {
+	/** Run without asking (`allow`, or `partial` with an allowed slice). */
+	allowed: number;
+	/** Held for approval first (`require-approval`, or `partial` whose only way in is held). */
+	ask: number;
+	/** Never run. */
+	denied: number;
+	/** Of `denied`: matched by no rule at all — not set, so denied by default. */
+	notSet: number;
+	total: number;
+}
+
+/** Tally operations into the preview's own header buckets. */
+export function countOperations(
+	rules: readonly PermissionRule[],
+	items: readonly VendorOperation[],
+): OperationCounts {
+	const counts: OperationCounts = {
+		allowed: 0,
+		ask: 0,
+		denied: 0,
+		notSet: 0,
+		total: items.length,
+	};
+	for (const op of items) {
+		const bucket = headerBucket(classifyOpCoverage(rules, op));
+		if (bucket === 'allowed') counts.allowed += 1;
+		else if (bucket === 'approval') counts.ask += 1;
+		else {
+			counts.denied += 1;
+			if (evaluateTemplateOp(rules, op).matchingRule === null) counts.notSet += 1;
+		}
+	}
+	return counts;
+}
+
+/** Stable empty list, so a missing read doesn't re-run the matchers. */
+const NO_OPS: readonly VendorOperation[] = [];
+
 /**
- * How many of an API's operations a binding's rules let through (`allow` or
- * `partial`, as the preview's group counts read), over the operation list —
- * the same client-side matcher the preview runs.
+ * How a binding's rules treat an API's operations — allowed, ask, denied, as
+ * the preview's group headers count them — over the operation list, with the
+ * same client-side matcher the preview runs. An Ask operation is never counted
+ * as allowed: it runs only once someone approves it.
  *
  * - `undefined` while the first read is in flight, or while `rules` is unknown.
  * - `null` when there is nothing to judge: the reference names no single
@@ -109,44 +158,74 @@ function firstPathSegment(path: string): string {
 export function useAllowedOperationCount(
 	api: OpsApiReference | null,
 	rules: readonly PermissionRule[] | undefined,
-	opts: { enabled?: boolean } = {},
-): { allowed: number; total: number } | null | undefined {
+	opts: { enabled?: boolean; reach?: ScopeReach } = {},
+): OperationCounts | null | undefined {
 	const ready = !!api && !!api.name && !!api.version;
-	const ops = useVendorOperations(api ?? undefined, { enabled: (opts.enabled ?? true) && ready });
+	const enabled = (opts.enabled ?? true) && ready;
+	const ops = useVendorOperations(api ?? undefined, { enabled });
 	const unavailable = ops.isError || (ops.isFetched && ops.data === null);
+	// Rules may name an operation by its spec `operationId`, so read those too.
+	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, {
+		enabled,
+		reach: opts.reach,
+	});
 	return useMemo(() => {
 		if (!ready || unavailable) return null;
 		if (ops.data == null || rules === undefined) return undefined;
-		const items = ops.data.data;
-		const allowed = items.filter(
-			(op) =>
-				classifyOpCoverage(rules, {
-					method: op.method,
-					path: op.path,
-					operation_id: op.operation_id,
-				}).verdict !== 'deny',
-		).length;
-		return { allowed, total: items.length };
-	}, [ready, unavailable, ops.data, rules]);
+		return countOperations(rules, items);
+	}, [ready, unavailable, ops.data, rules, items]);
+}
+
+/**
+ * "12 denied (4 chosen, 8 not set)" — denied outcomes, split when some are
+ * denied only because no rule matches them, so the number never reads as
+ * the count of Deny choices.
+ */
+export function deniedText(counts: Pick<OperationCounts, 'denied' | 'notSet'>): string {
+	const n = counts.denied.toLocaleString();
+	if (counts.notSet === 0 || counts.denied === 0) return `${n} denied`;
+	if (counts.notSet === counts.denied) return `${n} denied (not set)`;
+	return `${n} denied (${(counts.denied - counts.notSet).toLocaleString()} chosen, ${counts.notSet.toLocaleString()} not set)`;
+}
+
+/** "3 allowed · 1 ask · 12 denied (4 chosen, 8 not set)" — always all three, so
+ * an Ask is never folded into allowed. */
+export function operationCountsText(counts: OperationCounts): string {
+	return [
+		`${counts.allowed.toLocaleString()} allowed`,
+		`${counts.ask.toLocaleString()} ask`,
+		deniedText(counts),
+	].join(' · ');
 }
 
 export function OperationImpactPreview({
 	api,
 	rules,
 	label = 'What this credential lets an agent do',
+	showTotals = true,
+	reach,
 }: {
 	api: OpsApiReference | null;
 	rules: readonly PermissionRule[];
+	/** How far the credential reaches: with it, a rule naming a shared
+	 * `operationId` is read as the broker reads it (see `RuleRequest`). */
+	reach?: ScopeReach;
 	/**
 	 * Section label above the preview. Overridable for callers where
 	 * the default copy doesn't fit (the Agents page's per-binding editor
 	 * uses "Effective access for this binding" instead of the
 	 * connect-flow's copy).
 	 */
-	label?: string;
+	label?: ReactNode;
+	/** The totals beside the label; off where a bar above already states them. */
+	showTotals?: boolean;
 }) {
 	const ops = useVendorOperations(api ?? undefined, { enabled: !!api });
-	const items = useMemo(() => ops.data?.data ?? [], [ops.data]);
+	// Rules may name an operation by its spec `operationId`, so read those too.
+	const items = useOperationsWithSpecIds(api, ops.data?.data ?? NO_OPS, {
+		enabled: !!api,
+		reach,
+	});
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
 	// Flat top-level grouping by first path segment. A deep hierarchical
@@ -163,6 +242,8 @@ export function OperationImpactPreview({
 				method: op.method,
 				path: op.path,
 				operation_id: op.operation_id,
+				spec_operation_id: op.spec_operation_id,
+				ambiguous: op.ambiguous,
 			});
 			const entry: EvaluatedOp = { op, coverage };
 			const key = firstPathSegment(op.path);
@@ -198,9 +279,26 @@ export function OperationImpactPreview({
 		return out;
 	}, [items, rules]);
 
+	// Only where they're shown: a host with its own bar would pay a second
+	// pass over every operation for nothing.
+	const totals = useMemo(
+		() => (showTotals ? countOperations(rules, items) : null),
+		[showTotals, rules, items],
+	);
+
 	return (
 		<div className="space-y-2">
-			<Label>{label}</Label>
+			<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+				<Label>{label}</Label>
+				{totals && groups.length > 0 && (
+					<span
+						className="text-foreground-sub text-xs tabular-nums"
+						data-testid="op-impact-totals"
+					>
+						{operationCountsText(totals)}
+					</span>
+				)}
+			</div>
 			{importing ? (
 				<div className="bg-field rounded-lg px-3 py-6 text-center">
 					<Loader2 className="text-muted-foreground mx-auto h-4 w-4 animate-spin" />
@@ -324,11 +422,7 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 				<span className="text-foreground-name truncate font-mono text-[11px]">
 					{op.path}
 				</span>
-				{op.name && (
-					<span className="text-muted-foreground ml-auto truncate text-[10px]">
-						{op.name}
-					</span>
-				)}
+				<PlainText value={operationText(op)} className="ml-auto text-[10px]" />
 			</div>
 			{expanded && canExpand && (
 				<div className="mt-0.5 space-y-0.5 pl-6 font-mono text-[10px]">

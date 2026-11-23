@@ -63,7 +63,7 @@ export function BindingRuleSetPanel({
 
 	return (
 		<div
-			className="border-border bg-muted/20 space-y-4 rounded-lg border p-4 sm:p-5"
+			className="bg-surface-inset space-y-4 rounded-lg p-4 sm:p-5"
 			data-testid="binding-rule-set-panel"
 		>
 			<div>
@@ -71,8 +71,7 @@ export function BindingRuleSetPanel({
 					Permission rules for {credentialLabel}
 				</p>
 				<p className="text-muted-foreground mt-0.5 text-xs">
-					This binding uses a shared rule set. Its rules are evaluated in order — first
-					match wins, anything unmatched is denied — and are what the broker applies.
+					This binding uses a shared rule set — its rules are what the broker applies.
 				</p>
 			</div>
 
@@ -84,7 +83,7 @@ export function BindingRuleSetPanel({
 			) : isError || !ruleSet ? (
 				<ErrorAlert message="Failed to load the attached rule set." onRetry={onRetry} />
 			) : (
-				<div className="border-border/60 bg-card space-y-3 rounded-lg border p-3">
+				<div className="bg-surface-tonal space-y-3 rounded-md p-3">
 					<div className="flex flex-wrap items-center gap-2">
 						<Layers
 							className="text-muted-foreground h-4 w-4 shrink-0"

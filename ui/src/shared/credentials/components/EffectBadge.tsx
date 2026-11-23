@@ -19,6 +19,13 @@ const EFFECT_BADGE: Record<
 	deny: { variant: 'danger' },
 };
 
+/** The effect's word on a rule row — `require-approval` reads as "ask". */
+export const EFFECT_WORD: Record<PermissionRule['effect'], string> = {
+	allow: 'allow',
+	'require-approval': 'ask',
+	deny: 'deny',
+};
+
 /** The badge props for one effect, merged with the caller's own classes. */
 export function effectBadgeProps(
 	effect: PermissionRule['effect'],

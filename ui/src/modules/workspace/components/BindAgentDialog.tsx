@@ -57,7 +57,7 @@ import {
 	useBindCredentialToAgents,
 } from '@/shared/credentials/api/vendors-hooks';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { AccessRulesStep } from '@/shared/credentials/components';
+import { AccessRulesStep, useUnappliedChoices } from '@/shared/credentials/components';
 import {
 	rulesForPreset,
 	type RulesPreset,
@@ -225,7 +225,14 @@ export function BindAgentDialog({
 		onClose();
 	};
 
-	const handleBind = async (): Promise<void> => {
+	// By action's staged choices are settled before a bind — never dropped silently.
+	const unapplied = useUnappliedChoices();
+	const requestBind = (): void =>
+		unapplied.settle('before binding', (applied) => {
+			void handleBind(applied ? rulesForPreset(preset, applied) : rules);
+		});
+
+	const handleBind = async (rules: PermissionRuleInput[] | null): Promise<void> => {
 		if (picked.length === 0 || rules == null || busy) return;
 		setCreateError(null);
 		let target = credential;
@@ -435,6 +442,8 @@ export function BindAgentDialog({
 						apiReference={apiReference}
 						active={open}
 						disabled={busy}
+						stagedRef={unapplied.stagedRef}
+						onStagedChange={unapplied.onStagedChange}
 						testIdPrefix="bind-agent"
 					/>
 				)}
@@ -468,10 +477,10 @@ export function BindAgentDialog({
 			</Button>
 			<Button
 				size="sm"
-				onClick={(): void => void handleBind()}
+				onClick={requestBind}
 				disabled={
 					picked.length === 0 ||
-					rules == null ||
+					(rules == null && unapplied.staged === 0) ||
 					busy ||
 					(!credential && !pendingCreate) ||
 					!boundKnown
@@ -493,6 +502,7 @@ export function BindAgentDialog({
 			footer={noActiveAgents || noCredential ? undefined : footer}
 		>
 			{body}
+			{unapplied.dialog}
 		</Dialog>
 	);
 }

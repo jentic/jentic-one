@@ -9,15 +9,14 @@ import {
 	QUEUE_STATUS_LABELS,
 	activeEntry,
 	buildQueue,
-	dropWarning,
+	forgetCredential,
 	isTerminal,
-	markActive,
 	patchEntry,
+	reopenEntry,
 	queueBackSeed,
 	queueSummary,
 	queueSummaryLine,
 	reconcileQueue,
-	retryEntry,
 	unfinishedItems,
 	type QueueEntry,
 } from '@/modules/agents/lib/setupQueue';
@@ -132,15 +131,42 @@ describe('advancing the queue', () => {
 		expect(activeEntry(entries)?.key).toBe('slack.com/main');
 	});
 
-	it('a retry puts the failed item back in line, clearing its error', () => {
+	it('reopening a failed item puts it back in line, keeping its error for the pane to show', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'choose'), makeItem('slack.com', 'form')]);
 		entries = patchEntry(entries, 'stripe.com/main', {
 			status: 'failed',
 			error: 'Bind failed',
+			step: 'access',
 		});
-		entries = retryEntry(entries, 'stripe.com/main');
+		entries = reopenEntry(entries, 'stripe.com/main');
 		expect(activeEntry(entries)?.key).toBe('stripe.com/main');
-		expect(entries[0].error).toBeUndefined();
+		expect(entries[0].status).toBe('waiting');
+		expect(entries[0].step).toBe('credential');
+		// The reason is not thrown away with the status: the next attempt clears it.
+		expect(entries[0].error).toBe('Bind failed');
+	});
+
+	it('forgets a credential the server no longer has, the one this queue created included', () => {
+		const stale = makeCredential({ credential_id: 'cred_gone', name: 'Gone' });
+		const kept = makeCredential({ credential_id: 'cred_kept', name: 'Kept' });
+		let entries = buildQueue([makeItem('stripe.com', 'choose', { covering: [stale, kept] })]);
+		entries = patchEntry(entries, 'stripe.com/main', {
+			created: { credential_id: 'cred_gone', name: 'Gone', needsConnect: false },
+		});
+		entries = forgetCredential(entries, 'stripe.com/main', 'cred_gone');
+		expect(entries[0].covering.map((c) => c.credential_id)).toEqual(['cred_kept']);
+		expect(entries[0].created).toBeUndefined();
+	});
+
+	it('reopening a skipped item brings it back; an added one stays added', () => {
+		let entries = buildQueue([makeItem('stripe.com', 'choose'), makeItem('slack.com', 'form')]);
+		entries = patchEntry(entries, 'stripe.com/main', { status: 'dropped' });
+		entries = patchEntry(entries, 'slack.com/main', { status: 'added' });
+		entries = reopenEntry(reopenEntry(entries, 'stripe.com/main'), 'slack.com/main');
+		expect(shape(entries)).toEqual([
+			['stripe.com/main', 'waiting'],
+			['slack.com/main', 'added'],
+		]);
 	});
 
 	it('patching one entry leaves the others alone', () => {
@@ -151,29 +177,6 @@ describe('advancing the queue', () => {
 		const next = patchEntry(entries, 'slack.com/main', { status: 'added' });
 		expect(next[0]).toBe(entries[0]);
 		expect(next[1].status).toBe('added');
-	});
-
-	it('markActive promotes only the live item, and is a no-op once it has', () => {
-		const entries = markActive(
-			buildQueue([makeItem('stripe.com', 'choose'), makeItem('slack.com', 'form')]),
-		);
-		expect(shape(entries)).toEqual([
-			['stripe.com/main', 'active'],
-			['slack.com/main', 'waiting'],
-		]);
-		// Idempotent by identity, so it is safe to run on every render.
-		expect(markActive(entries)).toBe(entries);
-	});
-
-	it('markActive does not disturb an item already in flight', () => {
-		const entries = patchEntry(
-			buildQueue([makeItem('stripe.com', 'choose')]),
-			'stripe.com/main',
-			{
-				status: 'working',
-			},
-		);
-		expect(markActive(entries)).toBe(entries);
 	});
 });
 
@@ -194,16 +197,19 @@ describe('queueSummary', () => {
 			dropped: 1,
 			failed: 1,
 			unfinished: 1,
-			// The failure is owed back alongside the unwalked item.
-			remaining: 2,
+			// The failure and the skip are owed back alongside the unwalked item.
+			remaining: 3,
 			total: 4,
 			done: false,
 		});
 	});
 
-	it('is done only when every item is attached or declined', () => {
+	it('is done only when every item is attached — a skip is "for now", so it is not done', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'choose')]);
 		expect(queueSummary(entries).done).toBe(false);
+		entries = patchEntry(entries, 'stripe.com/main', { status: 'dropped' });
+		expect(queueSummary(entries).done).toBe(false);
+		expect(queueSummary(entries).remaining).toBe(1);
 		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
 		expect(queueSummary(entries).done).toBe(true);
 	});
@@ -248,14 +254,7 @@ describe('queueSummaryLine', () => {
 				total: 4,
 				done: false,
 			}),
-		).toBe('2 APIs added · 1 dropped · 1 failed');
-	});
-});
-
-describe('dropWarning', () => {
-	it('says the API is simply not added, with no promise of later', () => {
-		// There is no deferred state to fall into, so the copy cannot imply one.
-		expect(dropWarning('Stripe')).toBe("Stripe won't be added.");
+		).toBe('2 APIs added · 1 skipped · 1 failed');
 	});
 });
 
@@ -287,11 +286,13 @@ describe('unfinishedItems', () => {
 		expect(unfinishedItems(entries).map((i) => i.key)).toEqual(['stripe.com/main']);
 	});
 
-	it('excludes both settled states — attached and declined are answers', () => {
+	it('excludes the attached, and hands a skipped item back — "for now" means it returns', () => {
 		let entries = buildQueue([makeItem('stripe.com', 'choose'), makeItem('slack.com', 'form')]);
 		entries = patchEntry(entries, 'stripe.com/main', { status: 'added' });
 		entries = patchEntry(entries, 'slack.com/main', { status: 'dropped' });
-		expect(unfinishedItems(entries)).toEqual([]);
+		expect(unfinishedItems(entries).map((i) => i.key)).toEqual(['slack.com/main']);
+		// Going Back to the tray does not re-tick it, though: that was the operator's call.
+		expect(queueBackSeed(entries).picks).toEqual([]);
 	});
 
 	it('returns the in-flight item too — a closed pane finished nothing', () => {
@@ -303,9 +304,10 @@ describe('unfinishedItems', () => {
 });
 
 describe('QUEUE_STATUS_LABELS', () => {
-	it('never calls a dropped item "skipped"', () => {
-		expect(QUEUE_STATUS_LABELS.dropped).toBe('Not added');
-		expect(Object.values(QUEUE_STATUS_LABELS).join(' ')).not.toMatch(/skip/i);
+	it('reads as the list does: to do, skipped, added', () => {
+		expect(QUEUE_STATUS_LABELS.waiting).toBe('To do');
+		expect(QUEUE_STATUS_LABELS.dropped).toBe('Skipped');
+		expect(QUEUE_STATUS_LABELS.added).toBe('Added');
 	});
 });
 

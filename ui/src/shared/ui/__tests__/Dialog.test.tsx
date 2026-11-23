@@ -91,6 +91,32 @@ describe('Dialog', () => {
 		expect(dialog).not.toHaveAttribute('open');
 	});
 
+	it('Escape on a dialog nested inside another closes only the inner one', async () => {
+		// A confirm over a form: the form's draft must survive the confirm's Escape.
+		const outerClose = vi.fn();
+		function Nested() {
+			const [inner, setInner] = useState(true);
+			return (
+				<Dialog open onClose={outerClose} title="Outer">
+					<p className="text-foreground">Outer body</p>
+					<Dialog open={inner} onClose={() => setInner(false)} title="Inner">
+						<p className="text-foreground">Inner body</p>
+					</Dialog>
+				</Dialog>
+			);
+		}
+		renderWithProviders(<Nested />);
+		const inner = screen.getByRole('dialog', { name: 'Inner' });
+		// Escape makes the browser fire `cancel` at the topmost open modal; a
+		// synthetic key press never reaches its close watcher, so fire it the same way.
+		inner.dispatchEvent(new Event('cancel', { cancelable: true }));
+		await waitFor(() => expect(inner).not.toHaveAttribute('open'));
+		expect(screen.getByRole('dialog', { name: 'Outer' })).toHaveAttribute('open');
+		// Neither the inner `cancel` nor its `close` reached the outer owner.
+		await new Promise((r) => setTimeout(r, 0));
+		expect(outerClose).not.toHaveBeenCalled();
+	});
+
 	it('does not call onClose when the owner closes it', async () => {
 		const onClose = vi.fn();
 		const { rerender } = renderWithProviders(

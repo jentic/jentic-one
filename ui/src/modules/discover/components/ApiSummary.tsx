@@ -11,8 +11,9 @@
  * Nothing renders when the spec declares no schemes (or they haven't loaded).
  */
 import { useState } from 'react';
-import { KeyRound } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Button, Markdown, type SecuritySchemeMap } from '@/shared/ui';
+import { schemeTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 
 const SUMMARY_TRUNCATE = 280;
 
@@ -116,39 +117,48 @@ export function describeSecurityScheme(
 	return { label: name };
 }
 
-/**
- * Every scheme the spec declares, described and de-duplicated (two API-key
- * schemes on the same header read as one line).
- */
-export function summarizeAuth(schemes: SecuritySchemeMap | null | undefined): AuthSummary[] {
+/** The shared auth-type icon for a scheme (`http` names its type in `scheme`). */
+function securitySchemeIcon(scheme: Record<string, unknown> | undefined): LucideIcon {
+	const type = str(scheme?.type)?.toLowerCase() ?? '';
+	return schemeTypeIcon(type === 'http' ? (str(scheme?.scheme) ?? 'bearer') : type);
+}
+
+/** Each distinct line with the icon of the scheme it was first described from. */
+function authLines(
+	schemes: SecuritySchemeMap | null | undefined,
+): { entry: AuthSummary; icon: LucideIcon }[] {
 	const seen = new Set<string>();
-	const out: AuthSummary[] = [];
+	const out: { entry: AuthSummary; icon: LucideIcon }[] = [];
 	for (const [name, scheme] of Object.entries(schemes ?? {})) {
 		const entry = describeSecurityScheme(name, scheme);
 		const key = `${entry.label}|${entry.detail ?? ''}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
-		out.push(entry);
+		out.push({ entry, icon: securitySchemeIcon(scheme) });
 	}
 	return out;
 }
 
+/**
+ * Every scheme the spec declares, described and de-duplicated (two API-key
+ * schemes on the same header read as one line).
+ */
+export function summarizeAuth(schemes: SecuritySchemeMap | null | undefined): AuthSummary[] {
+	return authLines(schemes).map((line) => line.entry);
+}
+
 /** The inset "how do I authenticate" line(s) under the description. */
 export function ApiAuthRow({ schemes }: { schemes: SecuritySchemeMap | null | undefined }) {
-	const entries = summarizeAuth(schemes);
-	if (entries.length === 0) return null;
+	const lines = authLines(schemes);
+	if (lines.length === 0) return null;
 	return (
 		<ul className="mb-[22px] space-y-1.5" aria-label="Authentication" data-testid="api-auth">
-			{entries.map((e) => (
+			{lines.map(({ entry: e, icon: Icon }) => (
 				<li
 					key={`${e.label}|${e.detail ?? ''}`}
 					className="bg-surface-inset text-foreground-lighter flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[13px]"
 				>
-					<KeyRound
-						size={14}
-						className="text-muted-foreground shrink-0"
-						aria-hidden="true"
-					/>
+					<Icon size={14} className="text-muted-foreground shrink-0" aria-hidden="true" />
 					<span className="shrink-0">{e.label}</span>
 					{e.detail && (
 						<span className="text-muted-foreground ml-auto min-w-0 truncate font-mono text-[11.5px]">

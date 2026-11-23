@@ -41,9 +41,46 @@ export function catalogImportRef(entry: {
 	};
 }
 
+/**
+ * The display names more than one of `apis` carries, lowercased. Two vendors'
+ * APIs can share a name (`acme/orders-api` and `globex/orders-api` both read
+ * "Orders Api"), and a list that shows names only needs the vendor beside
+ * those to tell the rows apart.
+ */
+export function sharedApiLabels(apis: ReadonlyArray<{ label: string }>): Set<string> {
+	const seen = new Set<string>();
+	const shared = new Set<string>();
+	for (const { label } of apis) {
+		const key = label.trim().toLowerCase();
+		if (seen.has(key)) shared.add(key);
+		seen.add(key);
+	}
+	return shared;
+}
+
 /** Canonical `vendor/name` identity key — the picker's selection key. */
 export function apiRefKey(ref: { vendor: string; name: string }): string {
 	return `${slugifyApiField(ref.vendor)}/${slugifyApiField(ref.name)}`;
+}
+
+/**
+ * The key a pick is selected and deduplicated by: the identity its import
+ * REGISTERS. A catalog entry keys as {@link catalogImportRef} (`github.com/
+ * api.github.com` → `github-com/api-github-com`), so it and the workspace API
+ * it imports as — or a second catalog entry that imports alike — read as one
+ * API. Two credentials for one API make every unnamed call to it a 409.
+ */
+export function pickKey(api: {
+	source?: 'local' | 'catalog';
+	vendor: string;
+	name: string;
+	apiId?: string | null;
+}): string {
+	if (api.source === 'catalog' && api.apiId) {
+		const ref = catalogImportRef({ apiId: api.apiId, vendor: api.vendor });
+		if (ref) return apiRefKey(ref);
+	}
+	return apiRefKey(api);
 }
 
 /**

@@ -7,9 +7,9 @@
  * type, date and id tail that tell them apart, and reuse is never the only
  * option — an API can hold several credentials.
  */
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { Plus } from 'lucide-react';
-import { Badge } from '@/shared/ui';
+import { Badge, ExpandReveal } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { Credential } from '@/shared/credentials/api';
 import { CredentialTypeBadge } from '@/shared/credentials/components/CredentialTypeBadge';
@@ -35,6 +35,8 @@ export interface CredentialOptionsProps {
 	linkedCredentialId?: string | null;
 	disabled?: boolean;
 	className?: string;
+	/** Fold the existing cards behind a one-line `summary` while a create form is open. */
+	collapseExisting?: { collapsed: boolean; summary: ReactNode };
 }
 
 export function CredentialOptions({
@@ -48,38 +50,49 @@ export function CredentialOptions({
 	linkedCredentialId,
 	disabled = false,
 	className,
+	collapseExisting,
 }: CredentialOptionsProps) {
+	const cards = credentials.map((credential) => (
+		<OptionCard
+			key={credential.credential_id}
+			name={id}
+			checked={
+				selected?.kind === 'existing' && selected.credentialId === credential.credential_id
+			}
+			onSelect={(): void =>
+				onSelect({ kind: 'existing', credentialId: credential.credential_id })
+			}
+			title={credential.name}
+			detail={credentialDistinguisher(credential, { type: false })}
+			badges={
+				<>
+					{credential.credential_id === linkedCredentialId && (
+						<Badge variant="success">Already linked</Badge>
+					)}
+					{credentialAwaitsConsent(credential) && (
+						<Badge variant="pending">Sign-in needed</Badge>
+					)}
+					<CredentialTypeBadge type={credential.type} />
+				</>
+			}
+		/>
+	));
 	return (
-		<fieldset id={id} disabled={disabled} className={cn('space-y-1.5', className)}>
+		// `min-w-0`: a fieldset is min-content wide by default and would overflow a narrow pane.
+		<fieldset id={id} disabled={disabled} className={cn('min-w-0 space-y-1.5', className)}>
 			<legend className={cn(legendHidden ? 'sr-only' : 'text-muted-foreground mb-2 text-xs')}>
 				{legend}
 			</legend>
-			{credentials.map((credential) => (
-				<OptionCard
-					key={credential.credential_id}
-					name={id}
-					checked={
-						selected?.kind === 'existing' &&
-						selected.credentialId === credential.credential_id
-					}
-					onSelect={(): void =>
-						onSelect({ kind: 'existing', credentialId: credential.credential_id })
-					}
-					title={credential.name}
-					detail={credentialDistinguisher(credential, { type: false })}
-					badges={
-						<>
-							{credential.credential_id === linkedCredentialId && (
-								<Badge variant="success">Already linked</Badge>
-							)}
-							{credentialAwaitsConsent(credential) && (
-								<Badge variant="pending">Sign-in needed</Badge>
-							)}
-							<CredentialTypeBadge type={credential.type} />
-						</>
-					}
-				/>
-			))}
+			{collapseExisting && credentials.length > 0 ? (
+				<>
+					<ExpandReveal open={!collapseExisting.collapsed}>
+						<div className="space-y-1.5 pb-0.5">{cards}</div>
+					</ExpandReveal>
+					{collapseExisting.collapsed && collapseExisting.summary}
+				</>
+			) : (
+				cards
+			)}
 			<OptionCard
 				name={id}
 				checked={selected?.kind === 'new'}
@@ -92,7 +105,8 @@ export function CredentialOptions({
 	);
 }
 
-function OptionCard({
+/** One radio row of a pane-level choice; shared with the inline method chooser. */
+export function OptionCard({
 	name,
 	checked,
 	onSelect,
@@ -100,6 +114,8 @@ function OptionCard({
 	detail,
 	badges,
 	icon,
+	inputRef,
+	testId,
 }: {
 	name: string;
 	checked: boolean;
@@ -108,22 +124,30 @@ function OptionCard({
 	detail: string;
 	badges?: ReactNode;
 	icon?: ReactNode;
+	inputRef?: Ref<HTMLInputElement>;
+	testId?: string;
 }) {
 	return (
 		<label
 			className={cn(
-				'bg-field hover:bg-tint-2 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 transition-colors',
-				'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-2',
+				'bg-field hover:bg-tint-2 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 transition-[background-color,box-shadow] duration-200 ease-out motion-reduce:transition-none',
+				// Inset: an outer ring is clipped by a folding or scrolling ancestor.
+				'has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset',
 				'has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60',
-				checked && 'bg-surface-selected shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
+				checked &&
+					'bg-surface-selected shadow-[inset_0_0_0_1.5px_hsl(var(--primary)/0.45)]',
 			)}
 		>
 			<input
+				ref={inputRef}
 				type="radio"
 				name={name}
+				data-testid={testId}
 				className="accent-primary h-4 w-4 shrink-0"
 				checked={checked}
 				onChange={onSelect}
+				// A checked radio fires no change; the click still confirms (re-folds) it.
+				onClick={checked ? onSelect : undefined}
 			/>
 			<span className="min-w-0 flex-1">
 				<span className="text-foreground-name flex items-center gap-1.5 text-sm font-semibold">

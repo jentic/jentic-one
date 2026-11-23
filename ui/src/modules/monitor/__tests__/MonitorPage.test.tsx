@@ -274,6 +274,33 @@ describe('MonitorPage', () => {
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
+	it('the ID box filters API calls by a pasted trace id, or by an agent id as the actor', async () => {
+		const user = userEvent.setup();
+		renderMonitor();
+		await screen.findByText('GET /repos/{owner}/{repo}');
+		const box = screen.getByRole('textbox', { name: 'Filter by ID' });
+
+		// A trace id narrows the list to that one request's calls.
+		await user.type(box, 'trace_bbbbbbbb{Enter}');
+		await waitFor(() => expect(currentParams().get('trace')).toBe('trace_bbbbbbbb'));
+		await waitFor(() => {
+			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
+		});
+		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		// Cleared, every call is back.
+		await user.clear(box);
+		await user.keyboard('{Enter}');
+		await waitFor(() => expect(currentParams().get('trace')).toBeNull());
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+
+		// An agent id — the one an agent's Settings print — becomes the actor filter.
+		await user.type(box, 'agnt_billing{Enter}');
+		await waitFor(() => expect(currentParams().get('actor_id')).toBe('agnt_billing'));
+		expect(currentParams().get('actor_type')).toBe('agent');
+		expect(currentParams().get('trace')).toBeNull();
+		expect(box).toHaveValue('');
+	});
+
 	it('filters API calls by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();

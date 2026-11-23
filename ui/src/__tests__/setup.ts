@@ -15,6 +15,9 @@ import '@/index.css';
 // so `shared/lib/theme` reads the default when it loads.
 window.localStorage.removeItem('jentic-one.theme');
 document.documentElement.dataset.theme = 'light';
+// The Agents surface keeps a waiting Add-APIs batch in this tab's session
+// storage; one file's leftovers must not resume a setup in the next.
+window.sessionStorage.clear();
 
 // All test files run in parallel inside a single Chromium, so on a loaded CI
 // runner an async settle (backlog fetch → React commit) can outlast

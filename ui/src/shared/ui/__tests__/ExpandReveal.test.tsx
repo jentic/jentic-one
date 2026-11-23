@@ -84,4 +84,75 @@ describe('ExpandReveal', () => {
 		expect(reveal()).toBeNull();
 		await waitFor(() => expect(events()).toBe('opened,closed'));
 	});
+
+	// `keepMounted` lets a folded row keep a half-typed draft (`ApiSetupQueue`).
+	describe('keepMounted', () => {
+		function KeptHarness() {
+			const [open, setOpen] = useState(true);
+			return (
+				<MotionConfig reducedMotion="never">
+					<button type="button" onClick={() => setOpen((o) => !o)}>
+						toggle
+					</button>
+					<ExpandReveal open={open} data-testid="reveal" keepMounted>
+						<label>
+							Token
+							<input />
+						</label>
+					</ExpandReveal>
+				</MotionConfig>
+			);
+		}
+
+		it('keeps the folded subtree in the DOM, hidden and inert', async () => {
+			render(<KeptHarness />);
+			await waitFor(() => expect(reveal()).toHaveAttribute('data-state', 'open'));
+			expect(reveal()).not.toHaveAttribute('hidden');
+
+			toggle();
+			await waitFor(() => expect(reveal()).toHaveAttribute('data-state', 'closed'));
+			expect(reveal()).toBeInTheDocument();
+			expect(reveal()).toHaveAttribute('hidden');
+			expect(reveal()!.style.display).toBe('none');
+			expect(reveal()!.firstElementChild).toHaveAttribute('inert');
+			expect(screen.getByLabelText('Token')).toBeInTheDocument();
+		});
+
+		it('retains typed values across a fold and unfold', async () => {
+			render(<KeptHarness />);
+			await waitFor(() => expect(reveal()).toHaveAttribute('data-state', 'open'));
+			const input = screen.getByLabelText('Token');
+			fireEvent.change(input, { target: { value: 'sk-draft' } });
+
+			toggle();
+			await waitFor(() => expect(reveal()).toHaveAttribute('data-state', 'closed'));
+			toggle();
+			await waitFor(() => expect(reveal()).toHaveAttribute('data-state', 'open'));
+			expect(screen.getByLabelText('Token')).toBe(input);
+			expect(input).toHaveValue('sk-draft');
+		});
+	});
+
+	// Settled, the child overflows visibly, so a grid item's min width becomes its content's.
+	it('never grows wider than its container, even with wide content settled', async () => {
+		render(
+			<MotionConfig reducedMotion="always">
+				<div style={{ width: 200 }} data-testid="frame">
+					<ExpandReveal open data-testid="reveal">
+						<p data-testid="row" style={{ margin: 0 }}>
+							Above
+						</p>
+						<span style={{ display: 'inline-block', width: 600, whiteSpace: 'nowrap' }}>
+							a very wide line that must not widen the reveal
+						</span>
+					</ExpandReveal>
+				</div>
+			</MotionConfig>,
+		);
+		const inner = reveal()!.firstElementChild as HTMLElement;
+		await waitFor(() => expect(inner.className).toContain('overflow-visible'));
+		expect(reveal()!.getBoundingClientRect().width).toBe(200);
+		expect(inner.getBoundingClientRect().width).toBe(200);
+		expect(screen.getByTestId('row').getBoundingClientRect().width).toBe(200);
+	});
 });

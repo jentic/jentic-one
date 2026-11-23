@@ -29,7 +29,11 @@
 
 import RandExp from 'randexp';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { evaluateRuleEffect, type RuleOutcome } from '@/shared/credentials/lib/rule-matcher';
+import {
+	evaluateRuleEffect,
+	type RuleOutcome,
+	type RuleRequest,
+} from '@/shared/credentials/lib/rule-matcher';
 
 /**
  * Convert an OpenAPI-style path template to a JS RegExp that matches any
@@ -47,6 +51,27 @@ export function templateToRegex(template: string): RegExp {
 
 function escapeRegex(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The API operation a concrete request is: the one whose method matches and
+ * whose path template the path instantiates — a literal template first (the
+ * broker resolves the same way), then a parameterised one. Null when none
+ * does. Action rules name operations by id, so a dry run without the id
+ * would never see them.
+ */
+export function operationForRequest<T extends { method: string; path: string }>(
+	operations: readonly T[],
+	method: string,
+	path: string,
+): T | null {
+	const m = method.toUpperCase();
+	const candidates = operations.filter((op) => op.method.toUpperCase() === m);
+	return (
+		candidates.find((op) => op.path === path) ??
+		candidates.find((op) => templateToRegex(op.path).test(path)) ??
+		null
+	);
 }
 
 /**
@@ -93,16 +118,48 @@ function prefixCanApply(prefix: string, template: string): boolean {
 	for (let i = 0; i < pParts.length; i++) {
 		const tSeg = tParts[i];
 		const pSeg = pParts[i];
-		if (isPlaceholder(tSeg)) continue;
+		const last = i === pParts.length - 1;
+		// A placeholder on either side takes any segment: the broker compiles a
+		// `{name}` in a prefix or exact rule path to a wildcard, so `/{year}/`
+		// is not the literal text "{year}" to it, and must not be to this preview.
+		if (isPlaceholder(tSeg) || isPlaceholder(pSeg)) continue;
+		const tMixed = hasPlaceholder(tSeg);
+		const pMixed = hasPlaceholder(pSeg);
+		if (tMixed && pMixed) continue;
+		if (pMixed) {
+			// `{month}.json` against a fixed segment: the literal parts must fit.
+			if (!segmentRegex(pSeg, last).test(tSeg)) return false;
+			continue;
+		}
+		if (tMixed) {
+			// A fixed prefix segment against `{year}.json`: a partial last segment
+			// may still grow into an instance; a whole one must be an instance.
+			if (!last && !segmentRegex(tSeg, false).test(pSeg)) return false;
+			continue;
+		}
 		// Last prefix segment might be partial — allow "startsWith" against
 		// the fixed template segment. Non-last segments must equal exactly.
-		if (i === pParts.length - 1) {
+		if (last) {
 			if (!tSeg.startsWith(pSeg)) return false;
 		} else if (tSeg !== pSeg) {
 			return false;
 		}
 	}
 	return true;
+}
+
+function hasPlaceholder(segment: string): boolean {
+	return /\{[^}]+\}/.test(segment);
+}
+
+/** One path segment with `{name}` placeholders as a regex; `open` leaves the
+ * end unanchored (a prefix's last segment may stop short). */
+function segmentRegex(segment: string, open: boolean): RegExp {
+	const source = segment
+		.split(/(\{[^}]+\})/g)
+		.map((p) => (/^\{[^}]+\}$/.test(p) ? '[^/]+' : escapeRegex(p)))
+		.join('');
+	return new RegExp(`^${source}${open ? '' : '$'}`);
 }
 
 function splitPath(s: string): string[] {
@@ -526,7 +583,12 @@ export interface TemplateEvaluation {
  */
 export function evaluateTemplateOp(
 	rules: readonly PermissionRule[],
-	op: { method: string; path: string; operation_id: string | null },
+	op: {
+		method: string;
+		path: string;
+		operation_id: string | null;
+		spec_operation_id?: string | null;
+	},
 ): TemplateEvaluation {
 	for (const rule of rules) {
 		// Skip condition-less allow / require-approval rules (backend rejects
@@ -544,8 +606,10 @@ export function evaluateTemplateOp(
 			if (!upper.includes(op.method.toUpperCase())) continue;
 		}
 		if (rule.operations && rule.operations.length > 0) {
-			if (op.operation_id == null) continue;
-			if (!rule.operations.includes(op.operation_id)) continue;
+			const named =
+				(op.operation_id != null && rule.operations.includes(op.operation_id)) ||
+				(op.spec_operation_id != null && rule.operations.includes(op.spec_operation_id));
+			if (!named) continue;
 		}
 		if (rule.path != null && rule.path !== '') {
 			if (!ruleAppliesToTemplate(rule, op.path)) continue;
@@ -664,7 +728,7 @@ export function sampleTemplatePaths(
  */
 export function classifyOpCoverage(
 	rules: readonly PermissionRule[],
-	op: { method: string; path: string; operation_id: string | null },
+	op: RuleRequest,
 	maxExamples: number = 2,
 ): OpCoverage {
 	const samples = sampleTemplatePaths(op.path, rules);
@@ -679,6 +743,8 @@ export function classifyOpCoverage(
 			method: op.method,
 			path: sample,
 			operation_id: op.operation_id,
+			spec_operation_id: op.spec_operation_id,
+			ambiguous: op.ambiguous,
 		});
 		outcomes.add(outcome);
 		if (byOutcome[outcome].length < maxExamples) byOutcome[outcome].push(sample);

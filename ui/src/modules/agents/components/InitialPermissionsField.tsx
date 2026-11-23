@@ -4,10 +4,11 @@
  * agent shouldn't need a follow-up PUT from its detail page just to get its
  * first grants).
  *
- * Collapsed by default behind a disclosure — most creates don't grant
- * permissions, and the picker is tall. Selection state is lifted to the sheet so
- * it can be included in the POST body and reset on success. Non-grantable
- * catalogue entries are rendered disabled, mirroring the Edit-permissions dialog.
+ * Collapsed by default behind a disclosure whose line says what is selected —
+ * the platform's default agent set unless the operator changed it — since the
+ * picker is tall. Selection state is lifted to the sheet so it can be included
+ * in the POST body and reset on success. Non-grantable catalogue entries are
+ * rendered disabled, mirroring the Edit-permissions dialog.
  */
 import { useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
@@ -16,6 +17,16 @@ import { cn } from '@/shared/lib/utils';
 import { extractResourceFromScope } from '@/shared/lib';
 import { usePermissionCatalogue } from '@/modules/agents/api';
 import { catalogueToPickerItems } from '@/modules/agents/components/PermissionsCard';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
+
+/** Exactly the default set, in any order. */
+function isDefaultSet(selected: readonly string[]): boolean {
+	const chosen = new Set(selected);
+	return (
+		chosen.size === DEFAULT_AGENT_PERMISSIONS.length &&
+		DEFAULT_AGENT_PERMISSIONS.every((p) => chosen.has(p))
+	);
+}
 
 interface InitialPermissionsFieldProps {
 	selected: string[];
@@ -77,8 +88,15 @@ export function InitialPermissionsField({
 			>
 				<span>
 					Initial permissions{' '}
-					<span className="text-muted-foreground font-normal">
-						{selected.length > 0 ? `· ${selected.length} selected` : '(optional)'}
+					<span
+						className="text-muted-foreground font-normal"
+						data-testid="initial-permissions-summary"
+					>
+						{selected.length === 0
+							? '· none — the agent will not be able to call anything'
+							: isDefaultSet(selected)
+								? `· the default set (${selected.length})`
+								: `· ${selected.length} selected`}
 					</span>
 				</span>
 				<ChevronDown
