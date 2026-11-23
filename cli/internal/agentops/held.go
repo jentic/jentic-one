@@ -28,11 +28,14 @@ type Held struct {
 }
 
 // HeldLinks are a held envelope's links: the held execution itself, its
-// eventual result, and where to withdraw it.
+// eventual result, where to withdraw it, and where to explain it. Explain is
+// empty once the agent has explained the call (the broker sends null), and
+// from a broker that does not take explanations.
 type HeldLinks struct {
 	Self     string `json:"self"`
 	Result   string `json:"result"`
 	Withdraw string `json:"withdraw"`
+	Explain  string `json:"explain"`
 }
 
 // Execution statuses of a held execution (the control plane's

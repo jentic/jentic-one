@@ -466,7 +466,15 @@ def s04_withdraw(w: World, o: Outcome) -> None:
     reset_upstream(w.env)
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=4")
     hid = held["held_execution_id"]
-    for who, human in (("other user", w.other), ("org admin", w.admin)):
+    # The org admin owns ask-cli and sees the call, so it is refused (403); users who
+    # can't see it are told it's missing (404).
+    r = w.admin.withdraw(hid)
+    expect(
+        is_problem(r, 403, "held_execution_withdraw_forbidden"),
+        "org admin cannot withdraw (403)",
+        r.text,
+    )
+    for who, human in (("other user", w.other), ("member who doesn't own it", w.owner)):
         r = human.withdraw(hid)
         expect(
             is_problem(r, 404, "held_execution_not_found"), f"{who} cannot withdraw (404)", r.text
@@ -1143,16 +1151,21 @@ def s17_agent_explains_held_call(w: World, o: Outcome) -> None:
     link = held["_links"].get("explain", "")
     expect(link.endswith(f"/executions/holds/{hid}:explain"), "the 202 links :explain", held)
     expect(_reason_of(w, hid) is None, "no reason before the agent gives one", hid)
-    # Only the agent that made the call: the admin, the owner and another user get 404.
-    for who, token in (
-        ("admin", w.admin.token),
-        ("owner", w.owner.token),
-        ("another user", w.other.token),
+    # Only the agent that made the call: the admin and the owner can see it, so they get
+    # 403; another user can't, so it gets 404.
+    for who, token, status, slug in (
+        ("admin", w.admin.token, 403, "held_execution_explain_forbidden"),
+        ("owner", w.owner.token, 403, "held_execution_explain_forbidden"),
+        ("another user", w.other.token, 404, "held_execution_not_found"),
     ):
         r = httpx.post(
             link, json={"reason": "not mine"}, headers={"authorization": f"Bearer {token}"}
         )
-        expect(r.status_code == 404, f"{who} cannot explain another agent's call", r.text)
+        expect(
+            is_problem(r, status, slug),
+            f"{who} cannot explain another agent's call ({status})",
+            r.text,
+        )
     reason = "Order 140 is the customer's replacement (ticket #88) \u202e"
     r = agent_api(w, "POST", f"/executions/holds/{hid}:explain", {"reason": reason})
     expect(r.status_code == 200, "the filing agent explains", r.text)
