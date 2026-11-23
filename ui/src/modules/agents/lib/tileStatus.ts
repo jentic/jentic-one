@@ -4,7 +4,7 @@
  * (a green "Ready" beside "No rules — all calls blocked", say).
  *
  *   Suspended → Not serving → Sign-in needed → Checking / Unavailable → Blocked
- *     → Rules out of date → Ready
+ *     → Rules out of date → Rules ambiguous → Ready
  *
  * A binding is default-deny: with no operator rules every call is refused, and
  * with only deny rules nothing is allowed either — both read as Blocked. Ready
@@ -13,6 +13,9 @@
  * unknown binding may well be blocked, so it never looks healthy. Nor is Ready
  * claimed while an action rule names ids the API no longer has: that rule is
  * not in force, so the binding reads "Rules out of date".
+ * An action rule the broker would misread — a shared `operationId` on an Ask or
+ * Allow, or an action named in only some of the APIs that declare it — reads
+ * "Rules ambiguous" for the same reason.
  */
 import type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api';
 
@@ -25,6 +28,7 @@ export type TileStatus =
 	| 'checking'
 	| 'unavailable'
 	| 'rules-outdated'
+	| 'rules-ambiguous'
 	| 'ready';
 
 export interface TileStatusInput {
@@ -44,6 +48,13 @@ export interface TileStatusInput {
 	 * access sheet); a tile that cannot tell leaves it unset.
 	 */
 	staleActionRules?: boolean;
+	/**
+	 * An action rule names an action whose `operationId` another covered API
+	 * declares too, in a way the broker can't settle: an Ask or Allow by the
+	 * shared name (refused, or granting nothing), or a rule naming the action
+	 * in only some of the APIs (a call resolved to another skips it).
+	 */
+	ambiguousActionRules?: boolean;
 }
 
 export function deriveTileStatus({
@@ -52,6 +63,7 @@ export function deriveTileStatus({
 	awaitingConsent,
 	rules,
 	staleActionRules = false,
+	ambiguousActionRules = false,
 }: TileStatusInput): TileStatus {
 	if (suspended) return 'suspended';
 	if (!agentServing) return 'not-serving';
@@ -61,7 +73,10 @@ export function deriveTileStatus({
 	// Blocked outranks out-of-date: with nothing allowed no call gets through
 	// whatever the stale rule says. Past that, a stale rule means the rules on
 	// screen are not the rules in force, so the binding is never Ready.
-	return rulesBlock(rules) ?? (staleActionRules ? 'rules-outdated' : 'ready');
+	return (
+		rulesBlock(rules) ??
+		(staleActionRules ? 'rules-outdated' : ambiguousActionRules ? 'rules-ambiguous' : 'ready')
+	);
 }
 
 /** The breakdown itself, or `undefined` while it is loading or unreadable. */
@@ -98,6 +113,7 @@ export const TILE_STATUS_LABEL: Record<TileStatus, string> = {
 	checking: 'Checking access…',
 	unavailable: 'Status unavailable',
 	'rules-outdated': 'Rules out of date',
+	'rules-ambiguous': 'Rules ambiguous',
 	ready: 'Ready',
 };
 
@@ -118,6 +134,7 @@ export const TILE_STATUS_CARD_LABEL: Record<TileStatus, string> = {
 	checking: 'Checking',
 	unavailable: 'Unavailable',
 	'rules-outdated': 'Out of date',
+	'rules-ambiguous': 'Ambiguous',
 	ready: 'Ready',
 };
 

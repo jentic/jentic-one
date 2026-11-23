@@ -37,6 +37,7 @@ const TEXT_TONE = {
 	checking: { tone: 'muted', icon: undefined },
 	unavailable: { tone: 'muted', icon: CircleHelp },
 	'rules-outdated': { tone: 'warning', icon: AlertTriangle },
+	'rules-ambiguous': { tone: 'warning', icon: AlertTriangle },
 	ready: { tone: 'success', icon: undefined },
 } as const;
 
@@ -49,6 +50,7 @@ const CHIP = {
 	checking: { tone: 'neutral', icon: Loader2 },
 	unavailable: { tone: 'neutral', icon: CircleHelp },
 	'rules-outdated': { tone: 'warning', icon: AlertTriangle },
+	'rules-ambiguous': { tone: 'warning', icon: AlertTriangle },
 	ready: { tone: 'success', icon: CheckCircle2 },
 } as const;
 

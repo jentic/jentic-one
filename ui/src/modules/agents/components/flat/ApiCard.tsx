@@ -25,7 +25,7 @@ import {
 import { TileCardStatus } from '@/modules/agents/components/flat/TileStatusMarker';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 import { API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
-import { useActionRulesOutdated } from '@/modules/agents/lib/useActionRulesOutdated';
+import { useActionRulesHealth } from '@/modules/agents/lib/useActionRulesHealth';
 import type { SiblingApiReference } from '@/shared/credentials/components';
 
 interface ApiCardProps {
@@ -61,13 +61,14 @@ export function ApiCard({
 	agentId,
 	siblings,
 }: ApiCardProps) {
-	const staleActionRules = useActionRulesOutdated(agentId, tile, siblings);
+	const health = useActionRulesHealth(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
-		staleActionRules,
+		staleActionRules: health.outdated,
+		ambiguousActionRules: health.ambiguous,
 	});
 	const blocked = isBlockedStatus(status);
 	const credentialLabel = (accountLabel ?? tile.credentialName).trim() || 'No credential';

@@ -63,7 +63,7 @@ import {
 	API_ROW_METRIC_STATUS_LG,
 } from '@/modules/agents/components/flat/apiRowGrid';
 import type { ApiRowActivity } from '@/modules/agents/lib/apiRowActivity';
-import { useActionRulesOutdated } from '@/modules/agents/lib/useActionRulesOutdated';
+import { useActionRulesHealth } from '@/modules/agents/lib/useActionRulesHealth';
 import type { SiblingApiReference } from '@/shared/credentials/components';
 
 interface ApiRowProps {
@@ -145,13 +145,14 @@ export const ApiRow = memo(function ApiRow({
 	siblings,
 }: ApiRowProps) {
 	const reducedMotion = useReducedMotionConfig();
-	const staleActionRules = useActionRulesOutdated(agentId, tile, siblings);
+	const health = useActionRulesHealth(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
-		staleActionRules,
+		staleActionRules: health.outdated,
+		ambiguousActionRules: health.ambiguous,
 	});
 	// The marker already says "Blocked · no rules"; elsewhere the summary is the
 	// only place the grant shows.

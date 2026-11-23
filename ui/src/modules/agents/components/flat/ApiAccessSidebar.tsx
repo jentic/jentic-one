@@ -53,7 +53,11 @@ import {
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 import { splitCustomRules } from '@/shared/credentials/lib/accessPresets';
-import { describeActions, type ActionEntry } from '@/shared/credentials/lib/actionRules';
+import {
+	describeActions,
+	ruleAmbiguity,
+	type ActionEntry,
+} from '@/shared/credentials/lib/actionRules';
 import {
 	summarizeBindingRules,
 	useAgentBindingEffectiveRules,
@@ -270,11 +274,24 @@ export function ApiAccessSidebar({
 		);
 	}, [effectiveRules, catalog]);
 	const staleActions = staleEntries.length;
+	// An action rule the broker would misread on a shared `operationId` (see
+	// `ruleAmbiguity`) — the same check the row and card make.
+	const ambiguousActions = useMemo(() => {
+		const { groups } = splitCustomRules(effectiveRules);
+		return (['allow', 'ask', 'deny'] as const).some((g) => {
+			const found = ruleAmbiguity(groups[g], g, catalog);
+			return found.shared.length > 0 || found.partial.length > 0;
+		});
+	}, [effectiveRules, catalog]);
 	// One credential may reach several APIs under one rule list, so the rule
 	// counts alone can read Ready here on another API's allow. Judged against
 	// THIS API's operations (the bar's own numbers) once they are read, so a
 	// binding that lets none of them through reads Blocked.
-	const apiCounts = useAllowedOperationCount(apiReference, effectiveRules, { enabled: open });
+	const reach = shown ? apiScopeReach(shown.scope) : undefined;
+	const apiCounts = useAllowedOperationCount(apiReference, effectiveRules, {
+		enabled: open,
+		reach,
+	});
 	const perApiRules = useMemo(() => {
 		if (!savedRuleSummary || !apiCounts || savedRuleSummary.total === 0)
 			return savedRuleSummary;
@@ -292,6 +309,7 @@ export function ApiAccessSidebar({
 				awaitingConsent: shown.awaitingConsent,
 				rules: effective.isError ? 'error' : (perApiRules ?? 'loading'),
 				staleActionRules: staleActions > 0,
+				ambiguousActionRules: ambiguousActions,
 			})
 		: 'ready';
 	const othersPhrase = shown ? otherApisPhrase(shown, siblingTiles) : null;
@@ -531,6 +549,7 @@ export function ApiAccessSidebar({
 		/>
 	) : (
 		<AccessReadView
+			reach={reach}
 			credentialName={shown.credentialName}
 			rules={effectiveRules}
 			catalog={catalog}
