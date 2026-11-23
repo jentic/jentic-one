@@ -21,7 +21,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from jentic_one.admin.core.schema.agent_explanations import AgentExplanation
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
@@ -31,7 +30,6 @@ from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.events import emit_event_best_effort, summary_label, summary_text
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
-from jentic_one.shared.models.agent_explanations import ExplanationSubject
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.held_executions import HeldExecutionState
@@ -155,7 +153,7 @@ class HoldOutcome:
     expires_at: datetime
     execution_id: str | None
     joined: bool
-    #: A joined hold the agent has already explained (``agent_explanations``).
+    #: A joined hold the agent has already explained (``agent_reason`` is set).
     explained: bool = False
 
 
@@ -418,19 +416,13 @@ async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
 
 async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:
     job = await session.get(Job, row.job_id)
-    explained = await session.scalar(
-        select(AgentExplanation.id).where(
-            AgentExplanation.subject_type == ExplanationSubject.HELD_EXECUTION.value,
-            AgentExplanation.subject_id == row.id,
-        )
-    )
     return HoldOutcome(
         job_id=str(row.job_id),
         approval_id=str(row.id),
         expires_at=row.expires_at,
         execution_id=job.execution_id if job is not None else None,
         joined=True,
-        explained=explained is not None,
+        explained=row.agent_reason is not None,
     )
 
 

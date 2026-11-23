@@ -85,6 +85,25 @@ class HeldExecutionAlreadyExplainedError(AdminServiceError):
         self.approval_id = approval_id
 
 
+class HeldExecutionExplainForbiddenError(AdminServiceError):
+    """Raised when a caller who can see a held execution, but did not file it, explains it."""
+
+    def __init__(self, approval_id: str) -> None:
+        super().__init__(f"Only the agent that filed held execution '{approval_id}' can explain it")
+        self.approval_id = approval_id
+
+
+class HeldExecutionWithdrawForbiddenError(AdminServiceError):
+    """Raised when a caller who can see a held execution, but did not file it, withdraws it."""
+
+    def __init__(self, approval_id: str) -> None:
+        super().__init__(
+            f"Only the agent that filed held execution '{approval_id}' can withdraw it; "
+            "a reviewer denies it with :decide instead"
+        )
+        self.approval_id = approval_id
+
+
 class HeldExecutionJobNotHeldError(AdminServiceError):
     """Raised when a pending approval's job is no longer ``held``.
 

@@ -131,6 +131,22 @@ class HeldExecutionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def set_agent_reason(session: AsyncSession, approval_id: str, *, reason: str) -> bool:
+        """Set the approval's ``agent_reason`` if it has none yet.
+
+        Returns False when the row is missing or already carries a reason, so
+        the first explanation stands.
+        """
+        stmt = (
+            update(HeldExecution)
+            .where(HeldExecution.id == approval_id, HeldExecution.agent_reason.is_(None))
+            .values(agent_reason=reason)
+            .execution_options(synchronize_session=False)
+        )
+        result = await session.execute(stmt)
+        return int(result.rowcount) > 0  # type: ignore[attr-defined]
+
+    @staticmethod
     async def get_state(session: AsyncSession, approval_id: str) -> str | None:
         """The approval's current ``state`` read from the database, or None when missing."""
         result = await session.execute(

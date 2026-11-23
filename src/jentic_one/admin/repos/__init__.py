@@ -5,7 +5,6 @@ from jentic_one.admin.repos.actor_directory_repo import ActorDirectoryRepository
 from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_credential_binding_repo import AgentCredentialBindingRepository
 from jentic_one.admin.repos.agent_credential_repo import AgentCredentialRepository
-from jentic_one.admin.repos.agent_explanation_repo import AgentExplanationRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.admin.repos.assertion_jti_repo import AssertionJtiRepository
 from jentic_one.admin.repos.audit_repo import AuditRepository
@@ -33,7 +32,6 @@ __all__ = [
     "ActorPermissionGrantRepository",
     "AgentCredentialBindingRepository",
     "AgentCredentialRepository",
-    "AgentExplanationRepository",
     "AgentRepository",
     "AssertionJtiRepository",
     "AuditRepository",

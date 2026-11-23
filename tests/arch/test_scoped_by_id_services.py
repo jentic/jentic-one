@@ -54,14 +54,6 @@ _ATTRIBUTION_ONLY_ALLOWLIST: dict[str, str] = {
         "self-keyed password change: the repository actor id and current-password check "
         "use identity.sub"
     ),
-    "HeldExecutionService.withdraw": (
-        "self-keyed withdrawal: both the visibility check and compare-and-set require "
-        "created_by == identity.sub"
-    ),
-    "HeldExecutionService.explain": (
-        "self-keyed explanation: the locked read requires created_by == identity.sub "
-        "before the reason is stored"
-    ),
     "InviteService.reissue": (
         "guarded by UserService.reissue_invite, which calls _load_manageable before delegating"
     ),

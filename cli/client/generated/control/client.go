@@ -14001,8 +14001,9 @@ type ClientInterface interface {
 	// Say why a held call is needed — the agent that filed it only, once.
 	//
 	// The reviewer sees the reason beside the request, as the agent's own claim.
-	// Any other caller gets ``404``, as if it did not exist; a call that is no
-	// longer pending, or one already explained, answers ``409``. A reason with no
+	// Its owner or an ``org:admin`` gets ``403``; any caller who cannot see the
+	// call gets ``404``, as if it did not exist. A call that is no longer
+	// pending, or one already explained, answers ``409``. A reason with no
 	// readable text left once cleaned answers ``400``.
 	//
 	// Takes any type of body and a specified content type.
@@ -14015,8 +14016,9 @@ type ClientInterface interface {
 	// Say why a held call is needed — the agent that filed it only, once.
 	//
 	// The reviewer sees the reason beside the request, as the agent's own claim.
-	// Any other caller gets ``404``, as if it did not exist; a call that is no
-	// longer pending, or one already explained, answers ``409``. A reason with no
+	// Its owner or an ``org:admin`` gets ``403``; any caller who cannot see the
+	// call gets ``404``, as if it did not exist. A call that is no longer
+	// pending, or one already explained, answers ``409``. A reason with no
 	// readable text left once cleaned answers ``400``.
 	//
 	// Takes a body of the `application/json` content type.
@@ -14028,10 +14030,11 @@ type ClientInterface interface {
 	//
 	// Abandon a held execution — the agent that filed it only.
 	//
-	// The call becomes ``withdrawn`` and never runs; no result is written. Any
-	// other caller gets ``404``, as if it did not exist; one that is no longer
-	// pending (decided, expired or already withdrawn) answers ``409``. Owners and
-	// admins use ``:decide`` with ``deny`` instead.
+	// The call becomes ``withdrawn`` and never runs; no result is written. Its
+	// owner or an ``org:admin`` gets ``403`` and denies it with ``:decide``
+	// instead; any caller who cannot see the call gets ``404``, as if it did not
+	// exist. One that is no longer pending (decided, expired or already
+	// withdrawn) answers ``409``.
 	//
 	// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
 	WithdrawHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -18409,8 +18412,9 @@ func (c *Client) DecideHeldExecution(ctx context.Context, heldExecutionId PathHe
 // Say why a held call is needed — the agent that filed it only, once.
 //
 // The reviewer sees the reason beside the request, as the agent's own claim.
-// Any other caller gets “404“, as if it did not exist; a call that is no
-// longer pending, or one already explained, answers “409“. A reason with no
+// Its owner or an “org:admin“ gets “403“; any caller who cannot see the
+// call gets “404“, as if it did not exist. A call that is no longer
+// pending, or one already explained, answers “409“. A reason with no
 // readable text left once cleaned answers “400“.
 //
 // Takes any type of body and a specified content type.
@@ -18433,8 +18437,9 @@ func (c *Client) ExplainHeldExecutionWithBody(ctx context.Context, heldExecution
 // Say why a held call is needed — the agent that filed it only, once.
 //
 // The reviewer sees the reason beside the request, as the agent's own claim.
-// Any other caller gets “404“, as if it did not exist; a call that is no
-// longer pending, or one already explained, answers “409“. A reason with no
+// Its owner or an “org:admin“ gets “403“; any caller who cannot see the
+// call gets “404“, as if it did not exist. A call that is no longer
+// pending, or one already explained, answers “409“. A reason with no
 // readable text left once cleaned answers “400“.
 //
 // Takes a body of the `application/json` content type.
@@ -18456,10 +18461,11 @@ func (c *Client) ExplainHeldExecution(ctx context.Context, heldExecutionId PathH
 //
 // Abandon a held execution — the agent that filed it only.
 //
-// The call becomes “withdrawn“ and never runs; no result is written. Any
-// other caller gets “404“, as if it did not exist; one that is no longer
-// pending (decided, expired or already withdrawn) answers “409“. Owners and
-// admins use “:decide“ with “deny“ instead.
+// The call becomes “withdrawn“ and never runs; no result is written. Its
+// owner or an “org:admin“ gets “403“ and denies it with “:decide“
+// instead; any caller who cannot see the call gets “404“, as if it did not
+// exist. One that is no longer pending (decided, expired or already
+// withdrawn) answers “409“.
 //
 // Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
 func (c *Client) WithdrawHeldExecution(ctx context.Context, heldExecutionId PathHeldExecutionId, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -31587,8 +31593,9 @@ type ClientWithResponsesInterface interface {
 	// Say why a held call is needed — the agent that filed it only, once.
 	//
 	// The reviewer sees the reason beside the request, as the agent's own claim.
-	// Any other caller gets ``404``, as if it did not exist; a call that is no
-	// longer pending, or one already explained, answers ``409``. A reason with no
+	// Its owner or an ``org:admin`` gets ``403``; any caller who cannot see the
+	// call gets ``404``, as if it did not exist. A call that is no longer
+	// pending, or one already explained, answers ``409``. A reason with no
 	// readable text left once cleaned answers ``400``.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -31601,8 +31608,9 @@ type ClientWithResponsesInterface interface {
 	// Say why a held call is needed — the agent that filed it only, once.
 	//
 	// The reviewer sees the reason beside the request, as the agent's own claim.
-	// Any other caller gets ``404``, as if it did not exist; a call that is no
-	// longer pending, or one already explained, answers ``409``. A reason with no
+	// Its owner or an ``org:admin`` gets ``403``; any caller who cannot see the
+	// call gets ``404``, as if it did not exist. A call that is no longer
+	// pending, or one already explained, answers ``409``. A reason with no
 	// readable text left once cleaned answers ``400``.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -31614,10 +31622,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Abandon a held execution — the agent that filed it only.
 	//
-	// The call becomes ``withdrawn`` and never runs; no result is written. Any
-	// other caller gets ``404``, as if it did not exist; one that is no longer
-	// pending (decided, expired or already withdrawn) answers ``409``. Owners and
-	// admins use ``:decide`` with ``deny`` instead.
+	// The call becomes ``withdrawn`` and never runs; no result is written. Its
+	// owner or an ``org:admin`` gets ``403`` and denies it with ``:decide``
+	// instead; any caller who cannot see the call gets ``404``, as if it did not
+	// exist. One that is no longer pending (decided, expired or already
+	// withdrawn) answers ``409``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -51663,8 +51672,9 @@ func (c *ClientWithResponses) DecideHeldExecutionWithResponse(ctx context.Contex
 // Say why a held call is needed — the agent that filed it only, once.
 //
 // The reviewer sees the reason beside the request, as the agent's own claim.
-// Any other caller gets “404“, as if it did not exist; a call that is no
-// longer pending, or one already explained, answers “409“. A reason with no
+// Its owner or an “org:admin“ gets “403“; any caller who cannot see the
+// call gets “404“, as if it did not exist. A call that is no longer
+// pending, or one already explained, answers “409“. A reason with no
 // readable text left once cleaned answers “400“.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -51683,8 +51693,9 @@ func (c *ClientWithResponses) ExplainHeldExecutionWithBodyWithResponse(ctx conte
 // Say why a held call is needed — the agent that filed it only, once.
 //
 // The reviewer sees the reason beside the request, as the agent's own claim.
-// Any other caller gets “404“, as if it did not exist; a call that is no
-// longer pending, or one already explained, answers “409“. A reason with no
+// Its owner or an “org:admin“ gets “403“; any caller who cannot see the
+// call gets “404“, as if it did not exist. A call that is no longer
+// pending, or one already explained, answers “409“. A reason with no
 // readable text left once cleaned answers “400“.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -51702,10 +51713,11 @@ func (c *ClientWithResponses) ExplainHeldExecutionWithResponse(ctx context.Conte
 //
 // Abandon a held execution — the agent that filed it only.
 //
-// The call becomes “withdrawn“ and never runs; no result is written. Any
-// other caller gets “404“, as if it did not exist; one that is no longer
-// pending (decided, expired or already withdrawn) answers “409“. Owners and
-// admins use “:decide“ with “deny“ instead.
+// The call becomes “withdrawn“ and never runs; no result is written. Its
+// owner or an “org:admin“ gets “403“ and denies it with “:decide“
+// instead; any caller who cannot see the call gets “404“, as if it did not
+// exist. One that is no longer pending (decided, expired or already
+// withdrawn) answers “409“.
 //
 // Returns a wrapper object for the known response body format(s).
 //

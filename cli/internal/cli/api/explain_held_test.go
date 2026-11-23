@@ -85,6 +85,10 @@ func TestMCPExplainHeldCall_Refusals(t *testing.T) {
 	}{
 		{"not found", http.StatusNotFound, `{"type":"held_execution_not_found","status":404}`, "not found"},
 		{
+			"filed by another agent", http.StatusForbidden,
+			`{"type":"held_execution_explain_forbidden","status":403}`, "only the agent that filed",
+		},
+		{
 			"already explained", http.StatusConflict,
 			`{"type":"held_execution_already_explained","status":409,"detail":"already explained"}`, "already explained",
 		},

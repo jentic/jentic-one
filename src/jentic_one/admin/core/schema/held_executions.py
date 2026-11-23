@@ -29,7 +29,8 @@ class HeldExecution(AuditableMixin, AdminBase):
     only (no FK), the same precedent as ``execution_records.credential_id``.
     ``execution_id`` is set once the approved job runs and its
     ``execution_records`` row exists. The run outcome itself is the job's
-    status and ``job_results`` row, not duplicated here.
+    status and ``job_results`` row, not duplicated here. ``agent_reason`` is
+    the filing agent's explanation of the call, written once by ``:explain``.
     """
 
     __tablename__ = "held_executions"
@@ -78,5 +79,8 @@ class HeldExecution(AuditableMixin, AdminBase):
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
     decision_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # The filing agent's own account of why it made the call, already cleaned
+    # (``clean_agent_text``). Set at most once, while the call is pending.
+    agent_reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     execution_id: Mapped[str | None] = mapped_column(String(30), nullable=True)

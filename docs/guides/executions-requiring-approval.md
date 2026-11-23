@@ -166,6 +166,9 @@ checked per call.
 | `POST /executions/holds/{id}:withdraw` | The agent that filed it | Withdraw a pending held execution; it never runs |
 | `POST /executions/holds/{id}:explain` | The agent that filed it | `{"reason": "…"}`: tell the reviewer why, once, while it is pending |
 
+Withdrawing or explaining is for the filing agent only: the agent's owner or
+an org admin gets **403** (a reviewer denies the call with `:decide`
+instead), and anyone who can't see the held execution gets **404**.
 Deciding, withdrawing or explaining a settled held execution answers **409**,
 as does explaining one twice. Each decision, withdrawal, explanation and expiry
 is audit-logged and emits an event (`execution.approval_requested` when filed,

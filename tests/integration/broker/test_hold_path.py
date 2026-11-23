@@ -15,14 +15,13 @@ import pytest
 from sqlalchemy import delete, select
 from starlette.requests import Request
 
-from jentic_one.admin.core.schema.agent_explanations import AgentExplanation
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
-from jentic_one.admin.repos.agent_explanation_repo import AgentExplanationRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
+from jentic_one.admin.repos.held_execution_repo import HeldExecutionRepository
 from jentic_one.admin.repos.user_repo import UserRepository
 from jentic_one.broker.core.errors import ApprovalPendingLimitError
 from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
@@ -59,7 +58,6 @@ _BODY = b'{"amount": 500}'
 async def clean(integration_context: Context) -> AsyncGenerator[None, None]:
     async def _truncate() -> None:
         async with integration_context.admin_db.transaction() as session:
-            await session.execute(delete(AgentExplanation))
             await session.execute(delete(Job))
             await session.execute(delete(Event).where(Event.type.like("execution.approval_%")))
 
@@ -336,9 +334,7 @@ async def test_a_retry_joining_an_explained_call_is_not_asked_again(
     assert "explain_held_call" in first["agent_directive"]["human_readable_instruction"]
     assert first["_links"]["explain"].endswith(f"/executions/holds/{hid}:explain")
     async with ctx.admin_db.transaction() as session:
-        await AgentExplanationRepository.create(
-            session, subject_type="held_execution", subject_id=hid, agent_id=_AGENT.sub, text="x"
-        )
+        assert await HeldExecutionRepository.set_agent_reason(session, hid, reason="x")
 
     again = await _hold(ctx)
     assert again["held_execution_id"] == hid

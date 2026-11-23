@@ -284,10 +284,11 @@ async def withdraw_held_execution(
 ) -> HeldExecutionResponse:
     """Abandon a held execution — the agent that filed it only.
 
-    The call becomes ``withdrawn`` and never runs; no result is written. Any
-    other caller gets ``404``, as if it did not exist; one that is no longer
-    pending (decided, expired or already withdrawn) answers ``409``. Owners and
-    admins use ``:decide`` with ``deny`` instead.
+    The call becomes ``withdrawn`` and never runs; no result is written. Its
+    owner or an ``org:admin`` gets ``403`` and denies it with ``:decide``
+    instead; any caller who cannot see the call gets ``404``, as if it did not
+    exist. One that is no longer pending (decided, expired or already
+    withdrawn) answers ``409``.
     """
     view = await svc.withdraw(held_execution_id, identity=identity)
     return _response(view, request, identity)
@@ -308,8 +309,9 @@ async def explain_held_execution(
     """Say why a held call is needed — the agent that filed it only, once.
 
     The reviewer sees the reason beside the request, as the agent's own claim.
-    Any other caller gets ``404``, as if it did not exist; a call that is no
-    longer pending, or one already explained, answers ``409``. A reason with no
+    Its owner or an ``org:admin`` gets ``403``; any caller who cannot see the
+    call gets ``404``, as if it did not exist. A call that is no longer
+    pending, or one already explained, answers ``409``. A reason with no
     readable text left once cleaned answers ``400``.
     """
     view = await svc.explain(held_execution_id, body.reason, identity=identity)

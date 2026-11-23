@@ -41,6 +41,7 @@ from mcp.shared.exceptions import MCPError
 from jentic_one.admin.services.errors import (
     HeldExecutionAlreadyDecidedError,
     HeldExecutionAlreadyExplainedError,
+    HeldExecutionExplainForbiddenError,
     HeldExecutionNotFoundError,
     HeldExecutionResultNotReadyError,
     InvalidInputError,
@@ -1182,6 +1183,14 @@ async def handle_explain_held_call(
             "response; only the agent that made the call can explain it.",
             details=details,
             next_tool="get_execution_result",
+        ) from None
+    except HeldExecutionExplainForbiddenError as exc:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            str(exc),
+            actionable="Only the agent that made the call can explain it; a reviewer approves or "
+            "denies it on its review page instead.",
+            details=details,
         ) from None
     except HeldExecutionAlreadyExplainedError:
         raise ToolError(

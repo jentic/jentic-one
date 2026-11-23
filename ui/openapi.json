@@ -36304,7 +36304,7 @@
     "/executions/holds/{held_execution_id}:explain": {
       "description": "`POST`: Explain a held execution.",
       "post": {
-        "description": "Say why a held call is needed — the agent that filed it only, once.\n\nThe reviewer sees the reason beside the request, as the agent's own claim.\nAny other caller gets ``404``, as if it did not exist; a call that is no\nlonger pending, or one already explained, answers ``409``. A reason with no\nreadable text left once cleaned answers ``400``.",
+        "description": "Say why a held call is needed — the agent that filed it only, once.\n\nThe reviewer sees the reason beside the request, as the agent's own claim.\nIts owner or an ``org:admin`` gets ``403``; any caller who cannot see the\ncall gets ``404``, as if it did not exist. A call that is no longer\npending, or one already explained, answers ``409``. A reason with no\nreadable text left once cleaned answers ``400``.",
         "operationId": "explainHeldExecution",
         "parameters": [
           {
@@ -36410,7 +36410,7 @@
     "/executions/holds/{held_execution_id}:withdraw": {
       "description": "`POST`: Withdraw a held execution.",
       "post": {
-        "description": "Abandon a held execution — the agent that filed it only.\n\nThe call becomes ``withdrawn`` and never runs; no result is written. Any\nother caller gets ``404``, as if it did not exist; one that is no longer\npending (decided, expired or already withdrawn) answers ``409``. Owners and\nadmins use ``:decide`` with ``deny`` instead.",
+        "description": "Abandon a held execution — the agent that filed it only.\n\nThe call becomes ``withdrawn`` and never runs; no result is written. Its\nowner or an ``org:admin`` gets ``403`` and denies it with ``:decide``\ninstead; any caller who cannot see the call gets ``404``, as if it did not\nexist. One that is no longer pending (decided, expired or already\nwithdrawn) answers ``409``.",
         "operationId": "withdrawHeldExecution",
         "parameters": [
           {

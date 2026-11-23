@@ -104,6 +104,13 @@ func explainHeldErr(err error, heldExecutionID string, lane explainHeldLane) err
 				"only the agent that made the call can explain it.",
 			Details: details,
 		}
+	case http.StatusForbidden:
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        fmt.Sprintf("only the agent that filed held execution %s can explain it", heldExecutionID),
+			Actionable: "A reviewer approves or denies the call on its review page instead; only the agent that made the call can explain it.",
+			Details:    details,
+		}
 	case http.StatusConflict:
 		if pt, _ := he.Fields()["type"].(string); pt == "held_execution_already_explained" {
 			return &ux.CodedError{
