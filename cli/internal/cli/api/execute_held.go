@@ -87,9 +87,12 @@ func addHeldTimeoutFlag(cmd *cobra.Command, dst *time.Duration, usage string) {
 // heldRef is what the CLI knows about a held call it follows: its id and,
 // once seen, its review link and expiry.
 type heldRef struct {
-	ID             string
-	ReviewURL      string
-	ExpiresAt      string
+	ID        string
+	ReviewURL string
+	ExpiresAt string
+	// Explainable is whether the held reply still asks for a reason: false
+	// once the agent has explained the call.
+	Explainable    bool
 	controlBaseURL string
 	brokerURL      string
 }
@@ -129,6 +132,11 @@ func (r *heldRef) pollCommand() string {
 	return "jentic executions poll " + r.ID
 }
 
+// explainCommand tells the reviewer why the held call is needed.
+func (r *heldRef) explainCommand() string {
+	return "jentic executions explain " + r.ID + ` "<why you are making this call>"`
+}
+
 // details is the held call's identity for an error envelope's details.
 func (r *heldRef) details() map[string]any {
 	d := map[string]any{"held_execution_id": r.ID}
@@ -147,7 +155,10 @@ func (r *heldRef) details() map[string]any {
 // --wait it follows the held call up to --timeout and prints the outcome
 // exactly like a call that ran at once. It never re-sends the call.
 func (a *app) executeHeld(cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult, held *agentops.Held) error {
-	ref := &heldRef{ID: held.HeldExecutionID, ReviewURL: held.ReviewURL, ExpiresAt: held.ExpiresAt}
+	ref := &heldRef{
+		ID: held.HeldExecutionID, ReviewURL: held.ReviewURL, ExpiresAt: held.ExpiresAt,
+		Explainable: held.Links.Explain != "",
+	}
 	ref.configureTrust(cmd.Context(), opts.brokerScheme, opts.brokerHost)
 	notice := ref.notice()
 	notice.Waiting = opts.wait
@@ -207,11 +218,21 @@ func heldResultWithDirective(res *agentops.ExecuteResult, directive string) (*ag
 func heldPendingErr(ref *heldRef) *ux.CodedError {
 	details := ref.details()
 	details["next_command"] = ref.pollCommand()
-	actionable := fmt.Sprintf("Show the user the review_url (%s) — they approve or deny the call there — "+
-		"and end your turn. When they reply, run `%s` once for the result. Do not re-send the call.",
-		ref.ReviewURL, ref.pollCommand())
-	if !ref.trustedReviewURL() {
+	var actionable string
+	switch {
+	case !ref.trustedReviewURL():
 		actionable = untrustedReviewRecovery(ref)
+	case ref.Explainable:
+		details["explain_command"] = ref.explainCommand()
+		actionable = fmt.Sprintf("Show the user the review_url (%s) — they approve or deny the call there — "+
+			"and end your turn. Before you do, if you can, run `%s` once; the reviewer sees your reason "+
+			"next to the request. When they reply, run `%s` once for the result. Do not re-send the call.",
+			ref.ReviewURL, ref.explainCommand(), ref.pollCommand())
+	default:
+		// Already explained: the reviewer has the reason, so it is not asked again.
+		actionable = fmt.Sprintf("Show the user the review_url (%s) — they approve or deny the call there — "+
+			"and end your turn. When they reply, run `%s` once for the result. Do not re-send the call.",
+			ref.ReviewURL, ref.pollCommand())
 	}
 	return &ux.CodedError{
 		Code:       ux.CodeTimeoutPending,

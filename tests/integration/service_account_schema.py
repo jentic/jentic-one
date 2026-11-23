@@ -57,6 +57,9 @@ _EXTERNAL_IDENTITIES_ISSUER_HEAD = "e5c9f3a7b802"  # pragma: allowlist secret
 _ASSERTION_JTIS_HEAD = "bf1a695f4db0"  # pragma: allowlist secret
 #: Refresh-token ``family_issued_at`` column, stacked on the assertion ``jti`` table.
 _REFRESH_FAMILY_ISSUED_AT_HEAD = "c7d2e9a41b30"  # pragma: allowlist secret
+#: The held executions' nullable ``agent_reason`` column, stacked on the
+#: refresh-token ``family_issued_at`` column.
+_HELD_AGENT_REASON_HEAD = "3ff5fd639357"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -231,6 +234,7 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
         [_EXTERNAL_IDENTITIES_ISSUER_HEAD],
         [_ASSERTION_JTIS_HEAD],
         [_REFRESH_FAMILY_ISSUED_AT_HEAD],
+        [_HELD_AGENT_REASON_HEAD],
     ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)

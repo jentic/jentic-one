@@ -41,6 +41,16 @@ _WRITE_FILTER_ALLOWLIST: dict[str, str] = {
     "JobService.cancel": (
         "owner cancellation covers jobs created by their agents, so the read filter is required"
     ),
+    "HeldExecutionService.explain": (
+        "the read filter only tells a reviewer who can see the hold (403) from a caller who "
+        "cannot (404); created_by == identity.sub authorizes the write, and the HeldExecution "
+        "write filter omits the filing agent"
+    ),
+    "HeldExecutionService.withdraw": (
+        "the read filter only tells a reviewer who can see the hold (403) from a caller who "
+        "cannot (404); created_by == identity.sub authorizes the write, and the HeldExecution "
+        "write filter omits the filing agent"
+    ),
     "CredentialService.replace_agent_permissions": (
         "_require_visible_binding(for_write=True) adds the credential owner/org:admin write gate"
     ),

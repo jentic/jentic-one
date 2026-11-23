@@ -203,6 +203,20 @@ func TestNormalizeToolArgs_NumberCoercesToString(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolArgs_TextTakesOnlyAString(t *testing.T) {
+	specs := []paramSpec{{name: "reason", kind: paramText}}
+	got, err := normalizeToolArgs(json.RawMessage(`{"reason":"Customer 4821 asked"}`), specs)
+	if err != nil || got["reason"] != "Customer 4821 asked" {
+		t.Fatalf("got %v, err %v, want the string kept", got, err)
+	}
+	for _, raw := range []string{`{"reason":42}`, `{"reason":true}`, `{"reason":["why"]}`, `{"reason":{"a":1}}`} {
+		if _, err := normalizeToolArgs(json.RawMessage(raw), specs); err == nil ||
+			err.Error() != `parameter "reason": expected a string` {
+			t.Errorf("%s: err = %v, want expected a string", raw, err)
+		}
+	}
+}
+
 // --- coerceJSON: the execute body's paramJSON semantics ----------------------
 
 // TestCoerceJSON_Table pins the DELIBERATE reinterpretation rule for the

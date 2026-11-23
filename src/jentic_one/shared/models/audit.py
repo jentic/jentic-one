@@ -21,6 +21,7 @@ class AuditAction(StrEnum):
     APPROVE = "approve"
     DENY = "deny"
     WITHDRAW = "withdraw"
+    EXPLAIN = "explain"
     EXPIRE = "expire"
     ARCHIVE = "archive"
     ROTATE = "rotate"

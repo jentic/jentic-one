@@ -160,14 +160,15 @@ func TestMCPSession_ToolsListWorksWithNoConfig(t *testing.T) {
 	if importTool.Annotations == nil || !importTool.Annotations.IdempotentHint {
 		t.Errorf("import_api must carry idempotentHint (re-import of the same api_id converges)")
 	}
-	if len(names) != 14 {
-		t.Errorf("the stdio server serves exactly 14 tools, got %v", keys(names))
+	if len(names) != 15 {
+		t.Errorf("the stdio server serves exactly 15 tools, got %v", keys(names))
 	}
 }
 
 // TestMCPSession_ReadOnlyWithholdsMutatingTools pins the --read-only contract:
-// exactly execute, import_api, and request_connection lack
-// the read-only annotation, so the flag withholds exactly those three
+// exactly the tools that change something lack the read-only annotation —
+// execute, import_api, request_connection, request_access_change,
+// amend_request and explain_held_call — so the flag withholds exactly those
 // (execute_read, get_execution_result, search_catalog, show_access and
 // inspect_api stay servable).
 func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
@@ -183,7 +184,7 @@ func TestMCPSession_ReadOnlyWithholdsMutatingTools(t *testing.T) {
 	}
 	withheld := map[string]bool{
 		"execute": true, "import_api": true, "request_connection": true,
-		"request_access_change": true, "amend_request": true,
+		"request_access_change": true, "amend_request": true, "explain_held_call": true,
 	}
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
@@ -435,8 +436,8 @@ func TestMCPSession_ExcludeToolsFilters(t *testing.T) {
 			t.Errorf("--exclude-tools=whoami must withhold the tool")
 		}
 	}
-	if len(tools.Tools) != 13 {
-		t.Errorf("tools = %d, want 13 after exclusion", len(tools.Tools))
+	if len(tools.Tools) != 14 {
+		t.Errorf("tools = %d, want 14 after exclusion", len(tools.Tools))
 	}
 }
 

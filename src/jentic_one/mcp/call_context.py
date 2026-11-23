@@ -77,7 +77,7 @@ def invalid_params(message: str) -> MCPError:
 @dataclass(frozen=True)
 class ParamSpec:
     name: str
-    kind: str  # "string" | "int" | "object" | "json" | "string_list"
+    kind: str  # "string" | "text" | "int" | "object" | "json" | "string_list"
     aliases: tuple[str, ...] = ()
 
 
@@ -104,6 +104,12 @@ def normalize_tool_args(arguments: dict[str, Any] | None, specs: list[ParamSpec]
 
 
 def _coerce(spec: ParamSpec, value: Any) -> Any:
+    # "text" is free prose a person reads (explain_held_call's reason): only a
+    # JSON string is accepted, so a number never becomes text nobody wrote.
+    if spec.kind == "text":
+        if isinstance(value, str):
+            return value
+        raise invalid_params(f'parameter "{spec.name}": expected a string')
     if spec.kind == "string":
         if isinstance(value, str):
             return value
