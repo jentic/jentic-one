@@ -10,8 +10,9 @@
  *     side by side. A `‹ N` chip at the pin's edge counts the tabs
  *     scrolled behind it and pages back.
  *   - MIDDLE: the scrolling tabs — avatar, lifecycle glyph, name, API-count
- *     badge, "· N to set up". Waiting agents lead under "Waiting"; the rest are
- *     recent first (persisted across reloads), then in the fleet's order.
+ *     badge, the count of calls waiting for the viewer's decision, "· N to set
+ *     up". Waiting agents lead under "Waiting"; the rest are recent first
+ *     (persisted across reloads), then in the fleet's order.
  *   - RIGHT: up to five circles for the next agents off-screen to the right, in
  *     order, then `+N` (the exact rest) — or, with nothing off to the right, a
  *     search button — opening the agent picker (also ⌘K / Ctrl+K).
@@ -65,6 +66,7 @@ import { AgentHoverCard, type AgentFacts } from '@/modules/agents/components/fla
 import { AgentPicker } from '@/modules/agents/components/flat/AgentPicker';
 import { useStripLinkage } from '@/modules/agents/components/flat/useStripLinkage';
 import { contentTransition, foldTransition } from '@/modules/agents/components/flat/useStickyFold';
+import { HeldCallsChip } from '@/modules/agents/components/flat/HeldCallsCard';
 
 /** Where the rail pins in the viewport: `top-0` of the shell's scroller, which
  * starts under the fixed `h-12` TopNavbar. The pinned-state observer reads it. */
@@ -189,6 +191,8 @@ interface StripTabProps {
 	credentialCount: number | undefined;
 	blocked: number | undefined;
 	gaps: number | undefined;
+	/** Held calls waiting for the viewer's decision. */
+	waiting: number | undefined;
 	/** The selected agent's tab, in the pin. */
 	pinned: boolean;
 	/** Phone width: the pinned tab drops to avatar + a short name. */
@@ -206,6 +210,7 @@ const StripTab = memo(function StripTab({
 	credentialCount,
 	blocked,
 	gaps = 0,
+	waiting = 0,
 	pinned,
 	compact,
 	focusable,
@@ -216,7 +221,7 @@ const StripTab = memo(function StripTab({
 	const isPending = agent.status === 'pending';
 	const isSettled = SETTLED_STATUSES.has(agent.status);
 	const StatusIcon = STATUS_ICON[agent.status];
-	const facts: AgentFacts = { apiCount, credentialCount, blocked, gaps };
+	const facts: AgentFacts = { apiCount, credentialCount, blocked, gaps, waiting };
 	const slim = pinned && compact;
 	return (
 		<Tooltip
@@ -298,6 +303,7 @@ const StripTab = memo(function StripTab({
 						<span className="sr-only">{badgeLabel(apiCount, credentialCount)}</span>
 					</span>
 				)}
+				{waiting > 0 && !slim && <HeldCallsChip count={waiting} />}
 				{gaps > 0 && !slim && (
 					<span className="text-foreground-sub text-xs font-medium">
 						· {gaps} to set up
@@ -370,6 +376,9 @@ interface AgentStripProps {
 	/** Per-agent count of Blocked rows — known only for an agent whose rules
 	 * were read (the selected one); absent agents claim nothing. */
 	blockedCounts?: ReadonlyMap<string, number>;
+	/** Per-agent count of held calls waiting for the viewer's decision; an
+	 * absent agent has none. */
+	waitingCounts?: ReadonlyMap<string, number>;
 	/** The page header's filter text (this component consumes it, not owns it). */
 	filter: string;
 	/** Reports the bar's height: where the agent card pins, under it — and its
@@ -400,6 +409,7 @@ export function AgentStrip({
 	apiCounts,
 	credentialCounts,
 	blockedCounts,
+	waitingCounts,
 	filter,
 	onHeight,
 	cardPinned = false,
@@ -467,8 +477,9 @@ export function AgentStrip({
 			credentialCount: credentialCounts?.get(id),
 			blocked: blockedCounts?.get(id),
 			gaps: setupGaps.get(id),
+			waiting: waitingCounts?.get(id),
 		}),
-		[apiCounts, credentialCounts, blockedCounts, setupGaps],
+		[apiCounts, credentialCounts, blockedCounts, setupGaps, waitingCounts],
 	);
 
 	// Mid-switch: from the render that moves the selection until the tabs have
@@ -884,6 +895,7 @@ export function AgentStrip({
 				credentialCount={credentialCounts?.get(agent.id)}
 				blocked={blockedCounts?.get(agent.id)}
 				gaps={setupGaps.get(agent.id)}
+				waiting={waitingCounts?.get(agent.id)}
 				pinned={pinned}
 				compact={compact}
 				focusable={agent.id === focusableId}

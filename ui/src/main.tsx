@@ -42,6 +42,13 @@ async function enableMocking() {
 		installReviewScenario();
 		worker.use(...reviewScenarioHandlers);
 	}
+	// Three agents, two with pending held calls from Ask rules (`VITE_MSW_SCENARIO=approvals`).
+	if (import.meta.env.VITE_MSW_SCENARIO === 'approvals') {
+		const { installApprovalsScenario, approvalsScenarioHandlers } =
+			await import('@/mocks/scenarios/approvals');
+		installApprovalsScenario();
+		worker.use(...approvalsScenarioHandlers);
+	}
 	await worker.start({
 		onUnhandledFrame: 'bypass',
 		// Vite serves static assets (incl. the generated worker script) under

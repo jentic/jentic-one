@@ -1,7 +1,9 @@
 /**
- * FlatAgentsSection — the flat Agents surface: pending banner, agent strip, and
- * the selected agent's workspace (`SelectedAgentPanel`). Selection lives in
- * `?agent=<id>` so it is linkable.
+ * FlatAgentsSection — the flat Agents surface: pending banner, agent strip, the
+ * selected agent's workspace (`SelectedAgentPanel`), and the held calls
+ * waiting for the viewer's decision (a count on each strip tab, and on the
+ * selected agent a "Waiting for you" card pinned with its card). Selection
+ * lives in `?agent=<id>` so it is linkable.
  *
  * With no fleet in the org it shows `FirstAgentLanding`, where the first
  * self-registered agent is approved and given its first API before the fleet
@@ -51,6 +53,7 @@ import {
 	partitionBindings,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
+import type { HeldCall } from '@/shared/approvals';
 import {
 	AGENTS_READ,
 	useCanAccess,
@@ -60,6 +63,7 @@ import {
 import { AgentStrip, CARD_HANDOFF_MS } from '@/modules/agents/components/flat/AgentStrip';
 import { SelectedAgentPanel } from '@/modules/agents/components/flat/SelectedAgentPanel';
 import { STRIP_RECENT_STORAGE_KEY } from '@/modules/agents/lib/stripOrder';
+import { useHeldCallsByAgent } from '@/modules/agents/lib/useHeldCalls';
 import { PendingApprovalBanner } from '@/modules/agents/components/flat/PendingApprovalBanner';
 import {
 	LifecycleDialogs,
@@ -95,6 +99,7 @@ const STATUS_ORDER: Record<ActorStatus, number> = {
 /** Stable empty batch, so an agent with nothing pending doesn't re-render. */
 const EMPTY_BATCH: PreflightItem[] = [];
 const EMPTY_PICKS: SelectedApi[] = [];
+const NO_HELD_CALLS: readonly HeldCall[] = [];
 
 interface FlatAgentsSectionProps {
 	createOpen: boolean;
@@ -309,6 +314,14 @@ export function FlatAgentsSection({
 		!reducedMotionPref && selected != null && heldAgent != null && held.gen !== switchGen;
 	const panelAgent = handingOff ? heldAgent : selected;
 	const panelKey = `${panelAgent?.id}:${handingOff ? held.gen : switchGen}`;
+	// The held calls waiting for the viewer, per agent: a count on each strip
+	// tab, and the selected agent's own on its card (read on its own while the
+	// shared list is cut short).
+	const heldCallsByAgent = useHeldCallsByAgent(panelAgent?.id);
+	const waitingCounts = useMemo(
+		() => new Map([...heldCallsByAgent].map(([id, calls]) => [id, calls.length])),
+		[heldCallsByAgent],
+	);
 	useEffect(() => {
 		const next = { id: selected?.id ?? null, gen: switchGen };
 		const settle = () =>
@@ -579,6 +592,7 @@ export function FlatAgentsSection({
 						apiCounts={apiCounts}
 						credentialCounts={credentialCounts}
 						blockedCounts={blockedCounts}
+						waitingCounts={waitingCounts}
 						filter={filter}
 						incomplete={isError || Boolean(hasNextPage)}
 					/>
@@ -612,6 +626,7 @@ export function FlatAgentsSection({
 							queueBatch={queueBatches[panelAgent.id] ?? EMPTY_BATCH}
 							onQueueBatchChange={setQueueBatchFor}
 							onBlockedCount={reportBlocked}
+							heldCalls={heldCallsByAgent.get(panelAgent.id) ?? NO_HELD_CALLS}
 							pinning={{
 								stickyTop: stripHeight,
 								stuckTop: stripCondensedHeight,
