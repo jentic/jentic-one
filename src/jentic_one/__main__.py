@@ -48,6 +48,7 @@ from jentic_one.shared.web.app_factory import (
     create_combined_app,
     install_platform_token_verifier,
 )
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
 from jentic_one.wiring import (
@@ -116,21 +117,35 @@ def _build_context(config: AppConfig, apps: list[str]) -> Context:
     )
 
 
-def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
-    """Build the appropriate FastAPI application based on enabled surfaces."""
+def _build_app(ctx: Context, apps: list[str], *, container: AppContainer | None = None) -> FastAPI:
+    """Build the appropriate FastAPI application based on enabled surfaces.
+
+    ``container`` is the integrator's composition seam: when omitted the
+    process's default container (:func:`jentic_one.wiring.build_default_container`)
+    is used. A caller that passes its own (for example one carrying extra
+    routers) gets it on the combined app, on standalone control and auth, and
+    on the standalone broker, with the same post-build wiring (the broker's
+    registry resolver) the default path installs.
+    """
     if "broker" in apps and len(apps) > 1:
         raise RuntimeError("broker must run as the sole surface; do not bundle it with others")
-    container = build_default_container(ctx)
+    injected = container
+    if container is None:
+        container = build_default_container(ctx)
     if len(apps) == 1:
         surface = apps[0]
         mod = importlib.import_module(SURFACE_MODULES[surface])
         # Standalone control carries the composition container so the /mcp
         # mount (installer + session-manager lifespan) rides it; standalone
         # auth carries it for the /mcp discovery-challenge placeholder (the
-        # discovery pointers it serves must not dangle) — the other surfaces
+        # discovery pointers it serves must not dangle). The standalone broker
+        # carries a caller-supplied container (extra routers, an injected
+        # Broker) and otherwise builds its own default; the other surfaces
         # keep their own default wiring.
         if surface in ("control", "auth"):
             app: FastAPI = mod.create_app(ctx, container=container)
+        elif surface == "broker" and injected is not None:
+            app = mod.create_app(ctx, container=injected)
         else:
             app = mod.create_app(ctx)
         # Safety net: create_surface_app installs the platform verifier on every

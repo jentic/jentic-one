@@ -34,6 +34,7 @@ EXPECTED_PARAMETERS: dict[str, list[tuple[str, inspect._ParameterKind]]] = {
     "build_app": [
         ("ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD),
         ("apps", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("container", inspect.Parameter.KEYWORD_ONLY),
     ],
     "build_context": [
         ("config", inspect.Parameter.POSITIONAL_OR_KEYWORD),
