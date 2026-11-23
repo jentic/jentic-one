@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jentic_one.shared.config._state_compat import _fold_deprecated_state_section
@@ -36,6 +37,8 @@ from jentic_one.shared.config.registry import CatalogConfig, IngestConfig, Searc
 from jentic_one.shared.config.runtime import RuntimeConfig, ServicesConfig, WorkerConfig
 from jentic_one.shared.state.factory import StateBackendConfig
 from jentic_one.shared.url import is_loopback_host, is_loopback_url, origins_equivalent
+
+_logger = structlog.get_logger(__name__)
 
 
 class AppConfig(BaseModel):
@@ -163,6 +166,23 @@ class AppConfig(BaseModel):
                 f"databases.admin.pool_max={admin.pool_max}; raise pool_max above "
                 f"{2 * concurrency} or lower worker.concurrency to "
                 f"{max(1, (admin.pool_max - 1) // 2)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_shared_broker_and_admin_jwt_secret(self) -> AppConfig:
+        """Log a structured startup warning when broker.jwt_secret matches admin.auth.jwt_secret."""
+        if (
+            self.broker.jwt_secret is not None
+            and self.broker.jwt_secret.get_secret_value()
+            == self.admin.auth.jwt_secret.get_secret_value()
+        ):
+            _logger.warning(
+                "broker_jwt_secret_matches_admin_jwt_secret",
+                detail=(
+                    "broker.jwt_secret equals admin.auth.jwt_secret; use distinct "
+                    "secrets or configure broker.jwt_verification.trusted_issuers"
+                ),
             )
         return self
 

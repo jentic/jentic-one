@@ -167,6 +167,8 @@ class AgentRuleEvaluator:
         method: str,
         path: str,
         operation_id: str | None,
+        registry_operation_id: str | None = None,
+        ambiguous_operation_ids: frozenset[str] = frozenset(),
         upstream_path: str | None = None,
     ) -> RuleEvaluation:
         """Evaluate the binding's (or its rule set's) rules for the request.
@@ -189,6 +191,8 @@ class AgentRuleEvaluator:
             method=method,
             path=path,
             operation_id=operation_id,
+            registry_operation_id=registry_operation_id,
+            ambiguous_operation_ids=ambiguous_operation_ids,
             binding=_binding_label(
                 agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
             ),
@@ -200,6 +204,8 @@ class AgentRuleEvaluator:
                 relative_path=path,
                 upstream_path=upstream_path,
                 operation_id=operation_id,
+                registry_operation_id=registry_operation_id,
+                ambiguous_operation_ids=ambiguous_operation_ids,
             )
             if upstream_path is not None
             else None

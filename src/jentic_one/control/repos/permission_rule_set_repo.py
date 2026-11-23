@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
-from sqlalchemy import delete, func, insert, or_, select, text, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.permission_rule_sets import (
@@ -16,6 +16,7 @@ from jentic_one.control.core.schema.permission_rule_sets import (
 )
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.pagination import Cursor
 
 
@@ -37,12 +38,10 @@ class PermissionRuleSetRepository:
         ``pg_advisory_xact_lock``; on SQLite it is a no-op, since every write
         transaction opens with ``BEGIN IMMEDIATE``.
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                {"key": f"permission_rule_sets:{rule_set_id}"},
-            )
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"permission_rule_sets:{rule_set_id}",
+        )
 
     @staticmethod
     async def create(

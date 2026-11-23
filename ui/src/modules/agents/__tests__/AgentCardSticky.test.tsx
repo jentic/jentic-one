@@ -117,10 +117,12 @@ function renderCard(
 				description={a.description}
 				banner={props.banner}
 				kpis={<Stats />}
-				stickyTop={props.stickyTop ?? 60}
-				stuckTop={props.stuckTop}
+				pinning={{
+					stickyTop: props.stickyTop ?? 60,
+					stuckTop: props.stuckTop,
+					onStuckChange: props.onStuckChange,
+				}}
 				onSwitchAgent={props.onSwitchAgent}
-				onStuckChange={props.onStuckChange}
 			/>
 		</MotionConfig>
 	);
@@ -249,8 +251,7 @@ describe('AgentCard — pinned header', () => {
 					lastActivity={{ at: null }}
 					banner={banner}
 					kpis={<Stats />}
-					stickyTop={60}
-					onPinnedHeight={onPinnedHeight}
+					pinning={{ stickyTop: 60, onPinnedHeight }}
 				/>
 			</MotionConfig>
 		);

@@ -29,7 +29,11 @@ from jentic_one.control.services.oauth_app_registrations.errors import (
     SecretRotationNotSupportedError,
 )
 from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+    DeviceAuthorizationRegistrationCreate,
     OAuthAppRegistrationFlowKind,
+    OAuthAppRegistrationQuery,
+    OAuthAppRegistrationUpdate,
     OAuthAppRegistrationView,
 )
 from jentic_one.control.services.oauth_app_registrations.service import (
@@ -42,7 +46,7 @@ from jentic_one.control.web.deps import (
 )
 from jentic_one.control.web.routers import oauth_app_registrations as router_module
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.pagination import InvalidCursorError
+from jentic_one.shared.pagination import InvalidCursorError, Page
 from jentic_one.shared.web import deps as shared_deps
 
 _ADMIN_IDENTITY = Identity(
@@ -157,12 +161,23 @@ def test_create_auth_code_returns_view_without_leaking_secret() -> None:
     # No leaked secret anywhere in the response body.
     assert "client_secret" not in body
     assert "<paste>" not in resp.text
-    # Router forwarded the create's kwargs verbatim.
+    # Router maps the request into the service model and keeps identity separate.
     call = svc.create_authorization_code.await_args
     assert call is not None
-    assert call.kwargs["name"] == "MyOrg Prod Gmail"
-    assert call.kwargs["catalog_api_id"] == "googleapis-com/gmail"
-    assert call.kwargs["client_secret"] == "<paste>"  # pragma: allowlist secret
+    (payload,) = call.args
+    assert isinstance(payload, AuthorizationCodeRegistrationCreate)
+    assert payload.name == "MyOrg Prod Gmail"
+    assert payload.api_vendor == "googleapis-com"
+    assert payload.catalog_api_id == "googleapis-com/gmail"
+    assert payload.display_name == "Gmail"
+    assert payload.client_id == "cid"
+    assert payload.authorize_url == "https://ex/a"
+    assert payload.token_url == "https://ex/t"
+    assert payload.default_scopes is None
+    assert payload.client_secret.get_secret_value() == "<paste>"
+    assert "<paste>" not in repr(payload)
+    assert "<paste>" not in str(payload)
+    assert call.kwargs == {"identity": _ADMIN_IDENTITY}
 
 
 def test_create_device_flow_reports_no_client_secret() -> None:
@@ -181,6 +196,21 @@ def test_create_device_flow_reports_no_client_secret() -> None:
     assert body["has_client_secret"] is False
     assert body["flow_kind"] == "device_authorization"
     assert "client_secret" not in body
+    call = svc.create_device_authorization.await_args
+    assert call is not None
+    (payload,) = call.args
+    assert isinstance(payload, DeviceAuthorizationRegistrationCreate)
+    assert payload.name == "MyOrg Gmail Device"
+    assert payload.api_vendor == "googleapis-com"
+    assert payload.catalog_api_id == "googleapis-com/gmail"
+    assert payload.display_name == "Gmail"
+    assert payload.client_id == "cid"
+    assert payload.authorization_endpoint == "https://ex/d"
+    assert payload.token_endpoint == "https://ex/t"
+    assert payload.default_scopes is None
+    assert not hasattr(payload, "client_secret")
+    assert "client_secret" not in type(payload).model_fields
+    assert call.kwargs == {"identity": _ADMIN_IDENTITY}
 
 
 def test_create_requires_catalog_api_id() -> None:
@@ -334,7 +364,9 @@ def test_get_maps_not_found_to_404() -> None:
 
 def test_list_returns_paginated_envelope() -> None:
     svc = AsyncMock(spec=OAuthAppRegistrationService)
-    svc.list_page = AsyncMock(return_value=([_mk_view()], True, "cursor-abc"))
+    svc.list_page = AsyncMock(
+        return_value=Page(data=[_mk_view()], has_more=True, next_cursor="cursor-abc")
+    )
     app = _build_app(svc=svc)
     with TestClient(app) as client:
         resp = client.get(
@@ -348,9 +380,12 @@ def test_list_returns_paginated_envelope() -> None:
     assert body["next_cursor"] == "cursor-abc"
     call = svc.list_page.await_args
     assert call is not None
-    assert call.kwargs["flow_kind"] == "authorization_code"
-    assert call.kwargs["cursor"] == "cursor-prev"
-    assert call.kwargs["limit"] == 1
+    (query,) = call.args
+    assert isinstance(query, OAuthAppRegistrationQuery)
+    assert query.flow_kind == "authorization_code"
+    assert query.cursor == "cursor-prev"
+    assert query.limit == 1
+    assert call.kwargs == {}
 
 
 def test_list_maps_invalid_cursor_to_400() -> None:
@@ -384,6 +419,33 @@ def test_get_refused_for_non_admin() -> None:
 # ---------------------------------------------------------------------------
 # Update / rotate-secret / delete
 # ---------------------------------------------------------------------------
+
+
+def test_update_maps_request_to_service_model() -> None:
+    svc = AsyncMock(spec=OAuthAppRegistrationService)
+    svc.update = AsyncMock(return_value=_mk_view(name="Renamed"))
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.patch(
+            "/oauth-app-registrations/oar_test",
+            json={"name": "Renamed", "default_scopes": [], "is_active": False},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Renamed"
+    call = svc.update.await_args
+    assert call is not None
+    registration_id, payload = call.args
+    assert registration_id == "oar_test"
+    assert isinstance(payload, OAuthAppRegistrationUpdate)
+    assert payload.name == "Renamed"
+    assert payload.default_scopes == []
+    assert payload.is_active is False
+    assert payload.display_name is None
+    assert payload.authorize_url is None
+    assert payload.token_url is None
+    assert payload.authorization_endpoint is None
+    assert payload.token_endpoint is None
+    assert call.kwargs == {"identity": _ADMIN_IDENTITY}
 
 
 def test_update_refused_for_non_admin() -> None:

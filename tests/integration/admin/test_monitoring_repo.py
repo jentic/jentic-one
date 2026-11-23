@@ -187,6 +187,124 @@ async def test_top_operations_ranks_by_total(
     assert failed_op.failed == 1
 
 
+async def test_top_operations_breaks_ties_deterministically_across_limit(
+    admin_db: DatabaseSession, clean_execution_records: None
+) -> None:
+    """Pins #1801: tied operations sort deterministically by (api_vendor, api_name, operation_id),
+    including which rows win at the LIMIT cut-off."""
+    now = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
+    # Seed in reverse lexical order so insertion/heap scan order disagrees with the tie-breaker.
+    tied_ops = [
+        ("stripe", "payments", "refundCharge"),
+        ("stripe", "payments", "createCharge"),
+        ("stripe", "billing", "listInvoices"),
+        ("github", "rest", "listRepos"),
+    ]
+    for vendor, name, op_id in tied_ops:
+        for _ in range(2):
+            await _seed(
+                admin_db,
+                now,
+                "completed",
+                api_vendor=vendor,
+                api_name=name,
+                operation_id=op_id,
+            )
+
+    cutoff = now - timedelta(hours=1)
+    until = now + timedelta(minutes=1)
+    async with admin_db.session() as session:
+        all_four = await MonitoringRepository.top_operations(session, cutoff, until, limit=10)
+        cut_two = await MonitoringRepository.top_operations(session, cutoff, until, limit=2)
+
+    expected_order = [
+        ("github", "rest", "listRepos", 2),
+        ("stripe", "billing", "listInvoices", 2),
+        ("stripe", "payments", "createCharge", 2),
+        ("stripe", "payments", "refundCharge", 2),
+    ]
+    assert [(o.api_vendor, o.api_name, o.operation_id, o.total) for o in all_four] == expected_order
+    assert [(o.api_vendor, o.api_name, o.operation_id, o.total) for o in cut_two] == expected_order[
+        :2
+    ]
+
+
+@pytest.mark.parametrize(
+    ("group_by", "expected_keys"),
+    [
+        ("agent", ["agent/agt_alpha", "agent/agt_beta", "agent/agt_gamma", "user/usr_alpha"]),
+        ("api", ["acme/widgets", "github/repos", "stripe/payments", "unknown/unknown"]),
+        ("credential", ["cred_a", "cred_b", "cred_m", "unknown"]),
+    ],
+)
+async def test_grouped_top_breaks_ties_deterministically_across_limit(
+    admin_db: DatabaseSession,
+    clean_execution_records: None,
+    group_by: str,
+    expected_keys: list[str],
+) -> None:
+    """Pins #1801: grouped_top orders tied counts by key ascending on both backends,
+    handling nullable attribution columns consistently and selecting identical rows at LIMIT."""
+    now = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
+    # Seed in reverse order so physical table order opposes the deterministic tie-breaker.
+    rows: list[dict[str, object]] = [
+        {
+            "actor_type": "user",
+            "actor_id": "usr_alpha",
+            "api_vendor": None,
+            "api_name": None,
+            "credential_id": None,
+        },
+        {
+            "actor_type": "agent",
+            "actor_id": "agt_gamma",
+            "api_vendor": "stripe",
+            "api_name": "payments",
+            "credential_id": "cred_m",
+        },
+        {
+            "actor_type": "agent",
+            "actor_id": "agt_beta",
+            "api_vendor": "github",
+            "api_name": "repos",
+            "credential_id": "cred_b",
+        },
+        {
+            "actor_type": "agent",
+            "actor_id": "agt_alpha",
+            "api_vendor": "acme",
+            "api_name": "widgets",
+            "credential_id": "cred_a",
+        },
+    ]
+    for attrs in rows:
+        for _ in range(2):
+            async with admin_db.session() as session:
+                await ExecutionRecordRepository.create(
+                    session,
+                    toolkit_id="tk_test000000000000000000",
+                    trace_id="abcdef1234567890abcdef12",
+                    started_at=now,
+                    status="completed",
+                    created_by="usr_test",
+                    actor_id=str(attrs["actor_id"]),
+                    actor_type=str(attrs["actor_type"]),
+                    api_vendor=attrs["api_vendor"],  # type: ignore[arg-type]
+                    api_name=attrs["api_name"],  # type: ignore[arg-type]
+                    credential_id=attrs["credential_id"],  # type: ignore[arg-type]
+                )
+                await session.commit()
+
+    cutoff = now - timedelta(hours=1)
+    until = now + timedelta(minutes=1)
+    async with admin_db.session() as session:
+        full = await MonitoringRepository.grouped_top(session, cutoff, until, group_by, 10)
+        boundary = await MonitoringRepository.grouped_top(session, cutoff, until, group_by, 2)
+
+    assert [r.key for r in full] == expected_keys
+    assert [r.key for r in boundary] == expected_keys[:2]
+
+
 async def test_overall_stats_counts_and_percentiles(
     admin_db: DatabaseSession, clean_execution_records: None
 ) -> None:

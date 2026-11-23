@@ -101,13 +101,15 @@ export class JobsService {
     }
     /**
      * Get a job's result
-     * Get the result of a completed job — polymorphic by kind.
+     * Get the stored result of a finished job — polymorphic by kind.
      *
-     * Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
-     * running, failed or cancelled), and ``410`` once an
-     * approved execution's result is past
-     * ``held_executions.result_retention_seconds``.
-     * @returns any The completed job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:
+     * Serves the stored result for a ``completed`` job, or a ``failed`` job that
+     * recorded an actionable result (such as an approved execution whose upstream
+     * call or run-time authorization failed, or a held execution that never ran).
+     * Answers ``409`` while the job is active, cancelled, dead-lettered, or failed
+     * without a stored result, and ``410`` once an approved execution's result is
+     * past ``held_executions.result_retention_seconds``.
+     * @returns any The finished job's result, polymorphic by the job's `kind` (read `kind` from `GET /jobs/{job_id}`). The body is always a JSON object — never an array or a scalar — but its members depend on the kind:
      *
      * - **`kind=import`**: `revisions`, one entry per API revision the import produced, each with `api` (the API object), `revision_id` and `state`.
      * - **`kind=execution`**: the execution document — `execution_id`, `status` (`completed` or `failed`), `http_status` (the upstream status, or null when the call never reached the upstream), `duration_ms`, and `body_b64` when the upstream returned a body. The upstream payload is base64 in `body_b64`; it is never inlined as JSON, so it needs decoding and interpreting against the upstream's own content type. A run-time authorization denial adds `problem`, the RFC 9457 body the synchronous execute route would have returned.

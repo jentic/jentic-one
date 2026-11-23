@@ -52,10 +52,10 @@ func NewExecuteEnvelope(status int, headers map[string]string, body any, executi
 }
 
 // Directive mirrors the broker's problem+json agent_directive extension member
-// (broker/core/directives.py AgentDirective). The strategy vocabulary below
-// mirrors broker AgentStrategy; until the contract is a shared OpenAPI schema,
-// the Python test test_directive_factories_emit_known_strategies and this list
-// must be kept in lock-step (review P1-1).
+// (broker/core/directives.py AgentDirective), and Strategy shares broker
+// AgentStrategy wire values. Only rendering branches needing strategy-specific
+// behavior name constants below; test_directive_factories_emit_known_strategies
+// in tests/unit/broker/test_problem_json.py guards the broker side.
 type Directive struct {
 	Strategy    string         `json:"strategy"`
 	Parameters  map[string]any `json:"parameters"`
@@ -80,19 +80,19 @@ func RenderDirective(ctx context.Context, w io.Writer, d Directive) {
 	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(w, st.Warn.Render("Denied — recovery required:"))
 	if d.Instruction != "" {
-		fmt.Fprintln(w, "  "+d.Instruction)
+		fmt.Fprintln(w, "  "+TerminalSafe(d.Instruction))
 	}
 	if cmd, ok := d.Parameters["suggested_command"].(string); ok && cmd != "" {
-		fmt.Fprintln(w, "  run: "+st.Accent.Render(cmd))
+		fmt.Fprintln(w, "  run: "+st.Accent.Render(TerminalSafe(cmd)))
 	}
 	if u, ok := d.Parameters["provisioning_url"].(string); ok && u != "" {
-		fmt.Fprintln(w, "  open: "+st.Accent.Render(u))
+		fmt.Fprintln(w, "  open: "+st.Accent.Render(TerminalSafe(u)))
 	}
 	if cands, ok := d.Parameters["candidates"].([]any); ok && len(cands) > 0 {
 		parts := make([]string, 0, len(cands))
 		for _, c := range cands {
 			if s, isStr := c.(string); isStr {
-				parts = append(parts, s)
+				parts = append(parts, TerminalSafe(s))
 			}
 		}
 		if len(parts) > 0 {
@@ -103,7 +103,7 @@ func RenderDirective(ctx context.Context, w io.Writer, d Directive) {
 	// retrying; surface it so the recovery loop doesn't hot-spin.
 	if d.Strategy == DirectiveWait || d.Strategy == DirectiveRetry {
 		if secs, ok := d.Parameters["retry_after_seconds"]; ok {
-			fmt.Fprintf(w, "  retry after: %v\n", secs)
+			fmt.Fprintf(w, "  retry after: %s\n", TerminalSafe(fmt.Sprint(secs)))
 		}
 	}
 	// Catch-all self-check for when the directive's step doesn't unblock (UX9).
@@ -160,6 +160,8 @@ type HeldNotice struct {
 	HeldExecutionID string
 	ReviewURL       string
 	ExpiresAt       string
+	// Trusted reports whether ReviewURL belongs to the configured Jentic instance.
+	Trusted bool
 	// Waiting is true when the command goes on to wait for the decision
 	// (`execute --wait`), false when it stops at the hold.
 	Waiting bool
@@ -170,18 +172,23 @@ type HeldNotice struct {
 // call, when the hold expires, and how to collect the result.
 func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 	st := theme.StylesFromContext(ctx)
+	heldID := TerminalSafe(n.HeldExecutionID)
 	fmt.Fprintln(w, st.Warn.Render("Held — this call needs human approval before it runs:"))
-	fmt.Fprintln(w, "  held execution: "+n.HeldExecutionID)
-	fmt.Fprintln(w, "  Show the user this link; they approve or deny the call there.")
-	fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+	fmt.Fprintln(w, "  held execution: "+heldID)
+	if n.Trusted {
+		fmt.Fprintln(w, "  Show the user this link; they approve or deny the call there.")
+		fmt.Fprintln(w, "  open: "+st.Accent.Render(TerminalSafe(n.ReviewURL)))
+	} else {
+		fmt.Fprintln(w, st.Warn.Render("  warning: review_url did not come from the configured Jentic instance; do not open it or ask the user to sign in."))
+	}
 	if n.ExpiresAt != "" {
-		fmt.Fprintln(w, "  expires: "+n.ExpiresAt)
+		fmt.Fprintln(w, "  expires: "+TerminalSafe(n.ExpiresAt))
 	}
 	if n.Waiting {
 		fmt.Fprintln(w, "  waiting for the decision …")
 		return
 	}
-	fmt.Fprintln(w, "  then: "+st.Accent.Render(heldPollCommand(n.HeldExecutionID))+" (do not re-send the call)")
+	fmt.Fprintln(w, "  then: "+st.Accent.Render(heldPollCommand(heldID))+" (do not re-send the call)")
 }
 
 // RenderHeldUnfinished writes the notice for a followed held call that has
@@ -190,28 +197,34 @@ func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
 // known) and the poll command to run next.
 func RenderHeldUnfinished(ctx context.Context, w io.Writer, n HeldNotice, headline string) {
 	st := theme.StylesFromContext(ctx)
-	fmt.Fprintln(w, st.Warn.Render(headline))
-	fmt.Fprintln(w, "  held execution: "+n.HeldExecutionID)
+	heldID := TerminalSafe(n.HeldExecutionID)
+	fmt.Fprintln(w, st.Warn.Render(TerminalSafe(headline)))
+	fmt.Fprintln(w, "  held execution: "+heldID)
 	if n.ReviewURL != "" {
-		fmt.Fprintln(w, "  Show the user this link again if they have not decided; they approve or deny the call there.")
-		fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+		if n.Trusted {
+			fmt.Fprintln(w, "  Show the user this link again if they have not decided; they approve or deny the call there.")
+			fmt.Fprintln(w, "  open: "+st.Accent.Render(TerminalSafe(n.ReviewURL)))
+		} else {
+			fmt.Fprintln(w, st.Warn.Render("  warning: review_url did not come from the configured Jentic instance; do not open it or ask the user to sign in."))
+		}
 	}
 	if n.ExpiresAt != "" {
-		fmt.Fprintln(w, "  expires: "+n.ExpiresAt)
+		fmt.Fprintln(w, "  expires: "+TerminalSafe(n.ExpiresAt))
 	}
-	fmt.Fprintln(w, "  then: "+st.Accent.Render(heldPollCommand(n.HeldExecutionID))+" (do not re-send the call)")
+	fmt.Fprintln(w, "  then: "+st.Accent.Render(heldPollCommand(heldID))+" (do not re-send the call)")
 }
 
 // RenderHeldFinished names the held execution a finished outcome belongs to
 // on w (the caller's stderr): a dim one-line note with outcome, or — empty
 // outcome, following a never-ran notice — an indented "held execution:" line.
 func RenderHeldFinished(ctx context.Context, w io.Writer, heldExecutionID, outcome string) {
+	heldID := TerminalSafe(heldExecutionID)
 	if outcome == "" {
-		fmt.Fprintln(w, "  held execution: "+heldExecutionID)
+		fmt.Fprintln(w, "  held execution: "+heldID)
 		return
 	}
 	st := theme.StylesFromContext(ctx)
-	fmt.Fprintln(w, st.Dim.Render("held execution "+heldExecutionID+": "+outcome))
+	fmt.Fprintln(w, st.Dim.Render("held execution "+heldID+": "+TerminalSafe(outcome)))
 }
 
 func heldPollCommand(heldExecutionID string) string {
@@ -258,7 +271,7 @@ func RenderApprovalOutcome(ctx context.Context, w io.Writer, problemType, detail
 	}
 	fmt.Fprintln(w, st.Warn.Render(lines[0]))
 	if detail != "" {
-		fmt.Fprintln(w, "  "+detail)
+		fmt.Fprintln(w, "  "+TerminalSafe(detail))
 	}
 	for _, l := range lines[1:] {
 		fmt.Fprintln(w, "  "+l)

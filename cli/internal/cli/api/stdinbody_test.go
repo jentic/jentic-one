@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jentic/jentic-one/cli/client"
 )
 
 // TestStdinHasPipedBody pins the #1354 gate: the implicit stdin fallback must
@@ -222,5 +225,27 @@ func TestResolveExecuteBody_PipedStdinIsRead(t *testing.T) {
 	}
 	if string(got) != payload {
 		t.Errorf("body = %q, want %q", got, payload)
+	}
+}
+
+func TestReadStdinBody_RejectsOversizeStdin(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "oversize-stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := f.Truncate(client.MaxBodyBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+
+	var rerr error
+	withStdin(t, f, func() {
+		_, rerr = readStdinBody()
+	})
+	if !errors.Is(rerr, client.ErrRequestBodyTooLarge) {
+		t.Fatalf("readStdinBody err = %v, want wrapping ErrRequestBodyTooLarge", rerr)
 	}
 }

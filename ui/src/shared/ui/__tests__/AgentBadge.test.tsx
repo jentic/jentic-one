@@ -16,6 +16,9 @@ describe('agentInitials', () => {
 
 	it('takes the first two letters for single-word names', () => {
 		expect(agentInitials('orchestrator')).toBe('OR');
+		// Code points: an emoji is one letter, never half a glyph.
+		expect(agentInitials('🚀-launcher')).toBe('🚀L');
+		expect(agentInitials('🚀🚀')).toBe('🚀🚀');
 	});
 
 	it('returns empty string for missing names', () => {

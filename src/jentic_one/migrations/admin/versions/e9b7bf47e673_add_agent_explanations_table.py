@@ -11,7 +11,7 @@ The table starts empty. Downgrade drops it, and with it every explanation:
 they are advisory text shown to reviewers, not part of any decision record.
 
 Revision ID: e9b7bf47e673
-Revises: bf1a695f4db0
+Revises: c7d2e9a41b30
 Create Date: 2026-11-04
 
 """
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e9b7bf47e673"  # pragma: allowlist secret
-down_revision: str | None = "bf1a695f4db0"  # pragma: allowlist secret
+down_revision: str | None = "c7d2e9a41b30"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

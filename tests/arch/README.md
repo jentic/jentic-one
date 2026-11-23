@@ -28,7 +28,9 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_gateway_routes.py`](test_gateway_routes.py) — the split-deploy gateway (Docker + Helm) routes every backend path to a backend that serves it, carries no dead locations, and both configs share one map
 - [`test_ci_pass_markers.py`](test_ci_pass_markers.py) — `tools/ci_pass_markers.py` hashes the same input globs the CI paths filter declares, and computes the marker ids the workflow reads back
 - [`test_image_lock_install.py`](test_image_lock_install.py) — every Dockerfile that installs the wheel installs exactly `uv.lock` (hash-checked binary wheels, `--no-deps`, `pip check`)
+- [`test_composition_public_api.py`](test_composition_public_api.py) — `jentic_one.composition` public entrypoints and signatures stay in lockstep with `jentic_one.__main__`
 - [`test_testing_public_api.py`](test_testing_public_api.py) — the `jentic_one.testing` symbols the extending guide uses exist and are exported
+- [`test_testing_introspect_api.py`](test_testing_introspect_api.py) — `jentic_one.testing.introspect` route and scoping introspection contract, scoping-table parity, and module boundary
 
 ## Module boundaries and layering
 
@@ -66,6 +68,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_no_sqlalchemy_tuple_shims.py`](test_no_sqlalchemy_tuple_shims.py) — no SQLAlchemy typed-tuple shims (`Result.tuples()`, `.t`, `Row._tuple()`, `._t`)
 - [`test_repeated_failure_counter_threading.py`](test_repeated_failure_counter_threading.py) — every call site that runs repeated-failure detection passes the shared counter
 - [`test_keyset_helper.py`](test_keyset_helper.py) — keyset pagination predicates come from `shared/db/keyset.py`, never hand-written
+- [`test_advisory_lock_single_source.py`](test_advisory_lock_single_source.py) — transaction-scoped advisory locks go through `shared/db/locks.py`, never hand-rolled `pg_advisory_xact_lock` / `pg_advisory_lock` SQL
 - [`test_no_direct_db.py`](test_no_direct_db.py) — model modules never import DB internals directly
 - [`test_no_manual_commit.py`](test_no_manual_commit.py) — no production `session.commit()`/`rollback()`
 - [`test_migration_single_head.py`](test_migration_single_head.py) — exactly one alembic head per migration tree

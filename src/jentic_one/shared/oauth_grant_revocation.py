@@ -18,10 +18,9 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
-from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
-from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
+from jentic_one.admin.repos.token_lineage_repo import TokenLineageRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -64,8 +63,7 @@ async def revoke_grant_and_sweep_tokens(
     newly_revoked = grant.status == OAuthGrantStatus.ACTIVE.value and (
         await OAuthClientGrantRepository.revoke(session, grant.id)
     )
-    swept_access = await AccessTokenRepository.revoke_by_grant(session, grant.id)
-    swept_refresh = await RefreshTokenRepository.revoke_by_grant(session, grant.id)
+    sweep = await TokenLineageRepository.revoke_by_grant(session, grant.id)
     if not newly_revoked:
         return False
 
@@ -79,8 +77,8 @@ async def revoke_grant_and_sweep_tokens(
         after={
             "oauth_client_id": grant.oauth_client_id,
             "agent_id": grant.agent_id,
-            "swept_access_tokens": swept_access,
-            "swept_refresh_tokens": swept_refresh,
+            "swept_access_tokens": sweep.access,
+            "swept_refresh_tokens": sweep.refresh,
         },
         reason=audit_reason,
         origin=origin,

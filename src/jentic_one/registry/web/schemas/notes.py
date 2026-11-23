@@ -8,6 +8,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from jentic_one.registry.services.schemas import NoteCreate, NoteUpdate
+from jentic_one.registry.services.schemas import NoteResource as ServiceNoteResource
+from jentic_one.shared.schemas.api_reference import APIReference
 from jentic_one.shared.web import openapi_examples as ex
 
 _EX_NOTE_BODY = (
@@ -87,6 +90,22 @@ class NoteResource(BaseModel):
             raise ValueError(msg)
         return self
 
+    def to_service_model(self) -> ServiceNoteResource:
+        return ServiceNoteResource(
+            api=(
+                APIReference(
+                    vendor=self.api.vendor,
+                    name=self.api.name,
+                    version=self.api.version,
+                )
+                if self.api is not None
+                else None
+            ),
+            operation_id=self.operation_id,
+            execution_id=self.execution_id,
+            credential_id=self.credential_id,
+        )
+
 
 class NoteCreateRequest(BaseModel):
     """Payload for creating a new note."""
@@ -119,6 +138,17 @@ class NoteCreateRequest(BaseModel):
         description="ID of an execution the note relates to; null if none.",
         examples=[ex.EXECUTION_ID],
     )
+
+    def to_service_model(self) -> NoteCreate:
+        return NoteCreate(
+            resource=self.resource.to_service_model(),
+            type=self.type.value if self.type is not None else None,
+            body=self.body,
+            confidence=self.confidence.value if self.confidence is not None else None,
+            confidence_source="client",
+            source=self.source.value if self.source is not None else None,
+            related_execution_id=self.related_execution_id,
+        )
 
 
 class NoteUpdateRequest(BaseModel):
@@ -159,6 +189,9 @@ class NoteUpdateRequest(BaseModel):
             msg = "body may not be null"
             raise ValueError(msg)
         return self
+
+    def to_service_model(self) -> NoteUpdate:
+        return NoteUpdate.model_validate(self.model_dump(exclude_unset=True, mode="json"))
 
 
 class NoteResourceResponse(BaseModel):

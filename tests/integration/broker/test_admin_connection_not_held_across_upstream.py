@@ -559,7 +559,9 @@ class _AllowBoundCredential:
 class _ActiveActor:
     """The pre-injection actor read, reporting the job's actor active and permitted."""
 
-    async def authority(self, *, actor_id: str, actor_type: str, permission: str) -> ActorAuthority:
+    async def authority(
+        self, *, actor_id: str, actor_type: str, permission: str, **_lineage: Any
+    ) -> ActorAuthority:
         return ActorAuthority(active=True, holds_permission=True)
 
 
@@ -602,6 +604,9 @@ async def test_queued_execution_holds_no_admin_connection(
                 "api_name": _API_NAME,
                 "api_version": _API_VERSION,
                 "operation": {"id": "getThing", "path": "/thing", "method": "GET"},
+                "auth_token_sha256": "abcd" * 16,
+                "auth_method": "jwt",
+                "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             },
         )
         session.add(job)
@@ -683,6 +688,9 @@ async def test_queued_execution_completion_failure_never_resends_upstream_or_cre
                 "api_name": _API_NAME,
                 "api_version": _API_VERSION,
                 "operation": {"id": "getThing", "path": "/thing", "method": "GET"},
+                "auth_token_sha256": "abcd" * 16,
+                "auth_method": "jwt",
+                "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
             },
         )
         session.add(job)

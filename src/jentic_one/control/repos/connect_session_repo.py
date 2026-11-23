@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -18,6 +18,7 @@ from jentic_one.control.core.schema.connect_sessions import (
     ConnectSession,
 )
 from jentic_one.shared.db.keyset import apply_desc_keyset
+from jentic_one.shared.db.locks import advisory_xact_lock
 from jentic_one.shared.pagination import Cursor
 
 # The non-terminal states. A session outside these is frozen — no transition
@@ -160,12 +161,10 @@ class ConnectSessionRepository:
         rollback). On SQLite it is a no-op: every write transaction opens with
         ``BEGIN IMMEDIATE``, which already serialises writers to the file.
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:sid))"),
-                {"sid": f"connect_session_revision:{session_id}"},
-            )
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"connect_session_revision:{session_id}",
+        )
 
     @staticmethod
     async def transition_state(
@@ -434,12 +433,10 @@ class ConnectSessionRepository:
         SQLite: a no-op; its write transactions are already serial
         (``BEGIN IMMEDIATE``).
         """
-        dialect = session.bind.dialect.name if session.bind else "sqlite"
-        if dialect == "postgresql":
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                {"key": f"connect_session_cap:{owner_key}"},
-            )
+        await advisory_xact_lock(
+            session,
+            hashtext_name=f"connect_session_cap:{owner_key}",
+        )
 
     @staticmethod
     async def count_open(

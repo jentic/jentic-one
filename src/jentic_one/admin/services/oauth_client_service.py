@@ -9,10 +9,9 @@ from urllib.parse import urlparse
 import structlog
 
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
-from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
 from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
-from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
+from jentic_one.admin.repos.token_lineage_repo import TokenLineageRepository
 from jentic_one.admin.services._support.passwords import (
     configure_argon2_from_config,
     dummy_password_hash,
@@ -580,8 +579,7 @@ class OAuthClientService:
                     revocation_cause="the client was deleted",
                     event_reason=OAUTH_CLIENT_DELETED_REVOCATION_REASON,
                 )
-            swept_access = await AccessTokenRepository.revoke_by_client(session, public_client_id)
-            swept_refresh = await RefreshTokenRepository.revoke_by_client(session, public_client_id)
+            sweep = await TokenLineageRepository.revoke_by_client(session, public_client_id)
 
             success = await OAuthClientRepository.delete(session, id)
             if not success:
@@ -598,8 +596,8 @@ class OAuthClientService:
                 after={
                     "deleted": True,
                     "revoked_grants": len(grants),
-                    "swept_access_tokens": swept_access,
-                    "swept_refresh_tokens": swept_refresh,
+                    "swept_access_tokens": sweep.access,
+                    "swept_refresh_tokens": sweep.refresh,
                 },
                 reason="oauth client permanently deleted",
                 origin=identity.origin.value,
@@ -611,8 +609,8 @@ class OAuthClientService:
             client_id=public_client_id,
             client_name=client_name,
             revoked_grants=len(grants),
-            swept_access_tokens=swept_access,
-            swept_refresh_tokens=swept_refresh,
+            swept_access_tokens=sweep.access,
+            swept_refresh_tokens=sweep.refresh,
             actor_id=identity.sub,
         )
 

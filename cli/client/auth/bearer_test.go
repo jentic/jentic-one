@@ -17,6 +17,7 @@ import (
 
 func TestBearerToken_InjectedTokenWins(t *testing.T) {
 	withConfigDir(t)
+	seedEnvironmentBaseURL(t, "e1", "https://origin-a.example.com")
 	ref := IdentityRef{Identity: "a1", Environment: "e1"}
 	if err := SaveAPIKey(ref, "jak_stored"); err != nil {
 		t.Fatal(err)
@@ -36,6 +37,7 @@ func TestBearerToken_InjectedTokenWins(t *testing.T) {
 
 func TestBearerToken_APIKeyBeatsCachedToken(t *testing.T) {
 	withConfigDir(t)
+	seedEnvironmentBaseURL(t, "e1", "https://origin-a.example.com")
 	ref := IdentityRef{Identity: "a1", Environment: "e1"}
 	if err := SaveAPIKey(ref, "jak_stored"); err != nil {
 		t.Fatal(err)
@@ -107,6 +109,7 @@ func TestRefreshBearerToken_DropsCache(t *testing.T) {
 
 func TestRefreshBearerToken_StaticCredentialsPassThrough(t *testing.T) {
 	withConfigDir(t)
+	seedEnvironmentBaseURL(t, "e1", "https://origin-a.example.com")
 	ref := IdentityRef{Identity: "a1", Environment: "e1"}
 	if err := SaveAPIKey(ref, "jak_stored"); err != nil {
 		t.Fatal(err)

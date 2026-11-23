@@ -272,9 +272,14 @@ var (
 	// the captured key through isSensitiveKey so the byte pass and the structured
 	// pass share ONE definition of sensitive (incl. the allowlist — otherwise the
 	// byte pass would clobber a legitimate next_token the structured pass preserved).
-	reKV     = regexp.MustCompile(`(?i)"([a-z0-9_\-]+)"(\s*:\s*)"[^"]*"`)
-	reBearer = regexp.MustCompile(`(?i)(bearer\s+)[a-zA-Z0-9_\-\.=]+`)
-	rePEM    = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
+	reKV         = regexp.MustCompile(`(?i)"([a-z0-9_\-]+)"(\s*:\s*)"((?:[^"\\]|\\.)*)"`)
+	reFormKV     = regexp.MustCompile(`(?i)\b([a-z0-9_\-]+)(\s*=\s*)([^\s&"';<>]+)`)
+	reColonKV    = regexp.MustCompile(`(?im)^([[:blank:]]*)([A-Za-z0-9_\-]+)([[:blank:]]*:[[:blank:]]*)(\S[^\r\n]*)$`)
+	reAuthScheme = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization)([[:blank:]]*[:=][[:blank:]]*)([A-Za-z0-9\-]+[[:blank:]]+)?[^\s"';<>]+`)
+	reBearer     = regexp.MustCompile(`(?i)(bearer\s+)[a-zA-Z0-9_\-\.~+/=]+`)
+	reBasic      = regexp.MustCompile(`(?i)(basic\s+)[a-zA-Z0-9+/=_\-]+`)
+	reJAK        = regexp.MustCompile(`\bjak_[A-Za-z0-9_\-]{8,}`)
+	rePEM        = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
 )
 
 // redactSensitive is the NARROW byte-level backstop applied after marshaling (and
@@ -302,7 +307,32 @@ func redactSensitive(data []byte) []byte {
 		}
 		return []byte(`"` + key + `"` + string(sub[2]) + `"[REDACTED]"`)
 	})
+	out = reFormKV.ReplaceAllFunc(out, func(m []byte) []byte {
+		sub := reFormKV.FindSubmatch(m)
+		if sub == nil {
+			return m
+		}
+		key := string(sub[1])
+		if !isSensitiveKey(key) && !isRegisteredSensitiveName(key) {
+			return m
+		}
+		return []byte(key + string(sub[2]) + "[REDACTED]")
+	})
+	out = reColonKV.ReplaceAllFunc(out, func(m []byte) []byte {
+		sub := reColonKV.FindSubmatch(m)
+		if sub == nil {
+			return m
+		}
+		key := string(sub[2])
+		if !isSensitiveKey(key) && !isRegisteredSensitiveName(key) {
+			return m
+		}
+		return []byte(string(sub[1]) + key + string(sub[3]) + "[REDACTED]")
+	})
+	out = reAuthScheme.ReplaceAll(out, []byte(`${1}${2}${3}[REDACTED]`))
 	out = reBearer.ReplaceAll(out, []byte(`${1}[REDACTED]`))
+	out = reBasic.ReplaceAll(out, []byte(`${1}[REDACTED]`))
+	out = reJAK.ReplaceAll(out, []byte(`jak_[REDACTED]`))
 	out = rePEM.ReplaceAll(out, []byte(`[REDACTED PRIVATE KEY]`))
 	return out
 }

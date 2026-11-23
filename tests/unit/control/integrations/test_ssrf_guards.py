@@ -253,6 +253,80 @@ def _vendor_reply(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.asyncio()
+@pytest.mark.parametrize("interval", [0, -1])
+async def test_begin_device_authorization_rejects_non_positive_polling_interval(
+    interval: int,
+) -> None:
+    def _reply(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "device_code": "dc",
+                "user_code": "UC",
+                "verification_uri": "https://vendor.example.com/device",
+                "interval": interval,
+            },
+        )
+
+    with (
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("93.184.216.34")),
+        patch.object(
+            httpx, "AsyncHTTPTransport", side_effect=lambda *a, **k: httpx.MockTransport(_reply)
+        ),
+        pytest.raises(DeviceAuthorizationUpstreamError, match="malformed") as exc_info,
+    ):
+        await _call_begin()
+    assert exc_info.value.status == 200
+    assert "dc" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize("field", ["device_code", "user_code", "verification_uri"])
+@pytest.mark.parametrize("value", [None, 42, {}, []])
+async def test_begin_device_authorization_rejects_non_string_required_fields(
+    field: str, value: object
+) -> None:
+    def _reply(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "device_code": "dc",
+                "user_code": "UC",
+                "verification_uri": "https://vendor.example.com/device",
+                field: value,
+            },
+        )
+
+    with (
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("93.184.216.34")),
+        patch.object(
+            httpx, "AsyncHTTPTransport", side_effect=lambda *a, **k: httpx.MockTransport(_reply)
+        ),
+        pytest.raises(DeviceAuthorizationUpstreamError, match="malformed"),
+    ):
+        await _call_begin()
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize("field", ["refresh_token", "scope", "token_type"])
+@pytest.mark.parametrize("value", [42, {}, []])
+async def test_poll_device_authorization_rejects_non_string_optional_token_fields(
+    field: str, value: object
+) -> None:
+    def _reply(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "at", field: value})
+
+    with (
+        patch.object(socket, "getaddrinfo", return_value=_addrinfo("93.184.216.34")),
+        patch.object(
+            httpx, "AsyncHTTPTransport", side_effect=lambda *a, **k: httpx.MockTransport(_reply)
+        ),
+        pytest.raises(DeviceAuthorizationUpstreamError, match="malformed"),
+    ):
+        await _call_poll()
+
+
+@pytest.mark.asyncio()
 @pytest.mark.parametrize(("call", "error"), _CONNECT_SITES)
 async def test_connect_site_reaches_allowlisted_internal_host_pinned(
     call: Callable[..., Awaitable[Any]], error: type[Exception]
@@ -362,3 +436,39 @@ async def test_connect_site_applies_allowlist_off_the_event_loop(
     assert len(sent) == 1
     assert len(lookup_threads) == 1
     assert loop_thread not in lookup_threads
+
+
+def _echo_probe() -> VendorIdentityProbeConfig:
+    return VendorIdentityProbeConfig(
+        endpoint="https://idp.example.com/user",
+        identity_field="login",
+        display_template="@{login}",
+    )
+
+
+@pytest.mark.asyncio()
+async def test_echo_identity_transport_error_is_typed() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    with (
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(respond),
+        ),
+        pytest.raises(IdentityEchoError, match="identity probe transport"),
+    ):
+        await echo_identity(probe=_echo_probe(), access_token="tok", egress=None)
+
+
+@pytest.mark.asyncio()
+async def test_echo_identity_oversized_body_fails_closed() -> None:
+    huge = httpx.Response(200, json={"login": "octocat", "pad": "x" * (512 * 1024)})
+    with (
+        patch(
+            "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+            return_value=httpx.MockTransport(lambda request: huge),
+        ),
+        pytest.raises(IdentityEchoError, match="too_large"),
+    ):
+        await echo_identity(probe=_echo_probe(), access_token="tok", egress=None)

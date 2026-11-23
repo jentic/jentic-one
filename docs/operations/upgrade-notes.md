@@ -14,6 +14,25 @@ before moving on — see [0.41.0](#0410) for why.
 
 Changes on `main` since 0.44.0; they ship in the next release.
 
+- **Breaking: `jentic run` and local agent accounts are removed.** The CLI no
+  longer creates a dedicated `<you>-local-agent` Unix user (with its home-dir
+  ACL grants, passwordless-launch sudoers entry, and Seatbelt/bwrap session
+  confinement), and `jentic setup` no longer offers that step or the MCP
+  sudo-shim isolation (`_jentic-<runtime>` service users and the root-owned
+  `/usr/local/libexec/jentic/jentic` copy). `jentic run` is now an unknown
+  command; `jentic setup` registers the agent, installs the skill, and writes
+  the plain `jentic mcp` entry. A machine that already has an agent account or
+  MCP service account keeps it until you run **`jentic reset`**, which still
+  deletes the users, revokes the ACL grants, removes the sudoers lines and the
+  root-owned copy, and then wipes your local jentic identity state (re-run
+  `jentic setup` afterwards). `jenticctl doctor` warns about any that remain,
+  and about a sudo-shim MCP entry left in a runtime config; on a machine
+  without `jenticctl`, `jentic reset` shows what it would remove before it
+  changes anything. To keep a coding
+  agent away from the instance's files, run it in a container or VM, or run
+  the instance on another machine — see
+  [same-host options](../security/same-host/README.md) and
+  [hardening same-host MCP](../security/same-host/mcp-same-host-hardening.md).
 - **The connect-session rejection cooldown is off by default.**
   `control.connect.rejection_cooldown_hours` defaults to `0` (it was `24`),
   so an agent whose request a human rejected may ask again at once instead of
@@ -54,6 +73,188 @@ Changes on `main` since 0.44.0; they ship in the next release.
   `install_on_app` or the control surface's `install_connect_limiters`. The
   shipped app factories are unaffected; a custom assembly must call those
   install functions.
+- **External IdP email linking clears invite credentials and blocks invite reissue.**
+  When a user signs in through an external Identity Provider with a verified
+  email matching an existing local account, linking the identity cancels active
+  invite tokens, clears any password set via invite redemption, revokes existing
+  login sessions for that user, transitions `invite_state` to `accepted`, and
+  writes a `USER` `update` audit entry. `POST /users/{user_id}:reissue-invite`
+  now returns `409 Conflict` for accounts in `accepted` state in addition to
+  `redeemed` state.
+- **Broker trusted-issuer JWKS key cache lifespan and non-blocking fetches.**
+  `TrustedIssuerVerifier` disables indefinite per-key LRU caching in favor of
+  the time-bounded JWK-set cache (`lifespan=300s`), bounds JWKS HTTP fetches to
+  5 seconds, offloads cold/refresh JWKS fetches to worker threads coalesced per
+  issuer, and refuses JWT headers missing a non-empty string `kid`
+  (`jwt_kid_missing`) before any JWKS lookup. Signing keys removed from an
+  issuer's JWKS stop verifying within at most one JWK-set cache lifespan
+  (5 minutes). Custom implementations of the internal `TokenVerifier` protocol
+  must define `async def verify(self, token: str) -> dict[str, object]`.
+- **Broker request-target and method-override rejection (`request_override_not_allowed`).**
+  The broker returns `400 Bad Request` (`type: "request_override_not_allowed"`)
+  when a proxied request includes target-override headers (`X-Original-URL`,
+  `X-Rewrite-URL`, `X-Original-URI`), method-override headers
+  (`X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`), or a
+  `_method` query parameter whose value differs from the HTTP request method.
+  Method-override headers matching the request's HTTP method are accepted and
+  stripped before forwarding upstream.
+- **Broker OAuth refresh coalescing and undecryptable refresh-token classification.**
+  Concurrent in-process refreshes for the same credential coalesce into a single
+  vendor call before acquiring a database connection, and cross-process refresh
+  contention uses non-blocking `pg_try_advisory_xact_lock` polling bounded by the
+  IdP deadline (`502 refresh_transient_error` on timeout). Stored refresh tokens
+  that cannot be decrypted with the configured encryption keys now return
+  `424 Failed Dependency` (`type: "credential_undecryptable"`) instead of
+  `credential_needs_reconnect`.
+- **Standalone OAuth2 connect flows include PKCE (`S256`).**
+  `DirectOAuth2Provider` appends `code_challenge` and `code_challenge_method=S256`
+  to authorization URLs and sends the corresponding `code_verifier` during token
+  exchange. In-flight connect states issued before the upgrade continue to
+  complete without a verifier until their TTL expires.
+  `credentials.providers.<id>.authorize_extra_params` rejects `code_challenge`
+  and `code_challenge_method` overrides at startup validation.
+- **`jenticctl update` release signature verification and git token environment scoping.**
+  When `cosign` is on `PATH`, `jenticctl update` and `tools/install.sh` (binary
+  download mode) require verifying `checksums.txt.sig` and `checksums.txt.pem`
+  against the exact release tag identity (`...@refs/tags/vX.Y.Z`), failing closed
+  if signature assets are missing. Pass `--allow-unsigned` (or
+  `JENTIC_ALLOW_UNSIGNED=1` for `tools/install.sh`) to opt out when a proxy
+  blocks signature assets, or set `JENTIC_REQUIRE_SIGNATURE=1` (or
+  `"require_signature": true` in `~/.jentic/install.json`) to require `cosign`
+  on `PATH`. Updating to a release tag (`vX.Y.Z`) no longer falls back
+  automatically to building from source unless `--from-source` is passed. When
+  `GITHUB_TOKEN` is set, `jenticctl install` and `jenticctl update` pass git
+  credentials via URL-scoped `GIT_CONFIG_COUNT` environment variables and
+  require `git >= 2.31`.
+- **CLI human-mode control sequence escaping, path validation, and redaction parity.**
+  Human-rendered CLI output (`jentic` field values, list views, status lines,
+  error messages, recovery/approval notices, non-JSON pretty `execute` bodies,
+  and `jentic execute --raw` when stdout is a terminal) escapes C0/DEL/C1
+  control characters as `\uXXXX` and replaces invalid UTF-8 bytes with `U+FFFD`.
+  `jentic execute` and the MCP `execute` / `execute_read` tools reject exact dot
+  segments (`.` or `..`) as path parameter values. Python and Go `Retry-After`
+  HTTP-date parsers now enforce identical RFC 9110 §5.6.7 rules.
+- **Direct credential connect (`POST /credentials/{id}/connect`) requires write ownership and forbids scope widening.**
+  Initiating a standalone OAuth connect flow now requires write ownership of the
+  credential (`created_by` matching the caller, or `org:admin`). An agent that
+  can only read its owner's credential through `owner:credentials:read`
+  delegation receives `403 connect_requires_review` with an `agent_directive`
+  pointing to the reviewed connect-session flow (`POST /integrations:edit-connection`
+  / `request_access_change` or `POST /integrations:connect` / `jentic connect`).
+  `scopes` supplied to `POST /credentials/{id}/connect` may only narrow the
+  credential's stored scopes; requests that add new scopes return
+  `422 scope_widening_requires_review`.
+- **OAuth token family sweep on password change, user disable/delete, and agent JWKS updates.**
+  - Self-service password change (`POST /users/me:change-password`) revokes all
+    active user-actor OAuth access and refresh tokens and consumes unredeemed
+    authorization codes for that user, matching operator password resets. The
+    caller's web session continues via the newly returned login JWT, while OAuth
+    clients signed in as that user must re-authorize.
+  - Disabling or deleting a user account revokes the user's opaque OAuth access
+    and refresh tokens and consumes unredeemed authorization codes; re-enabling
+    a disabled user does not reactivate pre-disable OAuth tokens.
+  - Replacing an agent's public key set (`PUT /agents/{id}/jwks`) revokes all
+    active key-channel OAuth access and refresh token families
+    (`oauth_grant_id IS NULL`) for that agent and evicts warm in-process broker
+    token cache entries; user-consented grant-channel tokens remain active.
+- **Broker upstream scheme validation (`insecure_upstream_scheme`).**
+  The broker rejects plaintext `http://` execution requests with HTTP `400`
+  (`type: "insecure_upstream_scheme"`) before credential resolution or dispatch
+  when the matched operation's OpenAPI specification declares only `https://`
+  servers (or declares no servers). Plain-HTTP internal APIs remain supported
+  when their OpenAPI specification explicitly declares an `http://`,
+  scheme-relative, or templated-scheme server URL.
+- **Session JWT required claims, production assertion audience binding, and JWT secret startup warnings.**
+  `decode_jwt` requires `exp`, `iat`, and `sub` on HS256 tokens. In production
+  when neither `auth.canonical_base_url` nor `server.public_base_url` is set,
+  `POST /oauth/token` (`jwt-bearer`) no longer derives an expected assertion
+  audience from a non-loopback request `Host` header. Startup logs a structured
+  warning (and continues booting) when `admin.auth.jwt_secret` is shorter than
+  32 bytes (`insecure_jwt_secret`), when `broker.jwt_secret` is set in
+  production without `broker.jwt_verification.trusted_issuers`
+  (`broker_dev_jwt_secret_in_production`), or when `broker.jwt_secret` equals
+  `admin.auth.jwt_secret` (`broker_jwt_secret_matches_admin_jwt_secret`).
+- **Connect-session review bound-agent listing.**
+  Connect-session review and confirmation read bound-agent metadata from the
+  `agent_credential_bindings` join snapshot and batch candidate OAuth token
+  lookups; an agent deleted before review is no longer listed with `name=None`.
+- **Agent self-registration scope filtering and rate limiting.**
+  Anonymous agent self-registration (`POST /register`) now filters requested
+  `scope` values to non-admin catalogue permissions, ignoring unknown, retired,
+  and admin-only (`org:admin`, `agents:write`) permissions. Approving a pending
+  agent also removes any pre-staged self-requested `org:admin` or `agents:write`
+  grants; administrators can still grant those permissions explicitly via
+  `PUT /agents/{id}/permissions` after approval. Additionally, `POST /register`
+  is rate-limited per client network in its own `agent-registration` bucket using
+  `auth.oauth_rate_limit.registration_rpm` (default `10` rpm) and
+  `auth.oauth_rate_limit.registration_burst` (default `5`). Deployments behind a
+  reverse proxy or high-concurrency NAT should configure
+  `auth.oauth_rate_limit.trusted_proxies` or raise the registration rate-limit
+  thresholds.
+- **OAuth credential reconnect grant replacement.**
+  Reconnecting an OAuth credential now replaces the stored grant rather than
+  merging into the prior grant's refresh token and scope. On the standalone
+  credential connect path (which has no identity echo), or on a connect-session
+  reconnect where the OAuth app registration or confirmed vendor account differs
+  from the stored credential, an omitted `refresh_token` in the provider's token
+  response clears the prior refresh token and logs
+  `oauth_reconnect_dropped_prior_refresh_token`. For providers that omit
+  `refresh_token` on re-consent unless prompted (such as Google OAuth), configure
+  `prompt=consent` / `access_type=offline` in `authorize_extra_params` if
+  standalone reconnects require offline refresh continuity.
+- **Agent permission ceiling enforced at resolution time and on ownership transfer.**
+  Owned agents now have their effective permissions capped at resolution time
+  (across API keys, access tokens, token introspection/refresh, and queued/held
+  broker execution checks) by the owning user's current effective permissions
+  plus default agent permissions (`capabilities:read`, `capabilities:execute`,
+  `owner:resources:read`, `owner:credentials:read`, `owner:agents:read`). Agents
+  owned by an `org:admin` user or ownerless agents keep all granted permissions.
+  If an owned agent holds non-default permissions (such as `config:write`,
+  `users:write`, `credentials:write`, `apis:write`, or `oauth-clients:write`)
+  that its owner does not currently hold, grant those permissions to the owner to
+  retain them on the agent. In addition, transferring an agent to a new owner via
+  `PATCH /agents/{agent_id}` revokes any stored agent permission grants that
+  exceed the new owner's permission ceiling and records a `REVOKE` audit entry;
+  grant the required permissions to the new owner before transferring ownership
+  if the agent should keep them. `Identity.parent_permissions` has been removed.
+- **Agent permission grants are checked against the agent owner's permissions (`409 agent_permission_exceeds_owner`).**
+  `PUT /agents/{agent_id}/permissions` now checks each newly added permission
+  against the agent owner's effective permissions, in addition to the caller's,
+  and returns `409 Conflict` with `type: "agent_permission_exceeds_owner"` when
+  the owner does not hold it (for example `org:admin`, `agents:write`, or any
+  non-default permission the owner lacks, on an agent owned by a non-admin
+  user). Permissions the agent already holds are exempt, so re-saving or
+  narrowing an existing set keeps working. `POST /agents/{agent_id}:approve`
+  drops self-requested permissions that exceed the owner's, with a `REVOKE`
+  audit entry (`self_requested_permission_above_owner_dropped`), and rejects
+  permissions an admin staged that exceed the owner's with the same `409`.
+  Grant the permission to the owner first, or transfer the agent to an
+  `org:admin` user, before adding it to the agent. API clients that treat an
+  unexpected `409` on these two routes as fatal should handle it.
+- **Reading a connect-session review confirmed onto an existing credential returns the edit-shaped result.**
+  `GET /connect-sessions/{session_id}` for a session confirmed onto an existing
+  credential that needs vendor consent previously failed with a server error; it
+  now returns the normalized `edit.result` (`target`, `suspended`, `scope_notes`,
+  rule `id`s, and the union of granted and requested `scopes`). No client change
+  is needed.
+- **Linux CLI packages (`.deb`, `.rpm`, `.apk`) are published with each release.**
+  `jenticctl update` recognises a package-owned binary (`dpkg`, `rpm` or `apk`
+  owns the file) and leaves it to the package manager; `--stack-only` still
+  refreshes the stack. See [CLI installation](../installation/cli.md#linux-packages-deb--rpm--apk).
+- **OAuth refresh-token families now have a 90-day absolute lifetime (`auth.refresh_family_max_age_seconds`).**
+  Refresh-token families track their initial issuance timestamp in
+  `refresh_tokens.family_issued_at` (admin migration `c7d2e9a41b30`) and expire
+  `7776000` seconds (90 days) after initial mint by default, regardless of how
+  recently the refresh token was rotated. Each rotated refresh token's
+  `expires_at` is also capped at
+  `family_issued_at + refresh_family_max_age_seconds`. Pre-existing refresh
+  tokens with a `NULL` `family_issued_at` anchor on their row's `created_at`
+  timestamp at first rotation. Clients must re-authorize once a family reaches
+  its maximum age (agents using JWT-bearer assertions re-authenticate
+  automatically with their signing key). Set
+  `auth.refresh_family_max_age_seconds: null` (or
+  `JENTIC_AUTH__REFRESH_FAMILY_MAX_AGE_SECONDS=null`) to disable the absolute
+  family lifetime cap.
 
 ## 0.44.0
 

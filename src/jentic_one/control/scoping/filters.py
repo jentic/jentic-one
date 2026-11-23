@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -39,6 +40,39 @@ _DELEGATION_PERMISSIONS: dict[type[Any], str] = {
 # write call sites never pass, and the clause is keyed on the caller's own ``sub``
 # only — never widened through ``parent_actor_id`` delegation.
 _OWNED_AGENT_MODELS: frozenset[type[Any]] = frozenset({ConnectSession, Credential})
+
+_EXTRA_OWNER_COLUMNS: dict[type[Any], tuple[Any, ...]] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedModelSpec:
+    """Read-only scoping metadata for one owner-scoped control ORM model."""
+
+    table: str
+    model: str
+    owner_columns: tuple[str, ...]
+    id_column: str | None
+    delegation_permission: str | None
+    owned_agent_axis: bool
+
+
+def scoped_model_specs() -> tuple[ScopedModelSpec, ...]:
+    """Return read-only scoping specs for every owner-scoped control ORM model."""
+    return tuple(
+        ScopedModelSpec(
+            table=model.__tablename__,
+            model=f"{model.__module__}.{model.__qualname__}",
+            owner_columns=(
+                col.key,
+                *(extra.key for extra in _EXTRA_OWNER_COLUMNS.get(model, ())),
+            ),
+            id_column=None,
+            delegation_permission=_DELEGATION_PERMISSIONS.get(model),
+            owned_agent_axis=model in _OWNED_AGENT_MODELS,
+        )
+        for model, col in _OWNER_MODELS.items()
+    )
+
 
 # Session states that still hold a pending credential. Mirrors
 # ``connect_session_repo.LIVE_STATES`` (kept local so this module imports
@@ -101,6 +135,11 @@ def register_access_filter_provider(provider: AccessFilterProvider) -> None:
     """
     if provider not in _ACCESS_FILTER_PROVIDERS:
         _ACCESS_FILTER_PROVIDERS.append(provider)
+
+
+def access_filter_providers() -> tuple[AccessFilterProvider, ...]:
+    """Return a read-only snapshot of registered extra access-filter providers."""
+    return tuple(_ACCESS_FILTER_PROVIDERS)
 
 
 def _provider_clauses(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:

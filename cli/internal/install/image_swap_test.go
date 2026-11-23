@@ -35,15 +35,40 @@ func TestSwapImageTagKeepsTheRegistryAndRepository(t *testing.T) {
 }
 
 // A digest pin names an exact image and there is no way to learn the new
-// digest, so it is refused rather than quietly downgraded to a mutable tag.
+// digest, so it is refused rather than quietly downgraded to a mutable tag —
+// whether written as repo@sha256:... or repo:tag@sha256:...
 func TestSwapImageTagRefusesADigestPin(t *testing.T) {
-	pinned := "ghcr.io/jentic/jentic-one-app@sha256:" + strings.Repeat("ab", 32)
-	_, err := SwapImageTag(pinned, "v0.44.0")
-	if err == nil {
-		t.Fatal("SwapImageTag = nil error, want a refusal for a digest-pinned image")
+	for _, pinned := range []string{
+		"ghcr.io/jentic/jentic-one-app@sha256:" + strings.Repeat("ab", 32),
+		"ghcr.io/jentic/jentic-one-app:0.43.0@sha256:" + strings.Repeat("ab", 32),
+	} {
+		_, err := SwapImageTag(pinned, "v0.44.0")
+		if err == nil {
+			t.Fatalf("SwapImageTag(%q) = nil error, want a refusal for a digest-pinned image", pinned)
+		}
+		if !strings.Contains(err.Error(), "digest") {
+			t.Errorf("SwapImageTag(%q) error does not explain the digest pin: %v", pinned, err)
+		}
 	}
-	if !strings.Contains(err.Error(), "digest") {
-		t.Errorf("error does not explain the digest pin: %v", err)
+}
+
+func TestSplitImageRef(t *testing.T) {
+	for _, tc := range []struct {
+		ref                    string
+		wantRepo, wantT, wantD string
+	}{
+		{"ghcr.io/jentic/jentic-one-app:0.43.0", "ghcr.io/jentic/jentic-one-app", "0.43.0", ""},
+		{"localhost:5000/jentic-one-app:0.43.0", "localhost:5000/jentic-one-app", "0.43.0", ""},
+		{"localhost:5000/jentic-one-app", "localhost:5000/jentic-one-app", "", ""},
+		{"ghcr.io/jentic/jentic-one-app@sha256:abc", "ghcr.io/jentic/jentic-one-app", "", "sha256:abc"},
+		{"ghcr.io/jentic/jentic-one-app:0.43.0@sha256:abc", "ghcr.io/jentic/jentic-one-app", "0.43.0", "sha256:abc"},
+		{"localhost:5000/jentic-one-app:0.43.0@sha256:abc", "localhost:5000/jentic-one-app", "0.43.0", "sha256:abc"},
+	} {
+		repo, tag, digest := SplitImageRef(tc.ref)
+		if repo != tc.wantRepo || tag != tc.wantT || digest != tc.wantD {
+			t.Errorf("SplitImageRef(%q) = (%q, %q, %q), want (%q, %q, %q)",
+				tc.ref, repo, tag, digest, tc.wantRepo, tc.wantT, tc.wantD)
+		}
 	}
 }
 
@@ -67,11 +92,13 @@ func TestIsOperatorTagPin(t *testing.T) {
 		want bool
 	}{
 		{"ghcr.io/jentic/jentic-one-app:canary", true},
+		{"ghcr.io/jentic/jentic-one-app:1.2.3-rc.1", true},
 		{"ghcr.io/jentic/jentic-one-app:2026-10-28", true},
 		{"ghcr.io/jentic/jentic-one-app:0.43.0", false},
 		{"ghcr.io/jentic/jentic-one-app:latest", false},
 		{"localhost:5000/jentic-one-app:canary", true},
 		{"ghcr.io/jentic/jentic-one-app@sha256:abc", false},
+		{"ghcr.io/jentic/jentic-one-app:0.43.0@sha256:abc", false},
 	} {
 		if got := IsOperatorTagPin(tc.ref); got != tc.want {
 			t.Errorf("IsOperatorTagPin(%q) = %v, want %v", tc.ref, got, tc.want)

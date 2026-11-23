@@ -317,11 +317,74 @@ def test_retryable_source_failures(exc: Exception, phase: _SourcePhase) -> None:
     assert _is_deterministic_source_failure(exc, phase=phase) is False
 
 
-def test_cyclic_exception_chain_terminates() -> None:
-    """A chain that loops back on itself ends the walk instead of spinning."""
+@pytest.mark.parametrize(
+    ("root", "phase"),
+    [
+        pytest.param(
+            DatabaseUnavailableError("database temporarily unavailable"),
+            _SourcePhase.INGEST,
+            id="ingest",
+        ),
+        pytest.param(
+            RetryableFetchError("failed to fetch URL: connection refused"),
+            _SourcePhase.LOAD,
+            id="load",
+        ),
+    ],
+)
+@pytest.mark.parametrize("use_context", [False, True], ids=["cause", "context"])
+def test_deep_transient_exception_remains_retryable(
+    root: BaseException, phase: _SourcePhase, use_context: bool
+) -> None:
+    """Pins #2029: deep transient causes remain visible in load and ingest failures."""
+    exc: BaseException = root
+    for index in range(12):
+        outer = IngestStageError(f"wrapper {index}")
+        exc = _raised_while_handling(outer, exc) if use_context else _chained(outer, exc)
+    assert isinstance(exc, IngestStageError)
+    failure = _through_pipeline(exc)
+
+    assert _is_deterministic_source_failure(failure, phase=phase) is False
+
+
+@pytest.mark.parametrize("use_context", [False, True], ids=["cause", "context"])
+def test_deep_active_revision_conflict_remains_retryable(use_context: bool) -> None:
+    """A deeply wrapped one-active race retains its safe conflict classification."""
+    exc: BaseException = DatabaseIntegrityError(_PG_ONE_ACTIVE)
+    for index in range(12):
+        outer = IngestStageError(f"wrapper {index}")
+        exc = _raised_while_handling(outer, exc) if use_context else _chained(outer, exc)
+    assert isinstance(exc, IngestStageError)
+    failure = _through_pipeline(exc)
+
+    assert _is_deterministic_source_failure(failure, phase=_SourcePhase.INGEST) is False
+    assert _readable_source_error(failure) == ACTIVE_REVISION_CONFLICT_ERROR
+
+
+def test_unexpected_stage_error_is_not_an_active_revision_conflict() -> None:
+    """An internal stage failure keeps its stage diagnostic despite an active-index cause."""
+    failure = _through_pipeline(
+        _chained(
+            UnexpectedStageError("Stage 'FinalizeStage' failed unexpectedly"),
+            DatabaseIntegrityError(_PG_ONE_ACTIVE),
+        )
+    )
+
+    assert _readable_source_error(failure) == "Stage 'FinalizeStage' failed unexpectedly"
+    assert ACTIVE_REVISION_CONFLICT_ERROR not in _readable_source_error(failure)
+    assert _is_deterministic_source_failure(failure, phase=_SourcePhase.INGEST) is False
+
+
+@pytest.mark.parametrize("use_context", [False, True], ids=["cause", "context"])
+def test_cyclic_exception_chain_terminates(use_context: bool) -> None:
+    """A cause or context cycle ends the walk instead of spinning."""
     outer = IngestStageError("outer")
     inner = IngestStageError("inner")
-    outer.__cause__ = inner
-    inner.__cause__ = outer
+    if use_context:
+        _raised_while_handling(outer, inner)
+        _raised_while_handling(inner, outer)
+    else:
+        _chained(outer, inner)
+        _chained(inner, outer)
 
     assert _is_deterministic_source_failure(_through_pipeline(outer), phase=_SourcePhase.INGEST)

@@ -18,8 +18,7 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
-from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
-from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
+from jentic_one.admin.repos.token_lineage_repo import TokenLineageRepository
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.db.connectivity import (
     connection_loss_cause,
@@ -999,15 +998,12 @@ class WorkerLoop:
             # delete the rows — otherwise they accumulate forever (#610 audit).
             cutoff = datetime.now(UTC) - timedelta(days=_TOKEN_RETENTION_DAYS)
             async with self._db.transaction() as session:
-                access_removed = await AccessTokenRepository.delete_expired(session, before=cutoff)
-                refresh_removed = await RefreshTokenRepository.delete_expired(
-                    session, before=cutoff
-                )
-                if access_removed or refresh_removed:
+                sweep = await TokenLineageRepository.delete_expired(session, before=cutoff)
+                if sweep.access or sweep.refresh:
                     logger.info(
                         "token_retention_sweep_removed",
-                        access_tokens=access_removed,
-                        refresh_tokens=refresh_removed,
+                        access_tokens=sweep.access,
+                        refresh_tokens=sweep.refresh,
                     )
         except Exception as exc:
             # A lost connection is the run loop's to report (once per outage);

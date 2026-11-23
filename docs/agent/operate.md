@@ -185,7 +185,9 @@ rm -rf ~/.jentic                                    # install config, compose, l
 ```
 
 The `jentic` agent identity lives outside `~/.jentic` (`~/.config/jentic`,
-`~/.local/state/jentic`); remove it with `jentic reset`.
+`~/.local/state/jentic`); remove it with `jentic reset`. A local agent account an
+older release created (Unix user, ACLs, sudoers entry) also survives this and is
+removed by `jentic reset` too.
 
 To keep the data for a later reinstall, run
 `docker compose -p jentic -f ~/.jentic/docker-compose.yaml down` (no `-v`),

@@ -23,7 +23,7 @@ the public catalog into your local registry, inspect operations, and execute
 against them.
 
 New here? If you're a person setting up a local agent, run `jentic setup`
-to set one up end to end (identity + skills + isolation). If you're an agent
+to set one up end to end (identity + skills). If you're an agent
 that just needs tokens for an existing identity, run `jentic register`. Then
 browse the public catalog with `jentic catalog`. To install and operate
 jentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use
@@ -36,7 +36,7 @@ jentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use
 
 | Command | Description |
 |---|---|
-| [`jentic setup`](#jentic-setup) | Set up a new local agent (identity + skills + isolation) — start here if you're a person |
+| [`jentic setup`](#jentic-setup) | Set up a new local agent (identity + skills) — start here if you're a person |
 | [`jentic register`](#jentic-register) | Obtain tokens for an existing agent identity (identity only, no skills) — agents run this |
 | [`jentic logout`](#jentic-logout) | Revoke and clear the active identity's cached token |
 | [`jentic context`](#jentic-context) | Manage and switch contexts (environment + identity + mode) |
@@ -73,8 +73,7 @@ jentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use
 | Command | Description |
 |---|---|
 | [`jentic skill`](#jentic-skill) | Generate the Jentic skill set into your agent's native layout |
-| [`jentic run`](#jentic-run) | Launch a coding agent as its own isolated Unix user |
-| [`jentic reset`](#jentic-reset) | Tear down the agent account and wipe this machine's jentic identity state |
+| [`jentic reset`](#jentic-reset) | Wipe this machine's jentic identity state and remove any leftover agent account |
 | [`jentic doctor`](#jentic-doctor) | Diagnose this agent's local jentic setup (read-only) |
 | [`jentic mcp`](#jentic-mcp) | Serve Jentic tools to a local MCP client over stdio |
 
@@ -99,7 +98,7 @@ Accepted by every command (inherited from the root).
 
 #### jentic setup
 
-Set up a new local agent (identity + skills + isolation) — start here if you're a person
+Set up a new local agent (identity + skills) — start here if you're a person
 
 ```text
 jentic setup [flags]
@@ -111,7 +110,7 @@ machine to a Jentic install (creating the environment, identity and context
 if needed), registers the agent (Dynamic Client Registration), prints an
 approval link and waits for a human to approve it, mints and saves tokens,
 and generates the Jentic CLI-usage skill into your agent runtime's native
-layout. It also offers to isolate the coding agent behind its own Unix user.
+layout, plus the `jentic mcp` server entry for each detected MCP runtime.
 
 It is a thin orchestration of `jentic register` and `jentic skill`: nothing
 here you can't do by hand, just sequenced so you can start playing right
@@ -408,7 +407,9 @@ Add a Control Plane environment. --broker-url is optional and is NEVER
 derived from --url (Control Plane and Broker often live on different
 domains). `jentic register` seeds broker_url automatically for a loopback
 install; set it explicitly here for a remote broker or to fix an existing
-environment (use --force to replace one of the same name).
+environment (use --force to replace one of the same name). Replacing an
+environment with a different Control Plane or Broker origin purges its
+cached credentials and identity registrations before saving.
 ```
 
 **Flags**
@@ -615,17 +616,18 @@ jentic migrate [flags]
 
 ```text
 migrate copies each legacy profile into an Environment + Identity +
-Context under ~/.config/jentic, and copies key/token material into the XDG
-layout. It is idempotent and non-destructive (the legacy tree survives for
-downgrade); --purge-legacy removes the old tree afterwards. Cached refresh
-tokens are intentionally dropped.
+Context under ~/.config/jentic, and copies key/token material (including
+cached access and refresh tokens) into the XDG layout. It is idempotent and
+non-destructive by default so the legacy tree remains available for recovery
+or downgrade. Verify that a migrated context authenticates (for example,
+`jentic whoami`) before passing --purge-legacy to delete the legacy tree.
 ```
 
 **Flags**
 
 | Flag | Shorthand | Type | Default | Description |
 |---|---|---|---|---|
-| `--purge-legacy` |  | `bool` | `false` | Delete the legacy ~/.jentic profile tree after a successful migration |
+| `--purge-legacy` |  | `bool` | `false` | Delete the legacy ~/.jentic profile tree (run only after verifying migrated authentication) |
 | `--yes` | `-y` | `bool` | `false` | Proceed without interactive confirmation |
 
 Also accepts the [jentic global flags](#jentic-global-flags).
@@ -1945,76 +1947,24 @@ jentic skill remove --skill import-new-api --operator cursor
 jentic skill remove --all --force
 ```
 
-#### jentic run
-
-Launch a coding agent as its own isolated Unix user
-
-```text
-jentic run <agent> [path] [-- <agent-args>...] [flags]
-```
-
-```text
-run launches a coding agent under a dedicated, unprivileged OS account
-distinct from the operator's login user, so a compromised or prompt-injected
-agent cannot read the operator's keys, browser session, or the jentic-one
-credential store. It provisions the agent's binary for that account if
-missing, resolves filesystem access to the working directory (granting a
-scoped ACL only when the operator confirms), and starts the session as
-the agent's own Unix user in a fresh login shell, so the operator's
-environment and secrets are not inherited by the agent.
-
-Runnable agents: claude, codex, cursor, hermes.
-("generic" is a skill-only operator — it has no binary and cannot be run;
-use `jentic skill` to write its onboarding docs instead.)
-
-Arguments for the agent binary are forwarded verbatim, in either form:
-  jentic run claude -- --model opus -p "hi"   (agent, then -- <agent-args>)
-  jentic run -- claude --model opus -p "hi"   (-- then the whole agent command)
-both run `claude --model opus -p "hi"` as the agent user. In the leading-`--`
-form the first token after `--` is the agent id and there is no path argument
-(the working directory defaults to the current one); use the trailing form to
-pass a path. Without any `--`, run takes at most the agent id and a path.
-
-The agent account, its home, and the directories it has been granted are
-recorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).
-See the security analysis in
-docs/security/same-host/local-agent-isolation.md for the full rationale.
-```
-
-**Flags**
-
-| Flag | Shorthand | Type | Default | Description |
-|---|---|---|---|---|
-| `--agent-user` |  | `string` |  | override the derived &lt;operator&gt;-local-agent account |
-| `--allow-dir` |  | `bool` | `false` | grant the agent access to the working directory without prompting |
-| `--grant` |  | `string` |  | grant the agent access to the given directory, then exit (without launching) |
-| `--home` |  | `bool` | `false` | open the session in the agent's own home, skipping the current directory |
-| `--list-grants` |  | `bool` | `false` | list the directories the agent has been granted, then exit |
-| `--no-allow-dir` |  | `bool` | `false` | never grant directory access; open in the agent's home instead |
-| `--no-seed-config` |  | `bool` | `false` | never copy the operator's agent config into the agent's home |
-| `--revoke` |  | `string` |  | revoke the agent's access to the given directory, then exit |
-| `--seed-config` |  | `bool` | `false` | copy the operator's agent config into the agent's home without prompting |
-| `--yes` | `-y` | `bool` | `false` | assume the safe default for every prompt (never grants a flagged-dangerous dir) |
-
-Also accepts the [jentic global flags](#jentic-global-flags).
-
 #### jentic reset
 
-Tear down the agent account and wipe this machine's jentic identity state
+Wipe this machine's jentic identity state and remove any leftover agent account
 
 ```text
 jentic reset [flags]
 ```
 
 ```text
-reset is the inverse of the agent-user setup folded into `jentic setup`,
-and the clean-slate hatch for this machine's jentic identity state.
+reset is the clean-slate hatch for this machine's jentic identity state.
 
-It tears down the agent account — the dedicated Unix user, the named-user
-ACLs stamped across your home (both the leaf read/write grants and the
-execute-only ancestor traverse grants), and the passwordless-launch sudoers
-drop-in — plus any MCP-isolation service accounts (`_jentic-<runtime>`,
-their sudoers lines, and their exported key material), and then also wipes
+If an older jentic release left a local agent account on this machine, reset
+tears it down first — the dedicated Unix user (`<you>-local-agent`), the
+named-user ACLs stamped across your home (both the leaf read/write grants and
+the execute-only ancestor traverse grants), and the passwordless-launch
+sudoers drop-in — plus any MCP-isolation service accounts (`_jentic-<runtime>`,
+their sudoers lines, their exported key material, and the root-owned jentic
+copy they ran). Current releases never create these. Then it wipes
 your OWN jentic identity state: the store
 (contexts, environments, identities, keys, tokens under ~/.config/jentic and
 ~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The
@@ -2024,8 +1974,8 @@ a separate, explicit confirmation.
 To remove a single context/identity instead of everything, use
 `jentic context delete` / `jentic identity delete`.
 
-Deleting the account and stripping ACLs are privileged, so reset requires
-sudo to complete: run it as yourself and you'll be prompted for your
+Deleting an agent account and stripping ACLs are privileged, so reset
+requires sudo for those steps: run it as yourself and you'll be prompted for your
 password when it reaches the privileged steps. It shows the full plan before
 touching anything. It only ever removes the agent's own named-user ACLs and
 never touches another user's files.
@@ -2043,7 +1993,7 @@ Also accepts the [jentic global flags](#jentic-global-flags).
 **Examples**
 
 ```sh
-jentic reset                              # full clean slate: the account + your identity state
+jentic reset                              # full clean slate: any agent account + your identity state
 jentic reset --force                      # non-interactive; keeps the home
 jentic reset --force --delete-home        # non-interactive; deletes the home
 ```
@@ -2598,16 +2548,20 @@ failed stack half refreshes only the stack.
 
 A Homebrew-installed CLI is never swapped in place: the CLI half runs
 `brew upgrade jentic` instead, so brew's bookkeeping stays consistent
-(--ref cannot pin a Homebrew-managed CLI).
+(--ref cannot pin a Homebrew-managed CLI). A CLI installed from the
+.deb / .rpm / .apk packages is not swapped either: update it with the
+package manager, or pass --stack-only.
 ```
 
 **Flags**
 
 | Flag | Shorthand | Type | Default | Description |
 |---|---|---|---|---|
+| `--allow-unsigned` |  | `bool` | `false` | allow installing a release when its cosign signature or certificate cannot be verified |
 | `--base-url` |  | `string` |  | Jentic control-plane base URL (for the server probe) |
 | `--check` |  | `bool` | `false` | only report status; don't apply any update |
 | `--cli-only` |  | `bool` | `false` | update only the CLI binary |
+| `--from-source` |  | `bool` | `false` | build the CLI binaries from source via tools/install.sh instead of downloading prebuilt release archives |
 | `--ref` |  | `string` |  | git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag) |
 | `--stack-only` |  | `bool` | `false` | update only the stack (not the CLI binary) |
 | `--yes` | `-y` | `bool` | `false` | skip the confirmation prompt |
@@ -2622,12 +2576,14 @@ jenticctl uninstall [flags]
 
 ```text
 uninstall deletes the contents of ~/.jentic (venv, source, data, logs,
-CA, etc.). Config files are preserved: each is renamed to a
+etc.). Config files are preserved: each is renamed to a
 '-old' backup so you can restore your settings later. Your agent
 identity (~/.config/jentic, ~/.local/state/jentic, and any legacy
 ~/.jentic/profiles) is ALSO preserved — reinstalling keeps you
 authenticated; run `jentic reset` to remove it. The ~/.jentic
-directory itself is kept.
+directory itself is kept. A local agent account an older release
+created (Unix user, ACLs, sudoers entry) is not touched either;
+`jentic reset` removes it too.
 
 For a Docker install the database lives in a named volume (SQLite data or
 the managed Postgres data dir), not under ~/.jentic. uninstall tears the

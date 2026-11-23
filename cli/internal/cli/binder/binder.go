@@ -122,8 +122,9 @@ func walkLeaves(v reflect.Value, prefix string, depth int, out *[]leaf) {
 }
 
 // collectLeaves validates target is a struct pointer and returns its scalar
-// leaves. Shared by BindFlags, HydrateStruct, and the form generator so all three
-// agree on exactly which leaves exist and under which paths.
+// leaves. Shared by BindFlagsWithOptions, ChangedOverrides, and the form
+// generator so all three agree on exactly which leaves exist and under which
+// paths.
 func collectLeaves(target interface{}) []leaf {
 	v := reflect.ValueOf(target)
 	if v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Struct {
@@ -137,7 +138,7 @@ func collectLeaves(target interface{}) []leaf {
 // LeafPaths returns the dotted path of every scalar leaf of the nested config
 // struct, in walk order. Callers use it to build Exclude sets for a whole
 // section (e.g. everything under `telemetry.`) without duplicating the leaf
-// walk that BindFlags and the form generator share.
+// walk that BindFlagsWithOptions and the form generator share.
 func LeafPaths(target interface{}) []string {
 	leaves := collectLeaves(target)
 	out := make([]string, 0, len(leaves))
@@ -147,25 +148,21 @@ func LeafPaths(target interface{}) []string {
 	return out
 }
 
-// BindOptions tune BindFlags for the installer's needs (impl/6.0): Exclude drops
-// leaves entirely (sensitive secret-bearing paths never become flags), and Hidden
-// registers the flags but marks them hidden so they work yet stay out of --help
-// and the public cli-reference noise. Paths are dotted (server.public_base_url).
+// BindOptions tune BindFlagsWithOptions for the installer's needs (impl/6.0):
+// Exclude drops leaves entirely (sensitive secret-bearing paths never become
+// flags), and Hidden registers the flags but marks them hidden so they work yet
+// stay out of --help and the public cli-reference noise. Paths are dotted
+// (server.public_base_url).
 type BindOptions struct {
 	Exclude map[string]bool
 	Hidden  bool
 }
 
-// BindFlags registers one Cobra flag per scalar leaf of the nested config struct,
-// named by its dotted path flattened to kebab-case (impl/6.0 §3). It is
-// idempotent-safe only on a fresh command; re-binding the same struct onto a
-// command that already has a colliding flag will panic via pflag, which is the
-// desired loud failure.
-func BindFlags(cmd *cobra.Command, target interface{}) {
-	BindFlagsWithOptions(cmd, target, BindOptions{})
-}
-
-// BindFlagsWithOptions is BindFlags with the installer's Exclude/Hidden controls.
+// BindFlagsWithOptions registers one Cobra flag per scalar leaf of the nested
+// config struct, named by its dotted path flattened to kebab-case (impl/6.0 §3),
+// with the installer's Exclude/Hidden controls. It is idempotent-safe only on a
+// fresh command; re-binding the same struct onto a command that already has a
+// colliding flag will panic via pflag, which is the desired loud failure.
 func BindFlagsWithOptions(cmd *cobra.Command, target interface{}, opts BindOptions) {
 	for _, lf := range collectLeaves(target) {
 		if opts.Exclude[lf.path] {
@@ -193,71 +190,11 @@ func BindFlagsWithOptions(cmd *cobra.Command, target interface{}, opts BindOptio
 	}
 }
 
-// HydrateStruct writes every EXPLICITLY-SET flag back onto its leaf, leaving
-// unset leaves untouched so the defaults<preset<flags precedence ladder
-// (impl/6.0 §3.5) holds: applyDefaults/applyPreset populate cfg first, then this
-// overrides only what the operator actually passed. Flags the user did not set
-// are skipped via pflag's Changed(), never clobbering a preset/default value with
-// a flag zero-value.
-func HydrateStruct(cmd *cobra.Command, target interface{}) error {
-	flags := cmd.Flags()
-	for _, lf := range collectLeaves(target) {
-		name := flagName(lf.path)
-		if !flags.Changed(name) {
-			continue
-		}
-		if err := setLeaf(flags, name, lf.value); err != nil {
-			return fmt.Errorf("--%s: %w", name, err)
-		}
-	}
-	return nil
-}
-
-// setLeaf reads the parsed flag value for name and assigns it to the leaf,
-// matching the flag type registered in BindFlags.
-// setLeaf reads the parsed flag value for name and assigns it to the leaf,
-// matching the flag type registered in BindFlags.
-func setLeaf(flags *pflag.FlagSet, name string, dst reflect.Value) error {
-	switch dst.Kind() {
-	case reflect.String:
-		s, err := flags.GetString(name)
-		if err != nil {
-			return err
-		}
-		dst.SetString(s)
-	case reflect.Bool:
-		b, err := flags.GetBool(name)
-		if err != nil {
-			return err
-		}
-		dst.SetBool(b)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, err := flags.GetInt64(name)
-		if err != nil {
-			return err
-		}
-		dst.SetInt(n)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n, err := flags.GetUint64(name)
-		if err != nil {
-			return err
-		}
-		dst.SetUint(n)
-	case reflect.Float32, reflect.Float64:
-		f, err := flags.GetFloat64(name)
-		if err != nil {
-			return err
-		}
-		dst.SetFloat(f)
-	}
-	return nil
-}
-
 // ChangedOverrides returns a nested map of ONLY the flags the operator explicitly
 // set, keyed by the config's dotted path split back into a section tree
 // (databases-registry-host, set, → {"databases":{"registry":{"host":...}}}). This
 // is the flag layer of the installer's precedence ladder: it feeds straight into
-// the settings merge (ctl.ResolveSettings) so unset flags never contribute a
+// the settings merge (ctl.MergeSettings) so unset flags never contribute a
 // zero-value that would clobber a schema default or preset (impl/6.0 §3.5). The
 // target is used only to enumerate the leaves and their kinds; its field values
 // are not read.

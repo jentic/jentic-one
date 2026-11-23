@@ -46,20 +46,58 @@ class EncryptionService:
                 f"EncryptionConfig.active_id '{self._current_key_id}' not found in entries"
             )
 
-    def encrypt(self, plaintext: str) -> str:
-        """Encrypt plaintext with the current key. Returns ``'<key_id>:<b64(nonce||ct||tag)>'``."""
+    @property
+    def active_key_id(self) -> str:
+        """Identifier of the key used for new encryptions."""
+        return self._current_key_id
+
+    @property
+    def key_ids(self) -> tuple[str, ...]:
+        """All key identifiers configured on this service."""
+        return tuple(self._ciphers.keys())
+
+    @staticmethod
+    def key_id_of(ciphertext: str) -> str:
+        """Extract the key identifier prefix from an encrypted blob."""
+        sep = ciphertext.find(":")
+        if sep == -1:
+            raise DecryptionError("Invalid blob format: missing key_id separator")
+        key_id = ciphertext[:sep]
+        if not key_id:
+            raise DecryptionError("Invalid blob format: empty key_id")
+        return key_id
+
+    def needs_reencryption(self, ciphertext: str) -> bool:
+        """Return True when *ciphertext* is tagged with a key other than :attr:`active_key_id`."""
+        key_id = self.key_id_of(ciphertext)
+        return key_id != self._current_key_id
+
+    def reencrypt(self, ciphertext: str, *, aad: bytes | None = None) -> tuple[str, bool]:
+        """Decrypt *ciphertext* with *aad* and re-encrypt with :attr:`active_key_id` if needed.
+
+        Always validates authenticity by decrypting first. Returns
+        ``(new_or_existing_ciphertext, reencrypted)`` where ``reencrypted`` is
+        ``False`` when the blob already uses the active key.
+        """
+        plaintext = self.decrypt(ciphertext, aad=aad)
+        if not self.needs_reencryption(ciphertext):
+            return ciphertext, False
+        return self.encrypt(plaintext, aad=aad), True
+
+    def encrypt(self, plaintext: str, *, aad: bytes | None = None) -> str:
+        """Encrypt plaintext with the current key and optional AEAD associated data.
+
+        Returns ``'<key_id>:<b64(nonce||ct||tag)>'``.
+        """
         nonce = os.urandom(_NONCE_BYTES)
-        ct_with_tag = self._ciphers[self._current_key_id].encrypt(nonce, plaintext.encode(), None)
+        ct_with_tag = self._ciphers[self._current_key_id].encrypt(nonce, plaintext.encode(), aad)
         payload = base64.b64encode(nonce + ct_with_tag).decode()
         return f"{self._current_key_id}:{payload}"
 
-    def decrypt(self, blob: str) -> str:
-        """Decrypt a blob produced by :meth:`encrypt`. Raises :exc:`DecryptionError`."""
-        sep = blob.find(":")
-        if sep == -1:
-            raise DecryptionError("Invalid blob format: missing key_id separator")
-
-        key_id = blob[:sep]
+    def decrypt(self, blob: str, *, aad: bytes | None = None) -> str:
+        """Decrypt a blob with its associated data. Raises :exc:`DecryptionError`."""
+        key_id = self.key_id_of(blob)
+        sep = len(key_id)
         cipher = self._ciphers.get(key_id)
         if cipher is None:
             raise DecryptionError(f"Unknown key_id: '{key_id}'")
@@ -76,7 +114,7 @@ class EncryptionService:
         ciphertext = raw[_NONCE_BYTES:]
 
         try:
-            plaintext_bytes = cipher.decrypt(nonce, ciphertext, None)
+            plaintext_bytes = cipher.decrypt(nonce, ciphertext, aad)
         except Exception as exc:
             raise DecryptionError("Decryption failed: authentication error") from exc
 

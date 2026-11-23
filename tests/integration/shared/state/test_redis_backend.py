@@ -7,6 +7,7 @@ unset or the server is unreachable, so the suite stays green without Redis.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 import uuid
@@ -16,6 +17,11 @@ import pytest
 
 redis = pytest.importorskip("redis.asyncio")
 
+from jentic_one.broker.core.errors import IdempotencyCompletionError  # noqa: E402
+from jentic_one.broker.services.idempotency import (  # noqa: E402
+    IdempotencyState,
+    SharedStateIdempotencyStore,
+)
 from jentic_one.shared.config import SecurityConfig  # noqa: E402
 from jentic_one.shared.events.repeated_failure import (  # noqa: E402
     AxisKey,
@@ -43,11 +49,22 @@ async def _redis_available(url: str) -> bool:
 
 @pytest.fixture()
 async def redis_url() -> str:
+    in_ci = os.environ.get("CI") == "true"
     if not _REDIS_URL:
+        if in_ci:
+            pytest.fail("JENTIC_TEST_REDIS_URL must be set in CI")
         pytest.skip("JENTIC_TEST_REDIS_URL not set; Redis integration tests skipped")
     if not await _redis_available(_REDIS_URL):
+        if in_ci:
+            pytest.fail(f"Redis not reachable at {_REDIS_URL} in CI")
         pytest.skip(f"Redis not reachable at {_REDIS_URL}; skipping")
     return _REDIS_URL
+
+
+def test_redis_suite_is_not_skipped_in_ci() -> None:
+    """In CI on the postgres leg, JENTIC_TEST_REDIS_URL must be configured."""
+    if os.environ.get("CI") == "true" and os.environ.get("JENTIC_TEST_BACKEND") != "sqlite":
+        assert _REDIS_URL, "JENTIC_TEST_REDIS_URL must be set on the CI postgres integration leg"
 
 
 @pytest.fixture()
@@ -188,4 +205,44 @@ async def test_incr_and_read_matches_the_memory_backend(redis_url: str, prefix: 
         assert 0 < await raw.pttl(f"{prefix}a") <= 10_000
     finally:
         await raw.aclose()
+        await backend.aclose()
+
+
+async def test_redis_idempotency_lease_renews_and_fences_stale_completion(
+    redis_url: str, prefix: str
+) -> None:
+    """The production Redis CAS preserves lease ownership across broker instances."""
+    backend = RedisStateBackend(redis_url, key_prefix=prefix)
+    store = SharedStateIdempotencyStore(
+        backend,
+        pending_ttl_s=0.4,
+        done_ttl_s=30.0,
+        max_response_bytes=1024,
+    )
+    key = f"key-{uuid.uuid4().hex}"
+    try:
+        claim = await store.begin("agent-1", key, "fp-1")
+        assert claim.state is IdempotencyState.FRESH
+        assert claim.claim_id is not None
+        async with store.lease("agent-1", key, "fp-1", claim.claim_id) as lease:
+            await asyncio.sleep(1.0)
+            pending = await store.begin("agent-1", key, "fp-1")
+            assert pending.state is IdempotencyState.IN_PROGRESS
+            lease.mark_dispatched()
+            await lease.complete(status_code=201, headers={}, body=b"original")
+
+        stale = await store.begin("agent-1", key, "fp-1")
+        assert stale.state is IdempotencyState.REPLAY
+        assert stale.stored is not None
+        assert stale.stored.body == b"original"
+
+        # A writer holding an older generation cannot replace the completed record.
+        with pytest.raises(IdempotencyCompletionError):
+            async with store.lease("agent-1", key, "fp-1", claim.claim_id) as lease:
+                lease.mark_dispatched()
+                await lease.complete(status_code=200, headers={}, body=b"stale")
+        replay = await store.begin("agent-1", key, "fp-1")
+        assert replay.stored is not None
+        assert replay.stored.body == b"original"
+    finally:
         await backend.aclose()

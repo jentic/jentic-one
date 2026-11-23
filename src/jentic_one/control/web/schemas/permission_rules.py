@@ -42,8 +42,11 @@ class BasePermissionRuleSchema(BaseModel):
             "spec's path (`/widgets`), never the full upstream path with the "
             "server's base path (`/eu/widgets` for a server `https://host/{region}`). "
             "Interpreted per `match_mode`: `regex` uses "
-            "full-match semantics (the pattern must describe the whole path); "
-            "`prefix` and `exact` are literal. None matches all paths."
+            "full-match semantics (the pattern must describe the whole path) and is "
+            "limited to linear-time shapes: a repeated group may not contain another "
+            "repeat or ambiguous alternation, and back-references and lookarounds are "
+            "refused (422 `unsafe_regex`); paths over 2048 characters never match a "
+            "regex rule. `prefix` and `exact` are literal. None matches all paths."
         ),
     )
     match_mode: MatchMode = Field(
@@ -58,7 +61,11 @@ class BasePermissionRuleSchema(BaseModel):
     operations: list[str] | None = Field(
         default=None,
         examples=[[ex.OPERATION_ID]],
-        description="OpenAPI operation IDs to match. None matches all operations.",
+        description=(
+            "OpenAPI operationIds to match by exact string equality (survives revision "
+            "promotion; existing `op_…` registry operation IDs also match their revision). "
+            "None matches all operations."
+        ),
     )
     comment: str | None = Field(
         default=None,
@@ -152,7 +159,10 @@ class PermissionRuleReadSchema(BaseModel):
     )
     operations: list[str] | None = Field(
         default=None,
-        description="OpenAPI operation IDs the rule matches; null matches all.",
+        description=(
+            "OpenAPI operationIds the rule matches by exact equality (existing `op_…` "
+            "registry operation IDs also match their revision); null matches all."
+        ),
         examples=[[ex.OPERATION_ID]],
     )
     is_system: bool = Field(
@@ -276,7 +286,12 @@ class PermissionTestRequest(BaseModel):
     )
     operation_id: str | None = Field(
         default=None,
-        description="Optional OpenAPI operation id resolved from the request URL.",
+        description=(
+            "Optional OpenAPI operationId (or `op_…` registry operation ID) of the "
+            "hypothetical request. When omitted, the dry-run resolves the operation from "
+            "`(method, path)` against the credential's covered live API(s); when supplied, "
+            "it must agree with the resolved operation."
+        ),
         examples=[ex.OPERATION_ID],
     )
 

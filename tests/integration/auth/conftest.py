@@ -24,7 +24,7 @@ from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
-from jentic_one.shared.config import PlatformClientConfig, SigningKeyConfig
+from jentic_one.shared.config import AppConfig, PlatformClientConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
 from tests.integration.auth.seeds import SEED_MARKER
 
@@ -74,6 +74,13 @@ async def clean_grants(integration_context: Context) -> AsyncGenerator[None, Non
     await _truncate()
     yield
     await _truncate()
+
+
+@pytest.fixture()
+async def second_auth_process(integration_config: AppConfig) -> AsyncGenerator[Context, None]:
+    """An independent Context with its own pools and state backend."""
+    async with Context(integration_config) as ctx:
+        yield ctx
 
 
 @pytest.fixture()

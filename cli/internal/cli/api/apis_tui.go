@@ -79,9 +79,8 @@ type apisBrowser struct {
 	hasMore    bool
 	limit      int
 
-	vendor      string
-	searching   bool
-	searchInput string
+	vendor string
+	search searchLine
 
 	ops        map[string]*operationListResult
 	opsErr     map[string]string
@@ -293,7 +292,7 @@ func (m *apisBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirm != confirmNone {
 		return m.onConfirmKey(msg)
 	}
-	if m.searching {
+	if m.search.active {
 		return m.onSearchKey(msg)
 	}
 	if m.view == viewRevisions {
@@ -324,8 +323,7 @@ func (m *apisBrowser) onAPIsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "/":
-		m.searching = true
-		m.searchInput = m.vendor
+		m.search = searchLine{active: true, input: m.vendor}
 		m.status = ""
 		return m, nil
 	case "r":
@@ -477,27 +475,15 @@ func (m *apisBrowser) back() (tea.Model, tea.Cmd) {
 }
 
 func (m *apisBrowser) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.searching = false
-		return m, nil
-	case "enter":
-		m.searching = false
-		m.vendor = strings.TrimSpace(m.searchInput)
+	switch m.search.handleKey(msg) {
+	case searchSubmit:
+		m.vendor = strings.TrimSpace(m.search.input)
 		m.loading = true
 		return m, m.loadPage(true)
-	case "backspace":
-		if m.searchInput != "" {
-			m.searchInput = m.searchInput[:len(m.searchInput)-1]
-		}
-		return m, nil
-	case "ctrl+c":
+	case searchQuit:
 		m.done = true
 		return m, tea.Quit
 	default:
-		if len(msg.Runes) > 0 {
-			m.searchInput += string(msg.Runes)
-		}
 		return m, nil
 	}
 }
@@ -596,8 +582,8 @@ func (m *apisBrowser) headerStatus() string {
 }
 
 func (m *apisBrowser) filterLine() string {
-	if m.searching {
-		return "vendor: " + m.searchInput + "▏"
+	if m.search.active {
+		return "vendor: " + m.search.input + "▏"
 	}
 	if m.vendor != "" {
 		return fmt.Sprintf("vendor: %q", m.vendor)
@@ -756,7 +742,7 @@ func (m *apisBrowser) hintLine() string {
 	if m.confirm != confirmNone {
 		return m.st.Dim.Render("y confirm · any other key cancel")
 	}
-	if m.searching {
+	if m.search.active {
 		return m.st.Dim.Render("type a vendor · enter apply · esc cancel")
 	}
 	if m.view == viewRevisions {

@@ -142,7 +142,7 @@ async def test_resolve_active_agent_key_uses_one_admin_session(
     "permissions",
     [
         (),
-        (BROKER_EXECUTE_PERMISSION, "capabilities:read", "toolkits:read"),
+        (BROKER_EXECUTE_PERMISSION, "capabilities:read", "apis:read"),
     ],
     ids=["zero-grants", "multiple-grants"],
 )

@@ -172,6 +172,20 @@
           "title": "Rat Ttl Seconds",
           "type": "integer"
         },
+        "refresh_family_max_age_seconds": {
+          "anyOf": [
+            {
+              "minimum": 60,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 7776000,
+          "description": "Maximum absolute lifetime (seconds, default 90 days) of an OAuth refresh-token family from initial mint, across rotations. Set to null to disable the family cap.",
+          "title": "Refresh Family Max Age Seconds"
+        },
         "refresh_ttl_seconds": {
           "default": 604800,
           "description": "Lifetime (seconds, default 7 days) of an OAuth refresh token; each refresh rotates it and the new token gets a fresh lifetime.",
@@ -1454,6 +1468,35 @@
           ],
           "title": "Exporter",
           "type": "string"
+        },
+        "latency_buckets_ms": {
+          "default": [
+            1.0,
+            2.0,
+            5.0,
+            10.0,
+            15.0,
+            20.0,
+            25.0,
+            50.0,
+            100.0,
+            250.0,
+            500.0,
+            1000.0,
+            2500.0,
+            5000.0,
+            10000.0,
+            30000.0
+          ],
+          "description": "Explicit histogram bucket boundaries (milliseconds, strictly increasing, all > 0) for the request-latency histograms listed in docs/operations/monitoring.md; seconds-unit histograms get the list divided by 1000. Must be identical on every process whose series are aggregated together. As an env var, a comma-separated list.",
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Latency Buckets Ms",
+          "type": "array"
         }
       },
       "title": "MetricsConfig",
@@ -1506,7 +1549,7 @@
         },
         "registration_rpm": {
           "default": 10,
-          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (``POST /oauth-clients``).",
+          "description": "Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (``POST /oauth-clients``) and agent self-registration (``POST /register``), in its own bucket.",
           "title": "Registration Rpm",
           "type": "integer"
         },
@@ -1944,11 +1987,11 @@
       "type": "object"
     },
     "TelemetryConfig": {
-      "description": "Anonymous product-telemetry settings.\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt), which is where the\non-by-default install experience comes from. ``instance_id`` seeds the\ndurable admin-DB identity row on first startup for opted-in instances.\n``host_os`` is the operator's OS family, stamped by the CLI at install\ntime so a Docker-run instance reports the host's OS rather than the\ncontainer's; sent once per boot, on the ``instance_booted`` event.",
+      "description": "Anonymous product telemetry. Off by default for hand-written configs, but the\nshipped install paths (such as the quickstarts) may turn it on.\n\nTo opt out, set ``telemetry.enabled`` to ``false`` in the config, or the\nenvironment variable ``JENTIC__TELEMETRY__ENABLED=false`` (for example, in a\nDocker compose file).\n\nEvents carry only a fixed event name (such as ``instance_booted``,\n``agent_created`` or ``broker_execution``), closed-enum tags, the actor type and\na timestamp, plus a random instance id and the app version. No credentials,\nrequest data or personal data are sent. The full event list is\n``TelemetryEventName`` in ``src/jentic_one/shared/telemetry/events.py``.",
       "properties": {
         "enabled": {
           "default": false,
-          "description": "Send anonymous product telemetry. Off when the block is omitted; the onboarding CLI writes it explicitly.",
+          "description": "Send anonymous product telemetry. Off when unset; the shipped install paths may set it to true. Set false to opt out.",
           "title": "Enabled",
           "type": "boolean"
         },

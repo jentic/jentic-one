@@ -97,7 +97,7 @@ func (h *HumanUX) Render(data any) {
 		}
 		if page.HasNext() {
 			hint := lipgloss.NewStyle().Foreground(h.theme.Muted)
-			fmt.Fprintln(os.Stdout, hint.Render("\n"+page.NextHint()))
+			fmt.Fprintln(os.Stdout, hint.Render("\n"+TerminalSafe(page.NextHint())))
 		}
 		return
 	}
@@ -140,7 +140,7 @@ func (h *HumanUX) renderMapList(rows []map[string]any) {
 			}
 		}
 		if name, hasName := row["name"].(string); hasName {
-			header += nameStyle.Render(name)
+			header += nameStyle.Render(TerminalSafe(redactString(name)))
 		}
 		if header != "" {
 			fmt.Fprintln(os.Stdout, header)
@@ -155,7 +155,7 @@ func (h *HumanUX) renderMapList(rows []map[string]any) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintln(os.Stdout, "    "+keyStyle.Render(k+":")+" "+h.fieldValue(k, row[k]))
+			fmt.Fprintln(os.Stdout, "    "+keyStyle.Render(TerminalSafe(k)+":")+" "+h.fieldValue(k, row[k]))
 		}
 	}
 }
@@ -163,18 +163,21 @@ func (h *HumanUX) renderMapList(rows []map[string]any) {
 // renderResultLine composes the one-line human confirmation for a Result.
 func (h *HumanUX) renderResultLine(res Result) string {
 	ok := lipgloss.NewStyle().Foreground(h.theme.Success).Bold(true)
-	subject := res.Resource
-	if res.Name != "" {
-		subject = fmt.Sprintf("%s '%s'", res.Resource, res.Name)
+	resource := TerminalSafe(res.Resource)
+	name := TerminalSafe(redactString(res.Name))
+	status := TerminalSafe(res.Status)
+	subject := resource
+	if name != "" {
+		subject = fmt.Sprintf("%s '%s'", resource, name)
 	}
 	line := ok.Render("✓") + " "
 	if subject != "" {
-		line += fmt.Sprintf("%s %s.", subject, res.Status)
+		line += fmt.Sprintf("%s %s.", subject, status)
 	} else {
-		line += res.Status
+		line += status
 	}
 	if res.Message != "" {
-		line += " " + res.Message
+		line += " " + TerminalSafe(redactString(res.Message))
 	}
 	return line
 }
@@ -205,7 +208,7 @@ func (h *HumanUX) renderResultFields(fields map[string]any) {
 		if isEmptyFieldValue(fields[k]) {
 			continue
 		}
-		fmt.Fprintln(os.Stdout, "  "+keyStyle.Render(k+":")+" "+h.fieldValue(k, fields[k]))
+		fmt.Fprintln(os.Stdout, "  "+keyStyle.Render(TerminalSafe(k)+":")+" "+h.fieldValue(k, fields[k]))
 	}
 }
 
@@ -244,11 +247,11 @@ func (h *HumanUX) fieldValue(key string, v any) string {
 	case nil:
 		val = "-"
 	case string:
-		val = redactString(tv)
+		val = TerminalSafe(redactString(tv))
 	case bool, int, int32, int64, float32, float64:
 		val = fmt.Sprintf("%v", tv)
 	default:
-		val = string(safeMarshal(tv)) // compact, redacted JSON for nested values
+		val = TerminalSafe(string(safeMarshal(tv))) // compact, redacted JSON for nested values
 	}
 	return strings.TrimSpace(val)
 }
@@ -265,11 +268,11 @@ func (h *HumanUX) ReportError(err error, step string) {
 		}
 		coded.MarkReported()
 	}
-	msg := redactString(err.Error())
+	msg := TerminalSafe(redactString(err.Error()))
 	style := lipgloss.NewStyle().Foreground(h.theme.Error).Bold(true)
 	fmt.Fprintf(os.Stderr, "%s\n", style.Render("✖ Error: "+msg))
 	if step != "" {
-		fmt.Fprintf(os.Stderr, "  Next Step: %s\n", step)
+		fmt.Fprintf(os.Stderr, "  Next Step: %s\n", TerminalSafe(redactString(step)))
 	}
 }
 

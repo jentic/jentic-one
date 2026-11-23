@@ -16,6 +16,7 @@ Marks are declared in [`pyproject.toml`](../../pyproject.toml)
 | Both backends | `make test-integration-all` | Fixtures running | — |
 | Architecture | `make test-arch` | Nothing | `tests/arch/` — see [its README](../../tests/arch/README.md) |
 | Smoke | `make test-smoke` | A running deployment | `tests/smoke/` |
+| Upgrade | `make test-upgrade` | Docker (`OLD=0.44.0 BACKEND=postgres`) | `tests/upgrade/` — see [Upgrade testing](upgrade-testing.md) |
 | Perf / load | `make perf-help` | Docker; local only, never in CI | [`tests/perf/README.md`](../../tests/perf/README.md) |
 
 Notes:

@@ -11,7 +11,23 @@ from enum import StrEnum
 from typing import Any
 from urllib.parse import urlparse
 
-from jentic_one.shared.url_path import normalize_path as normalize_path
+from jentic_one.shared.url_path import (
+    PATH_PARAM_RE as PATH_PARAM_RE,
+)
+from jentic_one.shared.url_path import (
+    RFC6570_OPERATORS as RFC6570_OPERATORS,
+)
+from jentic_one.shared.url_path import (
+    allocate_group_names,
+    regex_group_base,
+    split_param_token,
+)
+from jentic_one.shared.url_path import (
+    normalize_path as normalize_path,
+)
+from jentic_one.shared.url_path import (
+    normalize_path_template as normalize_path_template,
+)
 
 SCHEME_DEFAULT_PORTS: dict[str, int] = {
     "http": 80,
@@ -19,14 +35,10 @@ SCHEME_DEFAULT_PORTS: dict[str, int] = {
     "ftp": 21,
 }
 
-PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
+_LEGACY_FREE_HOST_CLASS = r"[^:/]+"
+_LEGACY_SCHEME_RELATIVE_FREE_HOST_CLASS = r"[^/]+"
 
-# RFC 6570 expression operators. These are single-character prefixes on the
-# expression (e.g. ``{+var}``, ``{#var}``), never part of the variable name, so
-# they must be stripped before a templated token is reconciled against a declared
-# ``in: path`` parameter name. ``+`` (reserved expansion) additionally signals a
-# catch-all that matches across path separators.
-RFC6570_OPERATORS = frozenset("+#./;?&")
+_TRAILING_PARAM_GROUP_RE = re.compile(r"/\(\?P<([A-Za-z_][A-Za-z0-9_]*)>\[\^/\]\+\)\$$")
 
 
 @dataclass
@@ -64,36 +76,6 @@ is zero-width, so it never changes what a regex matches.
 """
 
 
-def normalize_path_template(template: str) -> str:
-    """Normalize a path template to the same canonical form as ``normalize_path``.
-
-    ``{...}`` parameter tokens are preserved verbatim (including RFC 6570
-    operators such as ``{+param}``); everything else — trailing slash, dot
-    segments, percent-encoding — is normalized exactly as ``normalize_path``
-    normalizes a request path. This symmetry is what lets an index entry built
-    from the template match a request path normalized at lookup time (#1085).
-
-    Tokens are shielded behind NUL-delimited sentinels while the whole template
-    goes through ``normalize_path`` in one pass; normalizing literal chunks
-    individually would strip the slash *before* a token (``/pets/{petId}`` →
-    ``/pets{petId}``), because each chunk's trailing slash looks like a
-    trailing slash to ``normalize_path``.
-    """
-    parts = PATH_PARAM_RE.split(template)
-    tokens: list[str] = []
-    shielded: list[str] = []
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            shielded.append(part)
-        else:
-            tokens.append(part)
-            shielded.append(f"\x00{len(tokens) - 1}\x00")
-    normalized = normalize_path("".join(shielded))
-    for idx, token in enumerate(tokens):
-        normalized = normalized.replace(f"\x00{idx}\x00", "{" + token + "}")
-    return normalized
-
-
 def normalise_host(host: str, scheme: str = "https") -> str:
     """Normalize a hostname: lowercase, strip default port."""
     host = host.lower()
@@ -110,20 +92,23 @@ def normalise_host(host: str, scheme: str = "https") -> str:
     return host
 
 
-def host_contains_variables(host: str) -> bool:
-    """Check if a host string contains OpenAPI variable placeholders."""
-    return bool(PATH_PARAM_RE.search(host))
+def is_free_host_regex(pattern: str) -> bool:
+    """Return whether a stored host pattern contains a legacy arbitrary-host class."""
+    return any(
+        host_class in pattern
+        for host_class in (_LEGACY_FREE_HOST_CLASS, _LEGACY_SCHEME_RELATIVE_FREE_HOST_CLASS)
+    )
 
 
 def build_host_regex(host: str) -> re.Pattern[str]:
-    """Build a regex pattern for matching a host with optional variables."""
+    """Build a host regex whose variable placeholders match only their literal templates."""
     parts = PATH_PARAM_RE.split(host)
     regex_parts: list[str] = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
             regex_parts.append(re.escape(part))
         else:
-            regex_parts.append(r"[^:/]+")
+            regex_parts.append(re.escape("{" + part + "}"))
     return re.compile("^" + "".join(regex_parts) + "$", re.IGNORECASE)
 
 
@@ -167,37 +152,6 @@ def is_relative_server_url(url: str) -> bool:
     return not url.startswith("http://") and not url.startswith("https://")
 
 
-def resolve_server_url(server_url: str, base_url: str = "") -> str:
-    """Resolve a potentially relative server URL against a base."""
-    if not is_relative_server_url(server_url):
-        return server_url
-    if base_url:
-        return base_url.rstrip("/") + "/" + server_url.lstrip("/")
-    return server_url
-
-
-def iter_openapi_server_lists(
-    spec: dict[str, Any],
-    path: str,
-    method: str,
-) -> list[dict[str, Any]]:
-    """Iterate through server lists at operation, path, and spec level."""
-    paths: dict[str, Any] = spec.get("paths", {})
-    path_item: dict[str, Any] = paths.get(path, {})
-    operation: dict[str, Any] = path_item.get(method.lower(), {})
-
-    operation_servers: list[dict[str, Any]] = operation.get("servers", [])
-    if operation_servers:
-        return operation_servers
-
-    path_servers: list[dict[str, Any]] = path_item.get("servers", [])
-    if path_servers:
-        return path_servers
-
-    result: list[dict[str, Any]] = spec.get("servers", [])
-    return result
-
-
 def merge_paths(base_path: str, operation_path: str) -> str:
     """Join a base with an operation path, collapsing the boundary slash.
 
@@ -214,28 +168,8 @@ def merge_paths(base_path: str, operation_path: str) -> str:
     return base + op
 
 
-def _safe_param_name(name: str) -> str:
-    """Make a parameter name safe for use in regex named groups."""
-    return re.sub(r"[^a-zA-Z0-9_]", "_", name)
-
-
-def _split_param_token(token: str) -> tuple[str, bool]:
-    """Split a path-param token into ``(name, is_catch_all)``.
-
-    OpenAPI / RFC 6570 expressions may carry a single-character operator prefix
-    (``+#./;?&``) that is *not* part of the variable name — Google discovery-derived
-    specs template reserved-expansion params as ``{+property}`` while declaring the
-    parameter plainly as ``property``. Any such operator is stripped from the
-    returned name so the token reconciles with its declared ``in: path`` parameter.
-
-    The reserved-expansion operator (``+``) additionally marks a catch-all that
-    matches across path separators (``.+``); a plain ``{param}`` matches a single
-    segment (``[^/]+``).
-    """
-    is_catch_all = token.startswith("+")
-    if token and token[0] in RFC6570_OPERATORS:
-        return token[1:], is_catch_all
-    return token, is_catch_all
+_safe_param_name = regex_group_base
+_split_param_token = split_param_token
 
 
 def reconcile_declared_path_params(path_template: str, declared_names: list[str]) -> list[str]:
@@ -287,24 +221,13 @@ def path_param_group_names(*templates: str) -> dict[str, str]:
     (``n`` from 2), so two distinct parameters never share a capture. Server
     variable tokens are not path parameters and are skipped.
     """
-    groups: dict[str, str] = {}
-    taken: set[str] = set()
-    for template in templates:
-        for token in PATH_PARAM_RE.findall(template):
-            if token.startswith(_SV_TOKEN_PREFIX):
-                continue
-            name, _is_catch_all = _split_param_token(token)
-            if name in groups:
-                continue
-            base = _safe_param_name(name)
-            group = base
-            suffix = 2
-            while group in taken:
-                group = f"{base}__{suffix}"
-                suffix += 1
-            groups[name] = group
-            taken.add(group)
-    return groups
+    tokens = (
+        token
+        for template in templates
+        for token in PATH_PARAM_RE.findall(template)
+        if not token.startswith(_SV_TOKEN_PREFIX)
+    )
+    return allocate_group_names(tokens)
 
 
 def path_param_catch_all(*templates: str) -> dict[str, bool]:
@@ -432,6 +355,68 @@ def count_segments(path: str) -> int:
     if not stripped:
         return 0
     return len(stripped.split("/"))
+
+
+def has_trailing_path_param(path_template: str) -> bool:
+    """Return True if *path_template* ends with a standalone ordinary ``{param}`` segment.
+
+    Only plain single-parameter final segments (e.g. ``/contents/{path}``,
+    ``/{key}``) qualify. RFC 6570 operator expressions (``{+path}``, ``{#frag}``),
+    internal server-variable placeholders (``{~sv0}``), and composite segments
+    with surrounding literals (``/items/id-{id}``) return False.
+    """
+    normalized = normalize_path_template(path_template)
+    if normalized == "/":
+        return False
+    last_segment = normalized.rsplit("/", 1)[-1]
+    match = PATH_PARAM_RE.fullmatch(last_segment)
+    if match is None:
+        return False
+    token = match.group(1)
+    return bool(
+        token and token[0] not in RFC6570_OPERATORS and not token.startswith(_SV_TOKEN_PREFIX)
+    )
+
+
+def trailing_param_path_regex(
+    path_template: str,
+    path_regex: str | re.Pattern[str],
+    *,
+    operation_path: str | None = None,
+) -> re.Pattern[str] | None:
+    """Build a multi-segment regex for an ordinary trailing ``{param}``, or ``None``.
+
+    Rewrites a trailing ``/(?P<name>[^/]+)$`` capture into
+    ``/(?P<name>[^/]+(?:/[^/]+)+)$`` so a final operation parameter can span
+    nested non-empty slash-separated segments (#701, #1422) while keeping
+    preceding parameters single-segment.
+
+    Returns ``None`` when:
+    - *path_template* (or *operation_path*, when given) does not end in a
+      standalone ordinary ``{param}`` segment,
+    - the final group captures a server variable (``sv__*`` / ``svk__*``), or
+    - the final segment is a ``(?P=...)`` back-reference to an earlier
+      single-segment parameter (#1980).
+    """
+    if operation_path is not None and not has_trailing_path_param(operation_path):
+        return None
+    if not has_trailing_path_param(path_template):
+        return None
+    source = path_regex.pattern if isinstance(path_regex, re.Pattern) else path_regex
+    match = _TRAILING_PARAM_GROUP_RE.search(source)
+    if match is None:
+        return None
+    group = match.group(1)
+    normalized_template = normalize_path_template(path_template)
+    trailing_token = PATH_PARAM_RE.fullmatch(normalized_template.rsplit("/", 1)[-1])
+    if trailing_token is None:
+        return None
+    trailing_name, _ = _split_param_token(trailing_token.group(1))
+    templates = (*((operation_path,) if operation_path is not None else ()), normalized_template)
+    if path_param_group_names(*templates).get(trailing_name) != group:
+        return None
+    widened = source[: match.start()] + f"/(?P<{group}>[^/]+(?:/[^/]+)+)$"
+    return re.compile(widened)
 
 
 def build_index_entry(
@@ -685,6 +670,8 @@ def resolve_server_variable_groups(
 
 
 def _raw_host(server_url: str) -> str:
+    if server_url.startswith("//"):
+        return server_url[2:].split("/", 1)[0]
     if "://" not in server_url:
         return ""
     return server_url.split("://", 1)[1].split("/", 1)[0]
@@ -775,11 +762,11 @@ def _render_server_template(
                 seen_groups.add(group)
                 regex.append(f"(?P<{group}>{matcher})")
             continue
-        # An undeclared placeholder: legacy handling (host → any label run,
-        # path → an operation path parameter).
+        # An undeclared host placeholder matches only its literal template; an
+        # undeclared path placeholder is an operation path parameter.
         display.append("{" + part + "}")
         if in_host:
-            regex.append(r"[^:/]+")
+            regex.append(re.escape("{" + part + "}"))
         else:
             regex.append(_path_param_group(part, param_groups, seen_groups, param_catch_all))
     return "".join(display), "".join(regex)
@@ -871,10 +858,11 @@ def build_server_index_entries(
     try:
         entries = [_entry_for_bindings(server_url, used, c, operation_path) for c in combos]
     except ValueError:
-        # A variable in an unparseable position (e.g. the port): fall back to
-        # the default-expanded URL, as before server variables were expanded.
-        # The row pins every expanded variable to its default, so the lookup
-        # still resolves (and scopes credentials on) those values.
+        # A variable in an unparseable position (e.g. the port) uses the
+        # default-expanded URL. The row pins every expanded variable to its
+        # default, so the lookup still resolves (and scopes credentials on)
+        # those values. A host variable without a default remains its literal
+        # ``{name}`` placeholder in ``expanded``.
         expanded = server_url
         fixed: list[str] = []
         for spec in used:
@@ -888,6 +876,9 @@ def build_server_index_entries(
             parsed.scheme,
             operation_path=operation_path,
         )
+        # Pin every placeholder left in the fallback host to its literal
+        # template rather than deriving another variable matcher for it.
+        entry.host_regex = re.compile("^" + re.escape(parsed.host) + "$", re.IGNORECASE)
         entry.path_regex = re.compile(
             entry.path_regex.pattern.replace("^", "^" + "".join(fixed), 1)
         )

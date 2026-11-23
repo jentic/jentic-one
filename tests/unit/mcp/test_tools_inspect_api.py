@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import jentic_one.mcp.tools as tools_mod
+import jentic_one.mcp.access as access_mod
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
     ConnectOptions,
@@ -101,7 +101,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeService.calls = []
     _FakeService.missing = False
     _FakeService.error = None
-    monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeService)
+    monkeypatch.setattr(access_mod, "ConnectSessionService", _FakeService)
 
 
 async def test_the_api_identity_reaches_the_service_and_the_next_step_is_added() -> None:

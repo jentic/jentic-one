@@ -49,7 +49,6 @@ Get going:
 Connect agents:
 
 - [Connect an agent](guides/connecting-agents.md) — the four integration paths
-- [Run coding agents in isolation](guides/local-agent.md) — the `jentic run` sandbox
 - [Serve MCP over HTTP](guides/mcp-http-endpoint.md) — the optional hosted `/mcp` endpoint
 
 Operate the catalog:
@@ -68,7 +67,7 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 ## Secure
 
 - [Deploying Jentic One securely](security/README.md) — threat model and the deployment-tier ladder
-- [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options (including `jentic run`)
+- [Same-host setups](security/same-host/README.md) — the threat model when an agent shares a machine with the instance, and the menu of isolation options
 - Agent runbook: [harden](agent/harden.md) — posture checks as executable steps
 
 ## Understand

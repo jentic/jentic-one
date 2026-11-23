@@ -192,6 +192,46 @@ func TestRetry_429OverBudgetSurfaces(t *testing.T) {
 	}
 }
 
+func TestRetryAfter_RejectsSignAndOverflow(t *testing.T) {
+	shrinkRetryKnobs(t) // maxRetryAfter = 5s
+	for _, raw := range []string{"+5", "-0", "-1"} {
+		r := &http.Response{Header: http.Header{"Retry-After": {raw}}}
+		if wait, ok := retryAfter(r); ok {
+			t.Errorf("retryAfter(%q) = (%v, true), want (_, false)", raw, wait)
+		}
+	}
+	for _, raw := range []string{"9300000000", "999999999999999999999999999999"} {
+		r := &http.Response{Header: http.Header{"Retry-After": {raw}}}
+		wait, ok := retryAfter(r)
+		if !ok {
+			t.Errorf("retryAfter(%q) = (_, false), want over-cap duration with ok=true", raw)
+		}
+		if wait <= maxRetryAfter {
+			t.Errorf("retryAfter(%q) = %v, want > maxRetryAfter (%v)", raw, wait, maxRetryAfter)
+		}
+	}
+}
+
+func TestRetry_429HugeRetryAfterSurfaces(t *testing.T) {
+	shrinkRetryKnobs(t)
+	fake := &fakeRT{respond: func(_ int, _ *http.Request) (*http.Response, error) {
+		return resp(http.StatusTooManyRequests, map[string]string{"Retry-After": "9300000000"}), nil
+	}}
+	rt := newRetryTransport(fake, auth.Credentials{InjectedBearerToken: "at_x"})
+
+	r, err := rt.RoundTrip(newReq(t, http.MethodGet, "https://x.test/thing", ""))
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	defer closeResp(r)
+	if r.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 surfaced", r.StatusCode)
+	}
+	if got := int(fake.calls); got != 1 {
+		t.Errorf("calls = %d, want 1 (no retry on overflowing Retry-After)", got)
+	}
+}
+
 // TestRetry_429PerpetualSurfacesAfterSingleRetry is the SEC-3 regression: a
 // server returning 429 + a small Retry-After on EVERY attempt must get exactly
 // one retry and then surface — not loop until a context deadline (which the
@@ -332,5 +372,124 @@ func TestBrokerTransport_5xxIdempotentStillRetries(t *testing.T) {
 	}
 	if got := int(fake.calls); got != 3 {
 		t.Errorf("calls = %d, want 3 (two 503s then 200)", got)
+	}
+}
+
+// TestRetry401_DoesNotReauthOffOrigin verifies that when a server 302-redirects
+// to a foreign origin that then returns 401, no second Authorization header is
+// ever sent off-origin and the stored token is not re-exchanged or invalidated.
+func TestRetry401_DoesNotReauthOffOrigin(t *testing.T) {
+	shrinkRetryKnobs(t)
+	withClientConfigDir(t)
+
+	ref := auth.IdentityRef{Identity: "a", Environment: "e"}
+	if err := auth.SaveTokens(ref, &auth.TokenSet{
+		AccessToken: "at_home",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Origin:      "https://home.test",
+	}); err != nil {
+		t.Fatalf("SaveTokens: %v", err)
+	}
+
+	creds := auth.Credentials{
+		BaseURL:         "https://home.test",
+		IdentityName:    "a",
+		EnvironmentName: "e",
+	}
+
+	var foreignHits int32
+	var foreignAuths []string
+	fake := &fakeRT{respond: func(_ int, req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "foreign.test" {
+			atomic.AddInt32(&foreignHits, 1)
+			foreignAuths = append(foreignAuths, req.Header.Get("Authorization"))
+			return resp(http.StatusUnauthorized, nil), nil
+		}
+		return resp(http.StatusFound, map[string]string{
+			"Location": "https://foreign.test/login",
+		}), nil
+	}}
+
+	// 1. Even if a bare http.Client follows the 302 to foreign.test and receives
+	// the 401, retryTransport must refuse to re-authenticate off-origin.
+	bareClient := &http.Client{Transport: newRetryTransport(fake, creds)}
+	req := newReq(t, http.MethodGet, "https://home.test/start", "")
+	req.Header.Set("Authorization", "Bearer at_home")
+	r, err := bareClient.Do(req)
+	if err != nil {
+		t.Fatalf("bareClient.Do: %v", err)
+	}
+	closeResp(r)
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", r.StatusCode)
+	}
+	if got := atomic.LoadInt32(&foreignHits); got != 1 {
+		t.Errorf("foreign hits = %d, want 1 (no 401 retry off-origin)", got)
+	}
+	for i, h := range foreignAuths {
+		if h != "" {
+			t.Errorf("foreign request %d carried Authorization %q, want empty", i, h)
+		}
+	}
+	if _, err := auth.ReadTokens(ref); err != nil {
+		t.Errorf("stored token should remain intact after foreign 401: %v", err)
+	}
+
+	// 2. The full plane httpClient additionally stops at the cross-origin 302
+	// before foreign.test is ever contacted.
+	atomic.StoreInt32(&foreignHits, 0)
+	hc := Config{
+		ControlBaseURL:  "https://home.test",
+		IdentityName:    "a",
+		EnvironmentName: "e",
+		HTTPClient:      &http.Client{Transport: fake},
+	}.httpClient()
+	req2 := newReq(t, http.MethodGet, "https://home.test/start", "")
+	req2.Header.Set("Authorization", "Bearer at_home")
+	r2, err := hc.Do(req2)
+	if err != nil {
+		t.Fatalf("hc.Do: %v", err)
+	}
+	closeResp(r2)
+	if r2.StatusCode != http.StatusFound {
+		t.Errorf("status = %d, want 302 surfaced", r2.StatusCode)
+	}
+	if got := atomic.LoadInt32(&foreignHits); got != 0 {
+		t.Errorf("foreign hits via plane client = %d, want 0", got)
+	}
+}
+
+// TestSameOriginRedirects_HTTPSDowngradeNotFollowed verifies that a redirect
+// from https:// to http:// on the same host is treated as a cross-origin
+// transition and is not followed.
+func TestSameOriginRedirects_HTTPSDowngradeNotFollowed(t *testing.T) {
+	var httpHits int32
+	fake := &fakeRT{respond: func(_ int, req *http.Request) (*http.Response, error) {
+		if req.URL.Scheme == "http" {
+			atomic.AddInt32(&httpHits, 1)
+			return resp(http.StatusOK, nil), nil
+		}
+		return resp(http.StatusFound, map[string]string{
+			"Location": "http://" + req.URL.Host + "/downgraded",
+		}), nil
+	}}
+	hc := Config{
+		ControlBaseURL:      "https://x.test",
+		InjectedBearerToken: "at_secret",
+		HTTPClient:          &http.Client{Transport: fake},
+	}.httpClient()
+
+	req := newReq(t, http.MethodGet, "https://x.test/start", "")
+	req.Header.Set("Authorization", "Bearer at_secret")
+	r, err := hc.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer closeResp(r)
+	if r.StatusCode != http.StatusFound {
+		t.Errorf("status = %d, want 302 (HTTPS downgrade must not be followed)", r.StatusCode)
+	}
+	if got := atomic.LoadInt32(&httpHits); got != 0 {
+		t.Errorf("downgraded http endpoint hit %d times, want 0", got)
 	}
 }

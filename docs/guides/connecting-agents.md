@@ -16,7 +16,7 @@ actual operations is a separate, also-approved step
    Hermes, or a generic `AGENTS.md`). The skill teaches the agent to drive
    `jentic search` → `jentic inspect` → `jentic execute`. Running the agent on
    the same machine as your own work? Isolate it —
-   [Run coding agents in isolation](local-agent.md).
+   [same-host options](../security/same-host/README.md).
 2. **MCP over stdio (`jentic mcp`)** — for MCP-capable runtimes, add a stdio
    entry that spawns `jentic mcp --context <name>`. Setup and
    registration stay CLI-only (`jentic setup`), so onboarding is unchanged;

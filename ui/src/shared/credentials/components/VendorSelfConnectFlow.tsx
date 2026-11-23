@@ -1,0 +1,679 @@
+import type { ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Unlink } from 'lucide-react';
+import {
+	ActorStatusBadge,
+	AgentBadge,
+	AppLink,
+	Button,
+	ErrorAlert,
+	Input,
+	Label,
+	RadioCardGroup,
+	SearchInput,
+	Skeleton,
+	VendorIcon,
+	toast,
+} from '@/shared/ui';
+import type { RadioCardOption } from '@/shared/ui';
+import {
+	invalidateBindingSurfaces,
+	useAgentsForPicker,
+	useCancelConnectSession,
+	useConfirmConnectSession,
+	useConnectSession,
+	usePollConnectSessionStatus,
+	useStartIntegrationConnect,
+	useVendorAuthCapabilities,
+} from '@/shared/credentials/api/vendors-hooks';
+import {
+	cancelConnectSession,
+	cancelConnectSessionOnUnload,
+} from '@/shared/credentials/api/vendors-client';
+import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
+import type {
+	ConfirmResponse,
+	PermissionRule,
+	VendorScopeCatalog,
+	VendorSummary,
+} from '@/shared/credentials/api/vendors-types';
+import {
+	AwaitingStep,
+	RulesStep,
+	ScopeChooseField,
+	SharedAppLine,
+	TerminalStep,
+} from './VendorConnectSteps';
+import type {
+	ConnectedCredentialInfo,
+	Phase,
+	PostConnectInfo,
+	VendorDisplay,
+} from './vendorFlowTypes';
+
+export function VendorSelfConnectFlow({
+	vendor,
+	preselectedAgentId,
+	renderPostConnect,
+	onConnected,
+	onBack,
+	onDone,
+}: {
+	vendor: VendorSummary;
+	preselectedAgentId?: string;
+	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+	onConnected?: (info: ConnectedCredentialInfo) => void;
+	onBack: () => void;
+	onDone: () => void;
+}) {
+	// Pin the auth-capabilities read to the picker tile's registration id
+	// (when set) so scope catalog / default_scopes come from *this* admin-
+	// registered OAuth app, not another source for the same slug. Without
+	// the pin, a config tile and a registration would share one catalog.
+	const capabilities = useVendorAuthCapabilities(vendor.key, vendor.registration_id);
+	const agents = useAgentsForPicker();
+
+	const queryClient = useQueryClient();
+	const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set());
+	const [scopesTouched, setScopesTouched] = useState(false);
+	const [phase, setPhase] = useState<Phase>('configure');
+	const [rules, setRules] = useState<PermissionRule[] | null>(null);
+	const [session, setSession] = useState<{
+		id: string;
+		pollToken: string;
+		revisionId: string | null;
+	} | null>(null);
+	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	// User-editable credential label. Pre-filled with the vendor display
+	// name so the input shows a sensible default the user can edit. Sent
+	// on the ``:connect`` payload; the backend accepts it as the credential
+	// name (falling back to the same vendor display name when omitted, so
+	// pre-filling here is functionally equivalent to omitting it).
+	const [credentialName, setCredentialName] = useState<string>(vendor.display_name);
+	// When ``preselectedAgentId`` is supplied by the caller (entry from
+	// a specific agent), the picker starts locked to that id.
+	// Otherwise it starts empty and the user must pick before Continue.
+	const [agentId, setAgentId] = useState<string | null>(preselectedAgentId ?? null);
+
+	const startMutation = useStartIntegrationConnect();
+	const confirmMutation = useConfirmConnectSession(session?.id ?? '', session?.pollToken ?? '');
+	const cancelMutation = useCancelConnectSession();
+	// Post-``:connect`` we can hydrate ``ReviewSession`` (specifically
+	// ``api_reference``) to feed the rules-page operation-impact preview.
+	// Gated on the session id existing so we don't fire before ``:connect``
+	// returns. The review read is poll_token-gated server-side, so the
+	// token from the ``:connect`` response rides along.
+	const reviewSession = useConnectSession(session?.id, session?.pollToken, {
+		enabled: !!session?.id,
+	});
+
+	// Cancellation is fire-and-forget on the unmount cleanup path (the
+	// user closed the dialog or navigated away mid-flow); if we go
+	// through the mutation, TanStack Query cancels the in-flight
+	// request when the component unmounts and the backend never sees
+	// it. Hold the effective (id, token) in a ref so the cleanup can
+	// hit the raw client without depending on the mutation lifecycle.
+	const sessionRef = useRef<{ id: string; pollToken: string; revisionId: string | null } | null>(
+		null,
+	);
+	const phaseRef = useRef<Phase>('configure');
+
+	// Fire ``:connect`` — invoked from Continue-click on the configure
+	// step (the user's credential-name pick is captured first) and from
+	// the terminal step's "Try again" so a retry opens a FRESH session
+	// (the failed one was cascade-deleted server-side and can't be
+	// reused). Idempotent: returns the existing session id/token when
+	// one is already in ``sessionRef``.
+	const startConnect = async (): Promise<{ id: string; pollToken: string } | null> => {
+		if (sessionRef.current) return sessionRef.current;
+		try {
+			startMutation.reset();
+			const trimmedName = credentialName.trim();
+			const result = await startMutation.mutateAsync({
+				vendor: vendor.key,
+				// Omit ``name`` entirely when blank so the server's default
+				// (vendor display name) kicks in instead of storing an
+				// empty label.
+				...(trimmedName ? { name: trimmedName } : {}),
+				// Pin the specific admin-registered app when the picker
+				// entry references one — required to disambiguate when
+				// multiple registrations exist for the same vendor.
+				...(vendor.registration_id
+					? { oauth_app_registration_id: vendor.registration_id }
+					: {}),
+			});
+			const next = {
+				id: result.session_id,
+				pollToken: result.poll_token,
+				revisionId: result.revision_id ?? null,
+			};
+			sessionRef.current = next;
+			setSession(next);
+			return next;
+		} catch {
+			// surfaced via ErrorAlert on the configure page.
+			return null;
+		}
+	};
+
+	const scopes = useMemo<VendorScopeCatalog[]>(
+		() => capabilities.data?.scopes ?? [],
+		[capabilities.data],
+	);
+	const scopeDefaults = useMemo(
+		() => scopes.filter((s) => s.default).map((s) => s.name),
+		[scopes],
+	);
+
+	useEffect(() => {
+		if (scopesTouched) return;
+		if (scopeDefaults.length === 0) return;
+		setSelectedScopes(new Set(scopeDefaults));
+	}, [scopeDefaults, scopesTouched]);
+
+	const polling = usePollConnectSessionStatus(session?.id ?? '', session?.pollToken ?? '', {
+		enabled: phase === 'awaiting' && !!session,
+		// RFC 8628 §3.5: honour the vendor's ``interval`` when supplied,
+		// fall back to the spec-mandated 5s (never the hook's default —
+		// that's for our own ``/status`` reads, not vendor cadence).
+		intervalMs:
+			challenge?.kind === 'device_authorization'
+				? (challenge.poll_interval_seconds ?? 5) * 1000
+				: undefined,
+	});
+
+	useEffect(() => {
+		if (phase !== 'awaiting') return;
+		// A 403 on /status means the backend deleted the session
+		// (unhappy terminal — ``_mark_terminal`` cascades the credential
+		// + session rather than leaving dangling ``failed`` rows). The
+		// service raises ``InvalidPollTokenError`` uniformly for both
+		// "session missing" and "poll_token mismatch" to close the
+		// session-id enumeration oracle; we know the poll_token is
+		// correct at this point (we made it through ``:confirm``), so
+		// a 403 here is unambiguously "session gone → terminal".
+		const err = polling.error as { status?: number } | undefined;
+		if (err?.status === 403) {
+			phaseRef.current = 'terminal';
+			setPhase('terminal');
+			return;
+		}
+		if (!polling.data) return;
+		const status = polling.data.status;
+		if (status === 'connected' || status === 'failed' || status === 'expired') {
+			phaseRef.current = 'terminal';
+			setPhase('terminal');
+			if (status === 'connected') {
+				toast({
+					title: `Connected to ${vendor.display_name}`,
+					description: polling.data.connected_as
+						? `Signed in as ${polling.data.connected_as}.`
+						: undefined,
+					variant: 'success',
+				});
+				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The connect bound the credential to the picked agent, so that
+				// agent's binding list (its page, the Add APIs tray) is stale too.
+				const credentialId = polling.data.credential_id;
+				if (credentialId && agentId) {
+					invalidateBindingSurfaces(queryClient, credentialId, [agentId]);
+				}
+			}
+		}
+	}, [phase, polling.data, polling.error, vendor.display_name, queryClient, agentId]);
+
+	// Cancel-on-unmount: if the user closes the dialog / navigates away
+	// mid-flow, the backend needs to know so the pending credential +
+	// session get cleaned up. We fire the raw ``cancelConnectSession``
+	// client (not the mutation) because TanStack Query aborts pending
+	// mutations on unmount, and this call MUST reach the server.
+	// Fire-and-forget; the backend is idempotent, so a double-cancel
+	// (e.g. Cancel button click that also triggers unmount) is a 204.
+	useEffect(() => {
+		return () => {
+			// Any pre-terminal phase — ``:connect`` fires at mount, so a
+			// session exists from ``configure`` onward. Without cancelling
+			// on unmount from those earlier phases too, a user who opens
+			// the dialog and immediately closes it leaves a pending
+			// credential + session until the TTL scanner reaps them.
+			if (phaseRef.current === 'terminal') return;
+			const s = sessionRef.current;
+			if (!s) return;
+			// Best-effort: swallow errors so a network blip on close
+			// doesn't crash the parent tree.
+			void cancelConnectSession(s.id, s.pollToken).catch(() => {});
+		};
+	}, []);
+
+	// Tab-close variant: a plain ``fetch`` fired from unmount is aborted by
+	// the browser when the page itself is being torn down, so the pending
+	// credential + session would otherwise linger until the session TTL
+	// scanner reaps them. A ``keepalive`` request outlives the page (see
+	// ``cancelConnectSessionOnUnload``); we keep the ``fetch`` above for the
+	// in-page dismiss case (dialog close, navigation).
+	useEffect(() => {
+		const onBeforeUnload = (): void => {
+			if (phaseRef.current === 'terminal') return;
+			const s = sessionRef.current;
+			if (!s) return;
+			cancelConnectSessionOnUnload(s.id, s.pollToken);
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	}, []);
+
+	const handleCancel = (): void => {
+		// Session exists from ``configure`` onward (``:connect`` fires at
+		// mount). Any pre-terminal cancel must clean up server-side —
+		// otherwise the pending credential/session sit until TTL. Same
+		// reasoning as ``VendorApproveFlow.handleCancel``.
+		const s = sessionRef.current;
+		if (s && phase !== 'terminal') {
+			cancelMutation.mutate({ sessionId: s.id, pollToken: s.pollToken });
+			phaseRef.current = 'terminal';
+		}
+		onBack();
+	};
+
+	const toggleScope = (name: string) => {
+		setScopesTouched(true);
+		setSelectedScopes((prev) => {
+			const next = new Set(prev);
+			if (next.has(name)) next.delete(name);
+			else next.add(name);
+			return next;
+		});
+	};
+
+	// Continue on the scopes page — no backend call yet. Rules start empty;
+	// the empty-state message on the rules page tells the user that
+	// leaving it empty falls back to allow-all-GETs at ``:confirm`` time.
+	// We do not pre-populate rules from scope classifications — the user
+	// sees exactly what they authored, nothing more.
+	const goToRules = async (): Promise<void> => {
+		// Fire ``:connect`` now (deferred from mount so the user's
+		// credential-name pick can be captured first). Idempotent — a
+		// re-click while the mutation is in flight resolves to the same
+		// session. Bails out on failure; the error surfaces via
+		// ``ErrorAlert`` on the configure page.
+		const s = await startConnect();
+		if (!s) return;
+		setRules((prev) => prev ?? []);
+		setPhase('rules');
+	};
+
+	// Continue on the rules page — session exists by the time we reach
+	// this handler (``goToRules`` fires ``:connect`` first). Just POST
+	// ``:confirm`` with the human-approved
+	// scopes + rules + selected agent, and transition to ``awaiting``.
+	// ``agent_id`` lands at ``:confirm`` (not ``:connect``) so the
+	// session-on-vendor-click semantics are preserved for the self flow
+	// — see the backend's late-bind branch in ``ConnectSessionService.confirm``.
+	const confirmFlow = async (finalRules: PermissionRule[]) => {
+		if (!session) return;
+		try {
+			const result = await confirmMutation.mutateAsync({
+				confirmed_scopes: Array.from(selectedScopes),
+				permission_rules: finalRules,
+				agent_id: agentId,
+				revision_id: session.revisionId,
+			});
+			// A vendor session's OAuth confirm always answers with a vendor
+			// challenge; the other result kinds belong to approve mode.
+			if (result.kind !== 'device_authorization' && result.kind !== 'authorization_code') {
+				return;
+			}
+			phaseRef.current = 'awaiting';
+			setChallenge(result);
+			setPhase('awaiting');
+			// The URL is vendor-supplied — refuse to auto-navigate anything
+			// that isn't https. On refusal, ``RedirectAwaitingStep`` renders
+			// an ``UnsafeVendorUrlNotice`` in place of the open button.
+			if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
+				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
+			}
+		} catch {
+			// surfaced via ErrorAlert below.
+		}
+	};
+
+	// Report the finished sign-in once, so a host tracking its own progress
+	// (e.g. the agent setup queue) can mark the credential added.
+	const reportedRef = useRef(false);
+	const connectedId =
+		phase === 'terminal' && polling.data?.status === 'connected'
+			? (polling.data.credential_id ?? null)
+			: null;
+	useEffect(() => {
+		if (!connectedId || reportedRef.current) return;
+		reportedRef.current = true;
+		onConnected?.({
+			credentialId: connectedId,
+			name: credentialName.trim() || vendor.display_name,
+		});
+	}, [connectedId, onConnected, credentialName, vendor.display_name]);
+
+	const display: VendorDisplay = {
+		displayName: vendor.display_name,
+		iconKey: vendor.vendor,
+		sharedAppName: vendor.source === 'db' ? vendor.name : undefined,
+	};
+	// Errors from either the on-mount ``:connect`` or the rules-page
+	// ``:confirm`` — surfaced on whichever page the user is looking at.
+	const flowError =
+		(startMutation.error as Error | null) ?? (confirmMutation.error as Error | null);
+
+	if (phase === 'terminal') {
+		return (
+			<TerminalStep
+				display={display}
+				status={polling.data?.status ?? 'failed'}
+				connectedAs={polling.data?.connected_as ?? null}
+				errorCode={polling.data?.error_code ?? null}
+				credentialId={polling.data?.credential_id ?? null}
+				renderPostConnect={renderPostConnect}
+				boundAgentId={agentId}
+				onDone={onDone}
+				onRetry={(): void => {
+					// A retry needs a FRESH session — the failed one was
+					// cascade-deleted server-side. Reset the phase refs so
+					// the unmount cleanup applies to the new session; the
+					// user then hits Continue on the configure page which
+					// fires a fresh ``:connect``.
+					phaseRef.current = 'configure';
+					sessionRef.current = null;
+					setPhase('configure');
+					setSession(null);
+					setChallenge(null);
+					confirmMutation.reset();
+				}}
+			/>
+		);
+	}
+
+	if (phase === 'awaiting' && challenge) {
+		return (
+			<AwaitingStep
+				display={display}
+				challenge={challenge}
+				status={polling.data?.status ?? 'pending'}
+				onCancel={handleCancel}
+			/>
+		);
+	}
+
+	if (phase === 'rules') {
+		return (
+			<RulesStep
+				display={display}
+				requestedRules={[]}
+				currentRules={rules ?? []}
+				onChange={setRules}
+				onBack={(): void => setPhase('configure')}
+				onContinue={(finalRules: PermissionRule[]) => void confirmFlow(finalRules)}
+				submitting={confirmMutation.isPending}
+				error={flowError}
+				// Session exists from mount — ``api_reference`` comes back
+				// on the review-session read once ``:connect`` completes,
+				// so by the time the rules page mounts the ops-list fetch
+				// has real coords to work with.
+				apiReference={reviewSession.data?.api_reference ?? null}
+			/>
+		);
+	}
+
+	return (
+		<div className="space-y-5">
+			<EditableVendorHeader
+				display={display}
+				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
+				name={credentialName}
+				onNameChange={setCredentialName}
+				// Disabled once the ``:connect`` session exists — the
+				// credential's name landed at ``:connect`` time and the
+				// backend doesn't accept name updates on a pending
+				// session. If the user needs to rename after connecting,
+				// they can do it from the credentials list.
+				disabled={session != null || startMutation.isPending}
+			/>
+
+			<AgentPickerField
+				agents={agents.data?.data ?? []}
+				loading={agents.isLoading}
+				error={agents.error as Error | null}
+				value={agentId}
+				onChange={setAgentId}
+				disabled={preselectedAgentId != null}
+			/>
+
+			<ScopeChooseField
+				loading={capabilities.isLoading}
+				error={capabilities.error as Error | null}
+				scopes={scopes}
+				selected={selectedScopes}
+				onToggle={toggleScope}
+			/>
+
+			{flowError && <ErrorAlert message={flowError} />}
+
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+				<Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
+					<ArrowLeft className="h-4 w-4" />
+					Back
+				</Button>
+				<Button
+					type="button"
+					variant="primary"
+					onClick={(): void => void goToRules()}
+					// ``:connect`` fires from this button (not on mount) so
+					// the user's credential-name pick is captured first.
+					// Scope-less vendors (empty catalog) proceed with the
+					// vendor's defaults, so the empty-selection gate only
+					// applies when there are scopes to choose from. An
+					// agent is NOT required — ``agent_id`` is optional at
+					// ``:confirm`` (connect unbound, bind later via the
+					// credentials API).
+					disabled={
+						(scopes.length > 0 && selectedScopes.size === 0) || startMutation.isPending
+					}
+					loading={startMutation.isPending}
+				>
+					Continue
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+// Sentinel radio value for "connect without binding" — agent ids are
+// never empty, so ``''`` can't collide; mapped back to ``null`` on change.
+const NO_AGENT_VALUE = '';
+
+// Above this many agents the picker grows a name filter.
+const AGENT_FILTER_THRESHOLD = 6;
+
+/**
+ * Agent-selection radio cards on the self-flow configure page. One card
+ * per agent (avatar + ``agent.name`` + lifecycle status) — actor IDs are
+ * non-obvious identifiers, so surfacing them would only confuse the
+ * user. Binding is OPTIONAL: ``agent_id`` is nullable at ``:confirm``
+ * (connect unbound, bind an agent later), so the list always leads with
+ * a quieter "no agent" card, and the empty state (no agents in this
+ * user's account) explains that the user can proceed anyway — with a
+ * link to the Agents page for when they'd rather create one first.
+ * ``disabled`` locks the field to its current value (only that agent's
+ * card is shown, checked and inert) so the "Bind credential" entry from
+ * a specific agent can pre-select without risk of accidental
+ * re-target.
+ */
+function AgentPickerField({
+	agents,
+	loading,
+	error,
+	value,
+	onChange,
+	disabled,
+}: {
+	agents: readonly { id: string; name: string; status?: string }[];
+	loading: boolean;
+	error: Error | null;
+	value: string | null;
+	onChange: (id: string | null) => void;
+	disabled: boolean;
+}) {
+	const labelId = useId();
+	const [filter, setFilter] = useState('');
+
+	if (loading) {
+		return (
+			<div className="space-y-2">
+				<Label>Which agent uses this credential?</Label>
+				<div className="space-y-1.5">
+					<Skeleton className="h-12 w-full" />
+					<Skeleton className="h-12 w-full" />
+				</div>
+			</div>
+		);
+	}
+	if (error) return <ErrorAlert message={error.message} />;
+	if (agents.length === 0) {
+		return (
+			<div className="space-y-2">
+				<Label>Which agent uses this credential?</Label>
+				<div className="bg-surface-inset rounded-lg p-3">
+					<p className="text-muted-foreground text-xs">
+						You don&apos;t have any agents yet — you can still connect without one and
+						bind an agent later, or{' '}
+						{/* Router basename adds /app — internal hrefs are basename-relative. */}
+						<AppLink href="/agents" className="text-primary underline">
+							create an agent
+						</AppLink>{' '}
+						first and come back.
+					</p>
+				</div>
+			</div>
+		);
+	}
+	const agentOption = (a: {
+		id: string;
+		name: string;
+		status?: string;
+	}): RadioCardOption<string> => ({
+		value: a.id,
+		label: a.name,
+		leading: <AgentBadge id={a.id} name={a.name} size="sm" />,
+		// Status only when the backend sent one — ``toActorStatus`` maps an
+		// unknown value to ``archived``, which would mislabel a sparse row.
+		trailing: a.status ? <ActorStatusBadge status={a.status} /> : undefined,
+	});
+
+	let options: RadioCardOption<string>[];
+	if (disabled) {
+		// Locked: show only the pinned agent's card (checked, inert). Falls
+		// back to a nameless card if it isn't in the picker page (the list
+		// is capped server-side) so the lock is still visible.
+		const locked = agents.find((a) => a.id === value);
+		options = [
+			locked
+				? agentOption(locked)
+				: {
+						value: value ?? NO_AGENT_VALUE,
+						label: value ? 'Selected agent' : 'No agent — connect without binding',
+						leading: <AgentBadge id={value ?? undefined} size="sm" />,
+					},
+		];
+	} else {
+		const q = filter.trim().toLowerCase();
+		const visible = q
+			? agents.filter((a) => a.name.toLowerCase().includes(q) || a.id === value)
+			: agents;
+		options = [
+			{
+				value: NO_AGENT_VALUE,
+				label: 'No agent — connect without binding',
+				description: 'You can bind an agent to this credential later.',
+				muted: true,
+				leading: (
+					<span
+						aria-hidden="true"
+						className="bg-surface-chip text-muted-foreground flex h-7 w-7 items-center justify-center rounded-[7px]"
+					>
+						<Unlink className="h-3.5 w-3.5" />
+					</span>
+				),
+			},
+			...visible.map(agentOption),
+		];
+	}
+
+	return (
+		<div className="space-y-2">
+			<div className="flex items-baseline justify-between">
+				<Label id={labelId}>Which agent uses this credential?</Label>
+				{disabled && (
+					<span className="text-muted-foreground text-xs">Locked to this agent</span>
+				)}
+			</div>
+			{!disabled && agents.length > AGENT_FILTER_THRESHOLD && (
+				<SearchInput
+					value={filter}
+					onValueChange={setFilter}
+					size="sm"
+					placeholder="Filter agents…"
+					aria-label="Filter agents"
+				/>
+			)}
+			<RadioCardGroup
+				options={options}
+				value={value ?? NO_AGENT_VALUE}
+				onChange={(v): void => onChange(v === NO_AGENT_VALUE ? null : v)}
+				ariaLabelledBy={labelId}
+				disabled={disabled}
+				// ~5 rows visible; the rest scroll so the scopes list below
+				// stays reachable with long agent rosters.
+				maxHeightClass="max-h-72"
+			/>
+		</div>
+	);
+}
+
+// Variant of :func:`VendorHeader` where the vendor name is inline-editable.
+// Renders the shared ``Input`` at heading weight so the user can type over the
+// label directly. Pre-filled with the vendor's
+// display name; the caller drives state.
+function EditableVendorHeader({
+	display,
+	subtitle,
+	name,
+	onNameChange,
+	disabled,
+}: {
+	display: VendorDisplay;
+	subtitle: string;
+	name: string;
+	onNameChange: (next: string) => void;
+	disabled: boolean;
+}) {
+	return (
+		<div className="flex items-center gap-3">
+			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
+			<div className="min-w-0 flex-1">
+				<div className="max-w-xs">
+					<Input
+						type="text"
+						size="sm"
+						className="px-2 py-1 text-base font-semibold disabled:opacity-60"
+						value={name}
+						placeholder={display.displayName}
+						aria-label="Credential name"
+						disabled={disabled}
+						onChange={(e): void => onNameChange(e.target.value)}
+					/>
+				</div>
+				<SharedAppLine display={display} />
+				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
+			</div>
+		</div>
+	);
+}

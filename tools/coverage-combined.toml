@@ -1,0 +1,14 @@
+# Combined (unit + integration) coverage configuration.
+# Unlike pyproject.toml's unit-only gate, this measures the full backend tree
+# including repositories and admin/auth services. Report-only until a baseline
+# is established on main.
+
+[tool.coverage.run]
+source = ["src/jentic_one"]
+branch = true
+omit = ["src/jentic_one/migrations/env.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+omit = ["src/jentic_one/migrations/env.py"]

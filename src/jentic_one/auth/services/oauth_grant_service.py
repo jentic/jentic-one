@@ -15,6 +15,7 @@ from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos import (
     AgentRepository,
     OAuthClientGrantRepository,
+    UserRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.oauth_grant_admin_service import (
@@ -162,10 +163,15 @@ class OAuthGrantService:
             # re-check is what makes "a LIVE grant's consenter is the
             # agent's current owner" hold.
             agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            user = await UserRepository.get_by_id(session, user_id)
             if (
                 agent is None
                 or agent.status != ActorStatus.ACTIVE.value
                 or agent.owner_id != user_id
+                or user is None
+                or not user.active
+                or user.deleted_at is not None
+                or user.must_change_password
             ):
                 raise ConsentAgentNotEligibleError(agent_id)
             prior = await OAuthClientGrantRepository.list_active_for_pair(

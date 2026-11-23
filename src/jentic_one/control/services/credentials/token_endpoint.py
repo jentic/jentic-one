@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
@@ -41,3 +43,26 @@ def minted_at_current_origin(minted_at: str | None, current: str | None) -> bool
     compare and passes.
     """
     return minted_at is None or same_origin(minted_at, current)
+
+
+def may_carry_refresh_token(
+    existing: OAuthToken,
+    *,
+    new_registration_id: str | None,
+    connected_as: str | None,
+    stored_account_ref: str | None,
+) -> bool:
+    """Whether a reconnect that omitted ``refresh_token`` may keep ``existing``'s.
+
+    The previous refresh token is kept only when ``existing`` has one, the
+    reconnect used the same client (``existing.app_registration_id ==
+    new_registration_id``), and identity echo positively confirms the same
+    vendor account (``connected_as`` is not ``None`` and matches
+    ``stored_account_ref``).
+    """
+    return (
+        existing.encrypted_refresh_token is not None
+        and existing.app_registration_id == new_registration_id
+        and connected_as is not None
+        and connected_as == stored_account_ref
+    )

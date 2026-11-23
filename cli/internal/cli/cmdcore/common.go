@@ -16,9 +16,6 @@ func (e *ExitCodeError) Error() string { return fmt.Sprintf("child exited with c
 // code verbatim.
 func (e *ExitCodeError) ExitCode() int { return e.Code }
 
-// NewExitCodeError constructs an ExitCodeError for the given child exit code.
-func NewExitCodeError(code int) *ExitCodeError { return &ExitCodeError{Code: code} }
-
 // ResolveBaseURL loads the install config once and resolves the control-plane
 // base URL, honouring an explicit flag value over the recorded install URL and
 // the default. It reads the INSTALL record (~/.jentic/config.yaml base_url —

@@ -58,8 +58,8 @@
 //
 // The following stay CLI-private under internal/ and are never part of the SDK
 // contract (impl/7.0 §2): the Cobra command implementations, the ux
-// audience/mode layer and theme, the local-agent isolation layer (account
-// lifecycle, confinement, ACL grants — host-side OS tooling, not API surface),
+// audience/mode layer and theme, the agent-account teardown primitives
+// (host-side OS tooling, not API surface),
 // and the jenticctl installer/lifecycle packages. Downstream binaries that want
 // to embed and extend the Cobra command tree use the public pkg/ composition
 // packages instead.

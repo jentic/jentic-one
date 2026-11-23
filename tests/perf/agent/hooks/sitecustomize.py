@@ -66,7 +66,8 @@ QUEUE_MAX = 200_000
 DEFAULT_STAGES: dict[str, tuple[str, ...]] = {
     "jentic_one.broker.web.deps": ("require_broker_identity",),
     "jentic_one.broker.core.token_validation": ("CachedTokenValidator.validate",),
-    "jentic_one.broker.web.routers.execute": ("_handle", "_persist_streaming_outcome"),
+    "jentic_one.broker.web.routers.execute": ("_handle",),
+    "jentic_one.broker.services.execution.streaming_persistence": ("_persist_streaming_outcome",),
     "jentic_one.broker.services.discovery": ("discover",),
     "jentic_one.broker.services.execution.authorization": ("authorize_execution",),
     "jentic_one.broker.services.credentials.resolver": ("CredentialResolver.resolve",),

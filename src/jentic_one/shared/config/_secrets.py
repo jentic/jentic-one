@@ -30,6 +30,8 @@ _EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
 # the image.
 _PLACEHOLDER_SECRET_RE = re.compile(r"change.?me", re.IGNORECASE)
 
+_MIN_HMAC_SECRET_BYTES = 32
+
 
 # Which surfaces read each scalar secret the production guard below enforces.
 # Verified against the code that consumes them: ``admin.auth.jwt_secret`` signs
@@ -98,6 +100,18 @@ def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretS
     """
     secret = value.get_secret_value()
     if secret.strip() and not _PLACEHOLDER_SECRET_RE.search(secret):
+        if (
+            field_path == "admin.auth.jwt_secret"
+            and len(secret.encode("utf-8")) < _MIN_HMAC_SECRET_BYTES
+        ):
+            _logger.warning(
+                "insecure_jwt_secret",
+                field_path=field_path,
+                detail=(
+                    "admin.auth.jwt_secret should be at least 32 bytes for HS256 "
+                    "(RFC 7518 §3.2); jenticctl install generates one automatically"
+                ),
+            )
         return value
     if os.environ.get("JENTIC_ENV", "development") == "production":
         if not _secret_required_by_enabled_apps(field_path):

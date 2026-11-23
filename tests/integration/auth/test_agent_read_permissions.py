@@ -88,6 +88,7 @@ async def test_api_key_reads_sibling_agent_on_effective_permissions(
     """
     ctx = integration_context
     owner_id = await seeds.seed_user(ctx, OWNER)
+    await seeds.seed_permissions(ctx, owner_id, ["org:admin"])
     target_id = await seeds.seed_agent(ctx, owner_id=owner_id, scopes=[], name="target")
     sibling_id = await seeds.seed_agent(
         ctx, owner_id=owner_id, scopes=[OWNER_AGENTS_READ, *permissions], name="sibling"

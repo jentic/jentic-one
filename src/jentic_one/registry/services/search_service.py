@@ -245,31 +245,28 @@ class SearchService:
             op_ids = {h.operation_id for h in hits}
             operations = await OperationRepository.get_by_ids(session, op_ids)
             op_map = {op.id: op for op in operations}
+            url_by_op = {op.id: _resolve_operation_url(op) for op in operations}
+
+            first_op_by_api: dict[uuid.UUID, str] = {}
+            for h in hits:
+                if h.api_id not in first_op_by_api and h.operation_id in op_map:
+                    first_op_by_api[h.api_id] = h.operation_id
 
             unique_api_ids = {h.api_id for h in hits}
+            api_identities = await ApiRepository.get_identities(session, unique_api_ids)
             api_map: dict[uuid.UUID, ApiRef] = {}
-            for api_id in unique_api_ids:
-                api_obj = await ApiRepository.get_by_id(session, api_id)
-                if api_obj is not None:
-                    host: str | None = None
-                    op_for_api = next(
-                        (
-                            op_map[h.operation_id]
-                            for h in hits
-                            if h.api_id == api_id and h.operation_id in op_map
-                        ),
-                        None,
-                    )
-                    if op_for_api is not None:
-                        url = _resolve_operation_url(op_for_api)
-                        parsed = urlparse(url)
-                        host = parsed.hostname
-                    api_map[api_id] = ApiRef(
-                        vendor=api_obj.vendor,
-                        name=api_obj.name,
-                        version=api_obj.version,
-                        host=host,
-                    )
+            for api_id, (vendor, name, version) in api_identities.items():
+                host: str | None = None
+                first_op_id = first_op_by_api.get(api_id)
+                if first_op_id is not None:
+                    parsed = urlparse(url_by_op[first_op_id])
+                    host = parsed.hostname
+                api_map[api_id] = ApiRef(
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                    host=host,
+                )
 
         results: list[OperationResult] = []
         for hit in hits:
@@ -279,7 +276,7 @@ class SearchService:
             api_ref = api_map.get(hit.api_id)
             if api_ref is None:
                 continue
-            url = _resolve_operation_url(op)
+            url = url_by_op[op.id]
             method = op.method.upper()
             results.append(
                 OperationResult(

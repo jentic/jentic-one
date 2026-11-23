@@ -60,6 +60,12 @@ admin:
     JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
     # See the note on registry.extraEnv — this pod is the JWT issuer.
     JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
+    # This pod serves the auth routes, including POST /register. The smoke suite
+    # registers an agent per test from one client address, so the default
+    # per-network registration limit (10/min, burst 5) would answer 429.
+    # LOCAL/SMOKE-ONLY: never raise this for a real deployment.
+    JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM: "100000"
+    JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST: "100000"
 
 control:
   enabled: true

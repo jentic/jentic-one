@@ -22,10 +22,12 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.services.errors import NoteNotFoundError
 from jentic_one.registry.services.note_service import NoteService, NoteView
+from jentic_one.registry.services.schemas import NoteCreate, NoteQuery, NoteResource, NoteUpdate
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, ExecutionStatus
+from jentic_one.shared.schemas.api_reference import APIReference
 
 pytestmark = pytest.mark.integration
 
@@ -36,8 +38,12 @@ _ADMIN = Identity(sub="usr_note_admin", email="admin@example.com", permissions=[
 
 async def _create_note(ctx: Context, api: Api) -> NoteView:
     return await NoteService(ctx).create(
-        resource_api=(api.vendor, api.name, api.version),
-        body="Owner body",
+        NoteCreate(
+            resource=NoteResource(
+                api=APIReference(vendor=api.vendor, name=api.name, version=api.version)
+            ),
+            body="Owner body",
+        ),
         identity=_OWNER,
     )
 
@@ -68,7 +74,7 @@ async def test_update_by_other_user_not_found_and_row_unchanged(
 
     with pytest.raises(NoteNotFoundError):
         await NoteService(integration_context).update(
-            view.id, if_match=if_match, body="Overwritten", identity=_OTHER
+            view.id, NoteUpdate(body="Overwritten"), if_match=if_match, identity=_OTHER
         )
 
     row = await _load(registry_db, view.id)
@@ -100,12 +106,73 @@ async def test_owner_can_update_and_delete(
     svc = NoteService(integration_context)
     view = await _create_note(integration_context, note_api)
 
-    updated = await svc.update(view.id, if_match=view.revision, body="Owner edit", identity=_OWNER)
+    updated = await svc.update(
+        view.id, NoteUpdate(body="Owner edit"), if_match=view.revision, identity=_OWNER
+    )
     assert updated.body == "Owner edit"
     assert updated.revision == view.revision + 1
 
     await svc.delete(view.id, if_match=updated.revision, identity=_OWNER)
     assert await _load(registry_db, view.id) is None
+
+
+async def test_update_omitted_keeps_fields_null_clears_and_empty_bumps_revision(
+    integration_context: Context, note_api: Api
+) -> None:
+    svc = NoteService(integration_context)
+    created = await svc.create(
+        NoteCreate(
+            resource=NoteResource(
+                api=APIReference(
+                    vendor=note_api.vendor,
+                    name=note_api.name,
+                    version=note_api.version,
+                )
+            ),
+            type="usage_hint",
+            body="Initial body",
+            confidence="observed",
+            source="human",
+            related_execution_id="exec_initial",
+        ),
+        identity=_OWNER,
+    )
+
+    omitted_update = await svc.update(
+        created.id,
+        NoteUpdate(body="Edited body"),
+        if_match=created.revision,
+        identity=_OWNER,
+    )
+    assert omitted_update.body == "Edited body"
+    assert omitted_update.type == "usage_hint"
+    assert omitted_update.confidence == "observed"
+    assert omitted_update.source == "human"
+    assert omitted_update.related_execution_id == "exec_initial"
+    assert omitted_update.revision == created.revision + 1
+
+    null_clear = await svc.update(
+        created.id,
+        NoteUpdate(type=None, related_execution_id=None),
+        if_match=omitted_update.revision,
+        identity=_OWNER,
+    )
+    assert null_clear.body == "Edited body"
+    assert null_clear.type is None
+    assert null_clear.confidence == "observed"
+    assert null_clear.source == "human"
+    assert null_clear.related_execution_id is None
+    assert null_clear.revision == omitted_update.revision + 1
+
+    empty_update = await svc.update(
+        created.id,
+        NoteUpdate(),
+        if_match=null_clear.revision,
+        identity=_OWNER,
+    )
+    assert empty_update.body == "Edited body"
+    assert empty_update.confidence == "observed"
+    assert empty_update.revision == null_clear.revision + 1
 
 
 async def test_admin_can_read_update_and_delete_any_note(
@@ -116,7 +183,7 @@ async def test_admin_can_read_update_and_delete_any_note(
 
     assert (await svc.get(view.id, identity=_ADMIN)).id == view.id
 
-    updated = await svc.update(view.id, body="Admin edit", identity=_ADMIN)
+    updated = await svc.update(view.id, NoteUpdate(body="Admin edit"), identity=_ADMIN)
     assert updated.body == "Admin edit"
     assert updated.created_by == _OWNER.sub
 
@@ -172,7 +239,11 @@ async def owned_agents(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
 
 async def _agent_note(ctx: Context, agent_id: str, body: str) -> NoteView:
     return await NoteService(ctx).create(
-        resource_credential_id=_CREDENTIAL_ID, body=body, identity=_agent(agent_id)
+        NoteCreate(
+            resource=NoteResource(credential_id=_CREDENTIAL_ID),
+            body=body,
+        ),
+        identity=_agent(agent_id),
     )
 
 
@@ -184,7 +255,8 @@ async def _listed(
     credential_id: str | None = None,
 ) -> set[str]:
     page = await NoteService(ctx).list_page(
-        identity=identity, created_by=created_by, credential_id=credential_id
+        NoteQuery(created_by=created_by, credential_id=credential_id),
+        identity=identity,
     )
     assert page.has_more is False
     return {view.id for view in page.data}
@@ -255,7 +327,9 @@ async def test_owner_cannot_update_or_delete_agents_note(
     svc = NoteService(integration_context)
 
     with pytest.raises(NoteNotFoundError):
-        await svc.update(view.id, if_match=if_match, body="Overwritten", identity=_OWNER)
+        await svc.update(
+            view.id, NoteUpdate(body="Overwritten"), if_match=if_match, identity=_OWNER
+        )
     with pytest.raises(NoteNotFoundError):
         await svc.delete(view.id, if_match=if_match, identity=_OWNER)
 
@@ -275,7 +349,9 @@ async def test_agent_can_update_and_delete_own_note(
     svc = NoteService(integration_context)
     agent = _agent(_OWNER_AGENT)
 
-    updated = await svc.update(view.id, if_match=view.revision, body="Agent edit", identity=agent)
+    updated = await svc.update(
+        view.id, NoteUpdate(body="Agent edit"), if_match=view.revision, identity=agent
+    )
     assert updated.body == "Agent edit"
 
     await svc.delete(view.id, if_match=updated.revision, identity=agent)
@@ -356,18 +432,24 @@ async def owner_targets(
 async def _note_on_target(ctx: Context, target: str, identity: Identity) -> NoteView:
     is_credential = target == "credential"
     return await NoteService(ctx).create(
-        resource_credential_id=_TARGET_CREDENTIAL_ID if is_credential else None,
-        resource_execution_id=None if is_credential else _TARGET_EXECUTION_ID,
-        body="Note on another user's target",
+        NoteCreate(
+            resource=NoteResource(
+                credential_id=_TARGET_CREDENTIAL_ID if is_credential else None,
+                execution_id=None if is_credential else _TARGET_EXECUTION_ID,
+            ),
+            body="Note on another user's target",
+        ),
         identity=identity,
     )
 
 
 async def _listed_by_target(ctx: Context, identity: Identity, target: str) -> set[str]:
     page = await NoteService(ctx).list_page(
+        NoteQuery(
+            credential_id=_TARGET_CREDENTIAL_ID if target == "credential" else None,
+            execution_id=_TARGET_EXECUTION_ID if target == "execution" else None,
+        ),
         identity=identity,
-        credential_id=_TARGET_CREDENTIAL_ID if target == "credential" else None,
-        execution_id=_TARGET_EXECUTION_ID if target == "execution" else None,
     )
     assert page.has_more is False
     return {view.id for view in page.data}

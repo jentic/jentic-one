@@ -106,7 +106,11 @@ Service-level settings (immutable after boot).
 
 ## `worker`
 
-Background job-worker durability knobs. The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever. A handler that raises `NonRetryableJobError` (a failure no retry can change, such as an import whose spec fails validation) fails the job on that attempt instead. Each claim is a single atomic `UPDATE` (`FOR UPDATE SKIP LOCKED` on Postgres, a serialised write transaction on SQLite), so any number of worker loops — across processes or replicas, each running up to `concurrency` jobs — can poll the same queue without double-claiming a job.
+Background job-worker durability knobs.
+
+The worker claims a job, sets a **visibility deadline** (`visibility_timeout_s` from claim), and processes it. A job left `RUNNING` past that deadline by a crashed worker/pod is reclaimed on a later poll. A handler failure requeues the job with capped exponential backoff up to `max_attempts` claims; beyond that it is dead-lettered (poison-message handling) rather than looped forever. A handler that raises `NonRetryableJobError` (a failure no retry can change, such as an import whose spec fails validation) fails the job on that attempt instead.
+
+Each claim is a single atomic `UPDATE` (`FOR UPDATE SKIP LOCKED` on Postgres, a serialised write transaction on SQLite), so any number of worker loops — across processes or replicas, each running up to `concurrency` jobs — can poll the same queue without double-claiming a job.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -169,6 +173,7 @@ Observability settings (metrics, tracing knobs).
 | --- | ---- | ------- | ------- | ----------- |
 | `observability.metrics.exporter` | "otlp" \| "prometheus" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__METRICS__EXPORTER` | Where metrics go: `otlp` pushes to the OTLP endpoint named by the standard `OTEL_EXPORTER_OTLP_*` environment variables, `prometheus` serves a scrape endpoint at `/metrics`, and `none` records nothing. |
 | `observability.metrics.export_interval_seconds` | integer | `15` | `JENTIC__OBSERVABILITY__METRICS__EXPORT_INTERVAL_SECONDS` | Seconds between OTLP metric pushes. Ignored unless `exporter` is `otlp`. |
+| `observability.metrics.latency_buckets_ms` | list of number (> 0) | `[1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 50.0, 100.0, 250.…` | `JENTIC__OBSERVABILITY__METRICS__LATENCY_BUCKETS_MS` | Explicit histogram bucket boundaries (milliseconds, strictly increasing, all > 0) for the request-latency histograms listed in docs/operations/monitoring.md; seconds-unit histograms get the list divided by 1000. Must be identical on every process whose series are aggregated together. As an env var, a comma-separated list. |
 | `observability.tracing.exporter` | "otlp" \| "none" | `"otlp"` | `JENTIC__OBSERVABILITY__TRACING__EXPORTER` | Where spans go. `none` records no spans at all (every span is non-recording), while trace ids are still generated and propagated: an inbound `traceparent` is honoured, outbound requests carry `traceparent`/`tracestate`, and execution records and logs keep their `trace_id`. With `none` the outbound `traceparent` has the sampled flag unset (`-00`) even when the caller sent `-01`, since this process records nothing. |
 | `observability.tracing.sample_ratio` | number (>= 0.0, <= 1.0) | `1.0` | `JENTIC__OBSERVABILITY__TRACING__SAMPLE_RATIO` | Fraction of traces recorded and exported when `exporter` is `otlp` (1.0 records every trace). It caps every trace entering the process, including requests that arrive with a sampled `traceparent` (the CLI and MCP send one on every call), so a caller cannot force recording. A caller's unsampled `traceparent` stays unsampled. Ignored with `exporter: none`, and overridden by the standard `OTEL_TRACES_SAMPLER` environment variable when that is set (a warning is logged if this field is not 1.0). |
 
@@ -198,6 +203,7 @@ Platform-actors OAuth surface configuration.
 | `auth.canonical_base_url` | string | `""` | `JENTIC__AUTH__CANONICAL_BASE_URL` | Public origin of the auth surface (`scheme://host[:port]`, no path), used for the OIDC issuer, the JWT-Bearer assertion audience and the SPA login callback. Unset falls back to `server.public_base_url`, then the request or bind origin. A value with a path breaks the OAuth well-known discovery routes. |
 | `auth.access_ttl_seconds` | integer | `3600` | `JENTIC__AUTH__ACCESS_TTL_SECONDS` | Lifetime (seconds) of an OAuth access token issued by the auth surface. |
 | `auth.refresh_ttl_seconds` | integer | `604800` | `JENTIC__AUTH__REFRESH_TTL_SECONDS` | Lifetime (seconds, default 7 days) of an OAuth refresh token; each refresh rotates it and the new token gets a fresh lifetime. |
+| `auth.refresh_family_max_age_seconds` | integer (>= 60) \| null | `7776000` | `JENTIC__AUTH__REFRESH_FAMILY_MAX_AGE_SECONDS` | Maximum absolute lifetime (seconds, default 90 days) of an OAuth refresh-token family from initial mint, across rotations. Set to null to disable the family cap. |
 | `auth.rat_ttl_seconds` | integer | `900` | `JENTIC__AUTH__RAT_TTL_SECONDS` | Lifetime (seconds) of the registration access token returned when an agent registers, which the agent uses to check its registration status. |
 | `auth.claim_ttl_seconds` | integer | `900` | `JENTIC__AUTH__CLAIM_TTL_SECONDS` | Lifetime (seconds) of the agent-ownership claim token minted at agent registration. Has no effect unless a claim-token minter is installed; the default build mints none. |
 | `auth.assertion_max_ttl_seconds` | integer | `300` | `JENTIC__AUTH__ASSERTION_MAX_TTL_SECONDS` | Furthest in the future (seconds) a JWT-Bearer client assertion's `exp` may be; assertions expiring later are rejected. |
@@ -223,7 +229,7 @@ Platform-actors OAuth surface configuration.
 | `auth.oauth_rate_limit.authorize_burst` | integer | `30` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__AUTHORIZE_BURST` | Burst allowance on top of `authorize_rpm`. |
 | `auth.oauth_rate_limit.exchange_rpm` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_RPM` | Sustained requests/minute allowed per `client_id` + client network (IPv4 address or IPv6 /64) on the token endpoint (also reused per client network for token revocation). |
 | `auth.oauth_rate_limit.exchange_burst` | integer | `60` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__EXCHANGE_BURST` | Burst allowance on top of `exchange_rpm`. |
-| `auth.oauth_rate_limit.registration_rpm` | integer | `10` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM` | Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (`POST /oauth-clients`). |
+| `auth.oauth_rate_limit.registration_rpm` | integer | `10` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM` | Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64) on anonymous dynamic client registration (`POST /oauth-clients`) and agent self-registration (`POST /register`), in its own bucket. |
 | `auth.oauth_rate_limit.registration_burst` | integer | `5` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST` | Burst allowance on top of `registration_rpm`. |
 | `auth.oauth_rate_limit.trusted_proxies` | list of string | — | `JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES` | Reverse proxies whose `X-Forwarded-For` header is honored when deriving the per-client rate-limit identity: IP addresses or CIDR networks (e.g. `10.0.0.0/8`, `fd00::/8`), matched against the socket address and each forwarded hop by network membership. Accepts a YAML list or a comma-separated string. Invalid entries fail config load. Empty (default) means the socket address is used as-is — behind a reverse proxy every request then carries the proxy's IP and all clients share one bucket, so list the proxy IPs or pod CIDR when deploying behind one. Only list ranges your proxies alone hold: any host inside a trusted network can choose its own rate-limit identity. |
 | `auth.oauth_rate_limit.approval_status_rpm` | integer | `120` | `JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_RPM` | Sustained requests/minute allowed on the approval-pending status poll (`GET /oauth/approval/status`). Its own namespace, so polling can never drain the `/authorize` or registration quota: one pending tab polls at 12 rpm, so the default keeps ~10 concurrent pending tabs behind one NAT inside the bucket, and the page honors `Retry-After` with backoff, so saturation degrades to a slower cadence rather than a thundering retry. |
@@ -293,7 +299,11 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration. `egress` is the allowlist for the platform's outbound OAuth and credential calls. Each `control.egress` key left unset takes its value from the matching `broker.egress` key. The policy is read by whichever process makes the call: the control surface for credential and OAuth app writes, the connect-session confirm, code exchange, device authorization and the identity probe, and the broker surface for the token refresh it runs before injecting a credential. With one process per surface, set `control.egress` (and the `broker.egress` keys it inherits) identically on both. Unknown subkeys of `control:` are ignored, so a section written for another release keeps validating; `control.egress` rejects unknown keys so a mistyped allowlist key fails at startup instead of silently allowing less.
+Control surface configuration.
+
+`egress` is the allowlist for the platform's outbound OAuth and credential calls. Each `control.egress` key left unset takes its value from the matching `broker.egress` key. The policy is read by whichever process makes the call: the control surface for credential and OAuth app writes, the connect-session confirm, code exchange, device authorization and the identity probe, and the broker surface for the token refresh it runs before injecting a credential. With one process per surface, set `control.egress` (and the `broker.egress` keys it inherits) identically on both.
+
+Unknown subkeys of `control:` are ignored, so a section written for another release keeps validating; `control.egress` rejects unknown keys so a mistyped allowlist key fails at startup instead of silently allowing less.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -390,7 +400,9 @@ Top-level vendor auth registry.
 
 ## `search`
 
-Search configuration. The built-in mode is "lexical" (BM25 on SQLite, native full-text on PostgreSQL). `search_mode` is validated against the registered SearchStrategy set at resolve time (`resolve_strategy`), so an unknown mode fails loudly with the available modes for the active dialect rather than at config load. Additional modes (e.g. "semantic", "vector") can be registered via `register_strategy` without editing this schema.
+Search configuration.
+
+The built-in mode is "lexical" (BM25 on SQLite, native full-text on PostgreSQL). `search_mode` is validated against the registered SearchStrategy set at resolve time (`resolve_strategy`), so an unknown mode fails loudly with the available modes for the active dialect rather than at config load. Additional modes (e.g. "semantic", "vector") can be registered via `register_strategy` without editing this schema.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -413,11 +425,15 @@ Platform security event thresholds.
 
 ## `telemetry`
 
-Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose config omits this block (non-onboarded or hand-rolled) sends nothing. The onboarding CLI writes `enabled` explicitly (a yes-default `[Y]/n` prompt), which is where the on-by-default install experience comes from. `instance_id` seeds the durable admin-DB identity row on first startup for opted-in instances. `host_os` is the operator's OS family, stamped by the CLI at install time so a Docker-run instance reports the host's OS rather than the container's; sent once per boot, on the `instance_booted` event.
+Anonymous product telemetry. Off by default for hand-written configs, but the shipped install paths (such as the quickstarts) may turn it on.
+
+To opt out, set `telemetry.enabled` to `false` in the config, or the environment variable `JENTIC__TELEMETRY__ENABLED=false` (for example, in a Docker compose file).
+
+Events carry only a fixed event name (such as `instance_booted`, `agent_created` or `broker_execution`), closed-enum tags, the actor type and a timestamp, plus a random instance id and the app version. No credentials, request data or personal data are sent. The full event list is `TelemetryEventName` in `src/jentic_one/shared/telemetry/events.py`.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `telemetry.enabled` | boolean | `false` | `JENTIC__TELEMETRY__ENABLED` | Send anonymous product telemetry. Off when the block is omitted; the onboarding CLI writes it explicitly. |
+| `telemetry.enabled` | boolean | `false` | `JENTIC__TELEMETRY__ENABLED` | Send anonymous product telemetry. Off when unset; the shipped install paths may set it to true. Set false to opt out. |
 | `telemetry.instance_id` | string \| null | `null` | `JENTIC__TELEMETRY__INSTANCE_ID` | Opaque instance id reported with telemetry (at most 64 characters). When set it is authoritative and overwrites the id stored in the admin database; unset, a random UUID is generated on first startup and kept. |
 | `telemetry.host_os` | string \| null | `null` | `JENTIC__TELEMETRY__HOST_OS` | Host OS family stamped by the onboarding CLI, so an instance running in Docker reports the operator's OS rather than the container's Linux. Unset falls back to runtime detection; unrecognised values are reported as `other`. Sent once per boot, on the `instance_booted` event. |
 | `telemetry.endpoint` | string | `"https://api.jentic.com/api/v1"` | `JENTIC__TELEMETRY__ENDPOINT` |  |
@@ -428,7 +444,11 @@ Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose con
 
 ## `release_check`
 
-"Update available" check for the running jentic-one build itself. Powers `GET /system/version`: the backend asks GitHub for the newest published release of `repo` and compares it against the running build so the web console can surface an "update available" banner (and the user menu can always show the current version). This covers *jentic-one's own* release; `CatalogConfig` tracks the public *API catalog* instead. Runs only on a `local` backend (a self-hosted install the operator can actually update); the hosted platform (`server.backend == "remote"`) skips it. The result is cached in-process for `cache_ttl_seconds` (fetch-on-read, no background job), so at most one GitHub request happens per TTL regardless of how many clients poll. Every failure degrades to "latest unknown" (no banner) rather than erroring — the version probe must never break the app.
+"Update available" check for the running jentic-one build itself.
+
+Powers `GET /system/version`: the backend asks GitHub for the newest published release of `repo` and compares it against the running build so the web console can surface an "update available" banner (and the user menu can always show the current version). This covers *jentic-one's own* release; `CatalogConfig` tracks the public *API catalog* instead.
+
+Runs only on a `local` backend (a self-hosted install the operator can actually update); the hosted platform (`server.backend == "remote"`) skips it. The result is cached in-process for `cache_ttl_seconds` (fetch-on-read, no background job), so at most one GitHub request happens per TTL regardless of how many clients poll. Every failure degrades to "latest unknown" (no banner) rather than erroring — the version probe must never break the app.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -438,7 +458,11 @@ Anonymous product-telemetry settings. Defaults to **OFF**: an instance whose con
 
 ## `entitlement`
 
-AWS Marketplace license gate for the Marketplace-listed deployment. Powers the entitlement checker (`integrations/aws_marketplace`): on startup, and every `refresh_interval_seconds` after, the process asks AWS whether this deployment's Marketplace subscription is still active, and locks the HTTP surface (503, health excepted) when it definitively is not. Defaults to **OFF**: a non-Marketplace install that omits this block wires nothing and never makes an AWS call. Failure posture: an *unreachable* or *erroring* AWS API is never grounds for lockout by itself — the last definitive verdict holds for `grace_period_seconds` before the gate fails closed. Only an explicit "not entitled" answer from AWS locks out immediately.
+AWS Marketplace license gate for the Marketplace-listed deployment.
+
+Powers the entitlement checker (`integrations/aws_marketplace`): on startup, and every `refresh_interval_seconds` after, the process asks AWS whether this deployment's Marketplace subscription is still active, and locks the HTTP surface (503, health excepted) when it definitively is not. Defaults to **OFF**: a non-Marketplace install that omits this block wires nothing and never makes an AWS call.
+
+Failure posture: an *unreachable* or *erroring* AWS API is never grounds for lockout by itself — the last definitive verdict holds for `grace_period_seconds` before the gate fails closed. Only an explicit "not entitled" answer from AWS locks out immediately.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -454,7 +478,9 @@ AWS Marketplace license gate for the Marketplace-listed deployment. Powers the e
 
 ## `held_executions`
 
-Require-approval holds: held execution jobs awaiting a human reviewer. An execute call matching a permission rule with `effect="require-approval"` is enqueued as a `held` job with a `pending` approval; a reviewer (the agent's owner or an `org:admin`) approves or denies it, or it expires.
+Require-approval holds: held execution jobs awaiting a human reviewer.
+
+An execute call matching a permission rule with `effect="require-approval"` is enqueued as a `held` job with a `pending` approval; a reviewer (the agent's owner or an `org:admin`) approves or denies it, or it expires.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
@@ -472,7 +498,9 @@ Surfaces this process serves: any of `registry`, `admin`, `control`, `auth`, or 
 
 ## `state`
 
-The process's shared-state backend (top-level `state:` section). One backend per process holds the rate-limit buckets, circuit-breaker counters, `Idempotency-Key` records, the auth surface's single-use markers, the broker's auth-failure counters and the MCP session-event dedupe of every surface the process serves.
+The process's shared-state backend (top-level `state:` section).
+
+One backend per process holds the rate-limit buckets, circuit-breaker counters, `Idempotency-Key` records, the auth surface's single-use markers, the broker's auth-failure counters and the MCP session-event dedupe of every surface the process serves.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |

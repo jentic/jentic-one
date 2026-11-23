@@ -12,6 +12,7 @@ from jentic_one.admin.services.errors import PasswordHasherBusyError
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
+    AgentPermissionExceedsOwnerError,
     ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
     CredentialBindingConflictError,
@@ -66,6 +67,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),
     OwnerTransferForbiddenError: (403, "owner_transfer_forbidden"),
+    AgentPermissionExceedsOwnerError: (409, "agent_permission_exceeds_owner"),
     PermissionNotGrantableError: (403, "agent_permission_not_grantable"),
     UnknownPermissionError: (422, "unknown_agent_permission"),
     PasswordHasherBusyError: (503, "password_hasher_busy"),

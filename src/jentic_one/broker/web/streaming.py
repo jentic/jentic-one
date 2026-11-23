@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from urllib.parse import urlsplit
 
@@ -71,12 +71,16 @@ from jentic_one.broker.core.headers import (
     JenticHeader,
     header_safe_value,
 )
-from jentic_one.broker.core.proxy_headers import passthrough_streaming_headers
+from jentic_one.broker.core.proxy_headers import (
+    passthrough_streaming_header_items,
+    passthrough_streaming_headers,
+)
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.shared.broker.execution import (
     ErrorOrigin,
     StreamingOutcome,
 )
+from jentic_one.shared.http.injection import get_current_reflection_guard
 from jentic_one.shared.logging import mark_response_aborted
 from jentic_one.shared.tracing import JENTIC_TRACESTATE_KEY, pack_jentic_tracestate
 
@@ -174,7 +178,7 @@ async def guarded_body(
         raise
     finally:
         if outcome is not None:
-            outcome.duration_ms = int((time.perf_counter() - outcome.started_at_perf) * 1000)
+            outcome.duration_ms = (time.perf_counter() - outcome.started_at_perf) * 1000
         await stack.aclose()
 
 
@@ -252,8 +256,22 @@ class OutcomeStreamingResponse(StreamingResponse):
         status_code: int,
         media_type: str | None,
         headers: dict[str, str],
+        raw_header_items: Sequence[tuple[str, str]] | None = None,
     ) -> None:
         super().__init__(content, status_code=status_code, media_type=media_type, headers=headers)
+        if raw_header_items is not None:
+            encoded: list[tuple[bytes, bytes]] = []
+            has_content_type = any(k.lower() == "content-type" for k, _ in raw_header_items)
+            if not has_content_type:
+                for raw_k, raw_v in self.raw_headers:
+                    if raw_k.lower() == b"content-type":
+                        encoded.append((raw_k, raw_v))
+                        break
+            for k, v in raw_header_items:
+                encoded.append((k.lower().encode("latin-1"), v.encode("latin-1")))
+            self.raw_headers = encoded
+            if hasattr(self, "_headers"):
+                delattr(self, "_headers")
         self._body = content
         self._stack = stack
         self._outcome = outcome
@@ -471,8 +489,46 @@ async def open_streaming_response(
         started_at_perf=start_perf,
     )
     metadata = _metadata_headers(ctx_req, execution_id, result.status_code)
-    passthrough = passthrough_streaming_headers(result.headers)
-    body = guarded_body(result, stack, transfer_deadline_s=transfer_deadline_s, outcome=outcome)
+    raw_source: Mapping[str, str] | tuple[tuple[str, str], ...] = getattr(
+        result, "raw_headers", result.headers
+    )
+    passthrough_items = passthrough_streaming_header_items(raw_source, upstream_url=request.url)
+    passthrough = passthrough_streaming_headers(raw_source, upstream_url=request.url)
+    metadata_lower = {k.lower() for k in metadata}
+    guard = get_current_reflection_guard()
+    suppress_body = bool(guard is not None and guard.secrets and 300 <= result.status_code < 400)
+    suppressed_headers = {"content-encoding", "content-type"} if suppress_body else set()
+    combined_items = [
+        *(
+            item
+            for item in passthrough_items
+            if item[0].lower() not in metadata_lower and item[0].lower() not in suppressed_headers
+        ),
+        *metadata.items(),
+    ]
+    body_result = result
+    media_type = result.content_type
+    if suppress_body:
+
+        async def empty_body() -> AsyncGenerator[bytes, None]:
+            return
+            yield b""
+
+        body_result = StreamingResult(
+            status_code=result.status_code,
+            headers=result.headers,
+            content_type=None,
+            aiter=empty_body(),
+        )
+        media_type = None
+    body = guarded_body(
+        body_result, stack, transfer_deadline_s=transfer_deadline_s, outcome=outcome
+    )
+    response_headers = {
+        key: value
+        for key, value in {**passthrough, **metadata}.items()
+        if key.lower() not in suppressed_headers
+    }
     return OutcomeStreamingResponse(
         body,
         stack=stack,
@@ -481,6 +537,7 @@ async def open_streaming_response(
         host=urlsplit(request.url).hostname,
         trace_id=ctx_req.trace_id,
         status_code=result.status_code,
-        media_type=result.content_type,
-        headers={**passthrough, **metadata},
+        media_type=media_type,
+        headers=response_headers,
+        raw_header_items=combined_items,
     )

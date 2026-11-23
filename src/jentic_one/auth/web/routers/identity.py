@@ -92,6 +92,7 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
             CredentialBindingEntry(
                 credential_id=cb.credential_id,
                 name=cb.name,
+                state=cb.state,
                 bound_at=cb.bound_at,
                 suspended=cb.suspended,
                 suspended_reason=cb.suspended_reason,

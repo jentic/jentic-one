@@ -8,8 +8,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, text
 
+from jentic_one.shared.auth.agent_permission_ceiling import cap_agent_permissions
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.owner_status import log_agent_owner_inactive
+from jentic_one.shared.auth.permission_catalog import (
+    USER_OAUTH_PASSTHROUGH_SCOPES,
+    compute_effective,
+    effective_user_oauth_scopes,
+)
 from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -75,7 +81,8 @@ class InProcessTokenResolver:
             # bare deletion would drop a residual row into ELSE 'active'.
             "  WHEN 'service_account' THEN 'retired'"
             "  WHEN 'user' THEN"
-            "   (SELECT CASE WHEN u.active AND u.deleted_at IS NULL"
+            "   (SELECT CASE"
+            "     WHEN u.active AND u.deleted_at IS NULL AND NOT u.must_change_password"
             "     THEN 'active' ELSE 'disabled' END"
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"
@@ -117,24 +124,57 @@ class InProcessTokenResolver:
             if row is None:
                 return None
 
-            # The mint-time snapshot is an OAuth2 scope set; cross it into the
-            # permission vocabulary the rest of the platform enforces on.
-            permissions = scopes_to_permissions(_as_scope_list(row.scopes))
+            raw_scopes = _as_scope_list(row.scopes)
 
             # Long-lived agent tokens (is_ephemeral=False) resolve permissions
             # live from actor_permission_grants so grant edits take effect
-            # immediately. Ephemeral minted tokens keep their downscoped snapshot;
-            # user tokens do not draw permissions from actor_permission_grants.
+            # immediately. Ephemeral agent tokens keep their downscoped snapshot.
+            # User tokens intersect their snapshot with live user_permission_grants
+            # expanded through effective_user_oauth_scopes (#1442).
             if not row.is_ephemeral and row.actor_type == ActorType.AGENT.value:
                 grants = await session.execute(
                     text(
-                        "SELECT permission FROM actor_permission_grants"
-                        " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-                        " ORDER BY permission"
+                        "SELECT g.permission, og.permission AS owner_permission"
+                        " FROM actor_permission_grants g"
+                        " LEFT JOIN user_permission_grants og ON og.user_id = :owner_id"
+                        " WHERE g.actor_id = :actor_id AND g.actor_type = :actor_type"
+                        " ORDER BY g.permission"
                     ),
-                    {"actor_id": row.actor_id, "actor_type": row.actor_type},
+                    {
+                        "actor_id": row.actor_id,
+                        "actor_type": row.actor_type,
+                        "owner_id": row.actor_owner_id,
+                    },
                 )
-                permissions = [str(g.permission) for g in grants.all()]
+                grant_rows = grants.all()
+                raw_permissions = [
+                    str(g.permission) for g in grant_rows if g.permission is not None
+                ]
+                owner_effective = (
+                    compute_effective(
+                        {
+                            str(g.owner_permission)
+                            for g in grant_rows
+                            if g.owner_permission is not None
+                        }
+                    )
+                    if row.actor_owner_id is not None
+                    else None
+                )
+                permissions = scopes_to_permissions(
+                    cap_agent_permissions(raw_permissions, owner_effective)
+                )
+            elif row.actor_type == ActorType.USER.value:
+                user_grants = await session.execute(
+                    text("SELECT permission FROM user_permission_grants WHERE user_id = :user_id"),
+                    {"user_id": row.actor_id},
+                )
+                user_ceiling = effective_user_oauth_scopes(
+                    {str(g.permission) for g in user_grants.all()}
+                )
+                permissions = scopes_to_permissions([s for s in raw_scopes if s in user_ceiling])
+            else:
+                permissions = scopes_to_permissions(raw_scopes)
 
         # SQLite returns DATETIME columns from a ``text()`` query as ISO strings
         # (Postgres returns aware ``datetime``); normalise so comparisons and the
@@ -147,8 +187,10 @@ class InProcessTokenResolver:
             bool(row.oauth_client_active) and bool(row.oauth_client_approved)
         )
         if oauth_client_id is not None:
-            ceiling = _as_scope_list(row.oauth_client_allowed_scopes)
+            ceiling = set(_as_scope_list(row.oauth_client_allowed_scopes))
             if row.oauth_client_allowed_scopes is not None:
+                if row.actor_type == ActorType.USER.value:
+                    ceiling |= USER_OAUTH_PASSTHROUGH_SCOPES
                 permissions = [s for s in permissions if s in ceiling]
 
         oauth_grant_id = row.oauth_grant_id
@@ -184,6 +226,8 @@ class InProcessTokenResolver:
             active=active,
             oauth_client_id=oauth_client_id,
             oauth_grant_id=oauth_grant_id,
+            auth_token_sha256=token_hash,
+            auth_method="access_token",
         )
 
 

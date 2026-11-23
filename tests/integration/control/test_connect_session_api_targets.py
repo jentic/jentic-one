@@ -91,6 +91,9 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     BasicSecret,
     BearerSecret,
 )
+from jentic_one.control.services.oauth_app_registrations.schemas import (
+    AuthorizationCodeRegistrationCreate,
+)
 from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
@@ -622,15 +625,17 @@ async def test_connect_oauth_api_uses_a_covering_config_entry(env: Context) -> N
 
 async def _register_app(ctx: Context, name: str = "Widgets app") -> str:
     view = await OAuthAppRegistrationService(ctx).create_authorization_code(
-        name=name,
-        api_vendor="widgets",
-        catalog_api_id=_CATALOG_ID,
-        display_name="Widgets",
-        client_id=f"client-{name}",
-        client_secret="registration-secret",  # pragma: allowlist secret
-        authorize_url="https://auth.widgets.example/authorize",
-        token_url="https://auth.widgets.example/token",
-        default_scopes=["read"],
+        AuthorizationCodeRegistrationCreate(
+            name=name,
+            api_vendor="widgets",
+            catalog_api_id=_CATALOG_ID,
+            display_name="Widgets",
+            client_id=f"client-{name}",
+            client_secret=SecretStr("registration-secret"),
+            authorize_url="https://auth.widgets.example/authorize",
+            token_url="https://auth.widgets.example/token",
+            default_scopes=["read"],
+        ),
         identity=_ADMIN,
     )
     return view.id
@@ -1317,31 +1322,24 @@ async def test_session_callback_discards_grant_minted_before_token_url_move(env:
     raw_state = parse_qs(urlsplit(confirmed.authorize_url).query)["state"][0]
     posted_to: list[str] = []
 
-    class _ExchangeWhileTokenUrlMoves:
+    async def _exchange_while_token_url_moves(request: httpx.Request) -> httpx.Response:
         """The vendor answers the exchange; the cross-origin edit commits first."""
+        posted_to.append(str(request.url))
+        await CredentialService(env).update(
+            credential_id,
+            CredentialUpdate(
+                type=CredentialType.OAUTH2,
+                token_url="https://login.other.example.org/token",
+                client_secret="moved-secret",  # pragma: allowlist secret
+            ),
+            identity=_OWNER,
+        )
+        return httpx.Response(200, json={"access_token": "at-stale", "refresh_token": "rt-stale"})
 
-        async def __aenter__(self) -> _ExchangeWhileTokenUrlMoves:
-            return self
-
-        async def __aexit__(self, *_exc: object) -> bool:
-            return False
-
-        async def post(self, url: str, **_kwargs: object) -> httpx.Response:
-            posted_to.append(url)
-            await CredentialService(env).update(
-                credential_id,
-                CredentialUpdate(
-                    type=CredentialType.OAUTH2,
-                    token_url="https://login.other.example.org/token",
-                    client_secret="moved-secret",  # pragma: allowlist secret
-                ),
-                identity=_OWNER,
-            )
-            return httpx.Response(
-                200, json={"access_token": "at-stale", "refresh_token": "rt-stale"}
-            )
-
-    with patch("httpx.AsyncClient", return_value=_ExchangeWhileTokenUrlMoves()):
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_exchange_while_token_url_moves),
+    ):
         result = await _svc(env).complete_from_callback(
             raw_state=raw_state, code="the-code", browser_binding=binding.value
         )

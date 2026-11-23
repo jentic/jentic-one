@@ -60,3 +60,89 @@ def test_field_boundaries_are_unambiguous() -> None:
     a = fingerprint("GET", "https://x/ab", "", b"")
     b = fingerprint("GET", "https://x/a", "b", b"")
     assert a != b
+
+
+def test_different_cookies_and_semantic_headers_differ() -> None:
+    base = fingerprint(
+        "POST",
+        "https://api.example.com/v1/items",
+        "cred_1",
+        b'{"a":1}',
+        headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json"},
+        cookie="sid=one; theme=dark",
+    )
+    same_norm = fingerprint(
+        "POST",
+        "https://api.example.com/v1/items",
+        "cred_1",
+        b'{"a":1}',
+        headers={
+            "content-type": 'Application/JSON; CHARSET="UTF-8"',
+            "accept": "application/json",
+            "Authorization": "Bearer different-caller-token",
+            "X-Request-Id": "req-999",
+            "Traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        },
+        cookie=" sid=one ;  theme=dark ",
+    )
+    assert base == same_norm
+
+    diff_cookie = fingerprint(
+        "POST",
+        "https://api.example.com/v1/items",
+        "cred_1",
+        b'{"a":1}',
+        headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json"},
+        cookie="sid=two; theme=dark",
+    )
+    assert base != diff_cookie
+
+    diff_if_match = fingerprint(
+        "POST",
+        "https://api.example.com/v1/items",
+        "cred_1",
+        b'{"a":1}',
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+            "If-Match": '"etag-2"',
+        },
+        cookie="sid=one; theme=dark",
+    )
+    assert base != diff_if_match
+
+    diff_server_vars = fingerprint(
+        "POST",
+        "https://api.example.com/v1/items",
+        "cred_1",
+        b'{"a":1}',
+        headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json"},
+        cookie="sid=one; theme=dark",
+        server_variables={"region": "eu"},
+    )
+    assert base != diff_server_vars
+
+
+def test_response_representation_negotiation_is_part_of_the_fingerprint() -> None:
+    """A replay cannot return compressed bytes to a caller requesting identity."""
+    common = ("POST", "https://api.example.com/v1/items", "cred_1", b"")
+    gzip = fingerprint(*common, headers={"Accept-Encoding": "gzip"})
+    identity = fingerprint(*common, headers={"Accept-Encoding": "identity"})
+    implicit_identity = fingerprint(*common, headers={})
+    assert identity == implicit_identity
+    assert gzip != identity
+
+
+def test_connection_nominated_hop_by_hop_headers_are_excluded_from_fingerprint() -> None:
+    common = ("POST", "https://api.example.com/v1/items", "cred_1", b"")
+    clean = fingerprint(*common, headers={"Content-Type": "application/json"})
+    with_hop = fingerprint(
+        *common,
+        headers={
+            "Content-Type": "application/json",
+            "Connection": "X-Transient-Hop, Cookie",
+            "X-Transient-Hop": "1",
+        },
+        cookie="sid=hop-only",
+    )
+    assert clean == with_hop

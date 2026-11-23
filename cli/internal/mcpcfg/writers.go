@@ -8,8 +8,9 @@ package mcpcfg
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/jentic/jentic-one/cli/internal/atomicfile"
 )
 
 // WriteJSONEntry merges entry into the JSON MCP config at path (creating the
@@ -75,51 +76,15 @@ func WriteCodexEntry(path string, entry Entry) (Outcome, error) {
 // config commonly carries sibling servers' env secrets, so err on the tight
 // side (the runtimes read their own user's file only).
 func writeFilePreserving(path string, data []byte, existed bool) error {
-	mode := os.FileMode(0o600)
-	if existed {
-		if info, err := os.Stat(path); err == nil {
-			mode = info.Mode().Perm()
-		}
-	} else if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return err
+	opts := atomicfile.Options{Perm: 0o600, PreserveMode: true}
+	if !existed {
+		opts.MkdirPerm = 0o750
 	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".jentic-mcp-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	renamed := false
-	defer func() {
-		if !renamed {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, mode); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	renamed = true
-	return nil
+	return atomicfile.Write(path, data, opts)
 }
 
 // ExecStep is one step of an exec-route plan (claude-code), enumerated rather
-// than run so the plan is assertable in tests without spawning anything —
-// mirroring localagent.AccountStep.
+// than run so the plan is assertable in tests without spawning anything.
 type ExecStep struct {
 	// What describes the step for progress/error messages.
 	What string

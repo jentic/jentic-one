@@ -84,7 +84,7 @@ async def test_jwt_without_embedded_permissions_hits_db(
     mock_resolve: AsyncMock, user_ctx: MagicMock
 ) -> None:
     """JWT without ``permissions`` claim triggers exactly one DB call for permission resolution."""
-    mock_resolve.return_value = (["some:perm"], [])
+    mock_resolve.return_value = ["some:perm"]
     secret = "a" * 32
     claims = {
         "sub": "usr_2",
@@ -107,7 +107,7 @@ async def test_jwt_merges_scopes_into_permissions(
     mock_resolve: AsyncMock, user_ctx: MagicMock
 ) -> None:
     """Scopes from JWT claims are merged into the permissions list."""
-    mock_resolve.return_value = (["resolved:perm"], [])
+    mock_resolve.return_value = ["resolved:perm"]
     secret = "a" * 32
     claims = {
         "sub": "usr_3",

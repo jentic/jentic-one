@@ -229,10 +229,17 @@ type AuthConfig struct {
 	// registers, which the agent uses to check its registration status.
 	RatTtlSeconds int `json:"rat_ttl_seconds" yaml:"rat_ttl_seconds" mapstructure:"rat_ttl_seconds"`
 
+	// Maximum absolute lifetime (seconds, default 90 days) of an OAuth refresh-token
+	// family from initial mint, across rotations. Set to null to disable the family
+	// cap.
+	RefreshFamilyMaxAgeSeconds interface{} `json:"refresh_family_max_age_seconds" yaml:"refresh_family_max_age_seconds" mapstructure:"refresh_family_max_age_seconds"`
+
 	// Lifetime (seconds, default 7 days) of an OAuth refresh token; each refresh
 	// rotates it and the new token gets a fresh lifetime.
 	RefreshTtlSeconds int `json:"refresh_ttl_seconds" yaml:"refresh_ttl_seconds" mapstructure:"refresh_ttl_seconds"`
 }
+
+type AuthConfigRefreshFamilyMaxAgeSeconds_0 *int
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (j *AuthConfig) UnmarshalJSON(value []byte) error {
@@ -262,6 +269,9 @@ func (j *AuthConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["rat_ttl_seconds"]; !ok || v == nil {
 		plain.RatTtlSeconds = 900
+	}
+	if v, ok := raw["refresh_family_max_age_seconds"]; !ok || v == nil {
+		plain.RefreshFamilyMaxAgeSeconds = 7776000.0
 	}
 	if v, ok := raw["refresh_ttl_seconds"]; !ok || v == nil {
 		plain.RefreshTtlSeconds = 604800
@@ -2190,6 +2200,13 @@ type MetricsConfig struct {
 	// ``OTEL_EXPORTER_OTLP_*`` environment variables, ``prometheus`` serves a scrape
 	// endpoint at ``/metrics``, and ``none`` records nothing.
 	Exporter MetricsConfigExporter `json:"exporter" yaml:"exporter" mapstructure:"exporter"`
+
+	// Explicit histogram bucket boundaries (milliseconds, strictly increasing, all >
+	// 0) for the request-latency histograms listed in docs/operations/monitoring.md;
+	// seconds-unit histograms get the list divided by 1000. Must be identical on
+	// every process whose series are aggregated together. As an env var, a
+	// comma-separated list.
+	LatencyBucketsMs []float64 `json:"latency_buckets_ms" yaml:"latency_buckets_ms" mapstructure:"latency_buckets_ms"`
 }
 
 type MetricsConfigExporter string
@@ -2241,6 +2258,32 @@ func (j *MetricsConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["exporter"]; !ok || v == nil {
 		plain.Exporter = "otlp"
 	}
+	if v, ok := raw["latency_buckets_ms"]; !ok || v == nil {
+		plain.LatencyBucketsMs = []float64{
+			1.0,
+			2.0,
+			5.0,
+			10.0,
+			15.0,
+			20.0,
+			25.0,
+			50.0,
+			100.0,
+			250.0,
+			500.0,
+			1000.0,
+			2500.0,
+			5000.0,
+			10000.0,
+			30000.0,
+		}
+	}
+	if plain.LatencyBucketsMs != nil && len(plain.LatencyBucketsMs) < 1 {
+		return fmt.Errorf("field %s length: must be >= %d", "latency_buckets_ms", 1)
+	}
+	if len(plain.LatencyBucketsMs) > 64 {
+		return fmt.Errorf("field %s length: must be <= %d", "latency_buckets_ms", 64)
+	}
 	*j = MetricsConfig(plain)
 	return nil
 }
@@ -2284,7 +2327,8 @@ type OAuthRateLimitConfig struct {
 	RegistrationBurst int `json:"registration_burst" yaml:"registration_burst" mapstructure:"registration_burst"`
 
 	// Sustained requests/minute allowed per client network (IPv4 address or IPv6 /64)
-	// on anonymous dynamic client registration (``POST /oauth-clients``).
+	// on anonymous dynamic client registration (``POST /oauth-clients``) and agent
+	// self-registration (``POST /register``), in its own bucket.
 	RegistrationRpm int `json:"registration_rpm" yaml:"registration_rpm" mapstructure:"registration_rpm"`
 
 	// Reverse proxies whose ``X-Forwarded-For`` header is honored when deriving the
@@ -3037,19 +3081,21 @@ func (j *StateBackendConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Anonymous product-telemetry settings.
+// Anonymous product telemetry. Off by default for hand-written configs, but the
+// shipped install paths (such as the quickstarts) may turn it on.
 //
-// Defaults to **OFF**: an instance whose config omits this block (non-onboarded
-// or hand-rolled) sends nothing. The onboarding CLI writes “enabled“
-// explicitly (a yes-default “[Y]/n“ prompt), which is where the
-// on-by-default install experience comes from. “instance_id“ seeds the
-// durable admin-DB identity row on first startup for opted-in instances.
-// “host_os“ is the operator's OS family, stamped by the CLI at install
-// time so a Docker-run instance reports the host's OS rather than the
-// container's; sent once per boot, on the “instance_booted“ event.
+// To opt out, set “telemetry.enabled“ to “false“ in the config, or the
+// environment variable “JENTIC__TELEMETRY__ENABLED=false“ (for example, in a
+// Docker compose file).
+//
+// Events carry only a fixed event name (such as “instance_booted“,
+// “agent_created“ or “broker_execution“), closed-enum tags, the actor type and
+// a timestamp, plus a random instance id and the app version. No credentials,
+// request data or personal data are sent. The full event list is
+// “TelemetryEventName“ in “src/jentic_one/shared/telemetry/events.py“.
 type TelemetryConfig struct {
-	// Send anonymous product telemetry. Off when the block is omitted; the onboarding
-	// CLI writes it explicitly.
+	// Send anonymous product telemetry. Off when unset; the shipped install paths may
+	// set it to true. Set false to opt out.
 	Enabled bool `json:"enabled,omitempty,omitzero" yaml:"enabled,omitempty" mapstructure:"enabled,omitempty"`
 
 	// Endpoint corresponds to the JSON schema field "endpoint".
@@ -3574,83 +3620,31 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Risk class shown on the review page: write and admin scopes carry a warning.
-	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
-
-	// Pre-select this scope on the review page.
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Human-facing explanation of the scope, shown on the review page.
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Scope string as the vendor expects it on the authorize request.
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
 	}
-	*j = VendorScopeConfigClassification(v)
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -3681,18 +3675,93 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-
-// Verified vendors offered by the agent-driven connect flow, keyed by a short slug
-// (e.g. “github“).
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Verified vendors offered by the agent-driven connect flow, keyed by a short
 	// slug (e.g. ``github``).
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+// Verified vendors offered by the agent-driven connect flow, keyed by a short slug
+// (e.g. “github“).
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Risk class shown on the review page: write and admin scopes carry a warning.
+	Classification VendorScopeConfigClassification `json:"classification" yaml:"classification" mapstructure:"classification"`
+
+	// Pre-select this scope on the review page.
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Human-facing explanation of the scope, shown on the review page.
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Scope string as the vendor expects it on the authorize request.
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
 }
 
 // Background job-worker durability knobs.
@@ -3844,27 +3913,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
-}
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig

@@ -30,6 +30,38 @@ def advisory_lock_key(name: str) -> int:
     return int.from_bytes(digest, "big", signed=True)
 
 
+async def advisory_xact_lock(
+    session: AsyncSession,
+    *,
+    key: int | None = None,
+    hashtext_name: str | None = None,
+) -> None:
+    """Take a transaction-scoped advisory lock on PostgreSQL; no-op on SQLite."""
+    if (key is None) == (hashtext_name is None):
+        raise ValueError("advisory_xact_lock requires exactly one of key or hashtext_name")
+    dialect = session.get_bind().dialect.name
+    if dialect != "postgresql":
+        return
+    if key is not None:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": key},
+        )
+    else:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
+            {"name": hashtext_name},
+        )
+
+
+CREDENTIAL_IDENTITY_REPAIR_LOCK_KEY = advisory_lock_key("control.credential_identity_repair")
+
+
+async def lock_credential_identity_repair(session: AsyncSession) -> None:
+    """Serialise API-connect creation with identity repair on the control DB."""
+    await advisory_xact_lock(session, key=CREDENTIAL_IDENTITY_REPAIR_LOCK_KEY)
+
+
 async def lock_credential_bindings(session: AsyncSession, credential_id: str) -> None:
     """Serialise writes to one credential's ``agent_credential_bindings`` rows.
 
@@ -45,9 +77,7 @@ async def lock_credential_bindings(session: AsyncSession, credential_id: str) ->
     SQLite it is a no-op: every write transaction opens with
     ``BEGIN IMMEDIATE``, which already serialises writers to the admin file.
     """
-    dialect = session.bind.dialect.name if session.bind else "sqlite"
-    if dialect == "postgresql":
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(:key)"),
-            {"key": advisory_lock_key(f"credentials.bindings.{credential_id}")},
-        )
+    await advisory_xact_lock(
+        session,
+        key=advisory_lock_key(f"credentials.bindings.{credential_id}"),
+    )

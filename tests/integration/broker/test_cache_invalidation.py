@@ -393,9 +393,18 @@ async def test_user_disable_delete_and_enable_immediately_invalidate_broker_cach
     await users.disable(user_id, identity=admin)
     await assert_live(False)
 
-    # Re-enabling evicts the negative verdicts cached while disabled.
+    # Re-enabling evicts the negative verdicts cached while disabled for the
+    # user and its owned agents; the user's pre-disable opaque OAuth token stays
+    # revoked (swept on disable), while the owned agent's API key resumes.
     await users.enable(user_id, identity=admin)
-    await assert_live(True)
+    assert await actor_status.is_active(actor_id=user_id, actor_type="user") is True
+    assert await actor_status.is_active(actor_id=agent.id, actor_type="agent") is True
+    assert (await token_validator.validate(api_key)).sub == agent.id
+    with pytest.raises(TokenValidationError):
+        await token_validator.validate(user_token)
+    fresh_user_token = await _issue_user_access_token(ctx, user_id)
+    assert (await token_validator.validate(fresh_user_token)).sub == user_id
+    user_token = fresh_user_token
 
     await users.delete(user_id, identity=admin)
     await assert_live(False)

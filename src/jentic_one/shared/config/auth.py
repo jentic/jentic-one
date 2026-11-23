@@ -268,7 +268,8 @@ class OAuthRateLimitConfig(BaseModel):
         description=(
             "Sustained requests/minute allowed per client network (IPv4 "
             "address or IPv6 /64) on anonymous dynamic client registration "
-            "(``POST /oauth-clients``)."
+            "(``POST /oauth-clients``) and agent self-registration "
+            "(``POST /register``), in its own bucket."
         ),
     )
     registration_burst: int = Field(
@@ -397,6 +398,15 @@ class AuthConfig(BaseModel):
         description=(
             "Lifetime (seconds, default 7 days) of an OAuth refresh token; each "
             "refresh rotates it and the new token gets a fresh lifetime."
+        ),
+    )
+    refresh_family_max_age_seconds: int | None = Field(
+        default=7776000,
+        ge=60,
+        description=(
+            "Maximum absolute lifetime (seconds, default 90 days) of an OAuth "
+            "refresh-token family from initial mint, across rotations. Set to "
+            "null to disable the family cap."
         ),
     )
     rat_ttl_seconds: int = Field(

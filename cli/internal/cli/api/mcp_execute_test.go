@@ -1416,3 +1416,23 @@ func TestMCPExecute_UpstreamOrigin5xxPassesThrough(t *testing.T) {
 		})
 	}
 }
+
+func TestExecute_DotSegmentInputIsInvalidParams(t *testing.T) {
+	for _, val := range []string{".", ".."} {
+		t.Run(val, func(t *testing.T) {
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", "http://127.0.0.1:8100"),
+				callToolRequest("execute", `{"operation_id":"GET:/v1/users/{id}/profile","inputs":{"id":"`+val+`"}}`))
+			if res != nil {
+				t.Fatalf("want a protocol error for dot-segment path parameter %q, got result: %v", val, res)
+			}
+			var wireErr *jsonrpc.Error
+			if !errors.As(err, &wireErr) || wireErr.Code != jsonrpc.CodeInvalidParams {
+				t.Fatalf("err = %v, want a JSON-RPC invalid-params error", err)
+			}
+			if !strings.Contains(wireErr.Message, `path parameter "id" has a dot-segment value`) {
+				t.Errorf("wireErr.Message = %q, want dot-segment path parameter message", wireErr.Message)
+			}
+		})
+	}
+}

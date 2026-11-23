@@ -210,3 +210,33 @@ async def test_tick_threads_catalog_auto_importer_into_session_service() -> None
     # Constructed with the importer keyword; the same object identity.
     _, kwargs = service_cls.call_args
     assert kwargs.get("catalog_auto_importer") is importer
+
+
+@pytest.mark.asyncio()
+async def test_hung_advance_is_abandoned_and_next_tick_runs() -> None:
+    # An advance that never returns must not pin the tick: it is abandoned at
+    # the per-advance deadline, a later tick advances a newly due credential,
+    # and the TTL sweep runs on every tick.
+    scanner = ConnectPollScanner(_make_context())
+    never_set = asyncio.Event()
+    advanced: list[str] = []
+
+    async def _advance(credential_id: str) -> None:
+        if credential_id == "cred_hung":
+            await never_set.wait()
+            return
+        advanced.append(credential_id)
+
+    due = [["cred_hung"], ["cred_new"]]
+    sweep = AsyncMock(return_value=0)
+    with (
+        patch.object(scanner, "_due_credentials", new=AsyncMock(side_effect=due)),
+        patch("jentic_one.shared.jobs.connect_poll_scanner._ADVANCE_DEADLINE_SECONDS", 0.2),
+        patch("jentic_one.shared.jobs.connect_poll_scanner.ConnectSessionService") as service_cls,
+    ):
+        service_cls.return_value.advance_polling_target = _advance
+        service_cls.return_value.expire_stale_sessions = sweep
+        await asyncio.wait_for(scanner._tick(), 5)
+        await asyncio.wait_for(scanner._tick(), 5)
+    assert advanced == ["cred_new"]
+    assert sweep.await_count == 2

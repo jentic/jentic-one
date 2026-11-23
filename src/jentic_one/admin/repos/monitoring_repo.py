@@ -235,7 +235,12 @@ class MonitoringRepository:
                 ExecutionRecord.api_name,
                 ExecutionRecord.operation_id,
             )
-            .order_by(func.count().desc())
+            .order_by(
+                func.count().desc(),
+                ExecutionRecord.api_vendor.asc(),
+                ExecutionRecord.api_name.asc(),
+                ExecutionRecord.operation_id.asc(),
+            )
             .limit(limit)
         )
         result = await session.execute(stmt)
@@ -402,6 +407,14 @@ class MonitoringRepository:
         ``get_usage_stats`` (which adds buckets and per-key trends on top).
         """
         key_expr, group_cols = _group_key(group_by)
+        # Secondary tie-breakers keep row order and LIMIT selection deterministic
+        # across backends when counts tie (#1801). Sorting by `key_expr` orders
+        # coalesced display keys consistently; explicit NULL-flag + column keys
+        # break any remaining ties without backend-dependent NULL ordering.
+        tie_breakers: list[SQLColumnExpression[Any]] = [key_expr.asc()]
+        for col in group_cols:
+            tie_breakers.append(col.is_(None).asc())
+            tie_breakers.append(col.asc())
 
         stmt: _AnySelect = (
             select(
@@ -418,7 +431,7 @@ class MonitoringRepository:
             )
             .where(ExecutionRecord.started_at >= cutoff, ExecutionRecord.started_at < until)
             .group_by(*group_cols)
-            .order_by(func.count().desc())
+            .order_by(func.count().desc(), *tie_breakers)
             .limit(limit)
         )
         if filters:

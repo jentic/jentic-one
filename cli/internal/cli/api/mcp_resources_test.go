@@ -234,6 +234,13 @@ func TestMCPSkillResource_HostedHonorsCAPin(t *testing.T) {
 		t.Fatalf("write ca bundle: %v", err)
 	}
 
+	withXDG(t)
+	if err := sdkconfig.MutateConfig(func(c *sdkconfig.Config) error {
+		c.Environments["test"] = sdkconfig.Env{BaseURL: srv.URL, CACertPath: pemPath}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	s := newTestMCPServer(t, nil)
 	state := &clictx.ActiveState{
 		ResolvedState: &sdkconfig.ResolvedState{
@@ -260,7 +267,13 @@ func TestMCPSkillResource_HostedHonorsCAPin(t *testing.T) {
 
 	// A set-but-broken bundle silently degrades to bundled (see the test
 	// comment above for why this differs from the execute leg's fail-closed).
-	state.CACertPath = filepath.Join(t.TempDir(), "missing.pem")
+	missingPath := filepath.Join(t.TempDir(), "missing.pem")
+	if err := sdkconfig.MutateConfig(func(c *sdkconfig.Config) error {
+		c.Environments["test"] = sdkconfig.Env{BaseURL: srv.URL, CACertPath: missingPath}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	res, err = s.handleSkillResource(ctx, readResourceRequest("skill://jentic"))
 	if err != nil {
 		t.Fatalf("a broken ca_cert_path must degrade to bundled, not fail: %v", err)

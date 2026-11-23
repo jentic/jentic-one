@@ -15,8 +15,6 @@ Connect agents:
 - [Connect an agent](connecting-agents.md) — the four integration paths
   (skill, MCP stdio, MCP over HTTP, plain HTTP), and how self-hosted differs
   from the Jentic cloud platform.
-- [Run coding agents in isolation](local-agent.md) — `jentic run` and the
-  local-agent sandbox.
 - [Serve MCP over HTTP](mcp-http-endpoint.md) — the optional hosted `/mcp`
   endpoint.
 - [Executions requiring approval](executions-requiring-approval.md) — Ask

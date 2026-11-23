@@ -329,3 +329,54 @@ func TestProbeDistinguishesMissingBinary(t *testing.T) {
 		t.Errorf("dockerNotInstalled did not recognize its own detail: %q", detail)
 	}
 }
+
+func TestPreflightRequiresGit231WhenTokenSet(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("shell stub test targets unix")
+	}
+	chdir(t, t.TempDir())
+	t.Setenv(SrcEnv, "")
+	t.Setenv("GITHUB_TOKEN", "ghp_preflight_tok")
+
+	dir := t.TempDir()
+	gitStub := dir + string(os.PathSeparator) + "git"
+	if err := os.WriteFile(gitStub, []byte("#!/bin/sh\necho 'git version 2.30.2'\n"), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	d := NewDraft()
+	results := Preflight(context.Background(), d)
+	var gitRes *CheckResult
+	for i := range results {
+		if results[i].Req.Name == "git" {
+			gitRes = &results[i]
+			break
+		}
+	}
+	if gitRes == nil {
+		t.Fatal("expected git requirement in preflight results")
+	}
+	if gitRes.Found {
+		t.Fatalf("expected git 2.30.2 with GITHUB_TOKEN set to fail preflight, got Found=true (Version=%q)", gitRes.Version)
+	}
+	if !strings.Contains(gitRes.MissingWhy, "2.31") {
+		t.Errorf("expected MissingWhy to mention git >= 2.31, got %q", gitRes.MissingWhy)
+	}
+
+	// git 2.31.0 with GITHUB_TOKEN set satisfies preflight.
+	if err := os.WriteFile(gitStub, []byte("#!/bin/sh\necho 'git version 2.31.0'\n"), 0o755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	results = Preflight(context.Background(), d)
+	gitRes = nil
+	for i := range results {
+		if results[i].Req.Name == "git" {
+			gitRes = &results[i]
+			break
+		}
+	}
+	if gitRes == nil || !gitRes.Found {
+		t.Fatalf("expected git 2.31.0 with GITHUB_TOKEN set to pass preflight, got %+v", gitRes)
+	}
+}

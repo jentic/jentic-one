@@ -147,6 +147,30 @@ describe('TruncateWithTooltip', () => {
 		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 	});
 
+	it('follows its trigger when an ancestor scrolls', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<div data-testid="scroller" style={{ height: 60, overflowY: 'auto' }}>
+				<div style={{ height: 30 }} />
+				<Narrow>
+					<TruncateWithTooltip>{LONG}</TruncateWithTooltip>
+				</Narrow>
+				<div style={{ height: 400 }} />
+			</div>,
+		);
+		const trigger = screen.getByText(LONG);
+		await waitFor(() => expect(trigger).toHaveAttribute('tabindex', '0'));
+		await user.hover(trigger);
+		const tooltip = await screen.findByRole('tooltip');
+		const before = parseFloat(tooltip.style.top);
+		// The sheet-like scroller moves the trigger up by 20px; the bubble
+		// re-places itself under it on the next frame.
+		const scroller = screen.getByTestId('scroller');
+		scroller.scrollTop = 20;
+		scroller.dispatchEvent(new Event('scroll'));
+		await waitFor(() => expect(parseFloat(tooltip.style.top)).toBeCloseTo(before - 20, 0));
+	});
+
 	it('has no a11y violations', async () => {
 		const { container } = renderWithProviders(
 			<Narrow>

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -322,6 +323,9 @@ async def _enqueue(ctx: Context, actor_id: str, actor_type: ActorType) -> str:
         "api_vendor": _VENDOR,
         "api_name": _API_NAME,
         "api_version": _API_VERSION,
+        "auth_token_sha256": "abcd" * 16,
+        "auth_method": "jwt",
+        "auth_expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     }
     async with ctx.admin_db.transaction() as session:
         return await enqueue_job(

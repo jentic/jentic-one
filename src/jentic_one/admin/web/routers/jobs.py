@@ -21,7 +21,7 @@ from jentic_one.admin.web.schemas.jobs import (
     JobResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.models import JobKind, JobStatus
+from jentic_one.shared.models import JobKind
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
@@ -39,11 +39,7 @@ router = APIRouter()
 
 def _job_response(view: JobView, request: Request) -> JobResponse:
     """Project a JobView to a JobResponse."""
-    result_link = (
-        build_link(request, f"/jobs/{view.id}/result")
-        if view.status == JobStatus.COMPLETED
-        else None
-    )
+    result_link = build_link(request, f"/jobs/{view.id}/result") if view.result_available else None
     execution_link = (
         build_link(request, f"/executions/{view.execution_id}") if view.execution_id else None
     )
@@ -148,7 +144,7 @@ async def get_job(
 _JOB_RESULT_RESPONSE: Final[dict[int | str, dict[str, Any]]] = {
     200: {
         "description": (
-            "The completed job's result, polymorphic by the job's `kind` (read `kind` from "
+            "The finished job's result, polymorphic by the job's `kind` (read `kind` from "
             "`GET /jobs/{job_id}`). The body is always a JSON object — never an array or a "
             "scalar — but its members depend on the kind:\n\n"
             "- **`kind=import`**: `revisions`, one entry per API revision the import "
@@ -222,12 +218,14 @@ async def get_job_result(
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
-    """Get the result of a completed job — polymorphic by kind.
+    """Get the stored result of a finished job — polymorphic by kind.
 
-    Answers ``409`` unless the job's ``status`` is ``completed`` (pending,
-    running, failed or cancelled), and ``410`` once an
-    approved execution's result is past
-    ``held_executions.result_retention_seconds``.
+    Serves the stored result for a ``completed`` job, or a ``failed`` job that
+    recorded an actionable result (such as an approved execution whose upstream
+    call or run-time authorization failed, or a held execution that never ran).
+    Answers ``409`` while the job is active, cancelled, dead-lettered, or failed
+    without a stored result, and ``410`` once an approved execution's result is
+    past ``held_executions.result_retention_seconds``.
     """
     view = await result_svc.get(job_id, identity=identity)
     if view.kind == JobKind.EXECUTION and view.content_type:

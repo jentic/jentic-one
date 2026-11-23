@@ -35,7 +35,7 @@ func (a *app) logoutE(ctx context.Context) error {
 	return a.logoutContextE(ctx, st)
 }
 
-func (a *app) logoutContextE(_ context.Context, st *clictx.ActiveState) error {
+func (a *app) logoutContextE(ctx context.Context, st *clictx.ActiveState) error {
 	// No mint happens here (logout only reads/clears local state and revokes),
 	// so this deliberately does NOT go through credsFromState: a broken
 	// ca_cert_path must never block clearing local tokens.
@@ -46,8 +46,16 @@ func (a *app) logoutContextE(_ context.Context, st *clictx.ActiveState) error {
 	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
 	tokens, err := auth.ReadTokens(ref)
 	if err == nil && tokens != nil && tokens.AccessToken != "" && st.BaseURL != "" {
-		// Best-effort revoke; report but do not fail on server/transport errors.
-		if revErr := auth.RevokeToken(st.BaseURL, tokens.AccessToken, tokens.AccessToken); revErr != nil {
+		// Best-effort revoke; revoking the refresh token when present revokes the
+		// full token family on the server. Report but do not fail on errors.
+		tokToRevoke := tokens.AccessToken
+		if tokens.RefreshToken != "" {
+			tokToRevoke = tokens.RefreshToken
+		}
+		hc, hcErr := clictx.AuthHTTPClient(ctx, st.CACertPath)
+		if hcErr != nil {
+			fmt.Fprintln(a.Out, theme.Warnf("warning: revoke failed: %v", hcErr))
+		} else if revErr := auth.RevokeTokenWithClient(hc, st.BaseURL, tokens.AccessToken, tokToRevoke); revErr != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("warning: revoke failed: %v", revErr))
 		}
 	}

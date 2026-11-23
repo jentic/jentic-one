@@ -13,6 +13,10 @@ export type AuthCodeConnectChallengeResponse = {
      * Vendor authorization URL to open in the browser that called this endpoint.
      */
     authorize_url: string;
+    /**
+     * Opaque identifier for reading this flow's completion status.
+     */
+    flow_id?: (string | null);
     kind?: string;
     /**
      * Opaque CSRF state bound to this challenge; the callback accepts it only from the browser that started the flow.

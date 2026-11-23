@@ -196,3 +196,69 @@ server:
       enabled: true
       auto_approve_clients: true   # default: false (admin approval required)
 ```
+
+## Setting up your MCP client
+
+The examples use the Docker quickstart's address, `http://127.0.0.1:8000/mcp`;
+replace it with your instance's URL. Each one authenticates with an agent API
+key, which the agent's **MCP tab** in the web app shows. If your instance has
+MCP sign-in (OAuth) enabled (`server.mcp.oauth.enabled`), you can remove the key
+and sign in through the browser instead.
+
+### Claude
+
+Claude connects through [`mcp-remote`](https://www.npmjs.com/package/mcp-remote),
+which needs Node.js (`npx`). Add this to the config file:
+
+- **Claude Desktop** (restart Claude after saving):
+  - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+  - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+  - Linux: `~/.config/Claude/claude_desktop_config.json`
+- **Claude Code:** `.mcp.json` in the project root.
+
+```json
+{
+  "mcpServers": {
+    "jentic": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8000/mcp",
+        "--header",
+        "Authorization:${JENTIC_AUTH}"
+      ],
+      "env": { "JENTIC_AUTH": "Bearer <agent-api-key>" }
+    }
+  }
+}
+```
+
+With OAuth, drop the `--header` arguments and the `env` block. See the
+[`mcp-remote`](#mcp-remote-npm) recipe for why the header goes through an
+environment variable, and where `mcp-remote` stores OAuth tokens.
+
+### Cursor
+
+Cursor connects to the URL directly. Add this to `~/.cursor/mcp.json` (all
+projects) or `.cursor/mcp.json` in a project:
+
+```json
+{
+  "mcpServers": {
+    "jentic": {
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": { "Authorization": "Bearer <agent-api-key>" }
+    }
+  }
+}
+```
+
+With OAuth, drop `headers`.
+
+> **Caveat:** Cursor doesn't yet complete OAuth sign-in for servers that, like
+> Jentic One, accept an anonymous connection and only ask for sign-in (a 401)
+> on the first tool call. It shows the server as connected, then fails that
+> call as Unauthorized without opening the browser
+> ([Cursor forum: "Plugin MCP OAuth never reaches needsAuth"](https://forum.cursor.com/t/plugin-mcp-oauth-never-reaches-needsauth-authenticate-button-missing-browser-never-opens/170058)).
+> Keep the API key header until that is fixed.

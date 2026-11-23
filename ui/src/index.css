@@ -226,8 +226,11 @@
 	--surface-chip: 192 22% 17%; /* #223135 */
 	--surface-chip-active: 192 22% 22%;
 	--surface-quiet-cta: 192 22% 18%;
-	--surface-sheet: 192 33% 10%; /* #111F22 */
-	--surface-sheet-foot: 192 33% 9%; /* #0F1B1F */
+	/* A sheet reads as the page's own tone, so the cards on it lift by the same
+	   step as cards on the page; a sheet a shade under the cards would leave
+	   them edgeless (the card edge is transparent in dark). */
+	--surface-sheet: 192 35% 8.5%; /* #0E1B1D */
+	--surface-sheet-foot: 192 35% 7.5%; /* #0C171A */
 	--surface-drop: 192 28% 13.5%;
 	--surface-drop-over: 176 30% 14%;
 	--surface-ghost: 189 37% 18%; /* #1D3A3F — drag ghost */

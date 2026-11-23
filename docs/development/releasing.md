@@ -28,16 +28,35 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      on a kind cluster, reusing `smoke-helm.yml`. Unlike the post-merge run on
      `main`, this one blocks: a release cannot ship while any deployment mode
      is red.
+   - **ci (including `upgrade-test`)** — runs the full
+     [`ci.yml`](../../.github/workflows/ci.yml) matrix (`full: true`) on the
+     tagged commit before `publish-image`. This includes
+     `build-candidate-image` and `upgrade-test`, which boots each enabled
+     published release from
+     [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
+     seeds live state, upgrades in place to the candidate image, and runs the
+     post-upgrade verifier (see
+     [Supported upgrades](../operations/supported-upgrades.md)). The same
+     `upgrade-test` job also runs pre-tag on every `release-please--*` Release
+     PR (for example `release-please--branches--main--components--jentic-one`
+     on Release PR `#2007`, matched by `startsWith(github.head_ref, 'release-please--')`)
+     so upgrade regressions are caught before a tag is cut.
    - **publish-image** — builds the `app` container image and pushes it to GHCR
      as `ghcr.io/<owner>/jentic-one-app` (tagged `X.Y.Z` — the `v` is stripped
      — and the short SHA; `latest` moves only on stable releases). One image
      serves every surface via `JENTIC__APPS`; this is the image self-hosters
      pull — see
      [`docs/installation/docker.md`](../installation/docker.md).
-   - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
+   - **release** — first builds the host `jentic` binary and asserts its
+     `--version` equals the tag (before anything is uploaded), then GoReleaser
+     builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and publishes the package
      channels: the Homebrew cask, a winget manifest PR against
-     `microsoft/winget-pkgs`, and the scoop bucket manifest. The winget/scoop
+     `microsoft/winget-pkgs`, and the scoop bucket manifest. It also attaches
+     `.deb` / `.rpm` / `.apk` packages per binary to the release (no package
+     repository, so nothing to provision). The packages are listed in the
+     cosign-signed `checksums.txt` but are not signed individually and have no
+     SBOM of their own (the syft SBOMs cover the archives). The winget/scoop
      publishes are token-gated: with `WINGET_TOKEN` / `SCOOP_BUCKET_TOKEN`
      unset the entry is skipped (logged, never fails the release) — see the
      one-time setup below.
@@ -63,6 +82,20 @@ Two states worth knowing by name:
   digest echoed by the *first* run then no longer matches the tag — anyone
   who pinned it keeps the old (still-signed) image. Prefer "Re-run failed
   jobs" precisely to avoid this.
+- **Re-running the `release` (GoReleaser) job**: the GitHub Release is created
+  by release-please before any gate runs, and GoReleaser attaches assets to it
+  (`mode: append`). `replace_existing_artifacts` is enabled, so a re-run uploads
+  the same asset names over the existing ones instead of failing on the first
+  duplicate. The binary version check now runs before GoReleaser, so a
+  mismatched binary stops the job before anything is uploaded or any package
+  channel is touched. Not covered: re-running after the Homebrew cask, scoop
+  or winget publish steps already ran has not been exercised (the cask and
+  scoop pushes are commits to separate repositories; the winget publish opens a
+  pull request and pushes a branch that already exists on a re-run). If a re-run
+  fails in one of those steps, recover with a superseding release
+  (`Release-As`, below) instead of repeating it. The Release is public from the
+  moment it is created (`draft: false`), and `jentic update` follows git tags, so
+  a failed release run is visible to users until a good one supersedes it.
 
 When the run can't be recovered in place (the workflow itself needs a fix),
 force a fresh release instead. release-please only opens a Release PR when
@@ -89,6 +122,71 @@ Operator-facing changes for each release live in
 for changes not yet released go under its `## Unreleased` heading; in the
 Release PR, rename that heading to the release version (e.g. `## 0.45.0`).
 Don't link to `#unreleased`: the anchor goes away at release.
+
+### Upgrade test gate and failing-leg runbook
+
+The `upgrade-test` job in [`ci.yml`](../../.github/workflows/ci.yml) tests
+in-place upgrades from the previous two minor series (`N-1` and `N-2`,
+collapsed to their latest patch) defined in
+[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
+and documented in [Supported upgrades](../operations/supported-upgrades.md).
+
+**Promoting `upgrade-test` from report-only to blocking:** during initial
+rollout (first two releases), `upgrade-matrix`, `build-candidate-image`, and
+`upgrade-test` are listed in `ci-status.needs` (with step summaries and
+`::warning::` annotations emitted on failure) but excluded from the failure
+check so flaky container pulls cannot burn a release tag. To make the upgrade
+pipeline a blocking gate on PRs, the Release PR, and `release.yml`, make this
+one-line change in the `ci-status` job of
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):
+
+```bash
+# Report-only (initial two releases):
+results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage, ."upgrade-matrix", ."build-candidate-image", ."upgrade-test") | .[].result')
+
+# Blocking:
+results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage) | .[].result')
+```
+
+**Rolling the support window on a new minor release:** when a new minor
+release `v0.N.0` is published to GHCR, update
+[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
+for the next target series `0.(N+1)` so `0.N.0` becomes `n-1` (pinned to its
+published multi-arch manifest digest) and `0.(N-1).x` becomes `n-2`.
+[`tests/unit/test_supported_upgrades.py`](../../tests/unit/test_supported_upgrades.py)
+and [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py) enforce that
+both `N-1` and `N-2` minor series are present with valid `sha256:` digests, and
+`python -m tests.upgrade.matrix --verify-git-tags` (run in the `upgrade-matrix`
+CI job and in `tests/upgrade/run.sh`) verifies that every source tag matches a
+real `v*` release tag.
+
+**Triaging a failing `upgrade-test` leg:**
+
+1. Download the `upgrade-test-<source>-<backend>` artifact from the workflow
+   run (contains `compose.log`, `migrate.log`, `migrate-check.log`, and
+   `seed-manifest.json`), or reproduce locally:
+   ```bash
+   make test-upgrade OLD=<source> BACKEND=<backend>
+   ```
+2. Classify the failure into one of three categories (never add blanket
+   `continue-on-error` or delete a required source minor):
+   - **(a) Real migration or upgrade-step regression:** `migrate.log` or
+     `migrate-check.log` shows a failed Alembic revision, an unapplied upgrade step
+     (exit `3`/`4`/`5`), startup `ERROR` logs, or unreadable pre-upgrade
+     data in `test_post_upgrade.py`. Fix the migration or upgrade step before
+     merging the Release PR (or recover post-tag via `Release-As` above).
+   - **(b) Intentional breaking change:** the release deliberately refuses an
+     in-place upgrade without operator action or an intermediate waypoint.
+     Document the requirement under the release heading in
+     [`docs/operations/upgrade-notes.md`](../operations/upgrade-notes.md),
+     add a `known_breaks` entry (`source`, `reason`, `upgrade_notes_link`, and
+     `expires`) to
+     [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
+     and update the harness to assert the documented refusal/route rather than
+     skipping the leg.
+   - **(c) Seeder drift against an older API shape:** the failure occurs
+     during the `seed` phase against the unmodified old container image. Fix
+     the pinned seeder for `<source>` under `tests/upgrade/seed/`.
 
 ## One-time setup (repo/org admin)
 
@@ -151,10 +249,11 @@ release:
 
 ```bash
 # 1. verify the checksum file's cosign signature (keyless / Sigstore).
+# Replace vX.Y.Z with the release tag being verified.
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature   checksums.txt.sig \
-  --certificate-identity-regexp '^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-identity 'https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/vX.Y.Z' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   checksums.txt
 
@@ -165,8 +264,9 @@ sha256sum --check --ignore-missing checksums.txt
 The **certificate identity** is the workflow that produced the signature:
 `https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/vX.Y.Z`,
 issued by GitHub Actions OIDC (`https://token.actions.githubusercontent.com`).
-Always pin both `--certificate-identity(-regexp)` and `--certificate-oidc-issuer`
-— verifying without them accepts any Sigstore certificate and defeats the point.
+Always pin both the exact `--certificate-identity` (matching the target release tag)
+and `--certificate-oidc-issuer` so a signature from a different release tag or
+workflow is not accepted.
 
 Each archive also ships a syft SBOM (`*.sbom.json`) listing its contents.
 

@@ -21,14 +21,11 @@ Refresh path stays on ``DirectOAuth2Provider``.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import secrets
 from datetime import UTC, datetime
 from typing import Any, ClassVar
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-import httpx
 import structlog
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
@@ -40,12 +37,15 @@ from jentic_one.control.repos.oauth_app_registration_repo import (
 from jentic_one.control.repos.oauth_client_credential_repo import (
     OAuthClientCredentialRepository,
 )
+from jentic_one.control.services.credentials.providers.base import ProviderError
+from jentic_one.control.services.credentials.providers.oauth2 import parse_oauth_expires_in
 from jentic_one.control.services.credentials.schemas.connect import ConnectState
 from jentic_one.control.services.credentials.state import (
     OAUTH_CALLBACK_PATH,
     BrowserBindingClaim,
     encode_state,
     generate_nonce,
+    pkce_challenge_s256,
 )
 from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
 from jentic_one.control.services.integrations.flow_handlers.base import (
@@ -56,10 +56,9 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.config import bind_origin, resolved_control_egress
 from jentic_one.shared.context import Context
-from jentic_one.shared.egress import build_always_pinned_transport
+from jentic_one.shared.http.idp_client import IdpResponse, IdpTransportError, idp_request
 from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
-from jentic_one.shared.url_validation import validate_upstream_url_async
 
 _logger = structlog.get_logger(__name__)
 
@@ -76,11 +75,57 @@ class RegistrationInactiveError(ConnectSessionServiceError):
 #: keeps refresh dispatch on the same code path (no broker changes needed).
 _PROVIDER_ID = "direct_oauth2"
 
+_ALLOWED_OAUTH_ERRORS: frozenset[str] = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+        "access_denied",
+        "server_error",
+        "temporarily_unavailable",
+    }
+)
 
-def _pkce_challenge_from_verifier(verifier: str) -> str:
-    """Derive the S256 code_challenge from a PKCE verifier (RFC 7636 §4.2)."""
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+def _extract_oauth_error_slug(response: IdpResponse) -> str | None:
+    """Extract a strictly allowlisted RFC 6749 error slug from a JSON error response."""
+    if not response.body:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    raw_error = body.get("error")
+    if not isinstance(raw_error, str):
+        return None
+    slug = raw_error.strip().lower()
+    return slug if slug in _ALLOWED_OAUTH_ERRORS else None
+
+
+def _merge_authorize_url(base_url: str, params: dict[str, str]) -> str:
+    """Merge *params* into *base_url*, overriding colliding endpoint query keys."""
+    parts = urlsplit(base_url)
+    existing = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in params
+    ]
+    merged = existing + list(params.items())
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(merged), parts.fragment))
+
+
+def _parse_expires_in(raw: object) -> int:
+    """Parse a bounded positive ``expires_in`` value for the embedded flow."""
+    try:
+        seconds = parse_oauth_expires_in(raw)
+    except ProviderError as exc:
+        raise AuthCodeExchangeError("invalid expires_in in token response") from exc
+    return seconds
 
 
 class AuthCodeFlowHandler:
@@ -153,7 +198,7 @@ class AuthCodeFlowHandler:
         # exchange time (see ``complete_from_callback``), preserving legacy
         # behaviour for anything created before PKCE landed.
         code_verifier = secrets.token_urlsafe(64)[:96]
-        code_challenge = _pkce_challenge_from_verifier(code_verifier)
+        code_challenge = pkce_challenge_s256(code_verifier)
         async with self._ctx.control_db.transaction() as session:
             await ConnectSessionRepository.update_fields(
                 session, row.id, pkce_code_verifier=code_verifier
@@ -190,7 +235,7 @@ class AuthCodeFlowHandler:
         }
         if confirmed_scopes:
             params["scope"] = " ".join(confirmed_scopes)
-        authorize_url = f"{app.authorize_url}?{urlencode(params)}"
+        authorize_url = _merge_authorize_url(app.authorize_url, params)
 
         return AuthCodeBeginResult(authorize_url=authorize_url)
 
@@ -270,53 +315,47 @@ class AuthCodeFlowHandler:
         }
         if row.pkce_code_verifier:
             payload["code_verifier"] = row.pkce_code_verifier
-        # Defense-in-depth SSRF guard.
+        # ``idp_request`` re-validates the URL (SSRF guard), pins the
+        # connection, and bounds the exchange by a total deadline and a body cap.
         egress = resolved_control_egress(self._ctx.config)
         try:
-            safe_url = await validate_upstream_url_async(token_url, egress)
-        except ValueError as exc:
-            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=30.0, transport=build_always_pinned_transport(egress)
-            ) as client:
-                response = await client.post(
-                    safe_url,
-                    data=payload,
-                    headers={"Accept": "application/json"},
-                )
-        except ValueError as exc:
-            # Raised by the pinning transport: the host re-resolved to a blocked
-            # address or did not resolve at all.
-            raise AuthCodeExchangeError(f"unsafe upstream URL: {exc}") from exc
+            response = await idp_request(
+                "POST",
+                token_url,
+                egress=egress,
+                data=payload,
+                headers={"Accept": "application/json"},
+            )
+        except IdpTransportError as exc:
+            if exc.kind == "unsafe_url":
+                raise AuthCodeExchangeError(f"unsafe upstream URL: {exc.detail}") from None
+            raise AuthCodeExchangeError(f"token endpoint {exc.kind}") from None
         if response.status_code != 200:
             _logger.warning(
                 "auth_code.token_exchange_failed",
                 status=response.status_code,
-                body_snippet=response.text[:200],
+                error=_extract_oauth_error_slug(response),
             )
             raise AuthCodeExchangeError(f"token exchange failed: HTTP {response.status_code}")
         try:
-            data: dict[str, str] = response.json()
+            data = response.json()
         except ValueError as exc:
             raise AuthCodeExchangeError("token endpoint returned non-JSON") from exc
+        if not isinstance(data, dict):
+            raise AuthCodeExchangeError("token endpoint returned non-object JSON")
 
         access_token = data.get("access_token")
-        if not access_token:
+        if not isinstance(access_token, str) or not access_token.strip():
             raise AuthCodeExchangeError("token endpoint returned no access_token")
 
-        expires_in_raw = data.get("expires_in")
-        expires_in: int | None
-        try:
-            expires_in = int(expires_in_raw) if expires_in_raw is not None else None
-        except (TypeError, ValueError):
-            expires_in = None
+        expires_in = _parse_expires_in(data["expires_in"]) if "expires_in" in data else None
 
-        scope = data.get("scope")
+        refresh_token = data.get("refresh_token")
+        scope_raw = data.get("scope")
+        scope = scope_raw if isinstance(scope_raw, str) else None
         return SuccessTokens(
             access_token=access_token,
-            refresh_token=data.get("refresh_token"),
+            refresh_token=refresh_token if isinstance(refresh_token, str) else None,
             expires_in=expires_in,
             scope=scope,
             # Auth-code: the server tells us what was granted.

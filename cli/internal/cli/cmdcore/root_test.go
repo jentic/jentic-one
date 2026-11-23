@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
 // captureStderr redirects the process stderr for fn's duration and returns what
@@ -93,5 +95,36 @@ func TestDecorateCodedErrorsSkipsAlreadyReported(t *testing.T) {
 
 	if n := strings.Count(stderr, "RESOLVE_FAILED"); n != 1 {
 		t.Errorf("envelope rendered %d times, want exactly 1\nstderr: %q", n, stderr)
+	}
+}
+
+// TestMigrateGateError_DoesNotRecommendPurgeLegacy pins #1384: an unmigrated
+// V1 machine must direct the caller to `jentic migrate` without recommending
+// `--purge-legacy` before the migrated identity has authenticated.
+func TestMigrateGateError_DoesNotRecommendPurgeLegacy(t *testing.T) {
+	legacyRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(legacyRoot, "profiles", "default"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{Paths: config.Paths{Root: legacyRoot}}
+	root := &cobra.Command{
+		Use:         "jentic",
+		Annotations: map[string]string{GateAnnotation: "true"},
+	}
+	leaf := &cobra.Command{Use: "apis"}
+	root.AddCommand(leaf)
+
+	gerr := migrateGateError(app, leaf)
+	if gerr == nil {
+		t.Fatal("expected migrateGateError to trigger on unmigrated profile directory")
+	}
+	if gerr.Code != ux.CodeMigrationRequired {
+		t.Errorf("code = %q, want %q", gerr.Code, ux.CodeMigrationRequired)
+	}
+	if gerr.Actionable != "jentic migrate" {
+		t.Errorf("actionable = %q, want %q", gerr.Actionable, "jentic migrate")
+	}
+	if strings.Contains(gerr.Msg, "purge-legacy") || strings.Contains(gerr.Actionable, "purge-legacy") {
+		t.Errorf("gate error must not advertise --purge-legacy: msg=%q actionable=%q", gerr.Msg, gerr.Actionable)
 	}
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -38,6 +37,7 @@ type executeOptions struct {
 	headers        []string
 	data           string
 	dataFile       string
+	dataFileBody   io.Reader
 	form           []string
 	formFile       []string
 	raw            bool
@@ -253,6 +253,15 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		}
 	}
 
+	// A selected data file is validated before operation inspection. Multipart
+	// conflicts and stdin bodies stay in resolveExecuteBody.
+	if len(opts.form) == 0 && len(opts.formFile) == 0 && opts.dataFile != "" && opts.data != "-" {
+		opts.dataFileBody, err = readDataFile(opts.dataFile)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Resolve phase: determine method and path either from METHOD:/path syntax
 	// or by inspecting an operation_id.
 	opInfo, err := a.resolveOperation(cmd.Context(), target, opts.revision)
@@ -400,11 +409,14 @@ func resolveExecuteBody(opts *executeOptions) (body io.Reader, mp *multipartBody
 		}
 		return r, nil, nil
 	case opts.dataFile != "":
-		data, readErr := os.ReadFile(opts.dataFile)
-		if readErr != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", opts.dataFile, readErr)
+		if opts.dataFileBody != nil {
+			return opts.dataFileBody, nil, nil
 		}
-		return bytes.NewReader(data), nil, nil
+		r, readErr := readDataFile(opts.dataFile)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		return r, nil, nil
 	case opts.data != "":
 		return strings.NewReader(opts.data), nil, nil
 	}

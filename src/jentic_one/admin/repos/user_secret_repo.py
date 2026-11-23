@@ -67,6 +67,18 @@ class UserSecretRepository:
         return secret
 
     @staticmethod
+    async def clear_password_hash(session: AsyncSession, user_id: str) -> UserSecret | None:
+        stmt = select(UserSecret).where(UserSecret.user_id == user_id)
+        result = await session.execute(stmt)
+        secret = result.scalar_one_or_none()
+        if secret is None:
+            return None
+        secret.password_hash = None
+        secret.password_changed_at = datetime.now(UTC)
+        await session.flush()
+        return secret
+
+    @staticmethod
     async def record_failed_login(session: AsyncSession, user_id: str) -> int | None:
         """Atomically add one to the failed-login count and return the new count.
 

@@ -61,11 +61,14 @@ _AGENT_ACTORS: tuple[str, ...] = ("agent",)
 #: other broker route is the execute proxy and requires BROKER_EXECUTE_PERMISSION.
 _BROKER_PUBLIC_PATHS: frozenset[str] = frozenset({"/health", "/ready"})
 
-#: The broker's authenticated data-plane route — the catch-all execute proxy. Its
-#: hand-curated spec carries no permission metadata, so it is annotated explicitly
-#: rather than by "everything that isn't a probe", so an unexpected new broker
-#: route is NOT silently mislabelled as the proxy (it falls through to the guard).
+#: The broker's authenticated data-plane routes: the catch-all execute proxy and
+#: the caller-scoped job polling / result endpoints (#1807). Their hand-curated
+#: spec carries no permission metadata, so they are annotated explicitly rather
+#: than by "everything that isn't a probe", so an unexpected new broker route is
+#: NOT silently mislabelled as the proxy (it falls through to the guard).
 _BROKER_PROXY_PATH = "/{upstream_url}"
+_BROKER_JOB_PATHS: frozenset[str] = frozenset({"/jobs/{job_id}", "/jobs/{job_id}/result"})
+_BROKER_AUTHENTICATED_PATHS: frozenset[str] = _BROKER_JOB_PATHS | {_BROKER_PROXY_PATH}
 
 #: HTTP methods the broker execute-proxy accepts on :data:`_BROKER_PROXY_PATH`.
 _BROKER_PROXY_METHODS: tuple[str, ...] = ("DELETE", "GET", "PATCH", "POST", "PUT")
@@ -206,6 +209,34 @@ def _declared_broker_endpoints() -> list[Endpoint]:
             public=True,
         ),
     ]
+    jobs = [
+        Endpoint(
+            method="GET",
+            path="/jobs/{job_id}",
+            surface="jobs",
+            summary="Get a job",
+            operation_id="brokerGetJob",
+            authenticated=True,
+            public=False,
+            actor_types=list(_AGENT_ACTORS),
+            required_permissions=[BROKER_EXECUTE_PERMISSION],
+            implied_permissions=implied_permissions([BROKER_EXECUTE_PERMISSION]),
+            typical_caller="agent",
+        ),
+        Endpoint(
+            method="GET",
+            path="/jobs/{job_id}/result",
+            surface="jobs",
+            summary="Get a job's result",
+            operation_id="brokerGetJobResult",
+            authenticated=True,
+            public=False,
+            actor_types=list(_AGENT_ACTORS),
+            required_permissions=[BROKER_EXECUTE_PERMISSION],
+            implied_permissions=implied_permissions([BROKER_EXECUTE_PERMISSION]),
+            typical_caller="agent",
+        ),
+    ]
     proxy = [
         Endpoint(
             method=method,
@@ -222,25 +253,26 @@ def _declared_broker_endpoints() -> list[Endpoint]:
         )
         for method in _BROKER_PROXY_METHODS
     ]
-    return probes + proxy
+    return probes + jobs + proxy
 
 
 def _annotate_broker(broker: list[Endpoint]) -> None:
-    """Stamp the broker execute-proxy route's enforced permission (its spec lacks the auth map).
+    """Stamp the broker data-plane routes' enforced permission (their spec lacks the auth map).
 
-    The broker proxy (:data:`_BROKER_PROXY_PATH`) enforces BROKER_EXECUTE_PERMISSION via
-    RequireExecuteAccess (broker/web/deps.require_execute_permission); its hand-curated
-    spec does not carry permission metadata, so annotate that specific data-plane route
+    The broker proxy (:data:`_BROKER_PROXY_PATH`) and caller-scoped job routes
+    (:data:`_BROKER_JOB_PATHS`) enforce BROKER_EXECUTE_PERMISSION via
+    ``broker/web/deps.require_execute_permission``; their hand-curated spec does
+    not carry permission metadata, so annotate those specific data-plane routes
     to keep the reference code-true. The liveness/readiness probes are the broker's
     only public routes.
 
-    Only the *known* proxy path is annotated — not "any non-probe route" — so a new
+    Only the *known* authenticated paths are annotated — not "any non-probe route" — so a new
     or unexpected broker route is left as-is and reaches
     :func:`assert_broker_classification_is_sound`, which fails loud rather than
     silently labelling it as the execute proxy.
     """
     for ep in broker:
-        if ep.path == _BROKER_PROXY_PATH and not ep.required_permissions:
+        if ep.path in _BROKER_AUTHENTICATED_PATHS and not ep.required_permissions:
             ep.authenticated = True
             ep.public = False
             ep.required_permissions = [BROKER_EXECUTE_PERMISSION]

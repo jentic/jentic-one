@@ -14,15 +14,15 @@ is the fastest local trial. Everything below assumes the app
 > the same OS user can read the credential database and encryption key off disk,
 > whatever the API-level controls allow. Read the
 > [security hardening guide](../security/README.md) before pointing an instance
-> at a real credential — or use [`jentic run`](local-agent.md) to isolate a local
-> coding agent behind its own Unix user.
+> at a real credential, and the [same-host options](../security/same-host/README.md)
+> for isolating a local coding agent.
 
 ## 1. Create your admin account *(operator, one-time)*
 
 Open `/app/setup` in the web UI and create the first administrator; the page
 redirects to login once the account exists. This account is the operator: it
-imports APIs, stores credentials, and approves agents. Already created your
-admin via the README quickstart's `create-admin`? Skip to step 2.
+imports APIs, stores credentials, and approves agents. Already created it
+after the README quickstart? Skip to step 2.
 
 From the terminal instead: `jenticctl setup` creates the account;
 `jenticctl wizard` sequences this whole page into one guided flow.
@@ -45,8 +45,7 @@ files a dynamic client registration, then **waits for an operator to approve
 the agent** — approve it in the UI at `/app`. Re-running is idempotent.
 
 Setting up a local *coding* agent (Claude Code, Cursor, …)? `jentic setup` does
-identity + skills + isolation in one flow — see
-[Local coding agents](local-agent.md). All the ways an agent can connect
+identity + skills + MCP entry in one flow. All the ways an agent can connect
 (CLI + skill, MCP over stdio or HTTP, raw HTTP):
 [Connecting an agent](connecting-agents.md).
 
@@ -74,9 +73,11 @@ import — see [how server URLs are resolved](importing-apis.md#server-urls).
 
 httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the
 operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
-the UI. It is encrypted at rest and never returned to a caller — it is
-decrypted only inside the broker, at execution time. How a stored credential
-covers an API and how the broker picks one at execution time:
+the UI. It is encrypted at rest. `POST /credentials` echoes the just-supplied
+secret once in its create response; subsequent reads return only redacted
+details. The broker decrypts the stored secret in-process at execution time
+and injects it into the upstream request without exposing it to the agent.
+How a stored credential covers an API and how the broker picks one at execution time:
 [How credential resolution works](credentials-and-toolkits.md).
 
 ## 5. Grant access

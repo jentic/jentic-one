@@ -5,14 +5,15 @@ from __future__ import annotations
 import base64
 import json
 import os
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
@@ -32,7 +33,11 @@ from jentic_one.control.services.credentials.schemas.provision import (
     APIReference,
     OAuthTokenView,
 )
-from jentic_one.control.services.credentials.state import decode_state
+from jentic_one.control.services.credentials.state import (
+    decode_state,
+    pkce_challenge_s256,
+    pkce_verifier_for,
+)
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
@@ -45,6 +50,38 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
+
+
+@contextmanager
+def idp_transport(
+    *,
+    post: object = None,
+    get: object = None,
+) -> Iterator[list[httpx.Request]]:
+    """Fake the IdP at the transport seam; yields the requests the code under test sent.
+
+    ``post`` / ``get`` script the reply per HTTP method: a response, an exception to
+    raise, or a list of either consumed one per request.
+    """
+    requests: list[httpx.Request] = []
+    scripts: dict[str, object] = {"POST": post, "GET": get}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        step = scripts[request.method]
+        if isinstance(step, list):
+            step = step.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, httpx.Response)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(respond),
+    ):
+        yield requests
+
 
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
@@ -176,14 +213,8 @@ async def test_complete_connect_exchanges_code() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=token_response)),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
         result = await provider.complete_connect(ctx, state=state, callback=callback)
 
     assert result.access_token == "at_fresh"
@@ -269,14 +300,8 @@ async def test_refresh_exchanges_refresh_token() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, json=token_response)),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, json=token_response))
-        mock_client_cls.return_value = mock_client
-
         result = await provider.refresh(ctx, token=token_view)
 
     assert result.access_token == "at_rotated"
@@ -319,16 +344,10 @@ async def test_refresh_raises_invalid_grant() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(400, text=error_body)),
+        pytest.raises(InvalidGrantError),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(400, text=error_body))
-        mock_client_cls.return_value = mock_client
-
-        with pytest.raises(InvalidGrantError):
-            await provider.refresh(ctx, token=token_view)
+        await provider.refresh(ctx, token=token_view)
 
 
 @pytest.mark.asyncio()
@@ -360,14 +379,8 @@ async def test_refresh_raises_token_exchange_error_on_other_failure() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(500, text="Internal Server Error")),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(500, text="Internal Server Error"))
-        mock_client_cls.return_value = mock_client
-
         with pytest.raises(TokenExchangeError) as exc_info:
             await provider.refresh(ctx, token=token_view)
         assert exc_info.value.status == 500
@@ -403,14 +416,8 @@ async def test_post_token_raises_on_non_json_response() -> None:
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(post=httpx.Response(200, text="<html>Not JSON</html>")),
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=httpx.Response(200, text="<html>Not JSON</html>"))
-        mock_client_cls.return_value = mock_client
-
         with pytest.raises(TokenExchangeError) as exc_info:
             await provider.complete_connect(ctx, state=state, callback=callback)
         assert exc_info.value.status == 200
@@ -594,7 +601,15 @@ async def test_begin_connect_with_empty_extra_params_emits_only_required_params(
     params = _parse_authorize_url_params(challenge.authorize_url)
     assert "prompt" not in params
     assert "access_type" not in params
-    assert set(params.keys()) == {"response_type", "client_id", "redirect_uri", "state", "scope"}
+    assert set(params.keys()) == {
+        "response_type",
+        "client_id",
+        "redirect_uri",
+        "state",
+        "scope",
+        "code_challenge",
+        "code_challenge_method",
+    }
 
 
 @pytest.mark.asyncio()
@@ -766,17 +781,260 @@ async def test_complete_connect_replays_state_redirect_uri_in_exchange() -> None
             new_callable=AsyncMock,
             return_value=FakeOCC(),
         ),
-        patch("httpx.AsyncClient") as mock_client_cls,
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        ) as mock_client,
     ):
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(
-            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
-        )
-        mock_client_cls.return_value = mock_client
-
         await provider.complete_connect(ctx, state=state, callback=callback)
 
-        sent_data = mock_client.post.await_args.kwargs["data"]
+        sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
         assert sent_data["redirect_uri"] == "http://127.0.0.1:8020/credentials/oauth/callback"
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("raw_authorize_url", "expected_preserved", "expected_fragment"),
+    [
+        ("https://idp.example.com/authorize", {}, ""),
+        ("https://idp.example.com/authorize?audience=api", {"audience": ["api"]}, ""),
+        (
+            "https://idp.example.com/authorize?tenant=t1&resource=https%3A%2F%2Fapi.example%2Fv1&empty=",
+            {"tenant": ["t1"], "resource": ["https://api.example/v1"], "empty": [""]},
+            "",
+        ),
+        (
+            "https://idp.example.com/authorize?audience=api&state=fixed&client_id=shadow#consent",
+            {"audience": ["api"]},
+            "consent",
+        ),
+    ],
+)
+async def test_begin_connect_merges_existing_query_and_overrides_security_params(
+    raw_authorize_url: str,
+    expected_preserved: dict[str, list[str]],
+    expected_fragment: str,
+) -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+
+    class _OCCWithQuery:
+        client_id = "client-abc"
+        authorize_url = raw_authorize_url
+        scope = "read"
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=_legacy_credential(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_OCCWithQuery(),
+        ),
+    ):
+        challenge = await provider.begin_connect(
+            ctx, api=_begin_connect_api_ref(), request=_begin_connect_request()
+        )
+
+    parsed = urlparse(challenge.authorize_url)
+    assert parsed.fragment == expected_fragment
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    for k, v in expected_preserved.items():
+        assert params[k] == v
+    assert params["client_id"] == ["client-abc"]
+    assert params["response_type"] == ["code"]
+    assert params["redirect_uri"] == ["https://app.example.com/credentials/oauth/callback"]
+    assert params["scope"] == ["read write"]
+    assert params["state"] == [challenge.state]
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "bad_expires_in",
+    [None, "not-a-number", "", 0, -1, True, False, 12.5, 10**20, "²", "9" * 5_000],
+)
+async def test_refresh_rejects_invalid_expires_in(bad_expires_in: object) -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at_new", "expires_in": bad_expires_in})
+        ),
+        pytest.raises(ProviderError, match="expires_in"),
+    ):
+        await provider.refresh(ctx, token=token_view)
+
+
+@pytest.mark.asyncio()
+async def test_refresh_rejects_missing_access_token_and_maps_transport_error() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    token_view = OAuthTokenView(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        expires_at=datetime.now(UTC),
+        decrypt=AsyncMock(return_value="rt"),
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        idp_transport(
+            post=[httpx.Response(200, json={"scope": "read"}), httpx.ReadError("connection reset")]
+        ),
+    ):
+        with pytest.raises(ProviderError, match="access_token"):
+            await provider.refresh(ctx, token=token_view)
+
+        with pytest.raises(TokenExchangeError):
+            await provider.refresh(ctx, token=token_view)
+
+
+@pytest.mark.asyncio()
+async def test_begin_connect_sends_s256_challenge_bound_to_state_nonce() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=_legacy_credential(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeOCCForBegin(),
+        ),
+    ):
+        challenge = await provider.begin_connect(
+            ctx, api=_begin_connect_api_ref(), request=_begin_connect_request()
+        )
+
+    params = _parse_authorize_url_params(challenge.authorize_url)
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    decoded = decode_state(state_secret, params["state"][0])
+    assert decoded.pkce is True
+    expected_verifier = pkce_verifier_for(state_secret, decoded.nonce)
+    assert params["code_challenge"] == [pkce_challenge_s256(expected_verifier)]
+    assert params["code_challenge_method"] == ["S256"]
+
+
+@pytest.mark.asyncio()
+async def test_complete_connect_sends_derived_code_verifier() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce="pkce-test-nonce",
+        pkce=True,
+    )
+    callback = ConnectCallback(code="auth-code-xyz")
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        ) as mock_client,
+    ):
+        await provider.complete_connect(ctx, state=state, callback=callback)
+
+    sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    assert sent_data["code_verifier"] == pkce_verifier_for(state_secret, "pkce-test-nonce")
+
+
+@pytest.mark.asyncio()
+async def test_complete_connect_legacy_state_sends_no_verifier() -> None:
+    provider = _make_provider()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce="legacy-nonce",
+    )
+    callback = ConnectCallback(code="auth-code-xyz")
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        idp_transport(
+            post=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        ) as mock_client,
+    ):
+        await provider.complete_connect(ctx, state=state, callback=callback)
+
+    sent_data = dict(parse_qsl(mock_client[-1].content.decode()))
+    assert "code_verifier" not in sent_data
+
+
+@pytest.mark.parametrize("pkce_key", ["code_challenge", "code_challenge_method"])
+def test_extra_params_cannot_override_pkce_keys(pkce_key: str) -> None:
+    with pytest.raises(ValidationError, match=pkce_key):
+        DirectOAuth2ProviderConfig(
+            redirect_uri="https://app.example.com/credentials/oauth/callback",
+            authorize_extra_params={pkce_key: "override"},
+        )

@@ -20,12 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/agentops"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -270,7 +269,13 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 		}), nil
 	}
 	if err := apiErrorFor(resp, callErr); err != nil {
-		return s.requestConnectionError(cctx, client, target, api != nil, err, connectRetryAfter(resp)), nil
+		var retryAfterS float64
+		if resp != nil && resp.HTTPResponse != nil {
+			if v, ok := agentops.RetryAfterSeconds(resp.HTTPResponse.Header); ok {
+				retryAfterS = v
+			}
+		}
+		return s.requestConnectionError(cctx, client, target, api != nil, err, retryAfterS), nil
 	}
 	var created connectResponse
 	if err := json.Unmarshal(resp.Body, &created); err != nil {
@@ -292,21 +297,6 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 		payload["next_tool"] = "execute"
 	}
 	return s.result(cctx, payload), nil
-}
-
-// connectRetryAfter extracts the Retry-After seconds the route stamps on its
-// 429 (integrations.py: per-actor connect rate limit), so the tool's
-// retryable envelope carries the same retry_after_s extra as the Python
-// mount's. Zero when absent/unparseable.
-func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
-	if resp == nil || resp.HTTPResponse == nil {
-		return 0
-	}
-	secs, err := strconv.ParseFloat(strings.TrimSpace(resp.HTTPResponse.Header.Get("Retry-After")), 64)
-	if err != nil || secs < 0 {
-		return 0
-	}
-	return secs
 }
 
 // requestConnectionError maps the route's failure surface onto the coded

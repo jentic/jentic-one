@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jentic/jentic-one/cli/internal/atomicfile"
 )
 
 // ConfigName is the CLI's own settings file under ~/.jentic.
@@ -36,15 +37,14 @@ type FileConfig struct {
 	// records whether the user has been asked; Enabled records their answer.
 	// Both are written together so the CLI never re-prompts after a decision.
 	Telemetry TelemetryConfig `yaml:"telemetry"`
-	// Agent is the LEGACY location of the shared agent-account record. Current
-	// releases keep it in the XDG agent state (~/.config/jentic/agent-account.yaml
-	// — see AgentState); this field remains only so records written by older
-	// releases can be read (LoadAgentState's fallback) and adopted (the first
-	// MutateAgentState moves them across and clears this). Nothing writes it.
+	// Agent is the LEGACY location of the agent-account record. The live record
+	// is the XDG agent state (~/.config/jentic/agent-account.yaml — see
+	// AgentState); this field remains only so a record still sitting here can be
+	// read (LoadAgentState's fallback), adopted (MutateAgentState), and cleared
+	// (ClearAgentAccount). Nothing else writes it.
 	Agent *AgentAccount `yaml:"agent_account,omitempty"`
-	// SameUserNoticeSeen is the LEGACY location of the one-time same-user launch
-	// notice flag. Like Agent it is read-only fallback state; the live flag is in
-	// the XDG agent state.
+	// SameUserNoticeSeen is a legacy one-time notice flag. Nothing reads it; it
+	// is kept so clearing the legacy agent fields drops it too.
 	SameUserNoticeSeen bool `yaml:"same_user_notice_seen,omitempty"`
 
 	// Path records where the config was loaded from (empty if no file existed).
@@ -53,44 +53,27 @@ type FileConfig struct {
 	Loaded bool `yaml:"-"`
 }
 
-// AgentAccount is the one dedicated Unix account all of this operator's local
-// coding agents share — the true credential boundary between the agents and the
-// operator's secrets. A human provisions it once; every `jentic run`, whatever
-// the agent binary, goes through it. Nothing here is secret (the agents' keys/
-// tokens live in the account's own home), so it sits safely in the operator's
-// XDG agent state (~/.config/jentic/agent-account.yaml — see AgentState), which
-// is also the only place the grant list may live: ~/.config/jentic is a
-// hard-banned grant target and sandbox-denied, so the agents can't edit their
-// own access.
+// AgentAccount is the record of a dedicated Unix account an older release
+// provisioned for this operator's local coding agents. Nothing here is secret
+// (the agents' keys/tokens live in the account's own home). `jentic reset`
+// reads it to tear the account down; nothing in this CLI creates one.
 type AgentAccount struct {
-	// User is the OS account name `jentic run` sudo's to (<operator>-local-agent).
+	// User is the OS account name (<operator>-local-agent).
 	User string `yaml:"user"`
-	// AccountCreated records whether jentic provisioned the dedicated Unix account
-	// (the true boundary), as opposed to the operator declining and running the
-	// agent same-user. The whole isolated posture keys off it: false means the CLI
-	// behaves exactly as it does for a user with no agent account.
+	// AccountCreated records whether jentic provisioned the Unix account (as
+	// opposed to the operator declining and recording only the decision).
 	AccountCreated bool `yaml:"account_created,omitempty"`
-	// Enabled records whether the agent account is currently in use. It is set
-	// true when the account is created and flipped false when a reset deletes the
-	// account. There is no command to toggle it today — it is reserved as the
-	// single place a future soft-pause would read from; behaviour currently keys
-	// off AccountCreated.
+	// Enabled records whether the account was in use when last recorded.
 	Enabled bool `yaml:"enabled,omitempty"`
-	// HomeDir is the account's home directory (the always-accessible working
-	// space; a session opens here unless a directory is granted).
+	// HomeDir is the account's home directory.
 	HomeDir string `yaml:"home_dir,omitempty"`
 	// ConfigDir is a LEGACY reference to the account's own ~/.jentic (typically
 	// <HomeDir>/.jentic) — the V1 home of the agents' registered identities and
-	// profiles. New accounts no longer record it (the agent's identity is
-	// exported into its home's own XDG store instead); it survives here so
-	// `jentic migrate` can rescue profiles from an old agent home and so reset
-	// keeps validating records written by older releases. Empty for accounts
-	// created by current releases.
+	// profiles. `jentic migrate` rescues profiles from it. Empty on most records.
 	ConfigDir string `yaml:"config_dir,omitempty"`
-	// GrantedDirs is the consolidated inventory of directories the account has
-	// been granted read/write access to (durable ACLs on disk). The ACLs are
-	// physically one set — same uid — so this is one list regardless of which
-	// agent binary made the grant. The on-disk ACL is the source of truth.
+	// GrantedDirs is the inventory of directories the account was granted
+	// read/write access to (durable ACLs on disk). reset revokes each, plus
+	// the traverse grants on their ancestors.
 	GrantedDirs []string `yaml:"granted_dirs,omitempty"`
 	// CreatedAt is when the account was first recorded (RFC3339).
 	CreatedAt string `yaml:"created_at,omitempty"`
@@ -206,46 +189,7 @@ func (c *FileConfig) Save(paths Paths) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(paths.ConfigPath(), data, 0o600)
-}
-
-// writeFileAtomic writes data to path via a same-directory temp file that is
-// fsynced and then renamed over path, so a reader (or a crash) never observes a
-// partial write. The temp file is created with perm and removed on any error
-// before the rename.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp config in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	// Clean up the temp file on any failure path before the successful rename.
-	defer func() {
-		if tmpName != "" {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename temp config over %s: %w", path, err)
-	}
-	tmpName = "" // renamed successfully — nothing to clean up
-	return nil
+	return atomicfile.Write(paths.ConfigPath(), data, atomicfile.Options{Perm: 0o600})
 }
 
 // Mutate performs a race-safe read-modify-write of config.yaml: it takes an
@@ -254,8 +198,8 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // fn, and saves atomically before releasing the lock. fn receives the
 // freshly-reloaded config and mutates it in place; the reloaded config is also
 // returned so callers can observe the committed result. (The agent-account
-// record that motivated this has moved to the XDG agent state — see
-// MutateAgentState, which follows the same discipline.)
+// record lives in the XDG agent state — see MutateAgentState, which follows
+// the same discipline.)
 func Mutate(paths Paths, fn func(*FileConfig) error) (*FileConfig, error) {
 	if _, err := paths.Ensure(paths.Dir()); err != nil {
 		return nil, err

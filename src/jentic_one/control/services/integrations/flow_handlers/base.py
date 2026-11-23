@@ -113,6 +113,9 @@ class StatusReport:
     error_code: str | None = None
     terminal_detail: str | None = None
     tokens: SuccessTokens | None = None
+    # Standalone device flows carry the immutable generation that produced
+    # this outcome into the conditional final write.
+    flow_nonce: str | None = None
 
 
 # ---------------------------------------------------------------------------

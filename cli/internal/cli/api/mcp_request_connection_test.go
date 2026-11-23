@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -425,6 +426,81 @@ func TestMCPRequestConnection_429IsRetryableTransportError(t *testing.T) {
 	// rides the envelope as retry_after_s, like the Python mount's.
 	if payload["retry_after_s"] != float64(2) {
 		t.Errorf("retry_after_s = %v, want 2 (the route's Retry-After header)", payload["retry_after_s"])
+	}
+}
+
+func TestMCPRequestConnection_429RetryAfterShapes(t *testing.T) {
+	cases := []struct {
+		name      string
+		header    func() string
+		wantSet   bool
+		wantExact float64
+		wantMin   float64
+		wantMax   float64
+	}{
+		{name: "integer seconds", header: func() string { return "2" }, wantSet: true, wantExact: 2},
+		{name: "fractional seconds rounds up", header: func() string { return "1.2" }, wantSet: true, wantExact: 2},
+		{
+			name: "http-date ~30s ahead",
+			header: func() string {
+				return time.Now().UTC().Truncate(time.Second).Add(32 * time.Second).Format(http.TimeFormat)
+			},
+			wantSet: true,
+			wantMin: 25,
+			wantMax: 35,
+		},
+		{name: "inf rejected", header: func() string { return "inf" }, wantSet: false},
+		{name: "NaN rejected", header: func() string { return "NaN" }, wantSet: false},
+		{name: "exponent rejected", header: func() string { return "1e3" }, wantSet: false},
+		{name: "negative rejected", header: func() string { return "-1" }, wantSet: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hdr := tc.header()
+			cp := &connectControlPlane{
+				status:  http.StatusTooManyRequests,
+				body:    `{"detail":"rate limit exceeded"}`,
+				headers: map[string]string{"Retry-After": hdr},
+			}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", `{"vendor":"github"}`))
+			if err != nil {
+				t.Fatalf("handleRequestConnection: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("want IsError result")
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != ux.CodeTransportError {
+				t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeTransportError)
+			}
+			if payload["retryable"] != true {
+				t.Errorf("retryable = %v, want true", payload["retryable"])
+			}
+			got, has := payload["retry_after_s"]
+			if !tc.wantSet {
+				if has {
+					t.Errorf("retry_after_s = %v, want key absent for %q", got, hdr)
+				}
+				return
+			}
+			if !has {
+				t.Fatalf("retry_after_s absent for %q", hdr)
+			}
+			gotF, ok := got.(float64)
+			if !ok {
+				t.Fatalf("retry_after_s = %T (%v), want float64", got, got)
+			}
+			if tc.wantExact != 0 && gotF != tc.wantExact {
+				t.Errorf("retry_after_s = %v, want %v", gotF, tc.wantExact)
+			}
+			if tc.wantMax != 0 && (gotF < tc.wantMin || gotF > tc.wantMax) {
+				t.Errorf("retry_after_s = %v, want in [%v, %v]", gotF, tc.wantMin, tc.wantMax)
+			}
+		})
 	}
 }
 
