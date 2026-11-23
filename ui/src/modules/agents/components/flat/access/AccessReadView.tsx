@@ -17,9 +17,11 @@ import {
 import { presetForRules, splitCustomRules } from '@/shared/credentials/lib/accessPresets';
 import {
 	actionCount,
+	actionLine,
 	actionOwner,
 	describeActions,
 	type ActionCatalog,
+	type ActionEntry,
 } from '@/shared/credentials/lib/actionRules';
 import { plural } from '@/modules/agents/lib/stripSummary';
 import { ownRules } from '@/modules/agents/lib/accessDraft';
@@ -157,12 +159,24 @@ export interface AccessReadViewProps {
 	/**
 	 * Action-rule ids the API's live version no longer has. Such a rule matches
 	 * nothing, so a call it denied or held falls through to the rules after it —
-	 * the one thing a reader of the saved rules must not miss.
+	 * the one thing a reader of the saved rules must not miss. Each is named by
+	 * what it was, when an earlier version of the API says.
 	 */
-	staleActions: number;
+	staleActions: readonly Extract<ActionEntry, { kind: 'missing' }>[];
+	/**
+	 * Saves the rules with every stale id moved to this version's action at the
+	 * same method and path, keeping its effect; absent when that can't be done
+	 * here (the rules are locked, or none of the stale ids has a match).
+	 */
+	onUpdate?: () => void;
+	/** The update is saving. */
+	updating?: boolean;
 	/** The last save just landed (shown for a few seconds, then cleared by the host). */
 	justSaved: boolean;
 }
+
+/** How many stale actions the warning names before "+N more". */
+const STALE_NAMED = 3;
 
 export function AccessReadView({
 	credentialName,
@@ -175,13 +189,18 @@ export function AccessReadView({
 	ruleSetPanel,
 	systemRuleCount,
 	staleActions,
+	onUpdate,
+	updating = false,
 	justSaved,
 }: AccessReadViewProps) {
-	const one = staleActions === 1;
+	const staleCount = staleActions.length;
+	const one = staleCount === 1;
+	const matched = staleActions.filter((e) => e.now).length;
+	const named = staleActions.filter((e) => e.was);
 	return (
 		<div className="space-y-4" data-testid="access-read-view">
-			{staleActions > 0 && (
-				<p
+			{staleCount > 0 && (
+				<div
 					role="status"
 					className="bg-warning/10 text-foreground flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs"
 					data-testid="access-stale-actions"
@@ -190,17 +209,58 @@ export function AccessReadView({
 						className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0"
 						aria-hidden="true"
 					/>
-					<span>
-						<strong>
-							{actionCount(staleActions)} in these rules {one ? 'is' : 'are'} not in
-							this version of the API.
-						</strong>{' '}
-						A rule names an action by an id that changes when the API is re-imported, so{' '}
-						{one ? 'that rule decides' : 'those rules decide'} nothing now — a call{' '}
-						{one ? 'it' : 'they'} denied or held falls through to the rules below. Open
-						Edit access and set {one ? 'it' : 'them'} again.
-					</span>
-				</p>
+					<div className="min-w-0 space-y-2">
+						<p>
+							<strong>
+								{actionCount(staleCount)} in these rules {one ? 'is' : 'are'} not in
+								this version of the API.
+							</strong>{' '}
+							A rule names an action by an id that changed when the API was
+							re-imported, so {one ? 'that rule decides' : 'those rules decide'}{' '}
+							nothing now — a call {one ? 'it' : 'they'} denied or held falls through
+							to the rules below.{' '}
+							{onUpdate
+								? matched === staleCount
+									? `Update moves ${one ? 'it' : 'each one'} to this version's action, with the same effect.`
+									: `Update moves the ${actionCount(matched)} this version still has, with the same effect; set the rest again in Edit access.`
+								: `Open Edit access and set ${one ? 'it' : 'them'} again.`}
+						</p>
+						{named.length > 0 && (
+							<ul className="space-y-0.5" data-testid="access-stale-names">
+								{named.slice(0, STALE_NAMED).map((e) => (
+									<li
+										key={e.id}
+										className="font-mono text-[11px] [overflow-wrap:anywhere]"
+									>
+										{actionLine(e)}
+										{!e.now && (
+											<span className="text-foreground-sub font-sans">
+												{' '}
+												· not in this version
+											</span>
+										)}
+									</li>
+								))}
+								{named.length > STALE_NAMED && (
+									<li className="text-foreground-sub">
+										+{(named.length - STALE_NAMED).toLocaleString()} more
+									</li>
+								)}
+							</ul>
+						)}
+						{onUpdate && (
+							<Button
+								size="xs"
+								variant="tonal"
+								loading={updating}
+								onClick={onUpdate}
+								data-testid="access-stale-update"
+							>
+								Update these rules to this version
+							</Button>
+						)}
+					</div>
+				</div>
 			)}
 			{lockedReason && (
 				<p

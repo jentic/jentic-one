@@ -53,7 +53,7 @@ import {
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 import { splitCustomRules } from '@/shared/credentials/lib/accessPresets';
-import { describeActions } from '@/shared/credentials/lib/actionRules';
+import { describeActions, type ActionEntry } from '@/shared/credentials/lib/actionRules';
 import {
 	summarizeBindingRules,
 	useAgentBindingEffectiveRules,
@@ -246,15 +246,30 @@ export function ApiAccessSidebar({
 		() => (shown ? siblingApiReferences(shown, siblingTiles) : []),
 		[shown, siblingTiles],
 	);
-	const catalog = useActionCatalog(apiReference, { enabled: open, siblings: siblingRefs });
+	const savedActionIds = useMemo(
+		() => effectiveRules.flatMap((r) => r.operations ?? []),
+		[effectiveRules],
+	);
+	const catalog = useActionCatalog(apiReference, {
+		enabled: open,
+		siblings: siblingRefs,
+		reach: shown ? apiScopeReach(shown.scope) : undefined,
+		ruleIds: savedActionIds,
+	});
 	// Action rules name operations by id, and a re-import gives the API's
 	// operations new ids, so a rule saved before it matches nothing: the broker
 	// skips it and the call falls through to the rules after it. Counted only
 	// once every operation list is complete — an id is "gone" when no list has it.
-	const staleActions = useMemo(() => {
+	const staleEntries = useMemo(() => {
 		const { groups } = splitCustomRules(effectiveRules);
-		return describeActions([...groups.allow, ...groups.ask, ...groups.deny], catalog).missing;
+		return describeActions(
+			[...groups.allow, ...groups.ask, ...groups.deny],
+			catalog,
+		).entries.filter(
+			(e): e is Extract<ActionEntry, { kind: 'missing' }> => e.kind === 'missing',
+		);
 	}, [effectiveRules, catalog]);
+	const staleActions = staleEntries.length;
 	// One credential may reach several APIs under one rule list, so the rule
 	// counts alone can read Ready here on another API's allow. Judged against
 	// THIS API's operations (the bar's own numbers) once they are read, so a
@@ -544,7 +559,16 @@ export function ApiAccessSidebar({
 				) : null
 			}
 			systemRuleCount={systemRuleCount}
-			staleActions={staleActions}
+			staleActions={staleEntries}
+			onUpdate={
+				canEditRules &&
+				!effective.ruleSetId &&
+				draft.update &&
+				staleEntries.some((e) => e.now)
+					? () => draft.update?.run(() => setJustSaved(true))
+					: undefined
+			}
+			updating={draft.saving}
 			justSaved={justSaved}
 		/>
 	);

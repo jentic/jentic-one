@@ -18,7 +18,7 @@ import {
 	splitCustomRules,
 	type RulesPreset,
 } from '@/shared/credentials/lib/accessPresets';
-import type { ActionCatalog } from '@/shared/credentials/lib/actionRules';
+import { actionsAtThisVersion, type ActionCatalog } from '@/shared/credentials/lib/actionRules';
 import { useReplaceAgentBindingPermissions } from '@/modules/agents/api';
 import {
 	awaitingActionCatalog,
@@ -53,6 +53,12 @@ export interface AccessDraft extends Draft {
 	discard: () => void;
 	save: (onSaved?: () => void) => void;
 	saving: boolean;
+	/**
+	 * The saved action rules brought up to the API's current version, when that
+	 * changes anything: `changed` ids rewritten (each keeps its effect), `left`
+	 * stale ids that name nothing current. `run` saves it as it stands.
+	 */
+	update: { changed: number; left: number; run: (onSaved?: () => void) => void } | null;
 }
 
 export function useAccessDraft({
@@ -131,6 +137,20 @@ export function useAccessDraft({
 		[savedRules, toSave, catalog],
 	);
 
+	// Only with every list whole is an id provably stale (`describeActions`).
+	const atThisVersion = useMemo(() => {
+		if (awaitingCatalog || catalog.status !== 'ready') return null;
+		const { pathRules, groups } = splitCustomRules(savedRules);
+		const next = actionsAtThisVersion(groups, catalog);
+		return next.changed > 0
+			? {
+					rules: joinCustomRules(pathRules, next.groups),
+					changed: next.changed,
+					left: next.left,
+				}
+			: null;
+	}, [awaitingCatalog, catalog, savedRules]);
+
 	return {
 		...draft,
 		setPreset: (preset) => {
@@ -163,5 +183,20 @@ export function useAccessDraft({
 			});
 		},
 		saving: replace.isPending,
+		update: atThisVersion && {
+			changed: atThisVersion.changed,
+			left: atThisVersion.left,
+			run: (onSaved) => {
+				const body = atThisVersion.rules.map((r) =>
+					cleanPermissionRule(r as unknown as PermissionRuleInput),
+				);
+				replace.mutate(body, {
+					onSuccess: () => {
+						setTouched(false);
+						onSaved?.();
+					},
+				});
+			},
+		},
 	};
 }
