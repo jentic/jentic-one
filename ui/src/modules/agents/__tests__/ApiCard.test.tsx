@@ -66,6 +66,7 @@ function renderCard(
 		<ul style={{ width: 900 }}>
 			<li>
 				<ApiCard
+					agentId="agnt_card_test"
 					tile={tile}
 					rules={rules}
 					agentServing={agentServing}
