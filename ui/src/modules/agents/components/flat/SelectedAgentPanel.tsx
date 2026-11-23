@@ -67,7 +67,7 @@ import {
 } from '@/modules/agents/lib/apiRowActivity';
 import { isBlockedStatus, deriveTileStatus } from '@/modules/agents/lib/tileStatus';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
-import { siblingTiles } from '@/modules/agents/lib/sharedRules';
+import { siblingApiReferences, siblingTiles } from '@/modules/agents/lib/sharedRules';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
@@ -360,6 +360,12 @@ export function SelectedAgentPanel({
 	const tiles = useMemo(
 		() => composeApiTiles(liveBindings, credentialsSource.items, apisSource.items),
 		[liveBindings, credentialsSource.items, apisSource.items],
+	);
+	// Each tile's rule-list siblings, built once per tile list so the memoised
+	// rows and cards keep stable props.
+	const siblingRefsByKey = useMemo(
+		() => new Map(tiles.map((t) => [t.key, siblingApiReferences(t, siblingTiles(t, tiles))])),
+		[tiles],
 	);
 	const stats = useMemo(
 		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
@@ -715,7 +721,9 @@ export function SelectedAgentPanel({
 					className="flex min-w-0"
 				>
 					<ApiCard
+						agentId={agent.id}
 						tile={tile}
+						siblings={siblingRefsByKey.get(tile.key)}
 						rules={ruleSummaries.get(tile.credentialId)}
 						agentServing={serving}
 						accountLabel={tileAccountLabels.get(tile.key)}
@@ -753,6 +761,7 @@ export function SelectedAgentPanel({
 						<ApiRow
 							agentId={agent.id}
 							tile={tile}
+							siblings={siblingRefsByKey.get(tile.key)}
 							rules={ruleSummaries.get(tile.credentialId)}
 							onRetryRules={verbs.onRetryRules}
 							activity={activityByKey.get(tile.key) as ApiRowActivity}

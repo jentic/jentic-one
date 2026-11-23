@@ -25,9 +25,14 @@ import {
 import { TileCardStatus } from '@/modules/agents/components/flat/TileStatusMarker';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 import { API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
+import { useActionRulesOutdated } from '@/modules/agents/lib/useActionRulesOutdated';
+import type { SiblingApiReference } from '@/shared/credentials/components';
 
 interface ApiCardProps {
+	agentId: string;
 	tile: ApiTileModel;
+	/** The other APIs the binding's rule list governs, so their actions aren't read as stale. */
+	siblings?: readonly SiblingApiReference[];
 	/** The binding's rules state (same source the row reads), driving the status. */
 	rules: BindingRulesState | undefined;
 	/** Whether the AGENT this card belongs to is serving traffic. */
@@ -53,12 +58,16 @@ export function ApiCard({
 	expanded,
 	sidebarId,
 	onOpen,
+	agentId,
+	siblings,
 }: ApiCardProps) {
+	const staleActionRules = useActionRulesOutdated(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
+		staleActionRules,
 	});
 	const blocked = isBlockedStatus(status);
 	const credentialLabel = (accountLabel ?? tile.credentialName).trim() || 'No credential';
