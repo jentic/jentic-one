@@ -125,7 +125,8 @@ def _build_app(ctx: Context, apps: list[str], *, container: AppContainer | None 
     is used. A caller that passes its own (for example one carrying extra
     routers) gets it on the combined app, on standalone control and auth, and
     on the standalone broker, with the same post-build wiring (the broker's
-    registry resolver) the default path installs.
+    registry resolver) the default path installs. A standalone registry or
+    admin process ignores it and builds its own default wiring.
     """
     if "broker" in apps and len(apps) > 1:
         raise RuntimeError("broker must run as the sole surface; do not bundle it with others")
