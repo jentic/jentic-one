@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState, ConfirmDialog } from '@/shared/ui';
 import {
 	isCancellableJob,
@@ -42,8 +42,10 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 		isAdmin && job != null && status != null && isCancellableJob(status, job.kind);
 	const span = job ? formatSpan(job.created_at, job.updated_at) : null;
 	const navigate = useNavigate();
-	// A held execution settles through its review on the Approvals page, never
-	// by cancelling the job.
+	// A held execution settles through its review, never by cancelling the job,
+	// so the button opens the rail's Inbox, where the call waits. It can't open
+	// the call itself: a hold's row carries no job id, and its execution id is
+	// empty until the call runs, so nothing here names the hold.
 	const heldExecution = status === 'held' && job?.kind === 'execution';
 	// A held call's execution record is written only once it runs.
 	const hasExecutionRecord = status !== 'held';
@@ -61,16 +63,7 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 			id={jobId}
 			idLabel="job id"
 			actions={
-				heldExecution ? (
-					<Button
-						variant="primary"
-						size={frame.mode === 'pane' ? 'sm' : undefined}
-						onClick={() => navigate(ROUTES.approvals)}
-						className={frame.mode === 'sheet' ? 'flex-1' : undefined}
-					>
-						Open approvals
-					</Button>
-				) : canCancel && job ? (
+				!heldExecution && canCancel && job ? (
 					<Button
 						variant="danger"
 						size={frame.mode === 'pane' ? 'sm' : undefined}
@@ -83,6 +76,17 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 				) : undefined
 			}
 		>
+			{/* A held call's one verb sits at the top, in view: the footer can lie
+			    below the fold when the pane opens with the page at its top. */}
+			{heldExecution && (
+				<Button
+					variant="primary"
+					size="sm"
+					onClick={() => navigate(ROUTE_PATHS.approvalsInbox())}
+				>
+					Open inbox
+				</Button>
+			)}
 			{query.isLoading ? (
 				<LoadingState />
 			) : query.isError || !job || !status ? (

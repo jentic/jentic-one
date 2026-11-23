@@ -1,8 +1,8 @@
 /**
  * SelectedAgentPanel — the selected agent's card, stat strip, non-active state
- * banner, "Can call" list/card workspace, Add-APIs tray/queue, and API access
- * sidebar. Tiles are composed client-side from reads the app already makes — no
- * new endpoints.
+ * banner, "Waiting for you" card of held calls, "Can call" list/card
+ * workspace, Add-APIs tray/queue, and API access sidebar. Tiles are composed
+ * client-side from reads the app already makes — no new endpoints.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotionConfig } from 'framer-motion';
@@ -38,6 +38,7 @@ import {
 	type ApiTileModel,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
+import type { HeldCall } from '@/shared/approvals';
 import {
 	AGENTS_WRITE,
 	CREDENTIALS_WRITE,
@@ -59,6 +60,8 @@ import { ApiViewSwitch } from '@/modules/agents/components/flat/ApiViewSwitch';
 import { API_CARD_GRID } from '@/modules/agents/components/flat/apiCardGrid';
 import { LENS_CARD_VARIANTS, type LensItem } from '@/modules/agents/lib/apiViewMotion';
 import { TreeBranch } from '@/modules/agents/components/flat/TreeBranch';
+import { HeldCallsCard, HeldCallsStatus } from '@/modules/agents/components/flat/HeldCallsCard';
+import { heldCallApiTitle } from '@/modules/agents/lib/heldCalls';
 import { API_VIEWS, API_VIEW_STORAGE_KEY, DEFAULT_API_VIEW } from '@/modules/agents/lib/apiView';
 import {
 	rowActivity,
@@ -235,6 +238,8 @@ export interface SelectedAgentPanelProps {
 	/** The agent's Blocked-credential figure, or `null` once it can't be claimed
 	 * (the join is loading or failed, or the panel has gone). */
 	onBlockedCount: (agentId: string, blocked: number | null) => void;
+	/** This agent's held calls waiting for the viewer's decision, oldest first. */
+	heldCalls: readonly HeldCall[];
 	/** Sticky offsets and pin-state callbacks under the measured agent strip. */
 	pinning: AgentCardPinning;
 	/** Opens the agent picker (the card's name is its button). */
@@ -257,6 +262,9 @@ interface RowCallbacks {
 /** DOM id of the API access sidebar panel (the tiles' aria-controls target). */
 const API_ACCESS_SIDEBAR_ID = 'api-access-sidebar';
 
+/** The waiting card's key in the API rows' pin stack. */
+const HELD_CALLS_PIN = 'held-calls';
+
 export function SelectedAgentPanel({
 	agent,
 	credentialsSource,
@@ -274,6 +282,7 @@ export function SelectedAgentPanel({
 	queueBatch,
 	onQueueBatchChange,
 	onBlockedCount,
+	heldCalls,
 	pinning,
 	onSwitchAgent,
 	onOpenActivity,
@@ -344,6 +353,8 @@ export function SelectedAgentPanel({
 	 * to cards and back starts clean). */
 	const pins = usePinStack();
 	const rowsListId = useId();
+	/** The waiting card's place in the pin stack: it opens and shuts with the rows. */
+	const heldCallsPin = heldCalls.length > 0;
 	/** Open a row's sheet; that row goes back to rest behind it (its pin goes
 	 * — it would otherwise be a stale pin under the sheet). Other pins stay:
 	 * the comparison is still there when the sheet closes. */
@@ -611,7 +622,9 @@ export function SelectedAgentPanel({
 	// ONLY the toggle: the stat strip already counts the APIs and credentials.
 	const showViewToggle = hasBindings && !sourcesError && !sourcesDraining && tiles.length > 0;
 	// Pins of rows no longer drawn don't count.
-	const anyPinned = pins.keys.some((key) => tiles.some((t) => t.key === key));
+	const anyPinned = pins.keys.some((key) =>
+		key === HELD_CALLS_PIN ? heldCallsPin : tiles.some((t) => t.key === key),
+	);
 	// One Expand all ⇄ Collapse all in list view, between the card's action
 	// and the lens toggle: Collapse all whenever any row is open.
 	const viewToggle = showViewToggle ? (
@@ -619,7 +632,12 @@ export function SelectedAgentPanel({
 			{apiView === 'list' && (
 				<ExpandAllToggle
 					anyOpen={anyPinned}
-					onExpandAll={() => pins.pinAll(tiles.map((t) => t.key))}
+					onExpandAll={() =>
+						pins.pinAll([
+							...(heldCallsPin ? [HELD_CALLS_PIN] : []),
+							...tiles.map((t) => t.key),
+						])
+					}
 					onCollapseAll={pins.clear}
 					controls={rowsListId}
 				/>
@@ -788,6 +806,54 @@ export function SelectedAgentPanel({
 		</ul>
 	);
 
+	// The held calls waiting for the viewer sit first under the card and scroll
+	// with the list. In the list lens they are the tree's first branch, its
+	// trunk running on into the rows, or stopping at this branch when no tree
+	// follows (a loading, failed or archived list); the cards lens has no tree,
+	// so there they sit flush, one grid gap under the card.
+	const listSettled =
+		!bindingsQuery.isPending &&
+		!(hasBindings && sourcesDraining) &&
+		!bindingsQuery.error &&
+		!(hasBindings && sourcesError);
+	const cardsShown = listSettled && tiles.length > 0 && apiView === 'cards';
+	const treeFollows =
+		listSettled && (tiles.length === 0 ? !isArchived : apiView === 'list' && !apisDegraded);
+	const heldCallsCard =
+		heldCalls.length > 0 ? (
+			<HeldCallsCard
+				calls={heldCalls}
+				agentName={agent.name}
+				apiTitleOf={(call) => heldCallApiTitle(call, tiles)}
+				pinned={pins.isPinned(HELD_CALLS_PIN)}
+				onPinnedChange={(on) => {
+					if (on !== pins.isPinned(HELD_CALLS_PIN)) pins.toggle(HELD_CALLS_PIN);
+				}}
+			/>
+		) : null;
+	const heldCallsRow =
+		heldCallsCard &&
+		(cardsShown ? (
+			<div data-testid="held-calls-row">{heldCallsCard}</div>
+		) : (
+			// On a phone the tree's indent would leave the card a third of the
+			// screen, so there it sits flush, as in the cards view.
+			<div
+				data-testid="held-calls-row"
+				className="-mt-[9px] pl-[31px] max-sm:mt-0 max-sm:pl-0"
+			>
+				<TreeBranch
+					as="div"
+					lands="row"
+					item={{ i: 0, n: 1 }}
+					continues={treeFollows}
+					flushOnPhones
+				>
+					{heldCallsCard}
+				</TreeBranch>
+			</div>
+		));
+
 	return (
 		// No entrance on the panel itself: the card's frame holds still under the
 		// strip's notch through a switch (its content fades in on its own), and
@@ -806,6 +872,7 @@ export function SelectedAgentPanel({
 				onSwitchAgent={onSwitchAgent}
 				fadeIn
 				viewToggle={viewToggle}
+				statusExtra={heldCalls.length > 0 ? <HeldCallsStatus /> : null}
 				description={
 					agent.description ? (
 						<ExpandableText lines={1} className="text-muted-foreground text-sm">
@@ -839,6 +906,8 @@ export function SelectedAgentPanel({
 					)
 				}
 			/>
+
+			{heldCallsRow}
 
 			<motion.section
 				aria-label={`APIs ${agent.name} can call`}

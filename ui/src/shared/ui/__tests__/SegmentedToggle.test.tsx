@@ -37,6 +37,28 @@ describe('SegmentedToggle', () => {
 		expect(onChange).toHaveBeenCalledWith('grid');
 	});
 
+	it('fill: the segments split the full width equally', () => {
+		renderWithProviders(
+			<div style={{ width: 300 }}>
+				<SegmentedToggle
+					options={[
+						{ value: 'waiting', label: 'Waiting' },
+						{ value: 'decided', label: 'A much longer label' },
+					]}
+					value="waiting"
+					onChange={() => {}}
+					ariaLabel="Show calls"
+					fill
+				/>
+			</div>,
+		);
+		const group = screen.getByRole('group', { name: 'Show calls' });
+		const [a, b] = screen.getAllByRole('button').map((el) => el.getBoundingClientRect());
+		expect(group.getBoundingClientRect().width).toBe(300);
+		expect(Math.abs(a.width - b.width)).toBeLessThanOrEqual(1);
+		expect(a.width + b.width).toBeGreaterThan(280);
+	});
+
 	it('disabled: every segment is disabled, the group aria-disabled, and clicks do nothing', async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();

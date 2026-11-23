@@ -1,9 +1,9 @@
 /**
- * Held-execution vocabulary for the Approvals module — the single place the
- * list and detail pages read a decision state's or a call status's label and
- * badge variant from. `ApprovalStateValue` mirrors the backend
- * `HeldExecutionState` enum (the decision); `CallStatusValue` mirrors a
- * held execution's `execution_status` (where the call stands).
+ * Held-execution vocabulary — the single place the held-call surfaces read a
+ * decision state's or a call status's label and badge variant from.
+ * `ApprovalStateValue` mirrors the backend `HeldExecutionState` enum (the
+ * decision); `CallStatusValue` mirrors a held execution's `execution_status`
+ * (where the call stands).
  */
 export type ApprovalStateValue = 'pending' | 'approved' | 'denied' | 'expired' | 'withdrawn';
 
@@ -26,20 +26,14 @@ export const APPROVAL_STATE_VARIANT: Record<
 	withdrawn: 'default',
 };
 
-export const APPROVAL_STATE_OPTIONS: { value: '' | ApprovalStateValue; label: string }[] = [
-	{ value: '', label: 'All states' },
-	...(Object.keys(APPROVAL_STATE_LABELS) as ApprovalStateValue[]).map((value) => ({
-		value,
-		label: APPROVAL_STATE_LABELS[value],
-	})),
-];
-
 /**
  * A pending approval past its expiry is effectively expired: the reviewer can
  * no longer decide it, even before the expiry sweep records it.
  */
 export function isDecidable(state: string, expiresAt: string, now: Date = new Date()): boolean {
-	return state === 'pending' && new Date(expiresAt).getTime() > now.getTime();
+	const at = Date.parse(expiresAt);
+	// An expiry the call doesn't state can't have passed.
+	return state === 'pending' && (Number.isNaN(at) || at > now.getTime());
 }
 
 /** Where a held call stands: held until decided, then queued, running and its outcome. */

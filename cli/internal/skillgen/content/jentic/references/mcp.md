@@ -180,7 +180,10 @@ execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets
 an async execution or a tracked import returns a **job envelope**
 (`{job_id, status, …}`). For a held call, the most important step is to
 **show the user its `review_url`** — a reviewer signs in there to approve or
-deny it — and end your turn so the user sees the link. **Do not call
+deny it — and end your turn so the user sees the link. Before you end your
+turn, if you can, call `explain_held_call` once with the `held_execution_id`
+and a `reason` of one or two sentences on why you are making the call: the
+reviewer sees it next to the request. **Do not call
 `get_execution_result` until the user replies**; then call it **once** with
 the `held_execution_id`; it waits up to 30 seconds (`timeout`, in seconds,
 at most 30) and returns early once the call has finished (`completed`,
@@ -190,6 +193,7 @@ at most 30) and returns early once the call has finished (`completed`,
 as its result. A tracked import is polled the same way with its `job_id`:
 
 ```
+explain_held_call {"held_execution_id": "<id from the held response>", "reason": "Order 4821 is the customer's replacement"}
 get_execution_result {"held_execution_id": "<id from the held response>"}
 get_execution_result {"job_id": "<id from an async or import response>"}
 ```
@@ -269,6 +273,8 @@ delivered in the envelope instead of stderr.
   every pure read.
 - `get_execution_result` — poll a job id (from a held 202 execute or a
   non-terminal import) until its status is terminal.
+- `explain_held_call` — tell the reviewer of a held call why you are making
+  it, once, before you end your turn.
 - `search_catalog` — find importable APIs when the registry search comes up
   empty.
 - `import_api` — import a catalog API into the registry; re-import is safe —

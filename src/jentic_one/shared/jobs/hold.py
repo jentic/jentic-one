@@ -62,21 +62,44 @@ ENCRYPTED_PAYLOAD_KEY = "_enc"
 #: cookie policy as the sync route without the payload holding cookies in plaintext.
 INBOUND_COOKIE_PAYLOAD_KEY = "inbound_cookie_enc"
 
-#: What the agent is told to do with a held 202.
-HELD_AGENT_DIRECTIVE = (
+_HELD_SHOW_LINK = (
     "This call needs human approval. Most important: show the user the review_url, "
     "since they cannot approve it without that link, and end your turn so they see it. "
+)
+_HELD_ASK_REASON = (
+    "Before you end your turn, if you can, call explain_held_call once with "
+    "held_execution_id and one or two sentences on why you are making this call (over "
+    "plain HTTP, POST a JSON body with a reason field to _links.explain instead); the "
+    "reviewer sees it next to the request. "
+)
+_HELD_THEN_POLL = (
     "Do not call get_execution_result until the user replies; then call it once with "
     "held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is "
     "still held, show the user the review_url again and end your turn again. Do not "
     "re-send the call."
 )
 
+#: What the agent is told to do with a held 202. It is asked, once, to explain
+#: the call for the reviewer; the review link stays the first instruction.
+HELD_AGENT_DIRECTIVE = _HELD_SHOW_LINK + _HELD_ASK_REASON + _HELD_THEN_POLL
+
+#: The same, for a retry that joins a held call the agent already explained:
+#: the reason is given once, so it is not asked again.
+HELD_EXPLAINED_AGENT_DIRECTIVE = _HELD_SHOW_LINK + _HELD_THEN_POLL
+
 #: What the agent is told when a poll answers before the call has finished.
 STILL_HELD_AGENT_DIRECTIVE = (
     "This call is still waiting on human approval. Show the user the review_url again "
     "and end your turn. When they reply, call get_execution_result once with this "
     "held_execution_id. Do not re-send the call."
+)
+
+
+#: What the agent is told once its explanation of a held call is recorded.
+EXPLAINED_AGENT_DIRECTIVE = (
+    "The reviewer will see your reason next to the request. Show the user the "
+    "review_url if you have not yet, and end your turn. When they reply, call "
+    "get_execution_result once with this held_execution_id. Do not re-send the call."
 )
 
 
@@ -130,6 +153,8 @@ class HoldOutcome:
     expires_at: datetime
     execution_id: str | None
     joined: bool
+    #: A joined hold the agent has already explained (``agent_reason`` is set).
+    explained: bool = False
 
 
 def canonical_body(body: bytes | None) -> bytes:
@@ -397,6 +422,7 @@ async def _joined(session: AsyncSession, row: HeldExecution) -> HoldOutcome:
         expires_at=row.expires_at,
         execution_id=job.execution_id if job is not None else None,
         joined=True,
+        explained=row.agent_reason is not None,
     )
 
 

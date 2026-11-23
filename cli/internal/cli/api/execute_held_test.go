@@ -23,11 +23,19 @@ var heldBody = `{
 	"held_execution_id": "held_held1",
 	"review_url": "http://ui.local/app/agents/approvals/held_held1",
 	"expires_at": "2026-10-10T12:00:00Z",
-	"agent_directive": ` + strconv.Quote(heldAgentDirective) + `,
+	"agent_directive": {
+		"strategy": "prompt_human",
+		"parameters": {
+			"held_execution_id": "held_held1",
+			"review_url": "http://ui.local/app/agents/approvals/held_held1"
+		},
+		"human_readable_instruction": ` + strconv.Quote(heldAgentDirective) + `
+	},
 	"_links": {
 		"self": "http://ui.local/executions/holds/held_held1",
 		"result": "http://ui.local/executions/holds/held_held1/result",
-		"withdraw": "http://ui.local/executions/holds/held_held1:withdraw"
+		"withdraw": "http://ui.local/executions/holds/held_held1:withdraw",
+		"explain": "http://ui.local/executions/holds/held_held1:explain"
 	},
 	"unknown_future_field": {"preserve": "this"}
 }`
@@ -49,6 +57,7 @@ type heldStack struct {
 	holdDrop      bool // GET /executions/holds/{id} drops the connection after the first poll
 	noReviewURL   bool // GET /executions/holds/{id} omits review_url
 	upstreamHeld  bool
+	explained     bool // the broker answers a retry that joins an explained call: _links.explain null
 	foreignReview bool
 	reviewOrigin  string
 	brokerHits    atomic.Int32
@@ -122,7 +131,11 @@ func (s *heldStack) serve(t *testing.T) *httptest.Server {
 				w.Header().Set("Jentic-Upstream-Status", "202")
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(strings.ReplaceAll(heldBody, "http://ui.local", reviewOrigin)))
+			body := heldBody
+			if s.explained {
+				body = strings.Replace(body, `"http://ui.local/executions/holds/held_held1:explain"`, "null", 1)
+			}
+			_, _ = w.Write([]byte(strings.ReplaceAll(body, "http://ui.local", reviewOrigin)))
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -194,13 +207,17 @@ func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 		!strings.Contains(coded.Actionable, "jentic executions poll held_held1") {
 		t.Errorf("msg %q / actionable %q do not name the held execution and executions poll", coded.Msg, coded.Actionable)
 	}
+	if !strings.Contains(coded.Actionable, "jentic executions explain held_held1") ||
+		coded.Details["explain_command"] == nil {
+		t.Errorf("actionable %q / details %v, want the explain step for a call not yet explained", coded.Actionable, coded.Details)
+	}
 	env := envelopeOf(t, stdout)
 	body, _ := env["body"].(map[string]any)
 	if env["status"] != float64(202) || body["status"] != "held" || body["held_execution_id"] != "held_held1" {
 		t.Errorf("stdout envelope = %v", env)
 	}
-	if body["agent_directive"] != heldAgentDirective {
-		t.Errorf("trusted held directive = %q, want the broker directive %q", body["agent_directive"], heldAgentDirective)
+	if directive, _ := body["agent_directive"].(map[string]any); directive["human_readable_instruction"] != heldAgentDirective {
+		t.Errorf("trusted held directive = %v, want the broker directive %q", body["agent_directive"], heldAgentDirective)
 	}
 	for _, want := range []string{"needs human approval", "held execution: held_held1", reviewURL, "jentic executions poll held_held1"} {
 		if !strings.Contains(stderr, want) {
@@ -209,6 +226,27 @@ func TestExecuteHeldExits3WithTheReviewLink(t *testing.T) {
 	}
 	if s.polls.Load() != 0 {
 		t.Errorf("without --wait the hold is never polled (polled %d times)", s.polls.Load())
+	}
+}
+
+func TestExecuteHeldOfAnExplainedCallDoesNotAskAgain(t *testing.T) {
+	s := &heldStack{explained: true}
+	srv := s.serve(t)
+	_, _, err := runHeld(t, srv, "execute", "POST:/v1/orders", "-d", `{"n":1}`, "--json")
+
+	code, coded := exitOf(t, err)
+	if code != ux.ExitTimeoutPending || coded.Code != ux.CodeTimeoutPending {
+		t.Fatalf("exit %d code %v, want 3 TIMEOUT_PENDING", code, coded)
+	}
+	if strings.Contains(coded.Actionable, "executions explain") {
+		t.Errorf("actionable %q, want no explain step: the reviewer already has the reason", coded.Actionable)
+	}
+	if _, ok := coded.Details["explain_command"]; ok {
+		t.Errorf("details = %v, want no explain_command", coded.Details)
+	}
+	if !strings.Contains(coded.Actionable, reviewURLFor(srv)) ||
+		!strings.Contains(coded.Actionable, "jentic executions poll held_held1") {
+		t.Errorf("actionable %q, want the review link and the poll command kept", coded.Actionable)
 	}
 }
 

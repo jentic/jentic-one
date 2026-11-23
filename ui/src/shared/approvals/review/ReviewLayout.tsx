@@ -30,15 +30,6 @@ export function ReviewSection({
 	);
 }
 
-export function ReviewRow({ label, value }: { label: string; value: ReactNode }) {
-	return (
-		<div className="mt-1.5 flex items-baseline justify-between gap-3 text-sm">
-			<span className="text-muted-foreground shrink-0 text-xs">{label}</span>
-			<span className="min-w-0 text-right break-words">{value}</span>
-		</div>
-	);
-}
-
 /** A rounded panel on the page surface — the trace detail's call card. */
 export function ReviewPanel({ children, className }: { children: ReactNode; className?: string }) {
 	return <div className={cn('bg-field rounded-lg p-4', className)}>{children}</div>;

@@ -355,5 +355,14 @@ func CuratedBindings() []CuratedBinding {
 				"token": "token",
 			},
 		},
+		{
+			// `jentic executions explain <held_execution_id> <reason>` builds the
+			// :explain request body; the held execution id is the path parameter.
+			Command: "executions explain",
+			Params:  control.ExplainHeldExecutionRequest{},
+			Bind: map[string]string{
+				"reason": PositionalArg,
+			},
+		},
 	}
 }

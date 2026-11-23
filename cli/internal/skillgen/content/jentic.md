@@ -221,7 +221,11 @@ session.
 An async execution does not answer inline: it returns a **job envelope**
 (`{job_id, status, …}`) to poll. A call held for human approval answers
 `status: "held"` with a `held_execution_id` and a `review_url`: **show the
-user that link** — a reviewer signs in there to approve or deny it. Follow
+user that link** — a reviewer signs in there to approve or deny it. If you
+can, tell the reviewer why you are making the call, once, before you end your
+turn: `POST` a `reason` (one or two sentences) to its `_links.explain` (CLI
+`jentic executions explain <held_execution_id> "<reason>"`; MCP
+`explain_held_call`) — they see it next to the request. Follow
 `_links.self` (`/executions/holds/{held_execution_id}`) until its
 `execution_status` has finished (`completed` ran it; `failed` with a
 permission-denied problem means denied or expired; `cancelled` means

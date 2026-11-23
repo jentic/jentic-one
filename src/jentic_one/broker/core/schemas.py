@@ -41,7 +41,7 @@ class AsyncQueuedResponse(BaseModel):
 
 
 class HeldExecutionAcceptedLinks(BaseModel):
-    """Links on a held execution: where it stands, its eventual result, and withdrawal."""
+    """Links on a held execution: where it stands, its result, withdrawal and explaining it."""
 
     self_link: str = Field(
         serialization_alias="self",
@@ -49,6 +49,13 @@ class HeldExecutionAcceptedLinks(BaseModel):
     )
     result: str = Field(description="The call's outcome once it has finished.")
     withdraw: str = Field(description="`POST` here to withdraw the call before it is decided.")
+    explain: str | None = Field(
+        default=None,
+        description=(
+            "`POST` a `reason` here to tell the reviewer why the call is needed, once, "
+            "before it is decided. Null once the call is explained."
+        ),
+    )
 
 
 class HeldExecutionAcceptedResponse(BaseModel):

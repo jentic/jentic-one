@@ -43,6 +43,7 @@ SERVED_TOOLS: tuple[str, ...] = (
     "execute",
     "execute_read",
     "get_execution_result",
+    "explain_held_call",
     "search_catalog",
     "import_api",
     "inspect_api",

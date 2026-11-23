@@ -128,6 +128,12 @@ interface SegmentedToggleProps<T extends string = string> {
 	 * toolbar/panel filter): draws the inputs' faint resting edge.
 	 */
 	field?: boolean;
+	/**
+	 * The segments share the control's full width equally, labels centred: for
+	 * a short choice that spans its container (the rail Inbox's Waiting ·
+	 * Decided). Default: each segment hugs its label.
+	 */
+	fill?: boolean;
 }
 
 interface PillRect {
@@ -149,6 +155,7 @@ export function SegmentedToggle<T extends string = string>({
 	size = 'default',
 	field = false,
 	onClear,
+	fill = false,
 }: SegmentedToggleProps<T>) {
 	const toneStyles = TONE_STYLES[tone];
 	const styles =
@@ -312,6 +319,7 @@ export function SegmentedToggle<T extends string = string>({
 						onKeyDown={(e) => handleKeyDown(e, option.value)}
 						className={cn(
 							'relative flex items-center transition-colors',
+							fill && 'flex-1 justify-center',
 							styles.segment,
 							disabled ? 'cursor-not-allowed' : !isActive && 'cursor-pointer',
 						)}
