@@ -30,7 +30,10 @@ from jentic_one.shared.config import EncryptionConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.http.injection import (
     clear_upstream_cookie_scopes,
+    format_cookie_scope_key,
     record_upstream_set_cookie,
+    reset_current_cookie_scope,
+    set_current_cookie_scope,
 )
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
@@ -55,12 +58,13 @@ _ENCRYPTION = EncryptionService(
 )
 
 
-def _request(*, cookies: list[str] | None = None) -> Request:
-    # These fixtures model cookies returned by this upstream on an earlier call.
+def _request(*, cookies: list[str] | None = None, scope_key: str | None = None) -> Request:
+    # These fixtures model cookies returned by this upstream on an earlier call,
+    # recorded under ``scope_key`` (the current cookie scope when ``None``).
     # Unknown cookies are intentionally rejected; isolation is covered separately.
     for cookie in cookies or []:
         for pair in cookie.split(";"):
-            record_upstream_set_cookie(_URL, f"{pair.strip()}; Path=/")
+            record_upstream_set_cookie(_URL, f"{pair.strip()}; Path=/", scope_key=scope_key)
     raw: list[tuple[bytes, bytes]] = [
         (b"host", b"broker.local:8080"),
         (b"content-type", b"application/json"),
@@ -246,6 +250,19 @@ async def _async_outbound(
 
 _QUERY_CRED = {"api_key": "qval"}  # pragma: allowlist secret
 
+#: The cookie scope the sync route sets for the parity actor: its id, and no
+#: credential id because these injections carry none.
+_PARITY_SCOPE = format_cookie_scope_key("agnt_parity")
+
+
+def _sync_outbound(injection: InjectedAuth, request: Request) -> tuple[str, dict[str, str]]:
+    """Apply ``injection`` the way the sync route does, under the caller's cookie scope."""
+    token = set_current_cookie_scope(_PARITY_SCOPE)
+    try:
+        return _apply_injection(_URL, injection, request)
+    finally:
+        reset_current_cookie_scope(token)
+
 
 def _lowered(headers: dict[str, str]) -> dict[str, str]:
     lowered = {name.lower(): value for name, value in headers.items()}
@@ -276,8 +293,12 @@ def _lowered(headers: dict[str, str]) -> dict[str, str]:
 async def test_sync_and_async_send_identical_upstream_requests(
     injection: InjectedAuth, inbound_cookies: list[str]
 ) -> None:
-    sync_url, sync_headers = _apply_injection(_URL, injection, _request(cookies=inbound_cookies))
-    async_url, async_headers = await _async_outbound(_request(cookies=inbound_cookies), injection)
+    sync_url, sync_headers = _sync_outbound(
+        injection, _request(cookies=inbound_cookies, scope_key=_PARITY_SCOPE)
+    )
+    async_url, async_headers = await _async_outbound(
+        _request(cookies=inbound_cookies, scope_key=_PARITY_SCOPE), injection
+    )
 
     assert async_url == sync_url
     assert _lowered(async_headers) == _lowered(sync_headers)
@@ -301,9 +322,11 @@ async def test_held_payload_sends_the_same_upstream_request_as_sync(
         query_params=_QUERY_CRED,
         cookies={"session": "cval"},
     )
-    sync_url, sync_headers = _apply_injection(_URL, injection, _request(cookies=inbound_cookies))
+    sync_url, sync_headers = _sync_outbound(
+        injection, _request(cookies=inbound_cookies, scope_key=_PARITY_SCOPE)
+    )
     held_url, held_headers = await _async_outbound(
-        _request(cookies=inbound_cookies), injection, held=True
+        _request(cookies=inbound_cookies, scope_key=_PARITY_SCOPE), injection, held=True
     )
 
     assert held_url == sync_url

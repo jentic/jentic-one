@@ -15,19 +15,24 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import structlog
+import structlog.testing
 from sqlalchemy import delete, or_, select
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import JobRepository
+from jentic_one.admin.services import user_hooks
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config.database import DatabaseConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import JobKind, JobStatus
 from tests.integration.auth import seeds
 
@@ -260,7 +265,11 @@ async def test_reenable_does_not_resurrect_cancelled_jobs(env: _Env, lifecycle: 
 async def test_user_lifecycle_cascades_to_owned_agents_and_control_resources(
     env: _Env, action: str
 ) -> None:
-    """User disable/delete sweeps owned-agent jobs/holds and deactivates control resources."""
+    """User disable/delete sweeps owned-agent jobs/holds and cancels open connect sessions.
+
+    Delete also deactivates the user's control credentials and drops their
+    OAuth tokens. Disable leaves both in place, so re-enabling restores them.
+    """
     user_id = await _seed_user(env)
     owned_agent_id = await seeds.seed_agent(env.ctx, owner_id=user_id, scopes=["apis:read"])
     env.actor_ids.append(owned_agent_id)
@@ -341,18 +350,32 @@ async def test_user_lifecycle_cascades_to_owned_agents_and_control_resources(
             assert hold is not None
             assert hold.state == "withdrawn"
 
+        deleted = action == "delete"
         async with env.ctx.control_db.session() as session:
             cred = await session.get(Credential, cred_id)
             assert cred is not None
-            assert cred.active is False
+            assert cred.active is not deleted
             tok = (
                 await session.execute(select(OAuthToken).where(OAuthToken.credential_id == cred_id))
             ).scalar_one_or_none()
-            assert tok is None
+            assert (tok is None) is deleted
             cs = await session.get(ConnectSession, session_id)
             assert cs is not None
             assert cs.state == "failed"
             assert cs.error_code == "cancelled"
+
+        if not deleted:
+            await _user_enable(env, user_id)
+            async with env.ctx.control_db.session() as session:
+                cred = await session.get(Credential, cred_id)
+                assert cred is not None
+                assert cred.active is True
+                tok = (
+                    await session.execute(
+                        select(OAuthToken).where(OAuthToken.credential_id == cred_id)
+                    )
+                ).scalar_one_or_none()
+                assert tok is not None
     finally:
         async with env.ctx.admin_db.transaction() as session:
             await session.execute(delete(HeldExecution).where(HeldExecution.id == hold_id))
@@ -360,3 +383,69 @@ async def test_user_lifecycle_cascades_to_owned_agents_and_control_resources(
             await session.execute(delete(ConnectSession).where(ConnectSession.id == session_id))
             await session.execute(delete(OAuthToken).where(OAuthToken.credential_id == cred_id))
             await session.execute(delete(Credential).where(Credential.id == cred_id))
+
+
+@dataclass
+class _RecordingInvalidator:
+    """Broker cache invalidator that records the ids it is asked to evict."""
+
+    user_ids: list[str] = field(default_factory=list)
+    agent_ids: list[str] = field(default_factory=list)
+
+    def invalidate(
+        self,
+        *,
+        agent_id: str | None = None,
+        credential_id: str | None = None,
+        rule_set_id: str | None = None,
+        token: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
+        if user_id is not None:
+            self.user_ids.append(user_id)
+        if agent_id is not None:
+            self.agent_ids.append(agent_id)
+
+
+@pytest.mark.parametrize("action", ["disable", "delete"])
+async def test_failed_control_sweep_still_invalidates_caches_and_runs_hooks(
+    env: _Env, action: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A control-DB failure after the admin change commits does not skip the cleanup after it.
+
+    The control database is a real session to a port nothing listens on, so
+    the sweep fails the way an outage does.
+    """
+    user_id = await _seed_user(env)
+    owned_agent_id = await seeds.seed_agent(env.ctx, owner_id=user_id, scopes=["apis:read"])
+    env.actor_ids.append(owned_agent_id)
+
+    recorder = _RecordingInvalidator()
+    monkeypatch.setattr(env.ctx, "_broker_cache_invalidators", [recorder])
+    hook_calls: list[str] = []
+
+    async def _hook(_ctx: Context, deleted_user_id: str, _identity: Identity) -> None:
+        hook_calls.append(deleted_user_id)
+
+    monkeypatch.setattr(user_hooks, "_USER_DELETED_HOOKS", [_hook])
+
+    original_control_db = env.ctx._control_db
+    unreachable_control_db = DatabaseSession(
+        DatabaseConfig(backend="postgres", host="127.0.0.1", port=1, name="unreachable")
+    )
+    env.ctx._control_db = unreachable_control_db
+    try:
+        with structlog.testing.capture_logs() as logs:
+            if action == "disable":
+                await _user_disable(env, user_id)
+            else:
+                await _user_delete(env, user_id)
+    finally:
+        env.ctx._control_db = original_control_db
+        await unreachable_control_db.close()
+
+    sweep_failures = [e for e in logs if e["event"] == "user_control_sweep_failed"]
+    assert [e["user_id"] for e in sweep_failures] == [user_id]
+    assert user_id in recorder.user_ids
+    assert owned_agent_id in recorder.agent_ids
+    assert hook_calls == ([user_id] if action == "delete" else [])

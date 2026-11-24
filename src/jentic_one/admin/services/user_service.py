@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import structlog
+
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
@@ -48,6 +50,8 @@ from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
+
+logger = structlog.get_logger(__name__)
 
 
 def _tombstone_email(user_id: str) -> str:
@@ -396,7 +400,7 @@ class UserService:
         included: that is how an operator re-runs a hook that failed.
         """
         owned_agent_ids = await self._delete_in_transaction(user_id, identity=identity)
-        deactivated_credential_ids = await self._sweep_control_for_user(user_id)
+        deactivated_credential_ids = await self._sweep_control_for_user(user_id, deactivate=True)
         self._invalidate_broker_caches(user_id, owned_agent_ids, deactivated_credential_ids)
         await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
@@ -509,8 +513,11 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DISABLE, "target_type": AuditTargetType.USER}
             )
-        deactivated_credential_ids = await self._sweep_control_for_user(user_id)
-        self._invalidate_broker_caches(user_id, owned_agent_ids, deactivated_credential_ids)
+        # The user's control credentials stay active so re-enabling restores
+        # them: while the user is disabled the broker's credential resolver
+        # refuses every credential they created.
+        await self._sweep_control_for_user(user_id, deactivate=False)
+        self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
 
     async def enable(self, user_id: str, *, identity: Identity) -> bool:
@@ -535,12 +542,37 @@ class UserService:
         self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
 
-    async def _sweep_control_for_user(self, user_id: str) -> list[str]:
-        """Deactivate control-DB credentials and cancel open connect sessions for ``user_id``."""
+    async def _sweep_control_for_user(self, user_id: str, *, deactivate: bool) -> list[str]:
+        """Cancel ``user_id``'s open connect sessions; return deactivated credential ids.
+
+        With ``deactivate`` the user's control credentials are also switched
+        off and their OAuth tokens dropped, which nothing undoes, so only
+        delete asks for it.
+
+        Best-effort: it runs after the admin change has committed, so a
+        control-DB failure is logged instead of raised and the caller's
+        cache invalidation and user-deleted hooks still run. Credentials the
+        sweep missed are still refused, because the broker's credential
+        resolver checks that each credential's creator is active.
+        """
         if self._ctx.is_db_allowed("control") is not True:
             return []
-        async with self._ctx.control_db.transaction() as session:
-            return await UserRepository.deactivate_control_resources(session, user_id=user_id)
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                if deactivate:
+                    return await UserRepository.deactivate_control_resources(
+                        session, user_id=user_id
+                    )
+                await UserRepository.cancel_open_connect_sessions(session, user_id=user_id)
+                return []
+        except Exception:
+            logger.error(
+                "user_control_sweep_failed",
+                user_id=user_id,
+                deactivate=deactivate,
+                exc_info=True,
+            )
+            return []
 
     def _invalidate_broker_caches(
         self,

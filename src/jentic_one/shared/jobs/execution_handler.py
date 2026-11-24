@@ -59,7 +59,13 @@ from jentic_one.shared.events.repeated_failure import (
     RepeatedFailureCounter,
     maybe_emit_repeated_failure,
 )
-from jentic_one.shared.http.injection import apply_injection, get_current_reflection_guard
+from jentic_one.shared.http.injection import (
+    apply_injection,
+    format_cookie_scope_key,
+    get_current_reflection_guard,
+    reset_current_cookie_scope,
+    set_current_cookie_scope,
+)
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -442,114 +448,123 @@ class ExecutionHandler:
                 server_variables_unresolved=server_variables_unresolved,
             )
             injected_defaults = server_variable_defaults
-        upstream_url, headers = apply_injection(
-            headers,
-            upstream_url,
-            injection,
-            inbound_cookie=inbound_cookie,
-            inbound_cookie_scoped=bool(payload.get("inbound_cookie_scoped"))
-            and not server_variables_unresolved,
-            server_variable_defaults=injected_defaults,
-        )
-        credential_id = injection.credential_id
-        credential_name = injection.credential_name
-        signing = injection.signing
-        if injection.server_variables or injected_defaults:
-            upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
-
-        status = ExecutionStatus.COMPLETED
-        http_status: int | None = None
-        error_msg: str | None = None
-        response_body: bytes = b""
-        content_type: str | None = None
-        duration_ms: int = 0
-
+        # The sync route partitions upstream cookies by (actor, credential);
+        # the worker uses the same key so the caller's tracked cookies are
+        # forwarded and upstream Set-Cookie lands in the caller's partition.
+        cookie_scope = format_cookie_scope_key(created_by, injection.credential_id)
+        cookie_scope_token = set_current_cookie_scope(cookie_scope)
         try:
-            exec_result = await self._executor.execute(
-                UpstreamExecRequest(
-                    method=method,
-                    url=upstream_url,
-                    headers=headers,
-                    body=body,
-                    timeout_s=self._timeout,
-                    signing=signing,
-                    metadata={
-                        "execution_id": execution_id,
-                        "trace_id": trace_id,
-                        "toolkit_id": payload.get("toolkit_id"),
-                        # The resolved operation (id + path template + method)
-                        # as one dict — the already-folded value, so a malformed
-                        # payload dict is validated (and warned about) once.
-                        "operation": operation.model_dump() if operation else None,
-                        "api_vendor": api_vendor,
-                        "api_name": api_name,
-                        "api_version": api_version,
-                        "pinned_revisions": payload.get("pinned_revisions"),
-                        "actor_id": created_by,
-                        "actor_type": actor_type,
-                        "origin": origin,
-                        # Credential attribution (#740): carried so the
-                        # pipeline persists the same credential_id/name on
-                        # the execution record as the sync router would.
-                        "credential_id": credential_id,
-                        "credential_name": credential_name,
-                    },
-                ),
-                db=db,
+            upstream_url, headers = apply_injection(
+                headers,
+                upstream_url,
+                injection,
+                inbound_cookie=inbound_cookie,
+                inbound_cookie_scoped=bool(payload.get("inbound_cookie_scoped"))
+                and not server_variables_unresolved,
+                server_variable_defaults=injected_defaults,
+                scope_key=cookie_scope,
             )
-            http_status = exec_result.status_code
-            response_body = exec_result.body
-            content_type = exec_result.content_type
-            duration_ms = exec_result.duration_ms
-            if http_status >= 400:
-                status = ExecutionStatus.FAILED
-                error_msg = f"Upstream returned {http_status}"
-        except ExecutionRecordNotPersistedError as exc:
-            cause = exc.__cause__
-            _record_write_failure("runner" if exc.runner_failed else "record")
-            logger.error(
-                "queued_execution_record_not_persisted",
-                job_id=job_id,
-                execution_id=execution_id,
-                error_type=type(cause).__name__ if cause is not None else None,
-                http_status=exc.result.status_code if exc.result is not None else None,
-                exc_info=_traceback_if_safe(exc),
-            )
-            if exc.result is None:
-                status = ExecutionStatus.FAILED
-                error_msg = (
-                    f"{exc.upstream_error} ({_RECORD_NOT_PERSISTED})"
-                    if exc.upstream_error
-                    else _RECORD_NOT_PERSISTED.capitalize()
-                )[:MAX_EVENT_SUMMARY_FIELD_LEN]
-            else:
-                http_status = exc.result.status_code
-                response_body = exc.result.body
-                content_type = exc.result.content_type
-                duration_ms = exc.result.duration_ms
+            credential_id = injection.credential_id
+            credential_name = injection.credential_name
+            signing = injection.signing
+            if injection.server_variables or injected_defaults:
+                upstream_url = await validate_upstream_url_async(upstream_url, self._egress)
+
+            status = ExecutionStatus.COMPLETED
+            http_status: int | None = None
+            error_msg: str | None = None
+            response_body: bytes = b""
+            content_type: str | None = None
+            duration_ms: int = 0
+
+            try:
+                exec_result = await self._executor.execute(
+                    UpstreamExecRequest(
+                        method=method,
+                        url=upstream_url,
+                        headers=headers,
+                        body=body,
+                        timeout_s=self._timeout,
+                        signing=signing,
+                        metadata={
+                            "execution_id": execution_id,
+                            "trace_id": trace_id,
+                            "toolkit_id": payload.get("toolkit_id"),
+                            # The resolved operation (id + path template + method)
+                            # as one dict — the already-folded value, so a malformed
+                            # payload dict is validated (and warned about) once.
+                            "operation": operation.model_dump() if operation else None,
+                            "api_vendor": api_vendor,
+                            "api_name": api_name,
+                            "api_version": api_version,
+                            "pinned_revisions": payload.get("pinned_revisions"),
+                            "actor_id": created_by,
+                            "actor_type": actor_type,
+                            "origin": origin,
+                            # Credential attribution (#740): carried so the
+                            # pipeline persists the same credential_id/name on
+                            # the execution record as the sync router would.
+                            "credential_id": credential_id,
+                            "credential_name": credential_name,
+                        },
+                    ),
+                    db=db,
+                )
+                http_status = exec_result.status_code
+                response_body = exec_result.body
+                content_type = exec_result.content_type
+                duration_ms = exec_result.duration_ms
                 if http_status >= 400:
                     status = ExecutionStatus.FAILED
-                    error_msg = f"Upstream returned {http_status} ({_RECORD_NOT_PERSISTED})"
-        except (OSError, TimeoutError) as exc:
-            status = ExecutionStatus.FAILED
-            error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
-        except Exception as exc:
-            # BrokerError (circuit open, bulkhead full, transport) crosses the arch
-            # boundary via the UpstreamExecutor protocol — we can't import it here.
-            # Re-raise programming errors; treat domain errors as pipeline failures.
-            if isinstance(exc, (TypeError, AttributeError, KeyError, IndexError)):
-                raise
-            # redact_sql: a DB error's str() carries the statement and bound
-            # parameters, which must not reach the persisted event summary.
-            safe_error = redact_sql(str(exc)) or type(exc).__name__
-            logger.warning(
-                "pipeline_error",
-                job_id=job_id,
-                error_type=type(exc).__name__,
-                error=safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN],
-            )
-            status = ExecutionStatus.FAILED
-            error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
+                    error_msg = f"Upstream returned {http_status}"
+            except ExecutionRecordNotPersistedError as exc:
+                cause = exc.__cause__
+                _record_write_failure("runner" if exc.runner_failed else "record")
+                logger.error(
+                    "queued_execution_record_not_persisted",
+                    job_id=job_id,
+                    execution_id=execution_id,
+                    error_type=type(cause).__name__ if cause is not None else None,
+                    http_status=exc.result.status_code if exc.result is not None else None,
+                    exc_info=_traceback_if_safe(exc),
+                )
+                if exc.result is None:
+                    status = ExecutionStatus.FAILED
+                    error_msg = (
+                        f"{exc.upstream_error} ({_RECORD_NOT_PERSISTED})"
+                        if exc.upstream_error
+                        else _RECORD_NOT_PERSISTED.capitalize()
+                    )[:MAX_EVENT_SUMMARY_FIELD_LEN]
+                else:
+                    http_status = exc.result.status_code
+                    response_body = exc.result.body
+                    content_type = exc.result.content_type
+                    duration_ms = exc.result.duration_ms
+                    if http_status >= 400:
+                        status = ExecutionStatus.FAILED
+                        error_msg = f"Upstream returned {http_status} ({_RECORD_NOT_PERSISTED})"
+            except (OSError, TimeoutError) as exc:
+                status = ExecutionStatus.FAILED
+                error_msg = str(exc)[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            except Exception as exc:
+                # BrokerError (circuit open, bulkhead full, transport) crosses the arch
+                # boundary via the UpstreamExecutor protocol — we can't import it here.
+                # Re-raise programming errors; treat domain errors as pipeline failures.
+                if isinstance(exc, (TypeError, AttributeError, KeyError, IndexError)):
+                    raise
+                # redact_sql: a DB error's str() carries the statement and bound
+                # parameters, which must not reach the persisted event summary.
+                safe_error = redact_sql(str(exc)) or type(exc).__name__
+                logger.warning(
+                    "pipeline_error",
+                    job_id=job_id,
+                    error_type=type(exc).__name__,
+                    error=safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN],
+                )
+                status = ExecutionStatus.FAILED
+                error_msg = safe_error[:MAX_EVENT_SUMMARY_FIELD_LEN]
+        finally:
+            reset_current_cookie_scope(cookie_scope_token)
 
         guard = get_current_reflection_guard()
         if (

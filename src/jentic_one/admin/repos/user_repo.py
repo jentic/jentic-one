@@ -286,8 +286,24 @@ class UserRepository:
         )
 
     @staticmethod
+    async def cancel_open_connect_sessions(session: AsyncSession, *, user_id: str) -> None:
+        """Fail ``user_id``'s connect sessions that have not finished yet."""
+        await session.execute(
+            text(
+                "UPDATE connect_sessions SET state = 'failed', error_code = 'cancelled' "
+                "WHERE initiator_actor_id = CAST(:uid AS VARCHAR) "
+                "AND state IN ('created', 'awaiting_app', 'polling')"
+            ),
+            {"uid": user_id},
+        )
+
+    @staticmethod
     async def deactivate_control_resources(session: AsyncSession, *, user_id: str) -> list[str]:
-        """Deactivate ``user_id``'s control credentials, tokens, and open sessions."""
+        """Deactivate ``user_id``'s control credentials, tokens, and open sessions.
+
+        Permanent: nothing restores the rows, so only a deleted user's
+        resources are swept this way.
+        """
         params = {"uid": user_id}
         rows = await session.execute(
             text("SELECT id FROM credentials WHERE created_by = CAST(:uid AS VARCHAR) ORDER BY id"),
@@ -305,13 +321,6 @@ class UserRepository:
             text("UPDATE credentials SET active = FALSE WHERE created_by = CAST(:uid AS VARCHAR)"),
             params,
         )
-        await session.execute(
-            text(
-                "UPDATE connect_sessions SET state = 'failed', error_code = 'cancelled' "
-                "WHERE initiator_actor_id = CAST(:uid AS VARCHAR) "
-                "AND state IN ('created', 'awaiting_app', 'polling')"
-            ),
-            params,
-        )
+        await UserRepository.cancel_open_connect_sessions(session, user_id=user_id)
         session.expire_all()
         return credential_ids

@@ -34,7 +34,10 @@ from jentic_one.shared.config import EgressConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.http.injection import (
     clear_upstream_cookie_scopes,
+    format_cookie_scope_key,
     record_upstream_set_cookie,
+    reset_current_cookie_scope,
+    set_current_cookie_scope,
 )
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.models import ActorType
@@ -147,9 +150,18 @@ async def test_async_post_reaches_upstream_with_content_and_version_headers(
         api_name="notion",
         api_version="1",
     )
-    record_upstream_set_cookie(ctx_req.upstream_url, "sid=agent-session; Path=/v1")
+    # The route records and captures cookies under the caller's cookie scope:
+    # the agent alone, because no credential is injected here.
+    caller_scope = format_cookie_scope_key(_AGENT.sub)
+    record_upstream_set_cookie(
+        ctx_req.upstream_url, "sid=agent-session; Path=/v1", scope_key=caller_scope
+    )
 
-    response = await _handle_async(_request(_BODY), ctx_req, ctx, _AGENT)
+    scope_token = set_current_cookie_scope(caller_scope)
+    try:
+        response = await _handle_async(_request(_BODY), ctx_req, ctx, _AGENT)
+    finally:
+        reset_current_cookie_scope(scope_token)
     assert response.status_code == 202
     job_id = json.loads(bytes(response.body))["job_id"]
 

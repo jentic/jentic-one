@@ -674,3 +674,34 @@ func TestRedact_NestedJSONStringPayloads(t *testing.T) {
 		t.Errorf("safe nested JSON string reshaped:\ngot  %s\nwant %s", gotSafe, safeEnvelope)
 	}
 }
+
+// A backslash inside a form-style or header value must not end the match early
+// and leave the rest of the secret in the output.
+func TestRedactBytesBackslashInSecretValueIsFullyRedacted(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		secret string
+		keep   string
+	}{
+		{"form value with backslash", `password=abc\def&x=1`, `def`, `&x=1`},                                              // pragma: allowlist secret
+		{"form value in JSON string", `{"msg":"password=ab\\cd"}`, `cd`, `"msg"`},                                         // pragma: allowlist secret
+		{"form value with escaped quote stops at the quote", `{"msg":"token=ab\"c\" ok"}`, `token=ab`, ` ok`},             // pragma: allowlist secret
+		{"authorization header value with backslash", `{"log":"Authorization: Bearer abc\\xyz failed"}`, `xyz`, `failed`}, // pragma: allowlist secret
+		{"authorization form value with backslash", `authorization=sekret\tail next`, `tail`, ` next`},                    // pragma: allowlist secret
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(RedactBytes([]byte(tc.body)))
+			if strings.Contains(got, tc.secret) {
+				t.Errorf("secret suffix %q leaked: %s", tc.secret, got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Errorf("nothing redacted: %s", got)
+			}
+			if !strings.Contains(got, tc.keep) {
+				t.Errorf("non-secret text %q was swallowed: %s", tc.keep, got)
+			}
+		})
+	}
+}
