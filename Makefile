@@ -71,14 +71,17 @@ test-arch: ## Run architecture enforcement tests
 test-smoke: ## Run smoke tests (requires running services)
 	uv run pytest tests/smoke/ -m smoke
 
-OLD ?= 0.44.0
+# OLD defaults to the n-1 source release resolved from git tags; OUT_DIR defaults
+# to build/upgrade-<OLD>-<BACKEND> (both resolved by tests/upgrade/run.sh).
+OLD ?=
+OLD_DIGEST ?=
 BACKEND ?= postgres
 CANDIDATE ?=
-OUT_DIR ?= $(BUILD_DIR)/upgrade-$(OLD)-$(BACKEND)
+OUT_DIR ?=
 
 .PHONY: test-upgrade
-test-upgrade: ## Run container upgrade test from OLD release to CANDIDATE image (OLD=0.44.0 BACKEND=postgres [CANDIDATE=<image>])
-	OLD="$(OLD)" BACKEND="$(BACKEND)" CANDIDATE="$(CANDIDATE)" OUT_DIR="$(OUT_DIR)" ./tests/upgrade/run.sh
+test-upgrade: ## Run container upgrade test from OLD release (default: n-1) to CANDIDATE image ([OLD=X.Y.Z] [BACKEND=postgres] [CANDIDATE=<image>])
+	OLD="$(OLD)" OLD_DIGEST="$(OLD_DIGEST)" BACKEND="$(BACKEND)" CANDIDATE="$(CANDIDATE)" OUT_DIR="$(OUT_DIR)" ./tests/upgrade/run.sh
 
 smoke-packaging: ## Build UI+wheel, install in a clean venv, verify the SPA is packaged & served (DB-free)
 	./scripts/spa_packaging_smoke.sh

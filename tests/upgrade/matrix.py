@@ -1,4 +1,12 @@
-"""Shared loader, validator, and CI matrix generator for supported-upgrades.yaml."""
+"""Policy loader, source-window resolver, and CI matrix generator for upgrade tests.
+
+``supported-upgrades.yaml`` holds only the upgrade *policy* (window size,
+enabled roles, backends, known breaks). The concrete source releases are
+derived at run time from the repository's ``v*`` git tags and the candidate's
+``pyproject.toml`` version, so the window rolls forward on every release with
+no manual edit. Source image digests are resolved from GHCR when the matrix is
+emitted and each leg pulls its source image by that digest.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +18,10 @@ import re
 import subprocess
 import sys
 import tomllib
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,13 +31,48 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MATRIX_PATH = REPO_ROOT / "tests" / "upgrade" / "supported-upgrades.yaml"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 UPGRADE_NOTES_PATH = REPO_ROOT / "docs" / "operations" / "upgrade-notes.md"
+SEED_DIR = REPO_ROOT / "tests" / "upgrade" / "seed"
+
+#: Registry, repository, and image name of the published app image.
+SOURCE_REGISTRY = "ghcr.io"
+SOURCE_REPOSITORY = "jentic/jentic-one-app"
+SOURCE_IMAGE = f"{SOURCE_REGISTRY}/{SOURCE_REPOSITORY}"
 
 _SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-_SERIES_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_ROLE_RE = re.compile(r"^n-([1-9]\d*)$")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SEEDER_RE = re.compile(r"^seed_v(0|[1-9]\d*)_(0|[1-9]\d*)\.py$")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 _INLINE_LINK_TEXT_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _NON_SLUG_CHARS_RE = re.compile(r"[^\w\s-]")
+
+_MANIFEST_ACCEPT = ", ".join(
+    [
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ]
+)
+
+Version = tuple[int, int, int]
+DigestResolver = Callable[[str], str | None]
+
+
+@dataclass(frozen=True)
+class Source:
+    """One source release the candidate is upgraded from."""
+
+    tag: str
+    role: str
+
+
+def parse_version(value: str) -> Version | None:
+    """Return ``(major, minor, patch)`` for a plain ``X.Y.Z`` string, else ``None``."""
+    match = _SEMVER_RE.match(value)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
 
 
 def load_matrix(path: Path = MATRIX_PATH) -> dict[str, Any]:
@@ -45,21 +92,30 @@ def read_pyproject_version(path: Path = PYPROJECT_PATH) -> str:
     return version
 
 
-def git_release_tags(repo_root: Path = REPO_ROOT) -> set[str]:
-    """Return semver release versions (without leading 'v') from local git tags."""
+def _git_versions(args: list[str], repo_root: Path) -> set[str]:
     out = subprocess.run(
-        ["git", "tag", "-l", "v*"],
+        ["git", *args],
         cwd=repo_root,
         check=True,
         capture_output=True,
         text=True,
     ).stdout
-    tags: set[str] = set()
+    versions: set[str] = set()
     for raw in out.splitlines():
         tag = raw.strip()
-        if tag.startswith("v") and _SEMVER_RE.match(tag[1:]):
-            tags.add(tag[1:])
-    return tags
+        if tag.startswith("v") and parse_version(tag[1:]) is not None:
+            versions.add(tag[1:])
+    return versions
+
+
+def git_release_tags(repo_root: Path = REPO_ROOT) -> set[str]:
+    """Return semver release versions (without leading 'v') from local git tags."""
+    return _git_versions(["tag", "-l", "v*"], repo_root)
+
+
+def git_head_tags(repo_root: Path = REPO_ROOT) -> set[str]:
+    """Return semver release versions whose ``v*`` tag points at HEAD."""
+    return _git_versions(["tag", "-l", "v*", "--points-at", "HEAD"], repo_root)
 
 
 def heading_slugs(doc: Path = UPGRADE_NOTES_PATH) -> frozenset[str]:
@@ -85,50 +141,103 @@ def heading_slugs(doc: Path = UPGRADE_NOTES_PATH) -> frozenset[str]:
     return frozenset(slugs)
 
 
-def _latest_patch_by_minor(release_tags: set[str]) -> dict[tuple[int, int], str]:
-    best: dict[tuple[int, int], tuple[int, str]] = {}
-    for ver in release_tags:
-        m = _SEMVER_RE.match(ver)
-        if not m:
-            continue
-        major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        key = (major, minor)
-        if key not in best or patch > best[key][0]:
-            best[key] = (patch, ver)
-    return {key: val[1] for key, val in best.items()}
+def target_series(
+    candidate_version: str,
+    release_tags: set[str],
+    head_tags: set[str],
+) -> tuple[int, int]:
+    """Return the ``(major, minor)`` series the candidate build will ship as.
+
+    An untagged candidate version (a release PR, or a branch ahead of the last
+    bump) ships as its own minor series. A candidate version that is already
+    released but not tagged at HEAD is ``main`` after a release: the code under
+    test ships in the next minor at the earliest supported window, so the
+    target is the following minor and the just-released version becomes
+    ``n-1``. The tagged release commit itself targets its own series.
+    """
+    parsed = parse_version(candidate_version)
+    if parsed is None:
+        raise ValueError(f"candidate version {candidate_version!r} is not valid semver")
+    major, minor, _ = parsed
+    if candidate_version in release_tags and candidate_version not in head_tags:
+        return major, minor + 1
+    return major, minor
 
 
-def validate_supported_upgrades(
-    data: dict[str, Any],
+def select_sources(
+    target: tuple[int, int],
+    release_tags: set[str],
     *,
-    pyproject_version: str,
-    upgrade_notes_slugs: frozenset[str],
-    today: datetime.date,
-    release_tags: set[str] | None = None,
-) -> list[str]:
-    """Return validation errors for a supported-upgrades YAML document.
+    minors_back: int,
+) -> list[Source]:
+    """Return the latest released patch of each of the ``minors_back`` prior minors.
 
-    Structural validation runs without git history when ``release_tags`` is
-    ``None``. Passing ``release_tags`` additionally checks that every source tag
-    exists as a ``v<tag>`` git tag and matches the latest patch of its minor
-    series.
+    A prior minor with no release (early history, or a major boundary) is
+    omitted rather than reported as an error.
+    """
+    latest: dict[tuple[int, int], Version] = {}
+    for tag in release_tags:
+        parsed = parse_version(tag)
+        if parsed is None:
+            continue
+        key = (parsed[0], parsed[1])
+        if key not in latest or parsed > latest[key]:
+            latest[key] = parsed
+
+    sources: list[Source] = []
+    major, minor = target
+    for offset in range(1, minors_back + 1):
+        if minor - offset < 0:
+            break
+        best = latest.get((major, minor - offset))
+        if best is not None:
+            sources.append(Source(tag=".".join(map(str, best)), role=f"n-{offset}"))
+    return sources
+
+
+def _parse_date(raw: Any) -> datetime.date | None:
+    if isinstance(raw, datetime.date) and not isinstance(raw, datetime.datetime):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return datetime.date.fromisoformat(raw)
+        except ValueError:
+            return None
+    return None
+
+
+def validate_policy(data: dict[str, Any], *, upgrade_notes_slugs: frozenset[str]) -> list[str]:
+    """Return structural errors in a supported-upgrades policy document.
+
+    Validation is static: it does not depend on the current date, the
+    ``pyproject.toml`` version, or which releases exist, so a valid policy file
+    stays valid as releases are cut.
     """
     errors: list[str] = []
 
     window = data.get("window")
-    minors_back = 2
     if not isinstance(window, dict):
         errors.append("window must be a mapping")
+        window = {}
+    minors_back = window.get("minors_back")
+    if not isinstance(minors_back, int) or isinstance(minors_back, bool) or minors_back < 2:
+        errors.append(f"window.minors_back must be an integer >= 2 (got {minors_back!r})")
+        minors_back = 2
+    if window.get("collapse_patches") != "latest":
+        errors.append(
+            f"window.collapse_patches must be 'latest' (got {window.get('collapse_patches')!r})"
+        )
+    enabled_roles = window.get("enabled_roles")
+    if not isinstance(enabled_roles, list) or not enabled_roles:
+        errors.append("window.enabled_roles must be a non-empty list of 'n-<k>' roles")
     else:
-        raw_minors_back = window.get("minors_back")
-        if not isinstance(raw_minors_back, int) or raw_minors_back < 2:
-            errors.append(f"window.minors_back must be an integer >= 2 (got {raw_minors_back!r})")
-        else:
-            minors_back = raw_minors_back
-        if window.get("collapse_patches") != "latest":
-            errors.append(
-                f"window.collapse_patches must be 'latest' (got {window.get('collapse_patches')!r})"
-            )
+        for role in enabled_roles:
+            match = _ROLE_RE.match(role) if isinstance(role, str) else None
+            if match is None or int(match.group(1)) > minors_back:
+                errors.append(
+                    f"window.enabled_roles entry {role!r} must be 'n-<k>' with "
+                    f"1 <= k <= minors_back ({minors_back})"
+                )
 
     if data.get("refresh_token_policy") != "survive_unless_documented_in_upgrade_notes":
         errors.append(
@@ -136,285 +245,278 @@ def validate_supported_upgrades(
             f"(got {data.get('refresh_token_policy')!r})"
         )
 
-    py_match = _SEMVER_RE.match(pyproject_version)
-    if not py_match:
-        errors.append(f"pyproject.toml version {pyproject_version!r} is not valid semver")
+    backends = data.get("backends")
+    if not isinstance(backends, list) or not backends:
+        errors.append("backends must be a non-empty list")
+    else:
+        backend_by_name = {
+            b.get("name"): b for b in backends if isinstance(b, dict) and "name" in b
+        }
+        pg = backend_by_name.get("postgres")
+        if not pg or pg.get("blocking") is not True or pg.get("enabled") is not True:
+            errors.append("backends must include postgres with blocking=true and enabled=true")
+        if "sqlite" not in backend_by_name:
+            errors.append("backends must declare sqlite")
+
+    known_breaks = data.get("known_breaks")
+    if not isinstance(known_breaks, list):
+        errors.append("known_breaks must be a list")
         return errors
-    py_major, py_minor = int(py_match.group(1)), int(py_match.group(2))
-
-    targets = data.get("targets")
-    if not isinstance(targets, list) or not targets:
-        errors.append("targets must be a non-empty list")
-        return errors
-
-    latest_patches = _latest_patch_by_minor(release_tags) if release_tags is not None else {}
-    allowed_target_series = {
-        f"{py_major}.{py_minor}",
-        f"{py_major}.{py_minor + 1}",
-    }
-
-    matched_active_target = False
-    for idx, target in enumerate(targets):
-        prefix = f"targets[{idx}]"
-        if not isinstance(target, dict):
+    for kb_idx, kb in enumerate(known_breaks):
+        prefix = f"known_breaks[{kb_idx}]"
+        if not isinstance(kb, dict):
             errors.append(f"{prefix} must be a mapping")
             continue
+        for field in ("source", "reason", "upgrade_notes_link"):
+            val = kb.get(field)
+            if not isinstance(val, str) or not val.strip():
+                errors.append(f"{prefix}.{field} must be a non-empty string")
+        source = kb.get("source")
+        if isinstance(source, str) and source.strip() and parse_version(source) is None:
+            errors.append(f"{prefix}.source must be a release version 'X.Y.Z' (got {source!r})")
 
-        series = target.get("version_series")
-        if not isinstance(series, str) or not _SERIES_RE.match(series):
-            errors.append(f"{prefix}.version_series must be 'MAJOR.MINOR' (got {series!r})")
-            continue
-
-        s_major, s_minor = (int(part) for part in series.split("."))
-        if series in allowed_target_series:
-            matched_active_target = True
-
-        sources = target.get("sources")
-        if not isinstance(sources, list) or not sources:
-            errors.append(f"{prefix}.sources must be a non-empty list")
-            continue
-
-        seen_tags: set[str] = set()
-        by_minor: dict[tuple[int, int], list[tuple[str, Any]]] = {}
-        for s_idx, src in enumerate(sources):
-            s_prefix = f"{prefix}.sources[{s_idx}]"
-            if not isinstance(src, dict):
-                errors.append(f"{s_prefix} must be a mapping")
-                continue
-            tag = src.get("tag")
-            tag_match = _SEMVER_RE.match(tag) if isinstance(tag, str) else None
-            if not isinstance(tag, str) or tag_match is None:
-                errors.append(f"{s_prefix}.tag must be valid semver (got {tag!r})")
-                continue
-            if tag in seen_tags:
-                errors.append(f"{s_prefix}.tag {tag!r} is duplicated")
-            seen_tags.add(tag)
-
-            t_major, t_minor = int(tag_match.group(1)), int(tag_match.group(2))
-            by_minor.setdefault((t_major, t_minor), []).append((tag, src.get("role")))
-
-            if release_tags is not None and tag not in release_tags:
-                errors.append(f"{s_prefix}.tag {tag!r} does not match any git tag 'v{tag}'")
-
-            expected_image = f"ghcr.io/jentic/jentic-one-app:{tag}"
-            if src.get("image") != expected_image:
+        link = kb.get("upgrade_notes_link")
+        if isinstance(link, str) and link.strip():
+            if "#" not in link:
                 errors.append(
-                    f"{s_prefix}.image must be {expected_image!r} (got {src.get('image')!r})"
-                )
-
-            digest = src.get("digest")
-            if not isinstance(digest, str) or not _DIGEST_RE.match(digest):
-                errors.append(
-                    f"{s_prefix}.digest must be a 'sha256:<64-hex>' digest (got {digest!r})"
-                )
-
-            if not isinstance(src.get("phase1_enabled"), bool):
-                errors.append(f"{s_prefix}.phase1_enabled must be a boolean")
-
-        for offset in range(1, minors_back + 1):
-            req_series = (s_major, s_minor - offset)
-            expected_role = f"n-{offset}"
-            entries = by_minor.get(req_series, [])
-            if not entries:
-                errors.append(
-                    f"{prefix}.sources omits required N-{offset} minor series "
-                    f"'{req_series[0]}.{req_series[1]}.x'"
+                    f"{prefix}.upgrade_notes_link {link!r} must include a #heading anchor"
                 )
             else:
-                if len(entries) > 1:
+                doc_part, anchor = link.split("#", 1)
+                if doc_part not in ("docs/operations/upgrade-notes.md", "upgrade-notes.md"):
                     errors.append(
-                        f"{prefix}.sources must collapse {req_series[0]}.{req_series[1]}.x "
-                        f"to a single patch release (got {[t for t, _ in entries]!r})"
+                        f"{prefix}.upgrade_notes_link must target "
+                        f"docs/operations/upgrade-notes.md (got {doc_part!r})"
                     )
-                entry_tag, entry_role = entries[0]
-                if entry_role != expected_role:
+                if anchor == "unreleased":
+                    errors.append(f"{prefix}.upgrade_notes_link must not link to #unreleased")
+                elif anchor not in upgrade_notes_slugs:
                     errors.append(
-                        f"{prefix}.sources entry {entry_tag!r} for "
-                        f"{req_series[0]}.{req_series[1]}.x must have role={expected_role!r} "
-                        f"(got {entry_role!r})"
-                    )
-
-            if release_tags is not None:
-                expected_tag = latest_patches.get(req_series)
-                if expected_tag is None:
-                    errors.append(
-                        f"{prefix}: no released git tag found for required minor series "
-                        f"{req_series[0]}.{req_series[1]}"
-                    )
-                elif expected_tag not in seen_tags:
-                    errors.append(
-                        f"{prefix}.sources omits required N-{offset} release {expected_tag!r} "
-                        f"(latest patch of {req_series[0]}.{req_series[1]})"
+                        f"{prefix}.upgrade_notes_link anchor #{anchor} does not match "
+                        "any heading in docs/operations/upgrade-notes.md"
                     )
 
-        backends = target.get("backends")
-        if not isinstance(backends, list) or not backends:
-            errors.append(f"{prefix}.backends must be a non-empty list")
-        else:
-            backend_by_name = {
-                b.get("name"): b for b in backends if isinstance(b, dict) and "name" in b
-            }
-            pg = backend_by_name.get("postgres")
-            if not pg or pg.get("blocking") is not True or pg.get("enabled") is not True:
-                errors.append(
-                    f"{prefix}.backends must include postgres with blocking=true and enabled=true"
-                )
-            if "sqlite" not in backend_by_name:
-                errors.append(f"{prefix}.backends must declare sqlite")
-
-        known_breaks = target.get("known_breaks")
-        if not isinstance(known_breaks, list):
-            errors.append(f"{prefix}.known_breaks must be a list")
-        else:
-            for kb_idx, kb in enumerate(known_breaks):
-                kb_prefix = f"{prefix}.known_breaks[{kb_idx}]"
-                if not isinstance(kb, dict):
-                    errors.append(f"{kb_prefix} must be a mapping")
-                    continue
-                for field in ("source", "reason", "upgrade_notes_link"):
-                    val = kb.get(field)
-                    if not isinstance(val, str) or not val.strip():
-                        errors.append(f"{kb_prefix}.{field} must be a non-empty string")
-
-                link = kb.get("upgrade_notes_link")
-                if isinstance(link, str) and link.strip():
-                    if "#" not in link:
-                        errors.append(
-                            f"{kb_prefix}.upgrade_notes_link {link!r} must include "
-                            "a #heading anchor"
-                        )
-                    else:
-                        doc_part, anchor = link.split("#", 1)
-                        if doc_part not in (
-                            "docs/operations/upgrade-notes.md",
-                            "upgrade-notes.md",
-                        ):
-                            errors.append(
-                                f"{kb_prefix}.upgrade_notes_link must target "
-                                f"docs/operations/upgrade-notes.md (got {doc_part!r})"
-                            )
-                        if anchor == "unreleased":
-                            errors.append(
-                                f"{kb_prefix}.upgrade_notes_link must not link to #unreleased"
-                            )
-                        elif anchor not in upgrade_notes_slugs:
-                            errors.append(
-                                f"{kb_prefix}.upgrade_notes_link anchor #{anchor} does not match "
-                                "any heading in docs/operations/upgrade-notes.md"
-                            )
-
-                raw_expires = kb.get("expires")
-                parsed_expires: datetime.date | None = None
-                if isinstance(raw_expires, datetime.date) and not isinstance(
-                    raw_expires, datetime.datetime
-                ):
-                    parsed_expires = raw_expires
-                elif isinstance(raw_expires, str):
-                    try:
-                        parsed_expires = datetime.date.fromisoformat(raw_expires)
-                    except ValueError:
-                        parsed_expires = None
-
-                if parsed_expires is None:
-                    errors.append(
-                        f"{kb_prefix}.expires must be a valid YYYY-MM-DD date (got {raw_expires!r})"
-                    )
-                elif parsed_expires < today:
-                    errors.append(
-                        f"{kb_prefix}.expires ({parsed_expires.isoformat()}) has expired "
-                        f"(today is {today.isoformat()})"
-                    )
-
-    if not matched_active_target:
-        errors.append(
-            f"targets must include an entry for {sorted(allowed_target_series)!r} "
-            f"matching pyproject.toml version {pyproject_version!r}"
-        )
+        if _parse_date(kb.get("expires")) is None:
+            errors.append(
+                f"{prefix}.expires must be a valid YYYY-MM-DD date (got {kb.get('expires')!r})"
+            )
 
     return errors
 
 
-def build_ci_matrix(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Build the GitHub Actions matrix payload for enabled (source, backend) legs."""
+def active_known_break(
+    data: dict[str, Any], source: str, *, today: datetime.date
+) -> dict[str, Any] | None:
+    """Return the unexpired ``known_breaks`` entry for ``source``, if any.
+
+    An expired entry no longer excuses the leg: it runs as an ordinary leg and
+    fails only if the migration path is still broken.
+    """
+    for kb in data.get("known_breaks") or []:
+        if not isinstance(kb, dict) or kb.get("source") != source:
+            continue
+        expires = _parse_date(kb.get("expires"))
+        if expires is not None and expires >= today:
+            return kb
+    return None
+
+
+def expired_known_breaks(data: dict[str, Any], *, today: datetime.date) -> list[dict[str, Any]]:
+    """Return ``known_breaks`` entries whose ``expires`` date has passed."""
+    expired: list[dict[str, Any]] = []
+    for kb in data.get("known_breaks") or []:
+        if not isinstance(kb, dict):
+            continue
+        expires = _parse_date(kb.get("expires"))
+        if expires is not None and expires < today:
+            expired.append(kb)
+    return expired
+
+
+def resolve_ghcr_digest(tag: str, *, attempts: int = 3, timeout: float = 15.0) -> str | None:
+    """Return the published manifest digest for ``SOURCE_IMAGE:<tag>``, or ``None``.
+
+    ``None`` covers both "not published (yet)" and "registry unreachable"; the
+    caller drops the leg with a warning either way, because neither says
+    anything about the migration path.
+    """
+    token_url = f"https://{SOURCE_REGISTRY}/token?scope=repository:{SOURCE_REPOSITORY}:pull"
+    manifest_url = f"https://{SOURCE_REGISTRY}/v2/{SOURCE_REPOSITORY}/manifests/{tag}"
+    for _ in range(attempts):
+        try:
+            with urllib.request.urlopen(token_url, timeout=timeout) as resp:
+                token = json.load(resp)["token"]
+            req = urllib.request.Request(
+                manifest_url,
+                method="HEAD",
+                headers={"Authorization": f"Bearer {token}", "Accept": _MANIFEST_ACCEPT},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                digest = resp.headers.get("Docker-Content-Digest", "")
+            return digest if _DIGEST_RE.match(digest) else None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+        except (urllib.error.URLError, TimeoutError, KeyError, ValueError):
+            pass
+    return None
+
+
+def build_ci_matrix(
+    data: dict[str, Any],
+    sources: list[Source],
+    *,
+    resolve_digest: DigestResolver,
+    today: datetime.date,
+) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    """Return the GitHub Actions matrix payload and warnings for skipped legs.
+
+    Only roles listed in ``window.enabled_roles`` and enabled backends produce
+    legs. A source whose image digest cannot be resolved is dropped with a
+    warning instead of failing the matrix.
+    """
+    enabled_roles = set(data.get("window", {}).get("enabled_roles") or [])
+    backends = [b for b in data.get("backends", []) if b.get("enabled") is True]
     include: list[dict[str, Any]] = []
-    for target in data.get("targets", []):
-        sources = [s for s in target.get("sources", []) if s.get("phase1_enabled") is True]
-        backends = [b for b in target.get("backends", []) if b.get("enabled") is True]
-        for src in sources:
-            for backend in backends:
-                include.append(
-                    {
-                        "source": src["tag"],
-                        "digest": src["digest"],
-                        "backend": backend["name"],
-                        "blocking": bool(backend.get("blocking", False)),
-                    }
-                )
-    return {"include": include}
+    warnings: list[str] = []
+    for src in sources:
+        if src.role not in enabled_roles:
+            continue
+        digest = resolve_digest(src.tag)
+        if digest is None:
+            warnings.append(
+                f"source {src.tag} ({src.role}) skipped: no published image digest for "
+                f"{SOURCE_IMAGE}:{src.tag} (not yet published, or the registry is unreachable)"
+            )
+            continue
+        known_break = active_known_break(data, src.tag, today=today) is not None
+        for backend in backends:
+            include.append(
+                {
+                    "source": src.tag,
+                    "role": src.role,
+                    "digest": digest,
+                    "backend": backend["name"],
+                    "blocking": bool(backend.get("blocking", False)),
+                    "known_break": known_break,
+                }
+            )
+    for kb in expired_known_breaks(data, today=today):
+        warnings.append(
+            f"known_breaks entry for {kb.get('source')} expired on {kb.get('expires')}; "
+            "the leg is no longer excused"
+        )
+    return {"include": include}, warnings
+
+
+def select_seeder(source: str, seed_dir: Path = SEED_DIR) -> Path | None:
+    """Return the newest ``seed_v<major>_<minor>.py`` not newer than ``source``.
+
+    A seeder stays in force for every later source minor until a newer one is
+    added, so a release that keeps the seeded API surface needs no new seeder.
+    """
+    parsed = parse_version(source)
+    if parsed is None:
+        raise ValueError(f"source version {source!r} is not valid semver")
+    best: tuple[tuple[int, int], Path] | None = None
+    for path in seed_dir.glob("seed_v*.py"):
+        match = _SEEDER_RE.match(path.name)
+        if match is None:
+            continue
+        key = (int(match.group(1)), int(match.group(2)))
+        if key <= parsed[:2] and (best is None or key > best[0]):
+            best = (key, path)
+    return best[1] if best else None
+
+
+def resolve_sources(data: dict[str, Any], repo_root: Path = REPO_ROOT) -> list[Source]:
+    """Return the source window for this checkout from pyproject and git tags."""
+    release_tags = git_release_tags(repo_root)
+    target = target_series(
+        read_pyproject_version(repo_root / "pyproject.toml"),
+        release_tags,
+        git_head_tags(repo_root),
+    )
+    return select_sources(target, release_tags, minors_back=data["window"]["minors_back"])
+
+
+def _append(env_var: str, text: str) -> None:
+    path = os.environ.get(env_var)
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(text)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for validating and emitting the upgrade matrix."""
+    """CLI entry point: validate policy, emit the CI matrix, or answer harness lookups."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Validate supported-upgrades.yaml and optionally emit the GitHub Actions matrix."
-        )
+        description="Validate supported-upgrades.yaml and resolve the upgrade-test window."
     )
-    parser.add_argument(
-        "--verify-git-tags",
-        action="store_true",
-        help="Verify that every source tag exists as a local 'v*' git tag.",
-    )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--emit-github-matrix",
         action="store_true",
-        help="Emit the enabled matrix legs as JSON (and write to GITHUB_OUTPUT when set).",
+        help="Resolve sources from git tags and GHCR and emit the GitHub Actions matrix.",
+    )
+    group.add_argument(
+        "--default-source",
+        action="store_true",
+        help="Print the n-1 source release for this checkout.",
+    )
+    group.add_argument(
+        "--seeder-for",
+        metavar="VERSION",
+        help="Print the seeder script path for a source release.",
     )
     args = parser.parse_args(argv)
 
-    data = load_matrix()
-    tags: set[str] | None = None
-    if args.verify_git_tags:
-        tags = git_release_tags()
-        if not tags:
-            print(
-                "ERROR: --verify-git-tags requested but no 'v*' git tags were found",
-                file=sys.stderr,
-            )
+    if args.seeder_for:
+        seeder = select_seeder(args.seeder_for)
+        if seeder is None:
+            print(f"ERROR: no seeder applies to source {args.seeder_for}", file=sys.stderr)
             return 1
+        print(seeder)
+        return 0
 
-    errors = validate_supported_upgrades(
-        data,
-        pyproject_version=read_pyproject_version(),
-        upgrade_notes_slugs=heading_slugs(),
-        today=datetime.date.today(),
-        release_tags=tags,
-    )
+    data = load_matrix()
+    errors = validate_policy(data, upgrade_notes_slugs=heading_slugs())
     if errors:
         print("ERROR: supported-upgrades.yaml validation failed:", file=sys.stderr)
         for err in errors:
             print(f"  - {err}", file=sys.stderr)
         return 1
 
-    if args.emit_github_matrix:
-        matrix = build_ci_matrix(data)
-        if not matrix["include"]:
-            print(
-                "ERROR: no enabled upgrade matrix legs found in supported-upgrades.yaml",
-                file=sys.stderr,
-            )
+    if args.default_source:
+        sources = resolve_sources(data)
+        if not sources:
+            print("ERROR: no released source found for this checkout", file=sys.stderr)
             return 1
+        print(sources[0].tag)
+        return 0
+
+    if args.emit_github_matrix:
+        sources = resolve_sources(data)
+        matrix, warnings = build_ci_matrix(
+            data, sources, resolve_digest=resolve_ghcr_digest, today=datetime.date.today()
+        )
+        for warning in warnings:
+            print(f"::warning::{warning}")
+        if not sources:
+            print("::warning::no released source versions found in git tags; no upgrade legs")
         payload = json.dumps(matrix, separators=(",", ":"))
         print(f"upgrade matrix: {payload}")
-        github_output = os.environ.get("GITHUB_OUTPUT")
-        if github_output:
-            with open(github_output, "a", encoding="utf-8") as fh:
-                fh.write(f"matrix={payload}\n")
-        step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        if step_summary:
-            legs = ", ".join(f"`{leg['source']}` ({leg['backend']})" for leg in matrix["include"])
-            with open(step_summary, "a", encoding="utf-8") as fh:
-                fh.write(f"**Upgrade matrix legs:** {legs}\n")
+        _append(
+            "GITHUB_OUTPUT", f"matrix={payload}\nhas_legs={str(bool(matrix['include'])).lower()}\n"
+        )
+        window = ", ".join(f"`{s.tag}` ({s.role})" for s in sources) or "none"
+        legs = ", ".join(
+            f"`{leg['source']}` ({leg['backend']}{', known break' if leg['known_break'] else ''})"
+            for leg in matrix["include"]
+        )
+        summary = f"**Upgrade window:** {window}\n\n**Upgrade matrix legs:** {legs or 'none'}\n"
+        if warnings:
+            summary += "".join(f"\n- ⚠️ {w}" for w in warnings) + "\n"
+        _append("GITHUB_STEP_SUMMARY", summary)
 
     return 0
 
