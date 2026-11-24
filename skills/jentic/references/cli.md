@@ -243,8 +243,10 @@ jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{ra
 
 **A call held for human approval exits 3** (`TIMEOUT_PENDING`). stdout
 carries the held envelope (`body.held_execution_id`, `body.review_url`); stderr
-repeats the review link. Show the user the `review_url`, end your turn, and
-once they reply collect the outcome with
+repeats the review link. If you can, first tell the reviewer why you are
+making the call with `jentic executions explain <held_execution_id> "<reason>"`
+(once; they see it next to the request). Show the user the `review_url`, end
+your turn, and once they reply collect the outcome with
 `jentic executions poll <held_execution_id>` — never re-send the call.
 `executions poll` (and `execute --wait`) prints the result exactly like a call
 that ran at once (exit 0), or the denial/expiry (exit 2). If the call is still
@@ -253,6 +255,7 @@ prints the review link and id: show the user the link again and end your turn.
 
 ```
 jentic execute POST:https://api.example.com/v1/orders -d '{"n":1}'   # exit 3: held, prints review_url
+jentic executions explain <held_execution_id> "Order 4821 is the customer's replacement"  # optional, once
 jentic executions poll <held_execution_id> --timeout 2m               # after the user decides
 ```
 

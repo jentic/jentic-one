@@ -1,8 +1,8 @@
 /**
  * SelectedAgentPanel — the selected agent's card, stat strip, non-active state
- * banner, "Can call" list/card workspace, Add-APIs tray/queue, and API access
- * sidebar. Tiles are composed client-side from reads the app already makes — no
- * new endpoints.
+ * banner, "Waiting for you" card of held calls, "Can call" list/card
+ * workspace, Add-APIs tray/queue, and API access sidebar. Tiles are composed
+ * client-side from reads the app already makes — no new endpoints.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotionConfig } from 'framer-motion';
@@ -38,6 +38,7 @@ import {
 	type ApiTileModel,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
+import type { HeldCall } from '@/shared/approvals';
 import {
 	AGENTS_WRITE,
 	CREDENTIALS_WRITE,
@@ -56,9 +57,11 @@ import { ExpandAllToggle } from '@/modules/agents/components/flat/ExpandAllToggl
 import { ApiCard } from '@/modules/agents/components/flat/ApiCard';
 import { ApiViewToggle } from '@/modules/agents/components/flat/ApiViewToggle';
 import { ApiViewSwitch } from '@/modules/agents/components/flat/ApiViewSwitch';
-import { API_CARD_GRID, API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
+import { API_CARD_GRID } from '@/modules/agents/components/flat/apiCardGrid';
 import { LENS_CARD_VARIANTS, type LensItem } from '@/modules/agents/lib/apiViewMotion';
 import { TreeBranch } from '@/modules/agents/components/flat/TreeBranch';
+import { HeldCallsCard, HeldCallsStatus } from '@/modules/agents/components/flat/HeldCallsCard';
+import { heldCallApiTitle } from '@/modules/agents/lib/heldCalls';
 import { API_VIEWS, API_VIEW_STORAGE_KEY, DEFAULT_API_VIEW } from '@/modules/agents/lib/apiView';
 import {
 	rowActivity,
@@ -67,6 +70,7 @@ import {
 } from '@/modules/agents/lib/apiRowActivity';
 import { isBlockedStatus, deriveTileStatus } from '@/modules/agents/lib/tileStatus';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
+import { siblingApiReferences, siblingTiles } from '@/modules/agents/lib/sharedRules';
 import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
@@ -191,8 +195,19 @@ const NO_APIS_COPY: Record<ActorStatus, string> = {
 	pending:
 		'Nothing is bound yet, and a pending agent cannot authenticate either. Approve it first, then add the APIs it needs.',
 	rejected: 'A rejected agent holds no credentials and cannot authenticate.',
-	archived: 'Archiving swept its credential bindings; an archived agent keeps no access.',
+	archived:
+		"Read-only. It can't authenticate, and its credential bindings, grants and consents were removed.",
 };
+
+/** Names the picks a batch still owes: "Stripe and Notion are picked, not set up yet." */
+function waitingPicksNote(items: readonly PreflightItem[]): string {
+	const names = items.map((item) => item.api.label);
+	const shown =
+		names.length <= 2
+			? names.join(' and ')
+			: `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
+	return `${shown} ${names.length === 1 ? 'is' : 'are'} picked, not set up yet.`;
+}
 
 export interface SelectedAgentPanelProps {
 	agent: AgentEntity;
@@ -210,6 +225,8 @@ export interface SelectedAgentPanelProps {
 	onDeny: () => void;
 	/** This agent was just created and its APIs are the next step. */
 	autoOpenAddApis: boolean;
+	/** Auto-opened from the New agent panel: the tray's way out reads "Skip for now". */
+	autoOpenFromNewAgent: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
 	onAutoOpenAddApisConsumed: () => void;
 	/** APIs already chosen: the auto-open skips the tray and queues these. */
@@ -221,10 +238,13 @@ export interface SelectedAgentPanelProps {
 	/** The agent's Blocked-credential figure, or `null` once it can't be claimed
 	 * (the join is loading or failed, or the panel has gone). */
 	onBlockedCount: (agentId: string, blocked: number | null) => void;
+	/** This agent's held calls waiting for the viewer's decision, oldest first. */
+	heldCalls: readonly HeldCall[];
 	/** Sticky offsets and pin-state callbacks under the measured agent strip. */
 	pinning: AgentCardPinning;
 	/** Opens the agent picker (the card's name is its button). */
 	onSwitchAgent: () => void;
+	onOpenActivity: () => void;
 }
 
 /** One row's verbs, made once per row and kept while its credential holds. */
@@ -242,6 +262,9 @@ interface RowCallbacks {
 /** DOM id of the API access sidebar panel (the tiles' aria-controls target). */
 const API_ACCESS_SIDEBAR_ID = 'api-access-sidebar';
 
+/** The waiting card's key in the API rows' pin stack. */
+const HELD_CALLS_PIN = 'held-calls';
+
 export function SelectedAgentPanel({
 	agent,
 	credentialsSource,
@@ -253,13 +276,16 @@ export function SelectedAgentPanel({
 	approvePending,
 	onDeny,
 	autoOpenAddApis,
+	autoOpenFromNewAgent,
 	onAutoOpenAddApisConsumed,
 	autoQueueApis,
 	queueBatch,
 	onQueueBatchChange,
 	onBlockedCount,
+	heldCalls,
 	pinning,
 	onSwitchAgent,
+	onOpenActivity,
 }: SelectedAgentPanelProps) {
 	const reducedMotion = useReducedMotionConfig();
 	// The list⇄cards lens for this agent's "Can call" area, persisted so a
@@ -271,6 +297,9 @@ export function SelectedAgentPanel({
 	);
 	/** Which step of the Add-APIs flow is on screen. */
 	const [addStep, setAddStep] = useState<'closed' | 'tray' | 'queue'>('closed');
+	// Only this opening came from the New agent panel; later ones are ordinary.
+	const [trayFromNewAgent, setTrayFromNewAgent] = useState(false);
+	if (trayFromNewAgent && addStep !== 'tray') setTrayFromNewAgent(false);
 	/** Set while the tray is editing the queue's batch (the queue's Back). The queue
 	 * stays mounted meanwhile so its progress survives; `remaining` is what the
 	 * queue would have handed back, kept for a tray that is closed, not continued. */
@@ -324,6 +353,8 @@ export function SelectedAgentPanel({
 	 * to cards and back starts clean). */
 	const pins = usePinStack();
 	const rowsListId = useId();
+	/** The waiting card's place in the pin stack: it opens and shuts with the rows. */
+	const heldCallsPin = heldCalls.length > 0;
 	/** Open a row's sheet; that row goes back to rest behind it (its pin goes
 	 * — it would otherwise be a stale pin under the sheet). Other pins stay:
 	 * the comparison is still there when the sheet closes. */
@@ -340,6 +371,12 @@ export function SelectedAgentPanel({
 	const tiles = useMemo(
 		() => composeApiTiles(liveBindings, credentialsSource.items, apisSource.items),
 		[liveBindings, credentialsSource.items, apisSource.items],
+	);
+	// Each tile's rule-list siblings, built once per tile list so the memoised
+	// rows and cards keep stable props.
+	const siblingRefsByKey = useMemo(
+		() => new Map(tiles.map((t) => [t.key, siblingApiReferences(t, siblingTiles(t, tiles))])),
+		[tiles],
 	);
 	const stats = useMemo(
 		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
@@ -364,13 +401,8 @@ export function SelectedAgentPanel({
 		}
 	}, [openTileKey, bindings, tiles, onCloseTile]);
 	// Blast radius: the OTHER tiles this credential's binding fans out to.
-	const siblingApiTitles = useMemo(
-		() =>
-			openTile
-				? tiles
-						.filter((t) => t.bindingId === openTile.bindingId && t.key !== openTile.key)
-						.map((t) => t.title)
-				: [],
+	const openSiblingTiles = useMemo(
+		() => (openTile ? siblingTiles(openTile, tiles) : []),
 		[openTile, tiles],
 	);
 
@@ -415,10 +447,12 @@ export function SelectedAgentPanel({
 				? null
 				: { at: executionsQuery.data.items[0]?.startedAt ?? null };
 
-	// `disabled` says it in the tile family rather than a banner.
+	// `disabled` says it in the tile family rather than a banner, `archived` in its read-only notice.
 	const serving = agent.status === 'active';
 	const bannerStatus: BanneredStatus | null =
-		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
+		agent.status === 'active' || agent.status === 'disabled' || agent.status === 'archived'
+			? null
+			: agent.status;
 
 	const isArchived = agent.status === 'archived';
 	// Only pending (cannot authenticate yet), rejected and archived block binding,
@@ -456,7 +490,19 @@ export function SelectedAgentPanel({
 	useEffect(() => {
 		if (owedBatch !== queueBatch) onQueueBatchChange(agent.id, owedBatch);
 	}, [owedBatch, queueBatch, onQueueBatchChange, agent.id]);
-	const openAddApis = (): void => setAddStep(owedBatch.length > 0 ? 'queue' : 'tray');
+	// One basket of picks per agent; Resume setup goes straight to the queue.
+	const openAddApis = (): void => {
+		setBatchEdit(
+			owedBatch.length > 0
+				? {
+						seed: { picks: owedBatch.map((item) => item.api), added: [] },
+						remaining: owedBatch,
+					}
+				: null,
+		);
+		setAddStep('tray');
+	};
+	const resumeSetup = (): void => setAddStep('queue');
 
 	// Bound only while the verb is available, so it never fires a no-op.
 	useHotkey('a', openAddApis, canBind && addStep === 'closed');
@@ -478,6 +524,7 @@ export function SelectedAgentPanel({
 			bindingsFailedToLoad
 		) {
 			onAutoOpenAddApisConsumed();
+			setTrayFromNewAgent(autoOpenFromNewAgent);
 			setAddStep('tray');
 			return;
 		}
@@ -487,6 +534,7 @@ export function SelectedAgentPanel({
 		setAddStep('queue');
 	}, [
 		autoOpenAddApis,
+		autoOpenFromNewAgent,
 		canBind,
 		onAutoOpenAddApisConsumed,
 		autoQueueApis,
@@ -519,18 +567,17 @@ export function SelectedAgentPanel({
 		setRulesFocusKey(key);
 		openSheetFor(key);
 	};
-	// The tree's "Add APIs", also on the card where it is easy to find: the
-	// same flow, tonal (the page keeps no solid primary of its own).
+	// The page's one filled primary; disabled, it takes the quiet unavailable fill.
 	const addApiButton = (
 		<Button
-			variant="tonal"
+			variant="primary"
 			className="w-full"
 			disabled={!canBind}
 			onClick={openAddApis}
 			data-testid="card-add-api"
 		>
 			<Plus className="h-4 w-4" />
-			Add API
+			Add APIs
 		</Button>
 	);
 	// A disabled button can't take focus, so the reason rides on the focusable
@@ -548,22 +595,22 @@ export function SelectedAgentPanel({
 
 	// The "Can call" tree's branches (`TreeBranch`) draw the Library ledger's
 	// trunk + elbows as real elements, so the list entrance can grow them.
-	// The last child is "+ Add APIs": its elbow lands on the 32px button's
-	// centre, which lines up with the rows' avatars.
-	const showAddApis = !isArchived;
-	const renderAddApisItem = (item: LensItem) => (
-		<TreeBranch key="add-apis" lands="button" item={item}>
-			<span className="flex flex-wrap items-center gap-2">
-				<Button variant="tonal" size="sm" disabled={!canBind} onClick={openAddApis}>
-					<Plus className="h-4 w-4" />
-					{owedBatch.length > 0
-						? `Finish adding ${owedBatch.length} ${owedBatch.length === 1 ? 'API' : 'APIs'}`
-						: 'Add APIs'}
-				</Button>
-				{bindBlockedReason && (
-					<span className="text-muted-foreground text-xs">{bindBlockedReason}</span>
-				)}
+	// Unset picks hang off the tree as its last child; the elbow meets the 32px button's centre.
+	const showResume = canBind && owedBatch.length > 0;
+	const resumeNoteId = useId();
+	const resumeSetupLine = showResume ? (
+		<span className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="resume-setup">
+			<Button variant="tonal" size="sm" onClick={resumeSetup} aria-describedby={resumeNoteId}>
+				Resume setup
+			</Button>
+			<span id={resumeNoteId} className="text-muted-foreground text-xs">
+				{waitingPicksNote(owedBatch)}
 			</span>
+		</span>
+	) : null;
+	const renderResumeItem = (item: LensItem) => (
+		<TreeBranch key="resume-setup" lands="button" item={item}>
+			{resumeSetupLine}
 		</TreeBranch>
 	);
 
@@ -575,7 +622,9 @@ export function SelectedAgentPanel({
 	// ONLY the toggle: the stat strip already counts the APIs and credentials.
 	const showViewToggle = hasBindings && !sourcesError && !sourcesDraining && tiles.length > 0;
 	// Pins of rows no longer drawn don't count.
-	const anyPinned = pins.keys.some((key) => tiles.some((t) => t.key === key));
+	const anyPinned = pins.keys.some((key) =>
+		key === HELD_CALLS_PIN ? heldCallsPin : tiles.some((t) => t.key === key),
+	);
 	// One Expand all ⇄ Collapse all in list view, between the card's action
 	// and the lens toggle: Collapse all whenever any row is open.
 	const viewToggle = showViewToggle ? (
@@ -583,7 +632,12 @@ export function SelectedAgentPanel({
 			{apiView === 'list' && (
 				<ExpandAllToggle
 					anyOpen={anyPinned}
-					onExpandAll={() => pins.pinAll(tiles.map((t) => t.key))}
+					onExpandAll={() =>
+						pins.pinAll([
+							...(heldCallsPin ? [HELD_CALLS_PIN] : []),
+							...tiles.map((t) => t.key),
+						])
+					}
 					onCollapseAll={pins.clear}
 					controls={rowsListId}
 				/>
@@ -662,42 +716,7 @@ export function SelectedAgentPanel({
 		return made;
 	}, []);
 
-	// The grid's dashed "+ Add API" affordance — the SAME flow as the tree's
-	// Add APIs, with the Tooltip-on-a-focusable-wrapper reason pattern the card
-	// button already uses when binding is blocked.
-	const addApiTileButton = (
-		<Button
-			variant="ghost"
-			size="sm"
-			data-testid="card-add-api-tile"
-			disabled={!canBind}
-			onClick={openAddApis}
-			className={cn(
-				API_CARD_HEIGHT,
-				'border-hairline-field text-foreground-sub flex w-full gap-2 rounded-[14px] border border-dashed px-0 py-0 text-[12.5px] font-bold active:scale-100',
-				'transition-[color,background-color,border-color] duration-150 motion-reduce:transition-none',
-				'focus-visible:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.65)] focus-visible:ring-0 focus-visible:ring-offset-0',
-				canBind
-					? 'hover:bg-surface-1/50 hover:text-foreground hover:border-control-edge/40'
-					: 'hover:text-foreground-sub hover:bg-transparent disabled:opacity-60',
-			)}
-		>
-			<Plus className="h-4 w-4" />
-			Add API
-		</Button>
-	);
-	const addApiTile =
-		!isArchived &&
-		(bindBlockedReason ? (
-			<Tooltip content={bindBlockedReason} placement="bottom" className="w-full">
-				{addApiTileButton}
-			</Tooltip>
-		) : (
-			addApiTileButton
-		));
-
-	// Items in either lens: one per tile, plus the trailing Add API(s) item.
-	const lensItems = tiles.length + (showAddApis ? 1 : 0);
+	const lensItems = tiles.length + (showResume ? 1 : 0);
 
 	const cardsGrid = (
 		<ul
@@ -720,7 +739,9 @@ export function SelectedAgentPanel({
 					className="flex min-w-0"
 				>
 					<ApiCard
+						agentId={agent.id}
 						tile={tile}
+						siblings={siblingRefsByKey.get(tile.key)}
 						rules={ruleSummaries.get(tile.credentialId)}
 						agentServing={serving}
 						accountLabel={tileAccountLabels.get(tile.key)}
@@ -731,13 +752,13 @@ export function SelectedAgentPanel({
 					/>
 				</motion.li>
 			))}
-			{addApiTile && (
+			{resumeSetupLine && (
 				<motion.li
 					custom={{ i: tiles.length, n: lensItems }}
 					variants={LENS_CARD_VARIANTS}
-					className="flex min-w-0"
+					className="col-span-full flex min-w-0"
 				>
-					{addApiTile}
+					{resumeSetupLine}
 				</motion.li>
 			)}
 		</ul>
@@ -758,6 +779,7 @@ export function SelectedAgentPanel({
 						<ApiRow
 							agentId={agent.id}
 							tile={tile}
+							siblings={siblingRefsByKey.get(tile.key)}
 							rules={ruleSummaries.get(tile.credentialId)}
 							onRetryRules={verbs.onRetryRules}
 							activity={activityByKey.get(tile.key) as ApiRowActivity}
@@ -780,9 +802,57 @@ export function SelectedAgentPanel({
 					</TreeBranch>
 				);
 			})}
-			{showAddApis && renderAddApisItem({ i: tiles.length, n: lensItems })}
+			{showResume && renderResumeItem({ i: tiles.length, n: lensItems })}
 		</ul>
 	);
+
+	// The held calls waiting for the viewer sit first under the card and scroll
+	// with the list. In the list lens they are the tree's first branch, its
+	// trunk running on into the rows, or stopping at this branch when no tree
+	// follows (a loading, failed or archived list); the cards lens has no tree,
+	// so there they sit flush, one grid gap under the card.
+	const listSettled =
+		!bindingsQuery.isPending &&
+		!(hasBindings && sourcesDraining) &&
+		!bindingsQuery.error &&
+		!(hasBindings && sourcesError);
+	const cardsShown = listSettled && tiles.length > 0 && apiView === 'cards';
+	const treeFollows =
+		listSettled && (tiles.length === 0 ? !isArchived : apiView === 'list' && !apisDegraded);
+	const heldCallsCard =
+		heldCalls.length > 0 ? (
+			<HeldCallsCard
+				calls={heldCalls}
+				agentName={agent.name}
+				apiTitleOf={(call) => heldCallApiTitle(call, tiles)}
+				pinned={pins.isPinned(HELD_CALLS_PIN)}
+				onPinnedChange={(on) => {
+					if (on !== pins.isPinned(HELD_CALLS_PIN)) pins.toggle(HELD_CALLS_PIN);
+				}}
+			/>
+		) : null;
+	const heldCallsRow =
+		heldCallsCard &&
+		(cardsShown ? (
+			<div data-testid="held-calls-row">{heldCallsCard}</div>
+		) : (
+			// On a phone the tree's indent would leave the card a third of the
+			// screen, so there it sits flush, as in the cards view.
+			<div
+				data-testid="held-calls-row"
+				className="-mt-[9px] pl-[31px] max-sm:mt-0 max-sm:pl-0"
+			>
+				<TreeBranch
+					as="div"
+					lands="row"
+					item={{ i: 0, n: 1 }}
+					continues={treeFollows}
+					flushOnPhones
+				>
+					{heldCallsCard}
+				</TreeBranch>
+			</div>
+		));
 
 	return (
 		// No entrance on the panel itself: the card's frame holds still under the
@@ -802,6 +872,7 @@ export function SelectedAgentPanel({
 				onSwitchAgent={onSwitchAgent}
 				fadeIn
 				viewToggle={viewToggle}
+				statusExtra={heldCalls.length > 0 ? <HeldCallsStatus /> : null}
 				description={
 					agent.description ? (
 						<ExpandableText lines={1} className="text-muted-foreground text-sm">
@@ -836,6 +907,8 @@ export function SelectedAgentPanel({
 				}
 			/>
 
+			{heldCallsRow}
+
 			<motion.section
 				aria-label={`APIs ${agent.name} can call`}
 				data-testid="can-call"
@@ -861,10 +934,10 @@ export function SelectedAgentPanel({
 						<div className="pt-[13px] pl-[65px]">
 							<ErrorAlert message={bindingsQuery.error as Error} />
 						</div>
-						{/* Still reachable: the tray holds on the failed read and retries it. */}
-						{showAddApis && (
+						{/* The card's Add APIs stays live: the tray holds on the failed read and retries it. */}
+						{showResume && (
 							<ul className="pt-[3px] pl-[31px]">
-								{renderAddApisItem({ i: 0, n: 1 })}
+								{renderResumeItem({ i: 0, n: 1 })}
 							</ul>
 						)}
 					</>
@@ -879,17 +952,25 @@ export function SelectedAgentPanel({
 					<div className="pt-[13px] pl-[65px]">
 						<p
 							data-testid="can-call-empty"
-							className="bg-surface-1/55 text-foreground-sub rounded-[14px] px-4 py-3.5 text-[12.5px]"
+							className="bg-surface-1/55 text-foreground-sub rounded-[14px] px-4 py-3.5 text-xs"
 						>
-							{NO_APIS_COPY[agent.status]}
+							{NO_APIS_COPY.archived}{' '}
+							<Button
+								variant="ghost"
+								size="xs"
+								onClick={onOpenActivity}
+								className="text-primary hover:text-primary h-auto px-0 py-0 text-xs font-semibold hover:bg-transparent hover:underline"
+							>
+								See its activity
+							</Button>
 						</p>
 					</div>
 				) : tiles.length === 0 ? (
 					<ul className={cn('pt-[3px] pl-[31px]', !serving && 'saturate-[.35]')}>
-						<TreeBranch lands="row" item={{ i: 0, n: 2 }}>
+						<TreeBranch lands="row" item={{ i: 0, n: showResume ? 2 : 1 }}>
 							<div
 								data-testid="can-call-empty"
-								className="bg-surface-1/55 max-w-prose rounded-[14px] px-4 py-3.5 text-[12.5px]"
+								className="bg-surface-1/55 max-w-prose rounded-[14px] px-4 py-3.5 text-xs"
 							>
 								{/* The card above names the agent; here it appears once, cut
 								    to its budget, so a long name can't swallow the line. */}
@@ -901,7 +982,7 @@ export function SelectedAgentPanel({
 								</p>
 							</div>
 						</TreeBranch>
-						{showAddApis && renderAddApisItem({ i: 1, n: 2 })}
+						{showResume && renderResumeItem({ i: 1, n: 2 })}
 					</ul>
 				) : (
 					<>
@@ -964,6 +1045,7 @@ export function SelectedAgentPanel({
 						onRetryBindings={() => void bindingsQuery.refetch()}
 						bindingsRetrying={bindingsQuery.isFetching}
 						seed={batchEdit?.seed ?? null}
+						fromNewAgent={trayFromNewAgent}
 						onContinue={(items) => {
 							onQueueBatchChange(agent.id, items);
 							setBatchEdit(null);
@@ -994,7 +1076,8 @@ export function SelectedAgentPanel({
 			<ApiAccessSidebar
 				agent={agent}
 				tile={openTile}
-				siblingApiTitles={siblingApiTitles}
+				siblingTiles={openSiblingTiles}
+				onOpenTile={openSheetFor}
 				accountCount={openTile ? (multiAccount.get(tileApiKey(openTile))?.count ?? 1) : 1}
 				open={openTileKey != null}
 				onClose={() => {

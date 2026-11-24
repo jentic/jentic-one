@@ -83,6 +83,19 @@ describe('deriveTileStatus', () => {
 		expect(deriveTileStatus({ ...live, rules: none })).toBe('blocked-no-rules');
 	});
 
+	it('reads Rules out of date, never Ready, while an action rule names ids the API no longer has', () => {
+		const status = deriveTileStatus({ ...live, rules: rules(1, 1), staleActionRules: true });
+		expect(status).toBe('rules-outdated');
+		expect(TILE_STATUS_LABEL[status]).toBe('Rules out of date');
+		expect(isBlockedStatus(status)).toBe(false);
+		// Blocked still wins: with nothing allowed, no call gets through either way.
+		expect(deriveTileStatus({ ...live, rules: rules(0, 1), staleActionRules: true })).toBe(
+			'blocked-all-denied',
+		);
+		// Unset (a tile that cannot read the API's operations) reads as before.
+		expect(deriveTileStatus({ ...live, rules: rules(1, 1) })).toBe('ready');
+	});
+
 	it('only the two Blocked statuses are blocked', () => {
 		for (const s of ['ready', 'suspended', 'not-serving', 'sign-in-needed'] as const) {
 			expect(isBlockedStatus(s)).toBe(false);

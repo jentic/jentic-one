@@ -44,6 +44,7 @@ import {
 import { formatApiVersion, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { HOVER_INTENT_IGNORE, useHoverIntent } from '@/shared/hooks';
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 import type { BindingRulesState } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import {
@@ -62,10 +63,14 @@ import {
 	API_ROW_METRIC_STATUS_LG,
 } from '@/modules/agents/components/flat/apiRowGrid';
 import type { ApiRowActivity } from '@/modules/agents/lib/apiRowActivity';
+import { useActionRulesHealth } from '@/modules/agents/lib/useActionRulesHealth';
+import type { SiblingApiReference } from '@/shared/credentials/components';
 
 interface ApiRowProps {
 	agentId: string;
 	tile: ApiTileModel;
+	/** The other APIs the binding's rule list governs, so their actions aren't read as stale. */
+	siblings?: readonly SiblingApiReference[];
 	/** Effect breakdown of the operator rules on the row's binding, or where its
 	 * read stands — the summary is omitted rather than guessed while unknown. */
 	rules: BindingRulesState | undefined;
@@ -137,13 +142,17 @@ export const ApiRow = memo(function ApiRow({
 	pinned = false,
 	onTogglePin,
 	canConnect = true,
+	siblings,
 }: ApiRowProps) {
 	const reducedMotion = useReducedMotionConfig();
+	const health = useActionRulesHealth(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
+		staleActionRules: health.outdated,
+		ambiguousActionRules: health.ambiguous,
 	});
 	// The marker already says "Blocked · no rules"; elsewhere the summary is the
 	// only place the grant shows.
@@ -161,6 +170,7 @@ export const ApiRow = memo(function ApiRow({
 	]
 		.filter(Boolean)
 		.join(' · ');
+	const AuthIcon = tile.authLabel && tile.authType ? credentialTypeIcon(tile.authType) : null;
 	const idle = tile.suspended || !agentServing;
 
 	// Reveal: pinned by the list, or previewed — a mouse at rest on the row,
@@ -324,10 +334,11 @@ export const ApiRow = memo(function ApiRow({
 				</div>
 				<div className="col-start-2 min-w-0 lg:col-start-3 lg:row-start-1">
 					<p
-						className="text-foreground-sub truncate text-xs leading-[18px]"
+						className="text-foreground-sub flex min-w-0 items-center gap-1.5 text-xs leading-[18px]"
 						data-testid="tile-capability"
 					>
-						{capability}
+						{AuthIcon && <AuthIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
+						<span className="min-w-0 truncate">{capability}</span>
 					</p>
 					{tile.awaitingConsent ? (
 						<StatusText

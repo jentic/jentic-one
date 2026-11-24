@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { PauseCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ruleSummary } from '@/shared/lib';
 import {
 	useTestAgentBindingPermissions,
@@ -7,7 +6,9 @@ import {
 	type BindingPermissionTestResult,
 } from '@/modules/agents/api';
 import { toDisplayRules } from '@/modules/agents/components/detail/shared';
-import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import { useVendorOperationsProgress } from '@/shared/credentials/api/vendors-hooks';
+import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
+import { operationForRequest } from '@/shared/credentials/lib/template-matcher';
 import {
 	type OpsApiReference,
 	MatchedRuleText,
@@ -28,6 +29,12 @@ import {
  * The verdict evaluates the SAVED rules (what the broker sees at request
  * time), not the editor's unsaved draft — the caption says so.
  *
+ * Action rules name operations by id, and the broker resolves every request
+ * to its operation before it evaluates them. The dry run does the same: the
+ * method and path are matched to the API's operation and its id goes with the
+ * request, unless the operator typed one. Without that, a By action deny
+ * would never show in a test.
+ *
  * The controls are the shared `RuleRequestTester`; this binds them to the
  * broker's dry run.
  */
@@ -37,10 +44,9 @@ export interface AgentBindingRuleTesterProps {
 	credentialId: string;
 	/** The binding's SAVED rules (system rows included), for naming the match. */
 	savedRules: BindingPermissionRule[];
-	/** Disable the tester while the host's editor holds an unsaved draft — the
-	 * dry-run evaluates SAVED rules, so a verdict against a stale set would
-	 * mislead. The caption names the reason. */
-	disabled?: boolean;
+	/** The host's editor holds unsaved changes: the tester still runs (on the
+	 * SAVED rules) and its caption says the draft isn't what it checks. */
+	draftPending?: boolean;
 	/** The API the binding covers — its real paths seed the path placeholder. */
 	apiReference?: OpsApiReference | null;
 }
@@ -71,17 +77,30 @@ function resolveMatch(
 function Verdict({
 	result,
 	savedRules,
+	operation,
 }: {
 	result: BindingPermissionTestResult;
 	savedRules: BindingPermissionRule[];
+	/** The API operation the request was read as, when the path resolved to one. */
+	operation: VendorOperation | null;
 }) {
+	const asOperation = operation ? (
+		<span data-testid="rule-tester-operation">
+			{' '}
+			· as {operation.method.toUpperCase()} {operation.path}
+		</span>
+	) : null;
 	if (!result.matched) {
-		return <VerdictChip outcome="denied">— no rule matched (default deny)</VerdictChip>;
+		return (
+			<VerdictChip outcome="denied">
+				— no rule matched (default deny){asOperation}
+			</VerdictChip>
+		);
 	}
 	const outcome = verdictOutcome(result.effect);
 	const { anchor, summary } = resolveMatch(result, savedRules);
 	const effectWord =
-		outcome === 'allowed' ? 'allow' : outcome === 'approval' ? 'require-approval' : 'deny';
+		outcome === 'allowed' ? 'an allow' : outcome === 'approval' ? 'an ask' : 'a deny';
 	return (
 		<VerdictChip outcome={outcome}>
 			{result.is_system ? (
@@ -90,9 +109,10 @@ function Verdict({
 				<MatchedRuleText
 					anchor={anchor}
 					summary={summary}
-					fallback={<>— matched a {effectWord} rule on this binding</>}
+					fallback={<>— matched {effectWord} rule on this binding</>}
 				/>
 			)}
+			{asOperation}
 		</VerdictChip>
 	);
 }
@@ -101,31 +121,42 @@ export function AgentBindingRuleTester({
 	agentId,
 	credentialId,
 	savedRules,
-	disabled = false,
+	draftPending = false,
 	apiReference,
 }: AgentBindingRuleTesterProps) {
-	// Same query key as the rule editor's suggestions, so this reads the cache.
-	const opsQuery = useVendorOperations(apiReference ?? undefined, { enabled: !!apiReference });
-	const paths = useMemo(() => opsQuery.data?.data?.map((op) => op.path), [opsQuery.data]);
+	// The whole operation list, off the same cache as By action and Effective
+	// access: a request must resolve to any operation, not just the first page's.
+	const { operations } = useVendorOperationsProgress(apiReference ?? undefined, {
+		enabled: !!apiReference,
+	});
+	const paths = useMemo(() => operations.map((op) => op.path), [operations]);
 	const test = useTestAgentBindingPermissions(agentId, credentialId);
 	const { reset: resetVerdict } = test;
+	/** The operation the last run's path resolved to (none when an id was typed). */
+	const [operation, setOperation] = useState<VendorOperation | null>(null);
 
 	// A verdict speaks only for the rules it was run against, and an always-mounted
 	// host keeps this tester alive across saves. So drop it when the saved rules
-	// change CONTENT (compared by value) or when an edit session ends.
+	// change CONTENT (compared by value).
 	const savedRulesFingerprint = JSON.stringify(savedRules);
-	const verdictContext = useRef({ savedRulesFingerprint, disabled });
+	const verdictContext = useRef(savedRulesFingerprint);
 	useEffect(() => {
 		const prev = verdictContext.current;
-		verdictContext.current = { savedRulesFingerprint, disabled };
-		if (savedRulesFingerprint !== prev.savedRulesFingerprint || (prev.disabled && !disabled)) {
-			resetVerdict();
-		}
-	}, [savedRulesFingerprint, disabled, resetVerdict]);
+		verdictContext.current = savedRulesFingerprint;
+		if (savedRulesFingerprint !== prev) resetVerdict();
+	}, [savedRulesFingerprint, resetVerdict]);
 
 	return (
 		<RuleRequestTester
-			onRun={(request) => test.mutate(request)}
+			onRun={(request) => {
+				// A typed id wins; else the path is read as the API's operation, so
+				// the rules on that operation are checked as the broker checks them.
+				const op = request.operation_id
+					? null
+					: operationForRequest(operations, request.method, request.path);
+				setOperation(op);
+				test.mutate(op ? { ...request, operation_id: op.operation_id } : request);
+			}}
 			pending={test.isPending}
 			error={
 				test.isError
@@ -134,29 +165,18 @@ export function AgentBindingRuleTester({
 						: 'Test failed.'
 					: null
 			}
-			verdict={test.data ? <Verdict result={test.data} savedRules={savedRules} /> : null}
-			disabled={disabled}
+			verdict={
+				test.data ? (
+					<Verdict result={test.data} savedRules={savedRules} operation={operation} />
+				) : null
+			}
 			paths={paths}
 			note={
-				disabled ? (
-					<p
-						className="text-foreground-sub text-xs"
-						data-testid="rule-tester-disabled-note"
-					>
-						<PauseCircle
-							className="text-caution -mt-px mr-1 inline h-3.5 w-3.5 align-middle"
-							aria-hidden="true"
-						/>
-						Paused while the editor holds unsaved changes — the dry-run evaluates the{' '}
-						<strong>saved</strong> rules only.
-					</p>
-				) : (
-					<p className="text-foreground-sub text-xs">
-						Dry-runs the broker's decision against the <strong>saved</strong> rules.
-						Nothing is sent upstream. Paths are relative to the API's server URL (the
-						spec's paths), without the server's base path.
-					</p>
-				)
+				<p className="text-foreground-sub text-xs" data-testid="rule-tester-note">
+					Checks the <strong>saved</strong> rules, action rules included — the path is
+					read as the API's operation. Nothing is sent upstream
+					{draftPending ? ' — save to test your changes.' : '.'}
+				</p>
 			}
 		/>
 	);

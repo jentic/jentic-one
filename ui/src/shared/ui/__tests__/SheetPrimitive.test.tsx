@@ -4,7 +4,14 @@ import { vi } from 'vitest';
 // only fires for TRUSTED key events, which @testing-library/user-event's
 // synthetic dispatch cannot produce.
 import { userEvent as browserUser } from 'vitest/browser';
-import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	within,
+	checkA11y,
+} from '@/__tests__/test-utils';
 import {
 	SHEET_EXIT_MS,
 	SheetBody,
@@ -129,6 +136,54 @@ describe('SheetPrimitive', () => {
 		expect(input).toHaveFocus();
 		// Never moved away and back: every keystroke typed meanwhile would be lost.
 		expect(blurs).not.toHaveBeenCalled();
+	});
+
+	it('hands focus to the opener’s successor when the opener re-rendered into a new node', async () => {
+		// A flow of sheets changes the data its opener is drawn from (an agent
+		// card redrawn with its new API), so the node that had focus is gone when
+		// the last sheet closes. Its successor — same test id — takes the focus.
+		function SwappingHost() {
+			const [open, setOpen] = useState(false);
+			const [gen, setGen] = useState(0);
+			return (
+				<>
+					<button
+						key={gen}
+						type="button"
+						data-testid="opener"
+						onClick={() => setOpen(true)}
+					>
+						Open
+					</button>
+					<SheetPrimitive open={open} onClose={() => setOpen(false)} ariaLabel="Swap">
+						<button
+							type="button"
+							onClick={() => {
+								setGen((g) => g + 1);
+								setOpen(false);
+							}}
+						>
+							Done
+						</button>
+					</SheetPrimitive>
+				</>
+			);
+		}
+		const user = userEvent.setup();
+		renderWithProviders(<SwappingHost />);
+		const opener = screen.getByTestId('opener');
+		await user.click(opener);
+		const dialog = await screen.findByRole('dialog', { name: 'Swap' });
+		await waitFor(() =>
+			expect(within(dialog).getByRole('button', { name: 'Done' })).toHaveFocus(),
+		);
+		await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Swap' })).toBeNull(), {
+			timeout: 2000,
+		});
+		const successor = screen.getByTestId('opener');
+		expect(successor).not.toBe(opener);
+		await waitFor(() => expect(successor).toHaveFocus());
 	});
 
 	it('hands focus back to the trigger after a host swaps initialFocus mid-entrance', async () => {

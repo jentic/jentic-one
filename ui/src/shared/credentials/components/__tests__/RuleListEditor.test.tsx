@@ -35,7 +35,11 @@ describe('RuleListEditor (connect flow)', () => {
 		await user.click(screen.getByRole('button', { name: /add rule/i }));
 		await user.click(screen.getByRole('button', { name: 'ask' }));
 		await user.click(screen.getByRole('button', { name: 'Add' }));
-		expect(screen.getByText(/"ask" rule must constrain/)).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				'An Ask rule needs at least one method, a path, or actions to match — on its own it would match every request.',
+			),
+		).toBeInTheDocument();
 		expect(state()).toEqual([]);
 	});
 

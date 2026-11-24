@@ -15,10 +15,14 @@
  *   calls  adds the Origin picker (the one list with an `origin` param).
  *
  * Free-text search is intentionally absent: no Monitor list endpoint supports
- * server-side search yet (tracked in jentic-one#624).
+ * server-side search yet (tracked in jentic-one#624). What the calls lens does
+ * take is an ID — the agent id an agent's Settings show, or a call's trace id —
+ * since those are the ids the rest of the app prints; a pasted agent id becomes
+ * the actor filter, anything else the trace filter.
  */
+import { useEffect, useState } from 'react';
 import { Route, Users } from 'lucide-react';
-import { SegmentedToggle, type SegmentedToggleOption } from '@/shared/ui';
+import { Input, SegmentedToggle, type SegmentedToggleOption } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useActors, type ActivitySource } from '@/modules/monitor/api';
 import { FilterSelect } from '@/modules/monitor/components/FilterSelect';
@@ -43,6 +47,64 @@ const decodeActor = (value: string): { id: string; type: string } | null => {
 	const [id, type] = value.split(ACTOR_SEP);
 	return id ? { id, type: type ?? '' } : null;
 };
+
+/** An agent id, as the platform mints them (`agnt_…`). */
+const AGENT_ID = /^agnt_[a-z0-9]+$/i;
+/** A user id (`usr_…`). */
+const USER_ID = /^usr_[a-z0-9]+$/i;
+
+/**
+ * The ID box: one field for the ids the app shows elsewhere. An agent or user
+ * id becomes the actor filter and empties the box; anything else filters by
+ * trace. Clearing the box drops the trace filter.
+ */
+function IdFilter() {
+	const filters = useMonitorFilters();
+	const applied = filters.traceId ?? '';
+	const [draft, setDraft] = useState(applied);
+	// Follow the URL (a deep link, a Reset) while the operator isn't typing.
+	useEffect(() => {
+		setDraft(applied);
+	}, [applied]);
+	const commit = (): void => {
+		const value = draft.trim();
+		if (!value) {
+			filters.setTraceId(null);
+			return;
+		}
+		if (AGENT_ID.test(value) || USER_ID.test(value)) {
+			filters.setTraceId(null);
+			filters.setActor(value, AGENT_ID.test(value) ? 'agent' : 'user');
+			setDraft('');
+			return;
+		}
+		filters.setTraceId(value);
+	};
+	return (
+		<Input
+			size="sm"
+			aria-label="Filter by ID"
+			title="An agent id (agnt_…) filters by that agent; a trace id filters to one call."
+			placeholder="Agent or trace ID"
+			value={draft}
+			onChange={(e) => setDraft(e.target.value)}
+			onBlur={commit}
+			onKeyDown={(e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					commit();
+				}
+			}}
+			spellCheck={false}
+			autoComplete="off"
+			className={cn(
+				'h-[1.875rem] w-52 font-mono text-xs',
+				applied && 'bg-primary/15 text-foreground',
+			)}
+			data-testid="monitor-id-filter"
+		/>
+	);
+}
 
 export function MonitorFilterBar({ view }: MonitorFilterBarProps) {
 	const filters = useMonitorFilters();
@@ -111,6 +173,7 @@ export function MonitorFilterBar({ view }: MonitorFilterBarProps) {
 					))}
 				</FilterSelect>
 			)}
+			{view === 'calls' && <IdFilter />}
 		</>
 	);
 }

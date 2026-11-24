@@ -133,12 +133,14 @@ function Harness({
 	filter = '',
 	agents = FLEET,
 	incomplete,
+	waitingCounts,
 }: {
 	initial?: string;
 	onSelect?: (id: string) => void;
 	filter?: string;
 	agents?: AgentEntity[];
 	incomplete?: boolean;
+	waitingCounts?: ReadonlyMap<string, number>;
 }) {
 	const [selected, setSelected] = useState<string | null>(initial);
 	// Mirror production: FlatAgentsSection wraps the strip in the fleet-wide
@@ -156,6 +158,7 @@ function Harness({
 				apiCounts={API_COUNTS}
 				filter={filter}
 				incomplete={incomplete}
+				waitingCounts={waitingCounts}
 			/>
 			<button type="button">elsewhere</button>
 		</AgentInitialsProvider>
@@ -389,6 +392,19 @@ describe('AgentStrip', () => {
 		expect(screen.getByTestId('agent-strip').querySelector('[title]')).toBeNull();
 	});
 
+	it('names the calls waiting for the viewer on the hover card, and only then', async () => {
+		renderStrip({ waitingCounts: new Map([['bravo', 3]]) });
+		act(() => screen.getByRole('tab', { name: /bravo/ }).focus());
+		const card = within(await screen.findByRole('tooltip')).getByTestId('agent-hover-card');
+		expect(card).toHaveTextContent(/Waiting for you\s*3/);
+		expect(within(card).getByText('Waiting for you')).toHaveClass('text-warning');
+		act(() => screen.getByRole('button', { name: 'elsewhere' }).focus());
+		act(() => screen.getByRole('tab', { name: /alpha/ }).focus());
+		const quiet = within(await screen.findByRole('tooltip')).getByTestId('agent-hover-card');
+		expect(quiet).toHaveTextContent('alpha');
+		expect(quiet).not.toHaveTextContent('Waiting for you');
+	});
+
 	it('moves focus with the arrows and switches on Enter', async () => {
 		const user = userEvent.setup();
 		const onSelect = vi.fn();
@@ -533,7 +549,9 @@ describe('AgentStrip', () => {
 			expect(onOpenChange).toHaveBeenLastCalledWith(false);
 
 			await user.click(screen.getByTestId('strip-more'));
-			await screen.findByRole('dialog', { name: 'Switch agent' });
+			const opened = await screen.findByRole('dialog', { name: 'Switch agent' });
+			// Esc is the field's: it takes focus a frame after the dialog opens.
+			await waitFor(() => expect(within(opened).getByRole('combobox')).toHaveFocus());
 			await user.keyboard('{Escape}');
 			await waitFor(() => expect(dialog()).toBeNull());
 
@@ -653,6 +671,128 @@ describe('AgentStrip', () => {
 		const scrollBy = vi.spyOn(scroller, 'scrollBy');
 		await user.click(screen.getByTestId('strip-left-chip'));
 		expect((scrollBy.mock.calls[0][0] as ScrollToOptions).behavior).toBe('auto');
+	});
+
+	/** Archived agents fold behind a "N archived" chip, but a filter, deep link or the chip reveals them. */
+	describe('the archived run', () => {
+		const ARCHIVED_FLEET: AgentEntity[] = [
+			agent('w1', 'waiting-one', 'pending'),
+			agent('alpha', 'alpha'),
+			agent('bravo', 'bravo'),
+			agent('nope', 'denied-one', 'rejected'),
+			agent('old1', 'old-billing', 'archived'),
+			agent('old2', 'old-triage', 'archived'),
+		];
+		const archivedStrip = (props: Parameters<typeof Harness>[0] = {}) =>
+			renderStrip({ agents: ARCHIVED_FLEET, initial: 'alpha', ...props });
+		const toggle = () => screen.getByTestId('strip-archived-toggle');
+		const tabNames = () =>
+			screen.getAllByRole('tab').map((t) => t.getAttribute('data-agent-id'));
+
+		it('folds the archived agents away, and the chip brings them back', async () => {
+			const user = userEvent.setup();
+			archivedStrip();
+			expect(tabNames()).toEqual(['alpha', 'w1', 'bravo', 'nope']);
+			expect(screen.queryByTestId('strip-archived')).toBeNull();
+			expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+			expect(toggle()).toHaveAccessibleName('Show 2 archived agents');
+			expect(toggle()).toHaveTextContent('2 archived');
+
+			await user.click(toggle());
+			expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+			const run = screen.getByTestId('strip-archived');
+			expect(within(run).getAllByRole('tab')).toHaveLength(2);
+			// The run's own label is decorative — each tab says it for itself.
+			expect(run.querySelector('[data-strip-archived-label]')).toHaveAttribute(
+				'aria-hidden',
+				'true',
+			);
+			expect(screen.getByRole('tab', { name: /old-billing/ })).toHaveAccessibleName(
+				/\(Archived\)/,
+			);
+
+			await user.click(toggle());
+			await waitFor(() => expect(screen.queryByTestId('strip-archived')).toBeNull());
+			expect(tabNames()).toEqual(['alpha', 'w1', 'bravo', 'nope']);
+		});
+
+		it('the Hide ⇄ N archived swap keeps focus on the one chip', async () => {
+			const user = userEvent.setup();
+			archivedStrip();
+			const chip = toggle();
+			await user.click(chip);
+			// The same element across the swap, so the keyboard never loses its place.
+			expect(toggle()).toBe(chip);
+			expect(chip).toHaveFocus();
+			expect(chip).toHaveTextContent('Hide');
+			expect(chip).toHaveAccessibleName('Hide archived agents');
+
+			await user.keyboard('{Enter}');
+			expect(toggle()).toBe(chip);
+			expect(chip).toHaveFocus();
+			expect(chip).toHaveTextContent('2 archived');
+		});
+
+		it('arrow traversal reaches the archived tabs only while the run is open', async () => {
+			const user = userEvent.setup();
+			archivedStrip();
+			act(() => screen.getByRole('tab', { name: /alpha/ }).focus());
+			await user.keyboard('{End}');
+			expect(screen.getByRole('tab', { name: /denied-one/ })).toHaveFocus();
+			await user.keyboard('{ArrowRight}');
+			expect(screen.getByRole('tab', { name: /alpha/ })).toHaveFocus();
+
+			await user.click(toggle());
+			act(() => screen.getByRole('tab', { name: /alpha/ }).focus());
+			await user.keyboard('{End}');
+			expect(screen.getByRole('tab', { name: /old-triage/ })).toHaveFocus();
+			await user.keyboard('{ArrowLeft}');
+			expect(screen.getByRole('tab', { name: /old-billing/ })).toHaveFocus();
+			await user.keyboard('{ArrowRight}{ArrowRight}');
+			expect(screen.getByRole('tab', { name: /alpha/ })).toHaveFocus();
+		});
+
+		it('opens itself when the selected agent is archived', async () => {
+			archivedStrip({ initial: 'old1' });
+			await waitFor(() => expect(screen.getByTestId('strip-archived')).toBeInTheDocument());
+			expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+			expect(
+				within(screen.getByTestId('strip-pin')).getByRole('tab', { name: /old-billing/ }),
+			).toHaveAttribute('aria-selected', 'true');
+			expect(within(screen.getByTestId('strip-archived')).getAllByRole('tab')).toHaveLength(
+				1,
+			);
+		});
+
+		it('a filter only an archived agent answers reveals it, rather than emptying the rail', () => {
+			archivedStrip({ filter: 'billing' });
+			// Folded or not, a typed query shows archived matches (as the picker does).
+			expect(screen.getByTestId('strip-archived')).toBeInTheDocument();
+			expect(screen.getByRole('tab', { name: /old-billing/ })).toBeInTheDocument();
+			expect(screen.queryByText('No agents match your filter.')).toBeNull();
+			expect(tabNames()).toEqual(['alpha', 'old1']);
+		});
+
+		it('still says so when the filter matches nothing at all, archived included', () => {
+			archivedStrip({ filter: 'zzz' });
+			expect(screen.getByText('No agents match your filter.')).toBeInTheDocument();
+			expect(screen.queryByTestId('strip-archived')).toBeNull();
+			expect(screen.queryByTestId('strip-archived-toggle')).toBeNull();
+		});
+
+		it('heads the strip with the live count only, and strikes through archived names alone', async () => {
+			const user = userEvent.setup();
+			archivedStrip();
+			expect(screen.getByTestId('strip-header')).toHaveTextContent(/Agents\s*4\s*·/);
+
+			await user.click(toggle());
+			const nameOf = (id: string) =>
+				document.querySelector(`[role="tab"][data-agent-id="${id}"] [dir="auto"]`);
+			expect(nameOf('old1')).toHaveClass('line-through');
+			// Rejected is a decision still open to change, so its name stands.
+			expect(nameOf('nope')).not.toHaveClass('line-through');
+			expect(nameOf('alpha')).not.toHaveClass('line-through');
+		});
 	});
 
 	describe('recent first', () => {
@@ -936,6 +1076,53 @@ describe('compensatedScrollLeft (a switch keeps the visible tabs still)', () => 
 		).toBe(550);
 		expect(compensatedScrollLeft({ ...base, anchorBefore: 700, anchorAfter: 100 })).toBe(0);
 		expect(compensatedScrollLeft({ ...base, anchorBefore: null, anchorAfter: 900 })).toBe(500);
+	});
+});
+
+describe('AgentStrip — + New agent', () => {
+	function renderWithNew(onNew = vi.fn()) {
+		renderWithProviders(
+			<MotionConfig reducedMotion="always">
+				<AgentInitialsProvider initials={smartInitials(FLEET)}>
+					<AgentStrip
+						agents={FLEET}
+						selectedId="alpha"
+						onSelect={() => {}}
+						setupGaps={EMPTY}
+						apiCounts={API_COUNTS}
+						filter=""
+						onNewAgent={onNew}
+					/>
+				</AgentInitialsProvider>
+			</MotionConfig>,
+		);
+		return onNew;
+	}
+
+	it('draws none without a handler', () => {
+		renderStrip();
+		expect(screen.queryByTestId('strip-new-agent')).toBeNull();
+	});
+
+	it('ends the stack: a strip-native button, never filled teal, that opens the panel', async () => {
+		const user = userEvent.setup();
+		const onNew = renderWithNew();
+		const button = screen.getByTestId('strip-new-agent');
+		expect(button).toHaveAccessibleName('New agent');
+		expect(button).not.toHaveAttribute('data-variant', 'primary');
+		expect(button).toHaveAttribute('aria-keyshortcuts', 'n');
+		expect(screen.getByTestId('strip-stack')).toContainElement(button);
+		expect(screen.getByRole('tablist', { name: 'Agents' })).not.toContainElement(button);
+		await user.click(button);
+		expect(onNew).toHaveBeenCalledTimes(1);
+	});
+
+	it('stays inside the rail with a fleet too long to show', () => {
+		renderWithNew();
+		const rail = screen.getByTestId('strip-rail').getBoundingClientRect();
+		const button = screen.getByTestId('strip-new-agent').getBoundingClientRect();
+		expect(button.right).toBeLessThanOrEqual(rail.right);
+		expect(button.left).toBeGreaterThanOrEqual(rail.left);
 	});
 });
 

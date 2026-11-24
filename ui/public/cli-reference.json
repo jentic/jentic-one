@@ -2217,7 +2217,7 @@
           "path": "jentic executions",
           "use": "executions",
           "short": "Follow your held executions (calls awaiting human approval)",
-          "long": "executions follows your held executions: calls a permission rule held for\na human to approve or deny. `jentic execute` prints a held call's\nheld_execution_id; `jentic executions poll \u003cheld_execution_id\u003e` collects\nits outcome.",
+          "long": "executions follows your held executions: calls a permission rule held for\na human to approve or deny. `jentic execute` prints a held call's\nheld_execution_id; `jentic executions explain \u003cheld_execution_id\u003e \u003creason\u003e`\ntells the reviewer why you made it, and `jentic executions poll\n\u003cheld_execution_id\u003e` collects its outcome.",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -2277,6 +2277,31 @@
                   "type": "duration",
                   "default": "30s",
                   "usage": "how long to follow the held call before exiting 3 (TIMEOUT_PENDING): a duration (30s, 1m) or seconds (30); max 5m, 0 checks once"
+                }
+              ]
+            },
+            {
+              "name": "explain",
+              "path": "jentic executions explain",
+              "use": "explain \u003cheld_execution_id\u003e \u003creason\u003e",
+              "short": "Tell the reviewer why a held call is needed",
+              "long": "explain sends the reviewer of a held call — one a permission rule held\nfor human approval — your reason for making it, in a sentence or two.\nThey see it next to the request, as your own claim. Only the agent that\nmade the call can explain it, once, while it waits for a decision.\n\nExit codes:\n  0 — the reason is recorded\n  1 — local/transport failure, or an empty reason\n  2 — an unknown held execution id, or a call already decided or explained",
+              "example": "  jentic executions explain held_2mXk... \"Customer 4821 asked for a refund in ticket #88\"",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
             }

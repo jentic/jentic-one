@@ -52,6 +52,14 @@ updates:
     groups:
       docker-bases:
         patterns: ["*"]
+    # A Postgres major is a user-facing upgrade: an existing data directory
+    # needs pg_upgrade (or a dump and restore) before the new major starts,
+    # and the mirror's tag moves in lockstep with
+    # deploy/helm/values/aws-marketplace.yaml (see #1267, #2151). Minors and
+    # patches still arrive here; a major is bumped by hand with both files.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/ui"

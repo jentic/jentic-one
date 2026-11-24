@@ -25,9 +25,14 @@ import {
 import { TileCardStatus } from '@/modules/agents/components/flat/TileStatusMarker';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 import { API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
+import { useActionRulesHealth } from '@/modules/agents/lib/useActionRulesHealth';
+import type { SiblingApiReference } from '@/shared/credentials/components';
 
 interface ApiCardProps {
+	agentId: string;
 	tile: ApiTileModel;
+	/** The other APIs the binding's rule list governs, so their actions aren't read as stale. */
+	siblings?: readonly SiblingApiReference[];
 	/** The binding's rules state (same source the row reads), driving the status. */
 	rules: BindingRulesState | undefined;
 	/** Whether the AGENT this card belongs to is serving traffic. */
@@ -53,12 +58,17 @@ export function ApiCard({
 	expanded,
 	sidebarId,
 	onOpen,
+	agentId,
+	siblings,
 }: ApiCardProps) {
+	const health = useActionRulesHealth(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
+		staleActionRules: health.outdated,
+		ambiguousActionRules: health.ambiguous,
 	});
 	const blocked = isBlockedStatus(status);
 	const credentialLabel = (accountLabel ?? tile.credentialName).trim() || 'No credential';
@@ -95,7 +105,7 @@ export function ApiCard({
 			aria-label={`${visibleText}${statusTail}${accountsPhrase}. Open access details.`}
 			onClick={onOpen}
 			className={cn(
-				// ONE fixed height for every card (and the add tile — `API_CARD_HEIGHT`),
+				// ONE fixed height for every card (`API_CARD_HEIGHT`),
 				// with three fixed-height rows spread by `justify-between`, so each
 				// row — and so every status dot — sits at the same y across the grid.
 				API_CARD_HEIGHT,

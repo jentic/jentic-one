@@ -8,7 +8,7 @@
  * the session, calls `:confirm`, and decides which step shows.
  */
 import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, Globe, KeyRound, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Globe, ShieldAlert } from 'lucide-react';
 import {
 	ActorLabel,
 	Badge,
@@ -28,6 +28,7 @@ import {
 	sharedWithCount,
 	type SecretKind,
 } from '@/shared/credentials/lib/connectReview';
+import { schemeTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 
 /** The action band: pinned to the bottom of the scrolling sheet body, so the
  *  decision stays in reach however long the review above it runs. */
@@ -48,6 +49,7 @@ const EYEBROW_CLASS = 'text-foreground-faint text-[10.5px] font-bold tracking-[0
 export function ApiTargetDetails({ session }: { session: ReviewSession }) {
 	const { provenance, scheme, pinned_hosts: hosts } = session;
 	const catalog = isCatalogProvenance(session);
+	const SchemeIcon = scheme ? schemeTypeIcon(scheme.type) : null;
 	return (
 		<div className="bg-surface-inset space-y-3 rounded-lg px-3 py-2.5">
 			<div>
@@ -81,11 +83,14 @@ export function ApiTargetDetails({ session }: { session: ReviewSession }) {
 					</p>
 				)}
 			</div>
-			{scheme && (
+			{scheme && SchemeIcon && (
 				<div>
 					<p className={EYEBROW_CLASS}>Authentication</p>
 					<p className="text-foreground mt-1 flex items-center gap-1.5 text-sm">
-						<KeyRound className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+						<SchemeIcon
+							className="text-muted-foreground h-3.5 w-3.5 shrink-0"
+							aria-hidden="true"
+						/>
 						{schemeSummary(scheme)}
 					</p>
 				</div>

@@ -11,6 +11,10 @@ export type HeldExecutionLinksResponse = {
      */
     execution?: (string | null);
     /**
+     * Explain why the agent made the call, for the reviewer. Present while it is pending and not yet explained; only the agent that filed it may use it.
+     */
+    explain?: (string | null);
+    /**
      * The call's result: the upstream response, or why it never ran. Present once the call has finished.
      */
     result?: (string | null);

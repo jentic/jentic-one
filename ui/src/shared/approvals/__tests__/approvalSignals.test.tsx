@@ -14,12 +14,7 @@ import { worker } from '@/mocks/browser';
 import { clearToken, setToken, sharedQueryKeys, type HeldExecutionResponse } from '@/shared/api';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
 import { AuthProvider } from '@/shared/auth';
-import {
-	PendingApprovalsBadge,
-	describeHeldCall,
-	groupApprovalsByAgent,
-	summariseHeldCalls,
-} from '@/shared/approvals';
+import { PendingApprovalsBadge, groupApprovalsByAgent } from '@/shared/approvals';
 
 const page = <T,>(data: T[]) => ({ data, has_more: false, next_cursor: null });
 
@@ -54,13 +49,6 @@ describe('groupApprovalsByAgent', () => {
 		expect(groups.map((g) => g.agentId)).toEqual(['b', 'a']);
 		expect(groups[0].approvals.map((a) => a.id)).toEqual(['b1', 'b2']);
 		expect(groups[0].since).toBe('2026-01-01T00:01:00Z');
-	});
-
-	it('describes one call, and counts several', () => {
-		const one = heldCall();
-		expect(describeHeldCall(one)).toBe('POST /v1/charges on api.stripe.com/payments');
-		expect(summariseHeldCalls([one])).toBe('a call to api.stripe.com/payments');
-		expect(summariseHeldCalls([one, heldCall({ id: 'held_2' })])).toBe('2 calls');
 	});
 });
 

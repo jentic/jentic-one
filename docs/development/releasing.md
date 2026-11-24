@@ -32,8 +32,9 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
      [`ci.yml`](../../.github/workflows/ci.yml) matrix (`full: true`) on the
      tagged commit before `publish-image`. This includes
      `build-candidate-image` and `upgrade-test`, which boots each enabled
-     published release from
-     [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
+     published release in the upgrade window (resolved from the `v*` tags under
+     the policy in
+     [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)),
      seeds live state, upgrades in place to the candidate image, and runs the
      post-upgrade verifier (see
      [Supported upgrades](../operations/supported-upgrades.md)). The same
@@ -127,9 +128,12 @@ Don't link to `#unreleased`: the anchor goes away at release.
 
 The `upgrade-test` job in [`ci.yml`](../../.github/workflows/ci.yml) tests
 in-place upgrades from the previous two minor series (`N-1` and `N-2`,
-collapsed to their latest patch) defined in
-[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
-and documented in [Supported upgrades](../operations/supported-upgrades.md).
+collapsed to their latest patch) under the policy in
+[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
+as documented in [Supported upgrades](../operations/supported-upgrades.md).
+A leg fails only when the upgrade path fails; a leg that cannot reach the
+upgrade step (image pull, source startup, seeding) is reported as inconclusive
+with a warning.
 
 **Promoting `upgrade-test` from report-only to blocking:** during initial
 rollout (first two releases), `upgrade-matrix`, `build-candidate-image`, and
@@ -148,17 +152,12 @@ results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage, ."upgrade-matrix", ."build-
 results=$(echo "$NEEDS_JSON" | jq -r 'del(.coverage) | .[].result')
 ```
 
-**Rolling the support window on a new minor release:** when a new minor
-release `v0.N.0` is published to GHCR, update
-[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
-for the next target series `0.(N+1)` so `0.N.0` becomes `n-1` (pinned to its
-published multi-arch manifest digest) and `0.(N-1).x` becomes `n-2`.
-[`tests/unit/test_supported_upgrades.py`](../../tests/unit/test_supported_upgrades.py)
-and [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py) enforce that
-both `N-1` and `N-2` minor series are present with valid `sha256:` digests, and
-`python -m tests.upgrade.matrix --verify-git-tags` (run in the `upgrade-matrix`
-CI job and in `tests/upgrade/run.sh`) verifies that every source tag matches a
-real `v*` release tag.
+**The support window rolls itself:** no release step edits the upgrade
+matrix. The `upgrade-matrix` CI job runs
+`python -m tests.upgrade.matrix --emit-github-matrix`, which derives the target
+series from `pyproject.toml` and the `v*` tags, picks the latest patch of each
+of the previous two minors, and resolves each source image's digest from GHCR.
+The job summary lists the resolved window and legs.
 
 **Triaging a failing `upgrade-test` leg:**
 
@@ -166,7 +165,7 @@ real `v*` release tag.
    run (contains `compose.log`, `migrate.log`, `migrate-check.log`, and
    `seed-manifest.json`), or reproduce locally:
    ```bash
-   make test-upgrade OLD=<source> BACKEND=<backend>
+   make test-upgrade OLD=<source> BACKEND=<backend>   # OLD defaults to the n-1 source
    ```
 2. Classify the failure into one of three categories (never add blanket
    `continue-on-error` or delete a required source minor):
@@ -182,11 +181,13 @@ real `v*` release tag.
      add a `known_breaks` entry (`source`, `reason`, `upgrade_notes_link`, and
      `expires`) to
      [`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
-     and update the harness to assert the documented refusal/route rather than
-     skipping the leg.
-   - **(c) Seeder drift against an older API shape:** the failure occurs
-     during the `seed` phase against the unmodified old container image. Fix
-     the pinned seeder for `<source>` under `tests/upgrade/seed/`.
+     and update the harness to assert the documented refusal/route. Until the
+     entry's `expires` date, a failure on that source is reported as a warning.
+   - **(c) Seeder drift against an older API shape** (reported as
+     *inconclusive*, not a failure): the `seed` phase fails against the
+     unmodified source image. Add `tests/upgrade/seed/seed_v<major>_<minor>.py`
+     for the first release with the changed API; the harness picks the newest
+     seeder that is not newer than the source.
 
 ## One-time setup (repo/org admin)
 

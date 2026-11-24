@@ -54,3 +54,32 @@ describe('evaluateRuleEffect', () => {
 		).toBe('deny');
 	});
 });
+
+describe('rules naming an operation by its spec operationId', () => {
+	const req = {
+		method: 'POST',
+		path: '/orders',
+		operation_id: 'op_0000000000000000000000000000000000000001',
+		spec_operation_id: 'createOrder',
+	};
+	const deny: PermissionRule = { effect: 'deny', operations: ['createOrder'] };
+	const ask: PermissionRule = { effect: 'require-approval', operations: ['createOrder'] };
+	const allow: PermissionRule = { effect: 'allow', operations: ['createOrder'] };
+	const fallback: PermissionRule = { effect: 'allow', path: '/', match_mode: 'prefix' };
+
+	it('matches the operation as its registry id would', () => {
+		expect(evaluateRuleEffect([deny, fallback], req)).toBe('deny');
+		expect(evaluateRuleEffect([ask, fallback], req)).toBe('require-approval');
+		expect(evaluateRuleEffect([allow], req)).toBe('allow');
+	});
+
+	it('an ambiguous one: a Deny still denies, an Ask refuses with no hold, an Allow grants nothing', () => {
+		const shared = { ...req, ambiguous: true };
+		expect(evaluateRuleEffect([deny, fallback], shared)).toBe('deny');
+		// The Ask halts as default-deny instead of falling through to the allow.
+		expect(evaluateRuleEffect([ask, fallback], shared)).toBe('deny');
+		// The Allow is skipped; the next rule decides.
+		expect(evaluateRuleEffect([allow], shared)).toBe('deny');
+		expect(evaluateRuleEffect([allow, fallback], shared)).toBe('allow');
+	});
+});

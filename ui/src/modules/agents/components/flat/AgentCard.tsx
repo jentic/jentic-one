@@ -1,8 +1,9 @@
 /**
  * AgentCard — the selected agent's card under the strip's notch: avatar, name,
- * a neutral status chip, one facts line (registered · owner or self-registered ·
- * id tail · last activity), one contextual action, the state banner when the
- * agent is not serving, and the KPI row.
+ * a neutral status chip (and, beside it, what the agent is waiting on), one
+ * facts line (registered · owner or self-registered · id tail · last
+ * activity), one contextual action, the state banner when the agent is not
+ * serving, and the KPI row.
  *
  * Status is never a hue: the chip is the neutral tonal chip with the state's
  * glyph (`STATUS_ICON`) and word (`STATUS_LABELS`), the same vocabulary as
@@ -86,7 +87,7 @@ interface AgentCardProps {
 	/** The newest call's time: `{ at: null }` = none yet; `null` = not visible to
 	 * this viewer (the fact is left out); `undefined` = still loading. */
 	lastActivity: { at: string | null } | null | undefined;
-	/** The one contextual action (the tonal "Add API"), if any. */
+	/** The one contextual action (the primary "Add APIs"), if any. */
 	action?: ReactNode;
 	/**
 	 * The "Can call" list ⇄ cards lens toggle, at the header's right end after
@@ -97,6 +98,8 @@ interface AgentCardProps {
 	description?: ReactNode;
 	/** The non-serving state's banner (pending decision, rejected, archived). */
 	banner?: ReactNode;
+	/** Beside the status chip: what the agent is waiting on, if anything. */
+	statusExtra?: ReactNode;
 	/** The KPI row. */
 	kpis?: ReactNode;
 	/** Sticky offsets and pin-state callbacks under the measured agent strip. */
@@ -225,6 +228,7 @@ export function AgentCard({
 	viewToggle,
 	description,
 	banner,
+	statusExtra,
 	kpis,
 	pinning,
 	onSwitchAgent,
@@ -444,7 +448,15 @@ export function AgentCard({
 							ref={headerRef}
 							className="flex flex-wrap items-center gap-x-4 gap-y-3.5 px-4 pt-4 pb-4 sm:px-5 sm:pt-5 sm:pb-[18px]"
 						>
-							<AgentBadge id={agent.id} name={agent.name} size="lg" shape="circle" />
+							<AgentBadge
+								id={agent.id}
+								name={agent.name}
+								size="lg"
+								shape="circle"
+								className={
+									agent.status === 'archived' ? 'opacity-70 grayscale' : undefined
+								}
+							/>
 							<div className="min-w-0 flex-1">
 								<div className="flex min-w-0 items-center gap-2.5">
 									{/* One line at the card's full width; the full name in a tooltip
@@ -466,6 +478,7 @@ export function AgentCard({
 										status={agent.status}
 										data-testid="agent-status-chip"
 									/>
+									{statusExtra}
 								</div>
 								{/* On a phone the facts fold away while the card is pinned. */}
 								<Fold

@@ -19,6 +19,8 @@ import { Button, Input, Select } from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import { explainRules, type RuleVerdict } from '@/shared/credentials/lib/rule-matcher';
+import { operationForRequest } from '@/shared/credentials/lib/template-matcher';
+import type { ActionOperation } from '@/shared/credentials/lib/actionRules';
 import { examplePath } from '@/shared/credentials/lib/path-completion';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
@@ -248,6 +250,12 @@ export interface DraftRuleTesterProps {
 	describeMatch?: (index: number) => ReactNode;
 	paths?: readonly string[];
 	disabled?: boolean;
+	/**
+	 * The API's operations: a request with no operation id typed is read as
+	 * the operation its method and path name, as the broker resolves it — so
+	 * action rules decide it too.
+	 */
+	operations?: readonly ActionOperation[];
 }
 
 /**
@@ -255,19 +263,30 @@ export interface DraftRuleTesterProps {
  * wins, default deny — the broker's semantics, via its parity-pinned TS port.
  * The last request stays asked, so its verdict follows every edit to the rules.
  */
-export function DraftRuleTester({ rules, describeMatch, paths, disabled }: DraftRuleTesterProps) {
+export function DraftRuleTester({
+	rules,
+	describeMatch,
+	paths,
+	disabled,
+	operations,
+}: DraftRuleTesterProps) {
 	const [request, setRequest] = useState<TesterRequest | null>(null);
-	const result = useMemo<RuleVerdict | null>(
-		() =>
-			request
-				? explainRules(rules, {
-						method: request.method,
-						path: request.path,
-						operation_id: request.operation_id ?? null,
-					})
-				: null,
-		[rules, request],
-	);
+	const result = useMemo<RuleVerdict | null>(() => {
+		if (!request) return null;
+		const typed = request.operation_id ?? null;
+		const op = operations
+			? typed
+				? operations.find((o) => o.operation_id === typed || o.spec_operation_id === typed)
+				: operationForRequest(operations, request.method, request.path)
+			: undefined;
+		return explainRules(rules, {
+			method: request.method,
+			path: request.path,
+			operation_id: op?.operation_id ?? typed,
+			spec_operation_id: op?.spec_operation_id ?? null,
+			ambiguous: !!op?.ambiguous_with,
+		});
+	}, [rules, request, operations]);
 
 	// A screen-reader user hears a verdict that changes under an edit, not just
 	// one that answers a click.

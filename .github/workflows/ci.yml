@@ -165,10 +165,11 @@ jobs:
               # inspect .github/workflows/ci.yml directly, so a workflow-only
               # edit must run the arch suite.
               - '.github/workflows/**'
-              # tests/unit/test_supported_upgrades.py validates the supported
-              # upgrades matrix and its upgrade-notes anchor links.
+              # tests/unit/test_supported_upgrades.py validates the upgrade
+              # policy, its upgrade-notes anchor links, and seeder selection.
               - 'tests/upgrade/supported-upgrades.yaml'
               - 'tests/upgrade/matrix.py'
+              - 'tests/upgrade/seed/**'
               - 'docs/operations/upgrade-notes.md'
             integration-tests:
               - 'src/**'
@@ -732,7 +733,7 @@ jobs:
         run: make sync
 
       - name: Download coverage artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           merge-multiple: true
@@ -1614,6 +1615,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_legs: ${{ steps.set-matrix.outputs.has_legs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1623,12 +1625,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Validate release tags and emit supported upgrade matrix
+      # Sources are the latest patch of each prior minor in the window, derived
+      # from the v* tags and pyproject.toml; digests come from GHCR. A source
+      # whose image is not published (yet) is dropped with a warning.
+      - name: Resolve the upgrade window and emit the upgrade matrix
         id: set-matrix
         run: |
           git fetch --tags --force
           uv run --no-project --python 3.12 --with 'pyyaml>=6' \
-            python -m tests.upgrade.matrix --verify-git-tags --emit-github-matrix
+            python -m tests.upgrade.matrix --emit-github-matrix
 
   build-candidate-image:
     name: Build candidate app image
@@ -1683,7 +1688,7 @@ jobs:
     # Report-only: a failure here must not fail the called workflow (release.yml's `ci`).
     continue-on-error: true
     needs: [changes, upgrade-matrix, build-candidate-image]
-    if: needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true'
+    if: (needs.changes.outputs.full == 'true' || needs.changes.outputs.upgrade-test == 'true') && needs.upgrade-matrix.outputs.has_legs == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1694,7 +1699,7 @@ jobs:
           fetch-tags: true
 
       - name: Download candidate image artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: candidate-image
 
@@ -1714,13 +1719,37 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      # tests/upgrade/run.sh exits 1 only when the upgrade path itself fails
+      # (candidate migration, migration check, idempotent re-run, candidate
+      # startup on migrated data, post-upgrade verifier). Exit 75 means the leg
+      # never reached the upgrade step (image pull, source startup, seeding) and
+      # is reported as a warning. A failure on a source with an unexpired
+      # known_breaks entry is also reported as a warning.
       - name: Run upgrade test (${{ matrix.source }} -> candidate on ${{ matrix.backend }})
+        env:
+          OLD: ${{ matrix.source }}
+          OLD_DIGEST: ${{ matrix.digest }}
+          BACKEND: ${{ matrix.backend }}
+          CANDIDATE: jentic-one/app:candidate
+          OUT_DIR: tests/upgrade/.artifacts/${{ matrix.source }}-${{ matrix.backend }}
+          KNOWN_BREAK: ${{ matrix.known_break }}
         run: |
-          make test-upgrade \
-            OLD="${{ matrix.source }}" \
-            BACKEND="${{ matrix.backend }}" \
-            CANDIDATE="jentic-one/app:candidate" \
-            OUT_DIR="tests/upgrade/.artifacts/${{ matrix.source }}-${{ matrix.backend }}"
+          rc=0
+          ./tests/upgrade/run.sh || rc=$?
+          leg="${OLD} -> candidate on ${BACKEND}"
+          if [[ "$rc" -eq 0 ]]; then
+            echo "**Upgrade leg (\`${leg}\`):** passed" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$rc" -eq 75 ]]; then
+            echo "::warning::Upgrade leg ${leg} was inconclusive: it did not reach the upgrade step (see the job log and artifacts)"
+            echo "**Upgrade leg (\`${leg}\`):** inconclusive (did not reach the upgrade step)" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$rc" -eq 1 && "$KNOWN_BREAK" == "true" ]]; then
+            echo "::warning::Upgrade leg ${leg} failed on a source with an active known_breaks entry"
+            echo "**Upgrade leg (\`${leg}\`):** failed (excused by known_breaks)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Upgrade leg ${leg} failed (exit ${rc})"
+            echo "**Upgrade leg (\`${leg}\`):** failed (exit ${rc})" >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
 
       - name: Upload upgrade test logs and artifacts
         if: always()
@@ -1730,11 +1759,6 @@ jobs:
           path: tests/upgrade/.artifacts/**
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Write job summary
-        if: always()
-        run: |
-          echo "**Upgrade leg (\`${{ matrix.source }}\` -> \`candidate\` on \`${{ matrix.backend }}\`):** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
 
   ci-status:
     name: CI status

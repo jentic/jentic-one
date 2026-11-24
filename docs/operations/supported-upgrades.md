@@ -17,10 +17,9 @@ gating):
 - Operators on an older patch within a supported minor series (`0.(N-1).0` when
   `0.(N-1).2` exists) should upgrade from the latest patch of that minor series,
   or upgrade directly to the latest release following the [upgrade notes](upgrade-notes.md).
-- For the `0.45` target series, both `0.44.0` (`N-1`) and `0.43.0` (`N-2`) are
-  registered in the supported window; during Phase 1 rollout, CI executes
-  `phase1_enabled: true` legs (`0.44.0` `N-1` on PostgreSQL) and holds `0.43.0`
-  (`N-2`, `phase1_enabled: false`) pending Phase 2 matrix expansion.
+- The window rolls forward automatically with each release: CI derives the
+  two source releases from the published `v*` tags, so nothing is edited by
+  hand when a release is cut (see [Backends and CI enforcement](#backends-and-ci-enforcement)).
 - Downgrades are not supported. Rolling back requires restoring the
   pre-upgrade database and keyset [backup](backup-restore.md)
   (see [Upgrades → The contract](upgrades.md#the-contract)).
@@ -60,24 +59,41 @@ deployments, outside the rolling `N-1` / `N-2` CI window.
 
 ## Backends and CI enforcement
 
-The machine-readable source of truth for CI is
-[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml),
-validated on every unit-test run by
+The upgrade *policy* lives in
+[`tests/upgrade/supported-upgrades.yaml`](../../tests/upgrade/supported-upgrades.yaml)
+(window size, which roles run, backends, known breaks). It holds no version
+numbers, and its validation in
 [`tests/unit/test_supported_upgrades.py`](../../tests/unit/test_supported_upgrades.py)
-and [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py):
+does not depend on the current date or release, so cutting a release never
+fails it. [`tests/upgrade/matrix.py`](../../tests/upgrade/matrix.py) resolves
+the concrete window when CI runs:
 
-- **Source images** are pinned by both release tag (`ghcr.io/jentic/jentic-one-app:X.Y.Z`)
-  and multi-arch manifest digest (`sha256:…`) so tag re-pushes cannot silently
-  alter the baseline under test.
-- **Phase 1 source gating (`phase1_enabled`)** — structural validation requires
-  both `N-1` (`0.44.0`) and `N-2` (`0.43.0`) entries in `sources`, while
-  `build_ci_matrix()` filters to `phase1_enabled: true` sources and
-  `enabled: true` backends. In Phase 1, CI executes the `0.44.0` (`N-1`) leg on
-  PostgreSQL and holds `0.43.0` (`N-2`, `phase1_enabled: false`) pending Phase 2
-  matrix expansion.
+- **Target series.** An unreleased `pyproject.toml` version (a release PR)
+  targets its own minor. A version that is already released (`main` after a
+  release) targets the next minor, so the release just cut becomes `N-1`. The
+  tagged release commit targets its own series.
+- **Sources** are the latest released patch of each of the previous two minors,
+  read from the `v*` git tags. A minor with no release is omitted.
+- **Which legs run (`enabled_roles`).** Both `N-1` and `N-2` are in the
+  supported window, but CI runs a leg only for the roles listed in
+  `window.enabled_roles` and only on `enabled: true` backends. During Phase 1
+  that is `enabled_roles: ["n-1"]` on PostgreSQL; the `N-2` leg is held pending
+  Phase 2 matrix expansion.
+- **Source images** are pulled by the multi-arch manifest digest GHCR reports
+  for the tag when the matrix is built, so every leg in a run tests the same
+  image. A tag whose image is not published yet (the minutes between tagging
+  and `publish-image`) is skipped with a warning.
+- **Seeders.** The harness uses the newest `tests/upgrade/seed/seed_v<major>_<minor>.py`
+  that is not newer than the source, so a release that keeps the seeded API
+  needs no new seeder.
+- **What fails CI.** A leg fails only when the upgrade path fails: the candidate
+  migration, `migrations.run --check`, the idempotent re-run, candidate startup
+  on the migrated data, or the post-upgrade verifier. A leg that never reaches
+  the upgrade step (image pull, source-release startup, seeding against the
+  source API) is reported as *inconclusive* with a warning.
 - **PostgreSQL** (`postgres`) is the primary production backend (`blocking: true`,
   `enabled: true`).
-- **SQLite** (`sqlite`, the quickstart topology) is declared in the matrix as an
+- **SQLite** (`sqlite`, the quickstart topology) is declared in the policy as an
   advisory leg (`blocking: false`, `enabled: false`) pending Phase 2 rollout.
 
 ## Refresh-token survival policy
@@ -108,8 +124,10 @@ with four required fields:
 - `upgrade_notes_link` — path and heading anchor in
   [`docs/operations/upgrade-notes.md`](upgrade-notes.md) (for example
   `docs/operations/upgrade-notes.md#0450`; never `#unreleased`).
-- `expires` — `YYYY-MM-DD` date (typically the next minor release cut) after
-  which the entry fails `tests/unit/test_supported_upgrades.py` until retired.
+- `expires` — `YYYY-MM-DD` date (typically the next minor release cut). Until
+  then, a failing leg for `source` is reported as a warning. After it, the leg
+  gates again, and the matrix summary flags the entry as expired so it can be
+  retired.
 
-When a `known_breaks` entry is active, the upgrade harness asserts the
-*documented* failure mode or multi-hop route rather than skipping the leg.
+A `known_breaks` entry never skips a leg: the leg still runs and its result is
+reported, so a break that is fixed before it expires is visible.

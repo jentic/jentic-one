@@ -1,4 +1,8 @@
-"""Seed data against a running v0.44.x instance before upgrading to the candidate.
+"""Seed data against a running v0.44.x-or-later instance before upgrading to the candidate.
+
+``tests/upgrade/matrix.py`` selects the newest ``seed_v<major>_<minor>.py`` that is
+not newer than the source release, so this seeder serves every source from 0.44
+onward until a newer seeder is added for a release that changes the seeded API.
 
 Exercises the HTTP API surface of the source release and writes a JSON manifest
 consumed by ``tests/upgrade/verify/test_post_upgrade.py`` after the candidate
@@ -87,7 +91,7 @@ INVITED_PERMISSIONS = [
 ]
 
 AGENT_NAME = "upgrade-seed-agent"
-AGENT_DESCRIPTION = "Agent seeded on 0.44.0 to verify post-upgrade continuity"
+AGENT_DESCRIPTION = "Agent seeded on the source release to verify post-upgrade continuity"
 AGENT_PERMISSIONS = [
     "apis:read",
     "apis:write",
@@ -460,7 +464,7 @@ def _execute_pre_upgrade_broker_call(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Seed v0.44.x data for upgrade testing.")
+    parser = argparse.ArgumentParser(description="Seed v0.44+ data for upgrade testing.")
     parser.add_argument("--app-url", required=True, help="Base URL of the combined app")
     parser.add_argument("--broker-url", required=True, help="Base URL of the broker")
     parser.add_argument(

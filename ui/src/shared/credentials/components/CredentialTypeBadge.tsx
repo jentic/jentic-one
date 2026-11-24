@@ -1,4 +1,3 @@
-import { Cloud, KeyRound, LockOpen, LogIn, Ticket, UserRound, type LucideIcon } from 'lucide-react';
 import { Tag } from '@/shared/ui';
 import {
 	CredentialType,
@@ -6,15 +5,7 @@ import {
 	credentialDetails,
 	type Credential,
 } from '@/shared/credentials/api';
-
-const ICON: Record<CredentialType, LucideIcon> = {
-	[CredentialType.BEARER_TOKEN]: Ticket,
-	[CredentialType.API_KEY]: KeyRound,
-	[CredentialType.BASIC]: UserRound,
-	[CredentialType.OAUTH2]: LogIn,
-	[CredentialType.NO_AUTH]: LockOpen,
-	[CredentialType.SIGV4]: Cloud,
-};
+import { credentialTypeIcon } from '@/shared/credentials/lib/authTypeIcons';
 
 const OAUTH_GRANT_LABEL: Record<string, string> = {
 	authorization_code: 'Authorization Code',
@@ -38,5 +29,5 @@ export function CredentialTypeBadge(props: CredentialTypeBadgeProps) {
 		const suffix = grant ? OAUTH_GRANT_LABEL[grant] : undefined;
 		if (suffix) label = `${label} · ${suffix}`;
 	}
-	return <Tag icon={ICON[type]}>{label}</Tag>;
+	return <Tag icon={credentialTypeIcon(type)}>{label}</Tag>;
 }

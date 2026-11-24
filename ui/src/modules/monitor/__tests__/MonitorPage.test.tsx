@@ -274,6 +274,33 @@ describe('MonitorPage', () => {
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
+	it('the ID box filters API calls by a pasted trace id, or by an agent id as the actor', async () => {
+		const user = userEvent.setup();
+		renderMonitor();
+		await screen.findByText('GET /repos/{owner}/{repo}');
+		const box = screen.getByRole('textbox', { name: 'Filter by ID' });
+
+		// A trace id narrows the list to that one request's calls.
+		await user.type(box, 'trace_bbbbbbbb{Enter}');
+		await waitFor(() => expect(currentParams().get('trace')).toBe('trace_bbbbbbbb'));
+		await waitFor(() => {
+			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
+		});
+		expect(screen.getByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		// Cleared, every call is back.
+		await user.clear(box);
+		await user.keyboard('{Enter}');
+		await waitFor(() => expect(currentParams().get('trace')).toBeNull());
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+
+		// An agent id — the one an agent's Settings print — becomes the actor filter.
+		await user.type(box, 'agnt_billing{Enter}');
+		await waitFor(() => expect(currentParams().get('actor_id')).toBe('agnt_billing'));
+		expect(currentParams().get('actor_type')).toBe('agent');
+		expect(currentParams().get('trace')).toBeNull();
+		expect(box).toHaveValue('');
+	});
+
 	it('filters API calls by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
@@ -419,10 +446,9 @@ describe('MonitorPage', () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/held_held_1',
-			),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('review')).toBe('held_held_1');
 		expect(currentParams().get('execution_id')).toBeNull();
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
@@ -704,7 +730,7 @@ describe('MonitorPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('offers the Approvals page, not Cancel, for a held execution', async () => {
+	it('offers the inbox, not Cancel, for a held execution', async () => {
 		const held = {
 			_links: {
 				self: '/jobs/job_exec_held',
@@ -730,7 +756,7 @@ describe('MonitorPage', () => {
 
 		await user.click(await screen.findByText('job_exec_held'));
 		const dialog = await screen.findByRole('dialog');
-		const open = await within(dialog).findByRole('button', { name: 'Open approvals' });
+		const open = await within(dialog).findByRole('button', { name: 'Open inbox' });
 		expect(
 			within(dialog).queryByRole('button', { name: 'Cancel job' }),
 		).not.toBeInTheDocument();
@@ -739,8 +765,9 @@ describe('MonitorPage', () => {
 
 		await user.click(open);
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents/approvals'),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('inbox')).toBe('1');
 	});
 
 	it('opens the review page, not the job, from a decided approval row', async () => {
@@ -773,10 +800,9 @@ describe('MonitorPage', () => {
 			await screen.findByRole('link', { name: /Held call held_held_1 approved/ }),
 		);
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/held_held_1',
-			),
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
 		);
+		expect(currentParams().get('review')).toBe('held_held_1');
 		expect(currentParams().get('job_id')).toBeNull();
 	});
 
