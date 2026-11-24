@@ -14,6 +14,13 @@ before moving on — see [0.41.0](#0410) for why.
 
 Changes on `main` since 0.44.0; they ship in the next release.
 
+- **Logs and error details mask bare tokens and provider keys.** Central
+  redaction now masks a platform token that appears on its own in free text
+  (an agent API key `jak_…`, a client secret `jcs_…`, an access, refresh or
+  registration token `at_…`/`rt_…`/`rat_…`) and common upstream key shapes
+  (`sk-…` keys, AWS `AKIA…`/`ASIA…` access key ids), keeping only the prefix:
+  `jak_***REDACTED***`. Log queries that matched on such a value need another
+  key.
 - **Breaking: `jentic run` and local agent accounts are removed.** The CLI no
   longer creates a dedicated `<you>-local-agent` Unix user (with its home-dir
   ACL grants, passwordless-launch sudoers entry, and Seatbelt/bwrap session

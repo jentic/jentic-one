@@ -27,7 +27,8 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `register_state_backend` | `jentic_one.shared.state` | Register a shared-state backend (rate-limit buckets, circuit counters, `Idempotency-Key` records, auth single-use markers) under a name operators select with `state.backend`. The builder receives a `StateBackendBuildContext` (the `state:` section, whose free-form `options` mapping it validates itself, and the process's surface set) and returns a `SharedStateBackend`. The process builds one backend at app assembly, shares it across every surface it serves, and closes it once at shutdown; an unregistered name fails startup listing the registered ones. `memory` (the default) and `redis` (deprecated) are built in. Prove it with `BaseStateBackendContract`. |
 | `register_access_filter_provider` | `jentic_one.control.scoping.filters` | OR an extra read-only visibility clause into control-surface read filters (`include_shared=True` call sites only; writes stay owner-scoped). Any table the clause references must be readable by the control DB role. Inspect registered providers via `access_filter_providers()`. |
 | `register_user_deleted_hook` | `jentic_one.admin.services.user_hooks` | Run an async `fn(ctx, user_id, identity)` after a user delete commits, e.g. to clean up the extension's own per-user rows. Hooks run inside the delete request, each bounded by `USER_DELETED_HOOK_TIMEOUT_S` (10 s). Best effort, not durable: a hook that raises or times out is logged, counted (`admin.user_deleted_hook.failures`) and skipped, and nothing retries it automatically. Hooks must be idempotent: deleting an already-deleted user runs them again. |
-| `jentic_one.composition` | `jentic_one.composition` | Public composition entrypoints (`build_app`, `build_context`, `expand_allowed_dbs`) that assemble a `Context` and `FastAPI` app through the same path `jentic-one serve` uses. |
+| `jentic_one.composition` | `jentic_one.composition` | Public composition entrypoints (`build_app`, `build_context`, `expand_allowed_dbs`) that assemble a `Context` and `FastAPI` app through the same path `jentic-one serve` uses. `build_app(ctx, apps, container=...)` uses your `AppContainer` for the combined app (any `apps` list of two or more surfaces) and for a standalone `control`, `auth` or `broker` process, and still runs the composition root's post-build wiring (such as the broker's registry resolver). A standalone `registry` or `admin` process ignores `container` and builds its default wiring. |
+| Broker caller identity | `jentic_one.broker.web.deps.require_broker_identity` (validator: `app.state.broker_token_validator`) | Authenticate a request on an extra router mounted on the standalone broker exactly as the broker's own routes do: the same `jak_` keys, opaque `at_` tokens and trusted-issuer JWTs, with the same caches and revocation. Use the dependency, or call `await app.state.broker_token_validator.validate(credential)` (returns an `Identity`, raises `TokenValidationError`). |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `jentic_one.testing.introspect` | `jentic_one.testing.introspect` | Read-only route and scoping introspection (`build_app`, `route_facts`, `scoped_tables`, `access_filter_providers`, `RouteFact`, `ScopedTable`, `INTROSPECTION_SCHEMA`) for downstream architecture and security gates. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
@@ -240,6 +241,64 @@ def build_broker_app(ctx: Context):
     install_broker_registry_resolver(app, ctx)
     return app
 ```
+
+#### Extra routers on the standalone broker
+
+To serve your own routes from the broker process (next to its forward proxy),
+put them on the container and build the app through `jentic_one.composition`.
+`build_app` hands the container to the broker's factory and installs the
+registry resolver itself, so it replaces the manual wiring above:
+
+```python
+from fastapi import APIRouter, Depends
+
+from jentic_one.broker.web.deps import require_broker_identity
+from jentic_one.composition import build_app, build_context
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import load_config
+from jentic_one.shared.web.container import AppContainer
+
+my_router = APIRouter()
+
+
+@my_router.get("/status")
+async def status(identity: Identity = Depends(require_broker_identity)) -> dict[str, str]:
+    return {"caller": identity.sub}
+
+
+config = load_config()
+ctx = build_context(config, ["broker"])
+container = AppContainer(ctx=ctx, extra_routers=[(my_router, "/my-ext", ["my-ext"])])
+app = build_app(ctx, ["broker"], container=container)
+```
+
+Starlette matches routes in registration order and the broker's root
+`/{upstream_url:path}` catch-all matches every path, so `create_surface_app`
+includes the catch-all **after** the container's extra routers: `/my-ext/status`
+answers from your router, and every other path still reaches the proxy. Give
+your routes a prefix that no upstream host can collide with, because a path
+you claim is no longer proxied.
+
+`require_broker_identity` reads the credential the same way the broker's
+routes do (the `x-jentic-api-key` header, then `Authorization: Bearer`) and
+validates it with `app.state.broker_token_validator`, the broker's composite
+validator (agent API keys, opaque access tokens and trusted-issuer JWTs,
+behind short-TTL caches the broker invalidates on revocation). A missing or
+invalid credential answers the standard 401 problem. To validate a credential
+you hold outside a FastAPI dependency (for example one forwarded in another
+header), call the validator directly:
+
+```python
+from jentic_one.shared.auth.errors import TokenValidationError
+
+try:
+    identity = await request.app.state.broker_token_validator.validate(credential)
+except TokenValidationError:
+    ...  # refuse: unknown, revoked, expired or inactive
+```
+
+The validator exists only on the standalone broker app; control-plane
+surfaces verify callers with their own `app.state.verify_token` chain.
 
 ### 3. Prove your implementations comply with the seam contracts
 

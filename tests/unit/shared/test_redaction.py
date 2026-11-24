@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import secrets
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 import structlog
 
+from jentic_one.auth.services.crypto import generate_agent_api_key, generate_client_secret
+from jentic_one.auth.services.registration_service import RAT_PREFIX
+from jentic_one.auth.services.token_service import ACCESS_TOKEN_PREFIX, REFRESH_TOKEN_PREFIX
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.redaction import (
@@ -300,3 +305,111 @@ def test_error_code_and_state_and_user_code_not_redacted() -> None:
 
 def test_status_code_key_not_redacted() -> None:
     assert redact_value({"code": 404}) == {"code": 404}
+
+
+def _prefixed_token(prefix: str) -> Callable[[], str]:
+    """The token shape the auth services issue: prefix + ``token_urlsafe(32)``."""
+    return lambda: f"{prefix}{secrets.token_urlsafe(32)}"
+
+
+@pytest.mark.parametrize(
+    ("make_token", "prefix"),
+    [
+        (generate_agent_api_key, "jak_"),
+        (generate_client_secret, "jcs_"),
+        (_prefixed_token(ACCESS_TOKEN_PREFIX), "at_"),
+        (_prefixed_token(REFRESH_TOKEN_PREFIX), "rt_"),
+        (_prefixed_token(RAT_PREFIX), "rat_"),
+    ],
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{token}",
+        "upstream rejected key {token} for agent agnt_1",
+        "config: api_key_value={token}, retrying",
+        "('{token}',)",
+        "line one\n{token}\nline two",
+    ],
+)
+def test_bare_platform_token_in_free_text_is_masked(
+    make_token: Callable[[], str], prefix: str, template: str
+) -> None:
+    token = make_token()
+    assert token.startswith(prefix)
+    out = redact_value(template.format(token=token))
+    assert token not in out
+    assert token[len(prefix) :] not in out
+    assert f"{prefix}{REDACTED}" in out
+    assert redact_value(out) == out
+
+
+def test_bare_platform_token_with_leading_dash_or_underscore_body_is_masked() -> None:
+    # token_urlsafe output can start with "-" or "_"; the prefix still anchors it.
+    for body in ("-" + "a" * 42, "_" + "B" * 42):
+        assert redact_value(f"key jak_{body} denied") == f"key jak_{REDACTED} denied"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Ordinary words and identifiers containing a token prefix.
+        "the request was retried at_least once",
+        "created_at_utc=2026-01-01T00:00:00Z",
+        "sort by updated_at_desc then created_at_asc",
+        "format_v2 and that_one and rt_flag and rat_race",
+        "jak_ prefix is documented, jak_example-secret is the docs example",
+        # A token-shaped body glued to a longer identifier is not a token.
+        "created_at_" + "a" * 43,
+        "x" + "jak_" + "A" * 43,
+        "jak_" + "A" * 44,
+        # Ids: a KSUID (27 characters) behind a short prefix, and a 43-character
+        # body that is too short for its prefix's issuance shape.
+        "agnt_2fXyZ8b3QkLmNoPqRsTuVwXyZaB and at_2fXyZ8b3QkLmNoPqRsTuVwXyZaB",
+        "at_" + "a" * 42,
+        # Provider-key look-alikes.
+        "sk-learn-is-a-library-name-not-a-key",
+        "risk-0123456789abcdefghijklmnop",  # pragma: allowlist secret
+        "sk-1234",
+        "AKIA is the access-key id prefix",
+        "XAKIAIOSFODNN7EXAMPLE",  # pragma: allowlist secret
+        "AKIAIOSFODNN7EXAMPLE1",  # pragma: allowlist secret
+    ],
+)
+def test_token_lookalikes_in_free_text_untouched(text: str) -> None:
+    assert redact_value(text) == text
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            "openai said invalid key sk-proj-AbC123dEf456GhI789jKl0mNoPq",
+            f"openai said invalid key sk-{REDACTED}",
+        ),
+        (
+            "key sk-ant-api03-AbC123dEf456GhI789jKl0mNoPq-xyz rejected",  # pragma: allowlist secret
+            f"key sk-{REDACTED} rejected",
+        ),
+        (
+            "legacy sk-AbCdEfGhIjKlMnOpQrStUvWx1234 expired",
+            f"legacy sk-{REDACTED} expired",
+        ),
+        (
+            "signing with AKIAIOSFODNN7EXAMPLE failed",  # pragma: allowlist secret
+            f"signing with AKIA{REDACTED} failed",
+        ),
+        (
+            "session ASIAY34FZKBOKMUTVV7A expired",  # pragma: allowlist secret
+            f"session ASIA{REDACTED} expired",
+        ),
+    ],
+)
+def test_provider_key_shapes_in_free_text_are_masked(raw: str, expected: str) -> None:
+    assert redact_value(raw) == expected
+
+
+def test_bearer_platform_token_keeps_single_mask() -> None:
+    token = generate_agent_api_key()
+    assert redact_value(f"Authorization: Bearer {token}") == f"Authorization: Bearer {REDACTED}"
+    assert redact_value(f"sent Bearer {token}") == f"sent Bearer {REDACTED}"
