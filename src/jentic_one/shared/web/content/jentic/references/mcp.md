@@ -243,7 +243,14 @@ is still waiting — relay that link to your operator rather than calling
 `credential_binding_expired`, `credential_undecryptable`, `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
 and live in `references/recovery.md`) applies unchanged — the same codes,
-delivered in the envelope instead of stderr.
+delivered in the envelope instead of stderr. The exception is
+`credential_binding_expired`: by default the first call through an ended
+binding is a held 202 (a `held_execution_id` and `review_url`, with a
+directive saying your access has ended), handled like any held call — relay
+the link, end your turn, then `get_execution_result` once; skip
+`explain_held_call` (the review page already says why). The 403 is the
+fallback when the binding refuses after it ends, a renewal is already
+waiting, or the owner denied one.
 
 ## The 13 mount tools (each maps onto the loop)
 

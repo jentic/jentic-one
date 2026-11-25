@@ -5637,8 +5637,13 @@ type ExistingCredentialConfirmSessionRequestKind string
 // them first (“needs_vendor_consent“), which widens the access of every
 // agent in “other_bound_agents“ too.
 //
-// Examples: {"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}
+// Examples: {"agent_binding":{"expired":false,"expires_at":"2026-12-31T23:59:00Z","max_idle_period":"P14D","max_quota":1,"quota_remaining":1,"suspended":false},"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}
 type ExistingCredentialResponse struct {
+	// AgentBinding The session agent's own binding to this credential, when it already has one: confirming with it binds nothing new, so the binding keeps these limits.
+	//
+	// Examples: {"expired":false,"expires_at":"2026-12-31T23:59:00Z","max_idle_period":"P14D","max_quota":1,"quota_remaining":1,"suspended":false}
+	AgentBinding *SessionAgentBindingResponse `json:"agent_binding,omitempty"`
+
 	// CanBind Whether this viewer may use it: its grant covers the request, or the missing scopes can be consented and the viewer may widen it.
 	//
 	// Examples: true
@@ -9354,7 +9359,7 @@ type ReviewScopeResponse struct {
 // ReviewScopeResponseClassification Examples: write
 type ReviewScopeResponseClassification string
 
-// ReviewSessionResponse Examples: {"agent":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"Issue triage bot","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"},"api_reference":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"can_confirm":true,"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","edit":{"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true},"existing_credentials":[{"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}],"last_rejected_at":"2026-01-10T16:45:00Z","pinned_hosts":["api.github.com"],"provenance":{"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"},"reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","requested_expires_in":"P7D","requested_max_idle_period":"P14D","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"resolved_flow":"authorization_code","revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"scheme":{"authorization_url":"https://github.com/login/oauth/authorize","field_name":"Authorization","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"oauth2"},"scopes":[{"classification":"write","default":false,"description":"Full control of private repositories","name":"repo","requested":true}],"session_id":"cs_6968b3983b8b91c75627bee5","stale":false,"state":"created","target_kind":"vendor","vendor_display_name":"GitHub","vendor_key":"github"}
+// ReviewSessionResponse Examples: {"agent":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"Issue triage bot","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"},"api_reference":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"can_confirm":true,"digest":"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae","edit":{"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true},"existing_credentials":[{"agent_binding":{"expired":false,"expires_at":"2026-12-31T23:59:00Z","max_idle_period":"P14D","max_quota":1,"quota_remaining":1,"suspended":false},"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}],"last_rejected_at":"2026-01-10T16:45:00Z","pinned_hosts":["api.github.com"],"provenance":{"catalog_api_id":"stripe.com","origin":"catalog","revision_id":"3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c","source_url":"https://raw.githubusercontent.com/stripe/openapi/master/spec3.json","submitted_by":"usr_6968b3987ee4c3ec0b4ee3b9"},"reason":"Needs read access to triage issues in the platform repo.","requested_by_actor_id":"agnt_6968b3984d1c238dbe7e2e29","requested_expires_in":"P7D","requested_max_idle_period":"P14D","requested_permission_rules":[{"comment":"Lets the agent draft replies, never send them.","effect":"allow","match_mode":"prefix","methods":["GET"],"operations":["listCharges"],"path":"/v1/charges"}],"requested_scopes":["repo","read:user"],"resolved_flow":"authorization_code","revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"scheme":{"authorization_url":"https://github.com/login/oauth/authorize","field_name":"Authorization","location":"header","token_url":"https://github.com/login/oauth/access_token","type":"oauth2"},"scopes":[{"classification":"write","default":false,"description":"Full control of private repositories","name":"repo","requested":true}],"session_id":"cs_6968b3983b8b91c75627bee5","stale":false,"state":"created","target_kind":"vendor","vendor_display_name":"GitHub","vendor_key":"github"}
 type ReviewSessionResponse struct {
 	// Agent Examples: {"agent_id":"agnt_6968b3984d1c238dbe7e2e29","name":"Issue triage bot","owner_id":"usr_6968b3987ee4c3ec0b4ee3b9","status":"active"}
 	Agent *ReviewAgentResponse `json:"agent,omitempty"`
@@ -9381,7 +9386,7 @@ type ReviewSessionResponse struct {
 	// Edit Examples: {"binding":{"agent_id":"agnt_6968b3984d1c238dbe7e2e29","credential_id":"cred_6968b39855d91a3561684b32"},"conflicts":[{"kind":"missing_rule","rule_id":"apr_1"}],"current":{"granted_scopes":["gmail.readonly"],"rule_set":{"created_by":"usr_6968b3987ee4c3ec0b4ee3b9","curated":false,"id":"prs_6968b3987c22b63e87e79f05","name":"Stripe read-only","rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}]},"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"suspended":false},"needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"result":{"rules":[{"added_by":"agnt_6968b3984d1c238dbe7e2e29","effect":"allow","id":"apr_6968b3987c22b63e87e79f06","match_mode":"prefix","methods":["GET"],"path":"/v1/charges"}],"scopes":["gmail.readonly","gmail.send"],"suspended":false,"target":"binding"},"revision":{"id":"csr_6968b3983b8b91c75627bee6","number":2},"widens_access":true}
 	Edit *ReviewEditResponse `json:"edit,omitempty"`
 
-	// ExistingCredentials Examples: [{"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}]
+	// ExistingCredentials Examples: [{"agent_binding":{"expired":false,"expires_at":"2026-12-31T23:59:00Z","max_idle_period":"P14D","max_quota":1,"quota_remaining":1,"suspended":false},"can_bind":true,"credential_id":"cred_6968b39855d91a3561684b32","granted_scopes":["repo"],"missing_scopes":["read:user"],"name":"GitHub (work)","needs_vendor_consent":true,"other_bound_agents":[{"agent_id":"agnt_6968b3984d1c238dbe7e2e29"}],"other_bound_agents_truncated":false,"type":"oauth2"}]
 	ExistingCredentials *[]ExistingCredentialResponse `json:"existing_credentials,omitempty"`
 
 	// LastRejectedAt When a human last rejected this agent's request for the same target (or, for an edit, the same binding), within the last 30 days; null when none. Lets the reviewer see that a request repeats one already rejected.
@@ -9877,6 +9882,44 @@ type ServedApiRef struct {
 	//
 	// Examples: 2024-04-10
 	ApiVersion *string `json:"api_version,omitempty"`
+}
+
+// SessionAgentBindingResponse The session agent's own binding to a credential it already holds.
+//
+// Binding that credential again creates nothing: the binding keeps these
+// limits, and the limits chosen on the review do not apply to it.
+//
+// Examples: {"expired":false,"expires_at":"2026-12-31T23:59:00Z","max_idle_period":"P14D","max_quota":1,"quota_remaining":1,"suspended":false}
+type SessionAgentBindingResponse struct {
+	// Expired Whether one of its limits has been reached.
+	//
+	// Examples: false
+	Expired bool `json:"expired"`
+
+	// ExpiresAt When the binding stops authorizing calls (RFC 3339); null never expires.
+	//
+	// Examples: 2026-12-31T23:59:00Z
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+
+	// MaxIdlePeriod Its idle limit as an ISO 8601 duration; null without one.
+	//
+	// Examples: P14D
+	MaxIdlePeriod *openapi_types.Duration `json:"max_idle_period,omitempty"`
+
+	// MaxQuota Its use count (1 is single use); null without one.
+	//
+	// Examples: 1
+	MaxQuota *int `json:"max_quota,omitempty"`
+
+	// QuotaRemaining The uses it has left; null without a use count.
+	//
+	// Examples: 1
+	QuotaRemaining *int `json:"quota_remaining,omitempty"`
+
+	// Suspended Whether the binding is suspended.
+	//
+	// Examples: false
+	Suspended bool `json:"suspended"`
 }
 
 // SessionApiReferenceResponse Where the vendor's OpenAPI lives in the registry, as a connect session sees it.

@@ -14,6 +14,18 @@ before moving on — see [0.41.0](#0410) for why.
 
 Changes on `main` since 0.44.0; they ship in the next release.
 
+- **Rolling back past grant expiry needs the snapshot (or the downgrade),
+  never just the old image.** This release adds end dates, idle limits and
+  use counts to credential bindings. Older code ignores those columns, so
+  running it on the new schema (a `helm rollback` or an image re-pin without
+  restoring the database) lets every ended binding authorize again. Restore
+  the pre-upgrade [snapshot](upgrades.md#the-contract) as usual. If you use
+  the break-glass schema downgrade instead, it fails closed: it suspends every
+  binding that carries an end date, idle limit or use count
+  (`binding_expired` when it had ended, `binding_policy_removed` otherwise).
+  Resume each one deliberately afterwards; the older code will never end
+  them.
+
 - **Breaking: `jentic run` and local agent accounts are removed.** The CLI no
   longer creates a dedicated `<you>-local-agent` Unix user (with its home-dir
   ACL grants, passwordless-launch sudoers entry, and Seatbelt/bwrap session

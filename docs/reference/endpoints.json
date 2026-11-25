@@ -413,6 +413,46 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_permissions": {
+        "agents:read": []
+      },
+      "method": "GET",
+      "operation_id": "listCredentialBindingsEndingSoon",
+      "path": "/agents/credentials:ending-soon",
+      "public": false,
+      "required_permissions": [
+        "agents:read"
+      ],
+      "summary": "List credential bindings ending soon",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {},
+      "method": "GET",
+      "operation_id": "getGrantPolicyLimits",
+      "path": "/agents/credentials:policy",
+      "public": false,
+      "required_permissions": [],
+      "summary": "Get the org's grant defaults and maximums",
+      "surface": "agents",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_permissions": {
         "agents:write": [
           "agents:read"
         ]
@@ -577,6 +617,30 @@
         "agents:write"
       ],
       "summary": "Suspend or remove a credential binding",
+      "surface": "agents",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_permissions": {
+        "agents:write": [
+          "agents:read"
+        ]
+      },
+      "method": "PATCH",
+      "operation_id": "renewAgentCredentialBinding",
+      "path": "/agents/{agent_id}/credentials/{credential_id}",
+      "public": false,
+      "required_permissions": [
+        "agents:write"
+      ],
+      "summary": "Renew a credential binding",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -4926,5 +4990,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 177
+  "total": 180
 }

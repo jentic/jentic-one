@@ -86,7 +86,7 @@ qualitative one, not just an ordering:
 | Severity   | Meaning                                                              |
 | ---------- | --------------------------------------------------------------------- |
 | `info`     | Routine: a lifecycle step happened as intended (import completed, credential connected, agent registration approved). |
-| `warning`  | Needs attention soon; nothing has failed *yet* — an advisory, a denial, a credential approaching expiry (`credential.expiring_soon`, `broker.pbac_denied`, an unserved binding). |
+| `warning`  | Needs attention soon; nothing has failed *yet* — an advisory, a denial, a credential approaching expiry (`credential.expiring_soon`, `broker.pbac_denied`, an unserved binding, a binding about to reach its end date or idle limit: `credential_grant.expiring`, `credential_grant.idle_expiring`). |
 | `error`    | One thing failed (an execution, an import, a permanently dead-lettered job, an expired credential). |
 | `critical` | A failure *pattern* crossed an operator-configured threshold — not one failure but many of the same kind in a short window. |
 

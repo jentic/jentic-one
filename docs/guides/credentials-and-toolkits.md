@@ -121,7 +121,72 @@ The outcomes:
   the refusal is `403 credential_binding_suspended`: only the operator can
   resume the binding, so the directive offers no connect, and a new connect
   for the same agent and API answers `409 connect_session_binding_suspended`
-  until the binding is resumed or removed.
+  until the binding is resumed or removed. When the binding has *expired*
+  (its `expires_at` has passed), the refusal is
+  `403 credential_binding_expired`, shaped the same way: only the operator
+  can renew it (`PATCH /agents/{agent_id}/credentials/{credential_id}`), a
+  new connect answers `409 connect_session_binding_expired`, and the agent
+  can no longer read the credential through the expired binding. Where the
+  broker can hold calls, an agent's call through an ended binding is held
+  for renewal instead (a `202`, see
+  [executions requiring approval](executions-requiring-approval.md)), and the
+  `403` is reserved for further calls while that renewal is pending or after
+  it was denied.
+  Suspension is reported first. A binding can also carry an idle limit
+  (`max_idle_period`, an ISO 8601 duration from `P1D` to `P999D`, such as
+  `P14D` or `PT36H`; weeks, days, hours, minutes and seconds only, never
+  years or months, and never a bare number): it ends once it goes that long without
+  a call, counted from its last use or its last renewal, whichever is later
+  (the broker records use about once an hour). Any limit reached ends the
+  binding. A binding can also carry a use count (`max_quota`; 1 is single
+  use): every call through the binding takes one use and restarts the idle
+  clock, whether it succeeds or fails (refused by the binding's permission
+  rules, a failed token refresh, an upstream error), and the binding ends when none is left (`quota_remaining` reaches 0). A
+  binding with a count is checked on every call, never from a cache. A queued
+  (asynchronous) call is charged once per job, however many times the worker
+  retries it; the marker that remembers this is kept in the shared-state
+  backend, so with the in-memory backend a worker restart between attempts
+  charges again (use Redis where that matters). An agent with an ended binding
+  covering the API is not served from the cache either: its calls read the
+  database.
+  Binding a credential and renewing a binding are audit-logged with the
+  policy granted (a renewal with its before and after). Binding responses and
+  `/me` report `expired` with `expired_reason`, naming
+  the limit that ended it (`end_date`, `idle` or `uses`), and
+  `idle_expires_at` for when an unused binding would end. Renewing (`PATCH`)
+  restarts the idle clock and restores the use count, even with an empty
+  body; a renewal that sends no `expires_at` runs the binding again for as
+  long as it was granted for (its end date less when it was granted or last
+  renewed), capped at the org's maximum.
+  An org can set defaults and maximums for these limits in config
+  (`grant_expiry.default_expires_in`, `max_expires_in`,
+  `default_idle_period`, `max_idle_period`, `single_use_by_default`), each an
+  ISO 8601 duration such as `P30D` (for example
+  `JENTIC__GRANT_EXPIRY__MAX_EXPIRES_IN=P90D`). A
+  default applies when a request creating a binding sets none of
+  `expires_at`, `max_idle_period` and `max_quota`; a maximum refuses
+  (`422 grant_policy_limit_exceeded`) a longer limit, or none at all, on every
+  path that creates or renews a binding. A renewal that leaves the end date
+  out takes the shorter of its granted length and the maximum, and one that
+  leaves the idle limit out keeps its own capped at the idle maximum (or takes
+  the org's default idle limit, or the maximum, when it has none), so renewing
+  a binding made before the org set a maximum brings it under it. `GET /agents/credentials:policy` reports them. With
+  `idle_warning` turned on (off by default), the agent's owner is warned in
+  the 48 hours before the binding ends: one `credential_grant.expiring` event
+  before its end date (for a binding granted for 4 days or more) and one
+  `credential_grant.idle_expiring` event before its idle limit (for an idle
+  limit of 4 days or more). `GET /agents/credentials:ending-soon` lists those
+  bindings, with the nearer deadline in `ends_at` and `ending`. A binding's
+  `after_expiry` says what a call through it gets once it has ended: `hold`
+  (the default) holds the first call for the owner to renew and run (see
+  [Calls held because access ended](executions-requiring-approval.md#calls-held-because-access-ended)),
+  and `refuse` answers every call with `403 credential_binding_expired`,
+  whose directive tells the agent to ask its owner to renew. Limits set when
+  connecting apply to the bindings that connect creates. When the approver
+  picks an existing credential the agent is already bound to, nothing new is
+  bound: that binding keeps its own limits, and the review shows them (each
+  existing credential carries the agent's `agent_binding`) instead of asking
+  for new ones. To change them, renew the binding.
 - **1 winner → use it.** The response carries `Jentic-Credential-Id` and
   `Jentic-Credential-Name` (absent when no stored credential was used), and
   the execution record carries the same attribution — every execution names

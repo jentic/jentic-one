@@ -1148,6 +1148,8 @@ When several shared OAuth apps serve the vendor, the error lists them
 |---|---|---|---|---|
 | `--api` |  | `string` |  | registry API to connect a credential for, as vendor/name/version (instead of a vendor key) |
 | `--auth-type` |  | `string` |  | with --api: the declared scheme name or kind to use (api_key, bearer, basic, oauth2) when the spec declares several |
+| `--expires-in` |  | `string` |  | how long you need the access, e.g. 7d, 8h, 30m or P7D (the approver decides the actual end date) |
+| `--max-idle` |  | `string` |  | ask for the access to end once unused this long, e.g. 14d or P14D (1d to 999d; the approver decides) |
 | `--reason` |  | `string` |  | why you need this connection (shown to the approver; max 1024 chars) |
 | `--registration` |  | `string` |  | registration_id of the shared OAuth app to connect through, when several serve the vendor (your user picks it) |
 | `--rules` |  | `string` |  | permission rules you ask for on the binding, as a JSON list (the approver reviews them; a denial's suggested_rules fit as-is) |

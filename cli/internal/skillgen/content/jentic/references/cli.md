@@ -141,9 +141,18 @@ code:
   binding for this API. Do not run `jentic connect` for it; ask your
   operator to resume the binding, then retry.
 - **`credential_binding_expired` (403)** — your binding for this API has
-  expired. Do not run `jentic connect` for it (it is refused with 409
-  `connect_session_binding_expired`); ask your operator to renew the
-  binding, then retry.
+  ended: its end date passed, it went unused for its idle limit, or its uses
+  ran out (`expired_reason` says which). Do not run `jentic connect` for it
+  (it is refused with 409 `connect_session_binding_expired`); ask your
+  operator to renew the binding, then retry. By default the **first** call
+  through an ended binding is not a 403 but a held call (exit 3,
+  `TIMEOUT_PENDING`, with `body.held_execution_id` and `body.review_url`):
+  show the user the link, then `jentic executions poll <held_execution_id>`
+  — never re-send. Approving it renews the binding and runs the call once (or renews without
+  running it, if the reviewer chose that: then send the call again).
+  The 403 is what you get when the binding is set to refuse, a renewal is
+  already waiting (its `review_url` is in the error), or the owner denied
+  it.
 - **`credential_identity_mismatch` (403)** — read the directive's
   `parameters.expected` vs `parameters.found` and ask your operator to fix
   or re-provision the credential so it targets `expected`, then retry.

@@ -385,13 +385,14 @@ func (RuleSetSummaryResponse) RequiredFields() []string {
 func (ScopeOptionSchema) RequiredFields() []string {
 	return []string{"classification", "description", "name"}
 }
-func (SearchLinksResponse) RequiredFields() []string        { return []string{"inspect"} }
-func (SearchRequest) RequiredFields() []string              { return []string{"query"} }
-func (SearchResponse) RequiredFields() []string             { return []string{"data", "has_more"} }
-func (SecuritySchemeFlowResponse) RequiredFields() []string { return []string{"flow_type"} }
-func (SecuritySchemeListResponse) RequiredFields() []string { return []string{"data"} }
-func (SecuritySchemeResponse) RequiredFields() []string     { return []string{"name", "type"} }
-func (ServedApiRef) RequiredFields() []string               { return []string{"api_vendor"} }
+func (SearchLinksResponse) RequiredFields() []string         { return []string{"inspect"} }
+func (SearchRequest) RequiredFields() []string               { return []string{"query"} }
+func (SearchResponse) RequiredFields() []string              { return []string{"data", "has_more"} }
+func (SecuritySchemeFlowResponse) RequiredFields() []string  { return []string{"flow_type"} }
+func (SecuritySchemeListResponse) RequiredFields() []string  { return []string{"data"} }
+func (SecuritySchemeResponse) RequiredFields() []string      { return []string{"name", "type"} }
+func (ServedApiRef) RequiredFields() []string                { return []string{"api_vendor"} }
+func (SessionAgentBindingResponse) RequiredFields() []string { return []string{"expired", "suspended"} }
 func (SessionApiReferenceResponse) RequiredFields() []string {
 	return []string{"name", "vendor", "version"}
 }

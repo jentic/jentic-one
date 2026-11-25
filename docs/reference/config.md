@@ -488,6 +488,21 @@ An execute call matching a permission rule with `effect="require-approval"` is e
 | `held_executions.max_pending_per_agent` | integer (>= 1) | `10` | `JENTIC__HELD_EXECUTIONS__MAX_PENDING_PER_AGENT` | Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the `approval_pending_limit_reached` problem type. |
 | `held_executions.result_retention_seconds` | integer (> 0) | `86400` | `JENTIC__HELD_EXECUTIONS__RESULT_RETENTION_SECONDS` | Seconds the result of an approved execution stays readable via `GET /jobs/{id}/result` before the result sweep removes it. Defaults to 24 hours. |
 
+## `grant_expiry`
+
+Settings for credential grant (agent binding) expiry.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `grant_expiry.idle_warning_interval` | string | `"P1D"` | `JENTIC__GRANT_EXPIRY__IDLE_WARNING_INTERVAL` | How often the job runs that warns an agent's owner before a binding with the warning on ends (ISO 8601, e.g. P1D). Defaults to once a day. Keep the warning window at least twice this: a binding is only warned when a run finds its deadline inside the window, so with a longer interval a deadline can fall between two runs and pass without a warning. |
+| `grant_expiry.idle_warning_window` | string | `"PT48H"` | `JENTIC__GRANT_EXPIRY__IDLE_WARNING_WINDOW` | How long before a binding's end date or idle deadline its owner is warned (ISO 8601, e.g. PT48H), once per deadline. Defaults to 48 hours. Keep it at least twice idle_warning_interval, or a deadline can pass between two runs of the warning job unwarned. |
+| `grant_expiry.idle_warning_min_length` | string | `"P4D"` | `JENTIC__GRANT_EXPIRY__IDLE_WARNING_MIN_LENGTH` | Shortest idle limit, or grant length before an end date, that is ever warned about (ISO 8601, e.g. P4D). Below this a warning would cover half the window or more and arrive for bindings doing exactly what they were set up to do. Defaults to 4 days. |
+| `grant_expiry.default_expires_in` | string \| null | `null` | `JENTIC__GRANT_EXPIRY__DEFAULT_EXPIRES_IN` | Default lifetime of a new credential grant whose creation sets no policy (ISO 8601, e.g. P30D): it ends this long after it is granted. Unset (the open-source default): such a grant has no end date. |
+| `grant_expiry.max_expires_in` | string \| null | `null` | `JENTIC__GRANT_EXPIRY__MAX_EXPIRES_IN` | Longest a credential grant may last from when it is granted or renewed (ISO 8601, e.g. P90D). When set, every grant must end: a grant with no end date, or one further out, is refused (422), and a creation that sets no policy gets the default (or this maximum when no default is set). |
+| `grant_expiry.default_idle_period` | string \| null | `null` | `JENTIC__GRANT_EXPIRY__DEFAULT_IDLE_PERIOD` | Default idle limit of a new credential grant whose creation sets no policy (ISO 8601, P1D to P999D, e.g. P14D). Unset: no idle limit. |
+| `grant_expiry.max_idle_period` | string \| null | `null` | `JENTIC__GRANT_EXPIRY__MAX_IDLE_PERIOD` | Longest idle limit a credential grant may carry (ISO 8601, P1D to P999D). When set, every grant must carry one: none, or a longer one, is refused (422). |
+| `grant_expiry.single_use_by_default` | boolean | `false` | `JENTIC__GRANT_EXPIRY__SINGLE_USE_BY_DEFAULT` | Whether a new credential grant whose creation sets no policy allows a single call (a use count of 1). |
+
 ## `apps`
 
 Surfaces this process serves: any of `registry`, `admin`, `control`, `auth`, or `broker` alone (the broker cannot be combined with other surfaces). Also decides which secrets production requires.
