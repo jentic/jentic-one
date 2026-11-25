@@ -22,9 +22,8 @@ from jentic_one.shared.auth.permission_catalog import (
 _OWNER_MODELS: dict[type[Any], Any] = {
     Credential: Credential.created_by,
     # Connect sessions ride the credential visibility axis: the initiator is
-    # the owner, and delegated agents reuse the credential-read owner scope
-    # (no dedicated owner:connect-sessions:read scope exists — see the
-    # query-scoping rule's resource→scope table).
+    # the owner, and delegated agents reuse the credential-read owner
+    # permission (there is no owner:connect-sessions:read permission).
     ConnectSession: ConnectSession.initiator_actor_id,
 }
 

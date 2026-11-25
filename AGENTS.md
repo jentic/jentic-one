@@ -1,7 +1,7 @@
 # AGENTS.md
 
-> **If `.rules/` exists, read `.rules/AGENTS.md` and use it instead of this file.**
-> Otherwise use the guidance below.
+> **If `.rules/` exists, also read `.rules/AGENTS.md` for the shared rules; this
+> file's repo-specific guidance takes precedence for this repo.**
 
 ## Using Jentic One (not changing it)
 

@@ -8,8 +8,8 @@ alwaysApply: true
 Conventional Commits are **enforced repo-wide** by the `commit-msg` hook
 (`uv run cz check`, pure Python — no Node). The allowed types and the schema
 regex live in `pyproject.toml` (`[tool.commitizen.customize]`) and are guarded
-by `tests/arch/test_commit_convention.py`. This document is the human-readable
-source of truth those reference; keep all three in sync.
+by `tests/arch/test_commit_convention.py`, which checks the type table below
+against that regex. Keep all three in sync.
 
 ## Commit Types — Use the Correct Type
 
@@ -51,21 +51,33 @@ ci(release.yaml): fix CI concurrency and duplicate Docker builds on main
 | `fix`      | Bug fix (something was broken, now it works) |
 | `test`     | Adding or updating tests                     |
 | `ci`       | CI/CD pipeline changes                       |
-| `chore`    | Dependency updates, tooling, configs         |
+| `chore`    | Tooling, configs (hidden from changelog)     |
 | `docs`     | Documentation only                           |
 | `style`    | Formatting, whitespace (no logic change)     |
 | `refactor` | Code restructuring (no behavior change)      |
 | `perf`     | Performance improvement                      |
-| `build`    | Build system or external deps (Docker, pkg)  |
+| `build`    | Build system or dependency updates (Docker, pkg, lib bumps) |
 | `revert`   | Reverting a previous commit                  |
 
 This table must match the types in the `schema_pattern` regex in
 `pyproject.toml`. If you add or remove a type, update both and the arch test.
 
+Dependency bumps are `build(deps)`, not `chore(deps)` — release-please hides
+`chore` from the auto-generated changelog, while `build` appears under "Build
+System", so lib updates stay visible in release notes. Dependabot is configured
+accordingly (`.github/dependabot.yml` uses the `build` prefix for the npm, uv,
+and docker ecosystems; GitHub Actions bumps stay `ci`, which is hidden by
+design).
+
 ### Scope
 
 The scope is **mandatory** (the hook rejects a message with no scope). Always
-include it in parentheses: `ci(ci.yml)`, `test(e2e)`, `chore(deps)`, `fix(security)`.
+include it in parentheses: `ci(ci.yml)`, `test(e2e)`, `build(deps)`, `fix(security)`.
+
+### Sign-off (DCO)
+
+Every commit is signed off (`git commit -s`), certifying it under the Developer
+Certificate of Origin (see `CONTRIBUTING.md`).
 
 ## PR Title Format
 

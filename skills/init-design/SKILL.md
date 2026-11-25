@@ -1,6 +1,6 @@
 # Skill: init-design
 
-Set up and carry out a new design in `docs/design/designs/<name>/`. Follows the conventions established in `platform-actors` — a brief README index, problem statement, scope, architecture decisions, open questions, and per-concern sub-documents. Ends with scaffolded stubs for each planned document.
+Set up and carry out a new design in `<design-root>/<name>/`, where `<design-root>` is the design-docs directory the user names (not `docs/`, which holds published documentation only; ask if unsure). Follows the conventions established in `platform-actors` — a brief README index, problem statement, scope, architecture decisions, open questions, and per-concern sub-documents. Ends with scaffolded stubs for each planned document.
 
 ---
 
@@ -37,13 +37,13 @@ Search for:
 - Existing design docs that mention the feature or its entities
 - OpenAPI specs that will need extending
 - ORM models and migrations relevant to the new entities
-- Existing permission scopes in `admin/core/permissions.py`
+- Existing permissions in `src/jentic_one/shared/auth/permission_catalog.py`
 
 Summarise findings in a short bullet list to the user before writing any docs. This becomes the raw material for the "Relationship to existing work" section of the README.
 
 ### 3. Write the README
 
-`docs/design/designs/<name>/README.md` — the index and anchor doc for the design. Structure:
+`<design-root>/<name>/README.md` — the index and anchor doc for the design. Structure:
 
 ```
 # <Name> — Design
@@ -112,10 +112,10 @@ These come from feedback on the platform-actors design work:
 
 ## Reference pattern (platform-actors)
 
-The `platform-actors` design is the canonical example of this pattern in this repo:
+The `platform-actors` design is the canonical example of this pattern:
 
 ```
-docs/design/designs/platform-actors/
+<design-root>/platform-actors/
   README.md                         — index, problem, scope, arch decisions, OQs
   access-scenarios.md               — concrete end-to-end access patterns (input to auth design)
   endpoints.md                      — shared OAuth/identity endpoint surface
