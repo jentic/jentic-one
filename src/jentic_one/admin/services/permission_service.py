@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from jentic_one.admin.core.permissions import (
     ALL_PERMISSIONS,
@@ -123,7 +124,6 @@ class PermissionService:
         permissions reach a session at its next refresh or sign-in.
         """
         granted_by = identity.sub
-        await self.validate_grants(granted_by, permissions)
 
         async with self._ctx.admin_db.transaction() as session:
             user = await UserRepository.get_by_id(
@@ -138,6 +138,7 @@ class PermissionService:
             # Grants on a deleted row can never be exercised (delete is
             # terminal), so editing them would only write misleading audit.
             ensure_not_deleted(user, "change the permissions of")
+            await self.validate_grants(granted_by, permissions, session=session)
             if ORG_ADMIN in permission_sets[user_id] and ORG_ADMIN not in permissions:
                 await ensure_not_last_active_admin(session, user_id)
 
@@ -190,7 +191,13 @@ class PermissionService:
         self._ctx.invalidate_broker_caches(user_id=user_id)
         return [g.permission for g in grants]
 
-    async def validate_grants(self, granter_user_id: str, permissions: list[str]) -> None:
+    async def validate_grants(
+        self,
+        granter_user_id: str,
+        permissions: list[str],
+        *,
+        session: Any | None = None,
+    ) -> None:
         """Validate that all permissions exist and the granter can grant them.
 
         ``RETIRED_PERMISSIONS`` members are accepted and skipped: a stored grant
@@ -198,8 +205,14 @@ class PermissionService:
         re-submit unchanged without a 422. The retired string is stored
         as-is and grants nothing — Phase 6b sweeps it.
         """
-        granter_effective = await self.get_effective_for_user(granter_user_id)
-        granter_set = set(granter_effective.effective)
+        if session is not None:
+            grants = await UserPermissionGrantRepository.get_grants_for_user(
+                session, granter_user_id
+            )
+            granter_set = compute_effective({g.permission for g in grants})
+        else:
+            granter_effective = await self.get_effective_for_user(granter_user_id)
+            granter_set = set(granter_effective.effective)
 
         for perm in permissions:
             if perm in RETIRED_PERMISSIONS:

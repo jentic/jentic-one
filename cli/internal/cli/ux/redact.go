@@ -5,6 +5,7 @@
 package ux
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -94,24 +95,25 @@ func isRegisteredSensitiveName(key string) bool {
 // bare name never matches its own "_"-prefixed suffix ("api_key" doesn't end in
 // "_api_key"). The impl/0.0 §2 redaction unit tests assert these.
 var sensitiveKeyExact = map[string]bool{
-	"authorization": true,
-	"x-api-key":     true,
-	"jwt":           true,
-	"assertion":     true,
-	"cookie":        true,
-	"set-cookie":    true,
-	"password":      true,
-	"passwd":        true,
-	"secret":        true,
-	"token":         true,
-	"api_key":       true,
-	"apikey":        true,
-	"private_key":   true,
-	"privatekey":    true,
-	"signing_key":   true,
-	"signingkey":    true,
-	"credential":    true,
-	"credentials":   true,
+	"authorization":       true,
+	"proxy_authorization": true,
+	"x_api_key":           true,
+	"jwt":                 true,
+	"assertion":           true,
+	"cookie":              true,
+	"set_cookie":          true,
+	"password":            true,
+	"passwd":              true,
+	"secret":              true,
+	"token":               true,
+	"api_key":             true,
+	"apikey":              true,
+	"private_key":         true,
+	"privatekey":          true,
+	"signing_key":         true,
+	"signingkey":          true,
+	"credential":          true,
+	"credentials":         true,
 }
 
 // sensitiveKeySuffixes: redact only when the (snake-cased) key ENDS with one of
@@ -172,26 +174,40 @@ func isSensitiveKey(key string) bool {
 // of truth for "does this property name look like a secret".
 func IsSensitiveKey(key string) bool { return isSensitiveKey(key) }
 
-// camelToSnake lowercases a key, inserting `_` at word boundaries. ACRONYM-AWARE:
-// a run of capitals is one word, so "APIKey" -> "api_key" and "HTTPSProxy" ->
-// "https_proxy" (a naive per-capital split gives "a_p_i_key", which matches
-// nothing and lets the key escape). Existing separators pass through.
+// camelToSnake lowercases a key, normalizing separators (`-`, `.`, whitespace,
+// repeated `_`) to a single `_` and inserting `_` at camelCase word boundaries.
+// ACRONYM-AWARE: a run of capitals is one word, so "APIKey" -> "api_key",
+// "HTTPSProxy" -> "https_proxy", and "X-Auth-Token" -> "x_auth_token" (a naive
+// per-capital split gives "a_p_i_key", which matches nothing and lets the key
+// escape).
 func camelToSnake(key string) string {
 	rs := []rune(key)
 	var b strings.Builder
+	lastUnderscore := false
+	writeUnderscore := func() {
+		if b.Len() > 0 && !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
 	for i, r := range rs {
+		if r == '-' || r == '_' || r == '.' || r == ' ' || r == '	' {
+			writeUnderscore()
+			continue
+		}
 		if r >= 'A' && r <= 'Z' {
 			prevLower := i > 0 && (rs[i-1] >= 'a' && rs[i-1] <= 'z' || rs[i-1] >= '0' && rs[i-1] <= '9')
 			nextLower := i+1 < len(rs) && rs[i+1] >= 'a' && rs[i+1] <= 'z'
 			prevUpper := i > 0 && rs[i-1] >= 'A' && rs[i-1] <= 'Z'
 			if prevLower || (prevUpper && nextLower) {
-				b.WriteByte('_')
+				writeUnderscore()
 			}
 			r += 'a' - 'A'
 		}
 		b.WriteRune(r)
+		lastUnderscore = false
 	}
-	return strings.ReplaceAll(b.String(), "__", "_")
+	return strings.TrimSuffix(b.String(), "_")
 }
 
 // redactValue returns a REDACTED DEEP COPY of an already-unmarshaled generic value
@@ -200,7 +216,10 @@ func camelToSnake(key string) string {
 // maxRedactDepth the subtree is replaced wholesale — fail CLOSED.
 const maxRedactDepth = 64
 
-func redactValue(v any) any { return redactValueDepth(v, 0) }
+func redactValue(v any) any {
+	out, _ := redactValueMarked(v)
+	return out
+}
 
 // redactValueMarked is like redactValue but also reports whether it changed
 // anything (redacted at least one sensitive key or hit the depth guard). The
@@ -235,35 +254,48 @@ func redactValueDepthMarked(v any, depth int, changed *bool) any {
 			out[i] = redactValueDepthMarked(val, depth+1, changed)
 		}
 		return out
+	case string:
+		return redactStringScalar(t, depth+1, changed)
 	default:
 		return v
 	}
 }
 
-func redactValueDepth(v any, depth int) any {
-	if depth > maxRedactDepth {
-		return "[REDACTED: too deep]"
+// redactStringScalar inspects a string scalar for serialized JSON payloads
+// (e.g. upstream text/plain JSON bodies or audit/error envelopes carrying a
+// JSON-encoded "body" string). When the trimmed scalar is a valid JSON object,
+// array, or nested JSON string, it recursively redacts the parsed value within
+// maxRedactDepth and re-serializes only when a secret is actually scrubbed,
+// preserving exact formatting when nothing inside is sensitive.
+func redactStringScalar(s string, depth int, changed *bool) string {
+	trimmed := bytesTrimSpace([]byte(s))
+	if len(trimmed) < 2 {
+		return s
 	}
-	switch t := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			if isSensitiveKey(k) || isRegisteredSensitiveName(k) {
-				out[k] = "[REDACTED]"
-			} else {
-				out[k] = redactValueDepth(val, depth+1)
+	first, last := trimmed[0], trimmed[len(trimmed)-1]
+	if (first == '{' && last == '}') || (first == '[' && last == ']') || (first == '"' && last == '"') {
+		var inner any
+		if err := json.Unmarshal([]byte(s), &inner); err == nil {
+			if depth > maxRedactDepth {
+				*changed = true
+				return "[REDACTED: too deep]"
+			}
+			innerChanged := false
+			red := redactValueDepthMarked(inner, depth, &innerChanged)
+			if innerChanged {
+				if out, merr := marshalLike([]byte(s), red); merr == nil {
+					*changed = true
+					return string(redactSensitiveDepth(out, depth))
+				}
+			}
+			scrubbed := redactSensitiveDepth([]byte(s), depth)
+			if !bytes.Equal(scrubbed, []byte(s)) {
+				*changed = true
+				return string(scrubbed)
 			}
 		}
-		return out
-	case []any:
-		out := make([]any, len(t))
-		for i, val := range t {
-			out[i] = redactValueDepth(val, depth+1)
-		}
-		return out
-	default:
-		return v
 	}
+	return s
 }
 
 // Precompiled byte-backstop patterns (compiled once at init, not per call).
@@ -273,9 +305,11 @@ var (
 	// pass share ONE definition of sensitive (incl. the allowlist — otherwise the
 	// byte pass would clobber a legitimate next_token the structured pass preserved).
 	reKV         = regexp.MustCompile(`(?i)"([a-z0-9_\-]+)"(\s*:\s*)"((?:[^"\\]|\\.)*)"`)
-	reFormKV     = regexp.MustCompile(`(?i)\b([a-z0-9_\-]+)(\s*=\s*)([^\s&"';<>]+)`)
+	reJSONString = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	reEscapedKV  = regexp.MustCompile(`(?i)\\"([a-z0-9_\-]+)\\"(\s*:\s*)\\"((?:[^"\\]|\\\\\\"|\\\\\\\\|\\\\[^"\\]|\\[^"\\])*)\\"`)
+	reFormKV     = regexp.MustCompile(`(?i)\b([a-z0-9_\-]+)(\s*=\s*)((?:[^\s&"';<>\\]|\\[^\s&"';<>])+)`)
 	reColonKV    = regexp.MustCompile(`(?im)^([[:blank:]]*)([A-Za-z0-9_\-]+)([[:blank:]]*:[[:blank:]]*)(\S[^\r\n]*)$`)
-	reAuthScheme = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization)([[:blank:]]*[:=][[:blank:]]*)([A-Za-z0-9\-]+[[:blank:]]+)?[^\s"';<>]+`)
+	reAuthScheme = regexp.MustCompile(`(?i)(?:("(?:authorization|proxy[-_]authorization)"[[:blank:]]*:[[:blank:]]*"?)|('(?:authorization|proxy[-_]authorization)'[[:blank:]]*:[[:blank:]]*'?)|(\\"(?:authorization|proxy[-_]authorization)\\"[[:blank:]]*:[[:blank:]]*(?:\\")?)|(\b(?:authorization|proxy[-_]authorization)[[:blank:]]*[:=][[:blank:]]*))([A-Za-z0-9\-]+[[:blank:]]+)?(?:[^\s"';<>\\]|\\[^\s"';<>])+`)
 	reBearer     = regexp.MustCompile(`(?i)(bearer\s+)[a-zA-Z0-9_\-\.~+/=]+`)
 	reBasic      = regexp.MustCompile(`(?i)(basic\s+)[a-zA-Z0-9+/=_\-]+`)
 	reJAK        = regexp.MustCompile(`\bjak_[A-Za-z0-9_\-]{8,}`)
@@ -291,6 +325,10 @@ var (
 // valid output. Keyed JWTs are handled by the structured pass; a bare JWT in a log
 // line is rare enough to accept the residual risk over mangling every dotted token.
 func redactSensitive(data []byte) []byte {
+	return redactSensitiveDepth(data, 0)
+}
+
+func redactSensitiveDepth(data []byte, depth int) []byte {
 	out := reKV.ReplaceAllFunc(data, func(m []byte) []byte {
 		sub := reKV.FindSubmatch(m)
 		if sub == nil {
@@ -307,6 +345,40 @@ func redactSensitive(data []byte) []byte {
 		}
 		return []byte(`"` + key + `"` + string(sub[2]) + `"[REDACTED]"`)
 	})
+	if bytes.IndexByte(out, '\\') >= 0 {
+		out = reJSONString.ReplaceAllFunc(out, func(m []byte) []byte {
+			var unescaped string
+			if err := json.Unmarshal(m, &unescaped); err != nil {
+				return m
+			}
+			if strings.IndexByte(unescaped, '"') < 0 {
+				return m
+			}
+			if depth+1 > maxRedactDepth {
+				return []byte(`"[REDACTED: too deep]"`)
+			}
+			redacted := redactBytesDepth([]byte(unescaped), depth+1)
+			if string(redacted) == unescaped {
+				return m
+			}
+			encoded, err := json.Marshal(string(redacted))
+			if err != nil {
+				return m
+			}
+			return encoded
+		})
+		out = reEscapedKV.ReplaceAllFunc(out, func(m []byte) []byte {
+			sub := reEscapedKV.FindSubmatch(m)
+			if sub == nil {
+				return m
+			}
+			key := string(sub[1])
+			if !isSensitiveKey(key) && !isRegisteredSensitiveName(key) {
+				return m
+			}
+			return []byte(`\"` + key + `\"` + string(sub[2]) + `\"[REDACTED]\"`)
+		})
+	}
 	out = reFormKV.ReplaceAllFunc(out, func(m []byte) []byte {
 		sub := reFormKV.FindSubmatch(m)
 		if sub == nil {
@@ -329,7 +401,7 @@ func redactSensitive(data []byte) []byte {
 		}
 		return []byte(string(sub[1]) + key + string(sub[3]) + "[REDACTED]")
 	})
-	out = reAuthScheme.ReplaceAll(out, []byte(`${1}${2}${3}[REDACTED]`))
+	out = reAuthScheme.ReplaceAll(out, []byte(`${1}${2}${3}${4}${5}[REDACTED]`))
 	out = reBearer.ReplaceAll(out, []byte(`${1}[REDACTED]`))
 	out = reBasic.ReplaceAll(out, []byte(`${1}[REDACTED]`))
 	out = reJAK.ReplaceAll(out, []byte(`jak_[REDACTED]`))
@@ -362,34 +434,42 @@ func redactString(s string) string { return string(redactSensitive([]byte(s))) }
 // free-form string values (bearer tokens, PEM blocks) that carry no sensitive key.
 //
 // When data is NOT valid JSON (e.g. a Markdown inspect body, a YAML spec, a
-// plain-text error) it falls back to the byte backstop alone — the same
-// behaviour as before — because there is no structure to walk.
+// plain-text error) it falls back to the byte backstop alone — because there is
+// no structure to walk.
 func RedactBytes(data []byte) []byte {
+	return redactBytesDepth(data, 0)
+}
+
+func redactBytesDepth(data []byte, depth int) []byte {
+	if depth > maxRedactDepth {
+		return []byte(`"[REDACTED: too deep]"`)
+	}
 	if trimmed := bytesTrimSpace(data); len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
 		var v any
 		if err := json.Unmarshal(data, &v); err == nil {
 			// Structured pass: redact sensitive keys regardless of value type
 			// (number/object/array/bool), which the reKV byte regex — string
-			// values only — misses (review round-3 P0). redactValue returns a
-			// redacted DEEP COPY and reports whether it actually changed anything.
-			red, changed := redactValueMarked(v)
+			// values only — misses (review round-3 P0). redactValueDepthMarked
+			// returns a redacted DEEP COPY and reports whether it changed anything.
+			changed := false
+			red := redactValueDepthMarked(v, depth, &changed)
 			if !changed {
 				// Nothing sensitive in the structured view: DO NOT re-marshal —
 				// that would reshape the caller's JSON (compact it / reorder keys)
 				// and break shape-preserving callers like WriteJSON. Just run the
 				// byte backstop over the ORIGINAL bytes (catches free-form embedded
 				// secrets without touching layout).
-				return redactSensitive(data)
+				return redactSensitiveDepth(data, depth)
 			}
 			// Something was redacted, so the document already differs from the
 			// input. Re-marshal, preserving the caller's indentation when the
 			// input was pretty-printed, then run the byte backstop.
 			if out, merr := marshalLike(data, red); merr == nil {
-				return redactSensitive(out)
+				return redactSensitiveDepth(out, depth)
 			}
 		}
 	}
-	return redactSensitive(data)
+	return redactSensitiveDepth(data, depth)
 }
 
 // marshalLike marshals v to match the indentation style of the original bytes:

@@ -50,11 +50,14 @@ Two append-only records, both in the **admin database** (which is why
 
 - **Execution records** — one per brokered call: agent, operation, verdict,
   latency, and the credential used (by id — never the secret). In the UI
-  under **Monitor**; over the API via `GET /executions` — note this returns
-  records for the **whole instance** to any holder of `executions:read` (a
-  default agent scope); it is not scoped to the caller — and
-  `GET /monitoring/executions` + `GET /monitoring/usage`
-  (operator aggregates); from the CLI via `jentic history`.
+  under **Monitor**; over the API via `GET /executions` (requires
+  `executions:read`), which is **scoped to the caller** via
+  `build_access_filters` — non-admin users see executions for themselves and
+  agents they own, agents see their own `actor_id` rows, and `org:admin`
+  callers see records across the whole instance — and via
+  `GET /monitoring/executions` + `GET /monitoring/usage` (instance-wide
+  operator aggregates, gated behind `org:admin`); from the CLI via
+  `jentic history`.
 - **Audit entries** — one per admin/control-plane mutation: actor (type, id,
   session), action, target, timestamp, and trace id. Append-only by
   construction (the table carries no update column). Over the API via

@@ -111,9 +111,10 @@ def build_access_filters(
        org:admin.
 
     ``for_write=True`` omits owner delegation and owned-agent read widening.
-    ``HeldExecution`` writes retain the owned-agent axis so a human can decide an agent's
-    hold, but omit the direct ``agent_id == sub`` clause. Agent self-writes retain
-    ``Agent.id == sub``.
+    ``HeldExecution`` and ``OAuthClientGrant`` writes retain the owned-agent axis so a
+    human owner can decide an agent's hold or revoke a grant bound to their agent;
+    ``HeldExecution`` writes omit the direct ``agent_id == sub`` clause. Agent self-writes
+    retain ``Agent.id == sub``.
 
     Raises ValueError for an unknown model or empty sub.
     """
@@ -145,9 +146,16 @@ def build_access_filters(
         ):
             conditions.append(col == identity.parent_actor_id)
 
-        if model in _OWNED_AGENT_ACTOR_MODELS and (not for_write or model is HeldExecution):
+        if model in _OWNED_AGENT_ACTOR_MODELS and (
+            not for_write or model in {HeldExecution, OAuthClientGrant}
+        ):
             owned_agent_ids = select(Agent.id).where(Agent.owner_id == identity.sub)
-            conditions.extend(c.in_(owned_agent_ids) for c in subject_cols)
+            owned_cols = (
+                (OAuthClientGrant.agent_id,)
+                if for_write and model is OAuthClientGrant
+                else subject_cols
+            )
+            conditions.extend(c.in_(owned_agent_ids) for c in owned_cols)
 
         return [or_(*conditions)]
 

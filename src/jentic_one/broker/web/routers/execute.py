@@ -162,7 +162,10 @@ from jentic_one.shared.events import (
 from jentic_one.shared.http.injection import (
     apply_injection,
     filter_inbound_cookie,
+    format_cookie_scope_key,
     get_current_reflection_guard,
+    reset_current_cookie_scope,
+    set_current_cookie_scope,
 )
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
@@ -513,6 +516,9 @@ def _apply_injection(
     injection: InjectedAuth,
     request: Request,
     server_variable_defaults: dict[str, str] | None = None,
+    *,
+    actor_id: str | None = None,
+    credential_id: str | None = None,
 ) -> tuple[str, dict[str, str]]:
     """The outbound URL and forwarded headers with injected auth applied.
 
@@ -521,12 +527,15 @@ def _apply_injection(
     the async worker also uses, so a call sent inline and the same call sent
     with ``Prefer: respond-async`` reach the upstream alike.
     """
+    resolved_cred_id = credential_id if credential_id is not None else injection.credential_id
     return apply_injection(
         forward_headers(request.headers, {}),
         upstream_url,
         injection,
         inbound_cookie=_inbound_cookie(request),
         server_variable_defaults=server_variable_defaults,
+        actor_id=actor_id,
+        credential_id=resolved_cred_id,
     )
 
 
@@ -735,128 +744,146 @@ async def _handle(
         ctx_req.credential_id = selected_credential.credential_id
         ctx_req.credential_name = selected_credential.name
 
-    # A require-approval rule matched — hold the execution before any upstream
-    # call. Both the async and sync request paths enter the hold path (async
-    # preference makes no difference: the result is always a 202 held envelope).
-    if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
-        return await _handle_hold(request, ctx_req, ctx, identity, authorization)
-
-    if _should_async(ctx_req.prefer):
-        return await _handle_async(
-            request,
-            ctx_req,
-            ctx,
-            identity,
-            selected_credential_id=selected_credential.credential_id,
-            allowed_credential_ids=allowed_credential_ids,
-        )
-
-    idem_key = request.headers.get("idempotency-key")
-    upstream_cfg = ctx.config.broker.resilience.upstream
-
-    # Stream the response straight through for sync, non-idempotent
-    # requests — idempotent requests fall to the buffered path below because
-    # replay needs the whole body. Disabled requests / non-streaming runners
-    # also fall through.
-    if (
-        upstream_cfg.stream_passthrough_enabled
-        and not (idempotency is not None and idem_key)
-        and isinstance(runner, StreamingUpstreamRunner)
-    ):
-        return await _handle_streaming(
-            request,
-            ctx_req,
-            ctx,
-            identity,
-            runner,
-            upstream_cfg,
-            preresolved=selected_credential,
-            allowed_credential_ids=allowed_credential_ids,
-        )
-
-    # Buffer the body once (needed for the idempotency fingerprint and the call).
-    with stage(ServerTimingStage.BODY):
-        body = await _read_request_body(request, method, ctx)
-
-    # Claim/replay on Idempotency-Key. Async same-job_id replay is future
-    # work — only the sync path is idempotent here.
-    fp: str | None = None
-    claim_lease: IdempotencyClaimLease | None = None
-    if idempotency is not None and idem_key:
-        # The fingerprint's consumer scope is the selected credential
-        # (historically the toolkit on the pre-6b legacy path — same slot,
-        # so replay identity is stable across the cutover).
-        fp = fingerprint(
-            method,
-            ctx_req.upstream_url,
-            ctx_req.credential_id or "",
-            body,
-            headers=request.headers,
-            cookie=_inbound_cookie(request),
-            server_variables=ctx_req.server_variables,
-        )
-        with stage(ServerTimingStage.IDEMPOTENCY):
-            outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
-        if outcome_idem.state is IdempotencyState.CONFLICT:
-            raise IdempotencyConflictError(
-                detail="Idempotency-Key reused with a different request.",
-                type="idempotency_conflict",
-            )
-        if outcome_idem.state is IdempotencyState.IN_PROGRESS:
-            raise IdempotencyInProgressError(
-                detail="A request with this Idempotency-Key is still in progress; retry shortly.",
-                type="idempotency_in_progress",
-                headers={"Retry-After": str(outcome_idem.retry_after_s)},
-            )
-        if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
-            return _replay_response(outcome_idem.stored)
-        claim_lease = idempotency.lease(
-            identity.sub,
-            idem_key,
-            fp,
-            outcome_idem.claim_id,
-        )
-
-    assembled_response: Response | None = None
-
-    async def _complete_idempotency(outcome_exec: ExecutionOutcome) -> None:
-        nonlocal assembled_response
-        assembled_response = _assemble_response(outcome_exec, ctx_req)
-        if claim_lease is not None:
-            raw_pairs = [
-                (k.decode("latin-1"), v.decode("latin-1"))
-                for k, v in assembled_response.raw_headers
-                if k.decode("latin-1").lower() != "content-length"
-            ]
-            with stage(ServerTimingStage.IDEMPOTENCY):
-                await claim_lease.complete(
-                    status_code=assembled_response.status_code,
-                    headers=raw_pairs,
-                    body=bytes(assembled_response.body),
-                )
-
-    async with claim_lease if claim_lease is not None else contextlib.nullcontext():
-        outcome = await _execute_buffered(
-            request,
-            ctx_req,
-            ctx,
-            identity,
-            runner,
-            body,
-            selected_credential=selected_credential,
-            allowed_credential_ids=allowed_credential_ids,
-            on_dispatched=claim_lease.mark_dispatched if claim_lease is not None else None,
-            on_pre_send_error=(
-                claim_lease.mark_pre_send_failure if claim_lease is not None else None
-            ),
-            on_outcome=_complete_idempotency if claim_lease is not None else None,
-        )
-
-    return (
-        assembled_response
-        if assembled_response is not None
-        else _assemble_response(outcome, ctx_req)
+    initial_cookie_scope = format_cookie_scope_key(
+        identity.sub,
+        selected_credential.credential_id if selected_credential is not None else None,
     )
+    cookie_scope_token = set_current_cookie_scope(initial_cookie_scope)
+    try:
+        # A require-approval rule matched — hold the execution before any upstream
+        # call. Both the async and sync request paths enter the hold path (async
+        # preference makes no difference: the result is always a 202 held envelope).
+        if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
+            return await _handle_hold(
+                request,
+                ctx_req,
+                ctx,
+                identity,
+                authorization,
+                cookie_scope=initial_cookie_scope,
+            )
+
+        if _should_async(ctx_req.prefer):
+            return await _handle_async(
+                request,
+                ctx_req,
+                ctx,
+                identity,
+                selected_credential_id=selected_credential.credential_id,
+                allowed_credential_ids=allowed_credential_ids,
+                cookie_scope=initial_cookie_scope,
+            )
+
+        idem_key = request.headers.get("idempotency-key")
+        upstream_cfg = ctx.config.broker.resilience.upstream
+
+        # Stream the response straight through for sync, non-idempotent
+        # requests — idempotent requests fall to the buffered path below because
+        # replay needs the whole body. Disabled requests / non-streaming runners
+        # also fall through.
+        if (
+            upstream_cfg.stream_passthrough_enabled
+            and not (idempotency is not None and idem_key)
+            and isinstance(runner, StreamingUpstreamRunner)
+        ):
+            return await _handle_streaming(
+                request,
+                ctx_req,
+                ctx,
+                identity,
+                runner,
+                upstream_cfg,
+                preresolved=selected_credential,
+                allowed_credential_ids=allowed_credential_ids,
+            )
+
+        # Buffer the body once (needed for the idempotency fingerprint and the call).
+        with stage(ServerTimingStage.BODY):
+            body = await _read_request_body(request, method, ctx)
+
+        # Claim/replay on Idempotency-Key. Async same-job_id replay is future
+        # work — only the sync path is idempotent here.
+        fp: str | None = None
+        claim_lease: IdempotencyClaimLease | None = None
+        if idempotency is not None and idem_key:
+            # The fingerprint's consumer scope is the selected credential
+            # (the toolkit slot on the pre-6b legacy path — same slot,
+            # so replay identity is stable across the cutover).
+            fp = fingerprint(
+                method,
+                ctx_req.upstream_url,
+                ctx_req.credential_id or "",
+                body,
+                headers=request.headers,
+                cookie=_inbound_cookie(request),
+                server_variables=ctx_req.server_variables,
+            )
+            with stage(ServerTimingStage.IDEMPOTENCY):
+                outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
+            if outcome_idem.state is IdempotencyState.CONFLICT:
+                raise IdempotencyConflictError(
+                    detail="Idempotency-Key reused with a different request.",
+                    type="idempotency_conflict",
+                )
+            if outcome_idem.state is IdempotencyState.IN_PROGRESS:
+                raise IdempotencyInProgressError(
+                    detail=(
+                        "A request with this Idempotency-Key is still in progress; retry shortly."
+                    ),
+                    type="idempotency_in_progress",
+                    headers={"Retry-After": str(outcome_idem.retry_after_s)},
+                )
+            if outcome_idem.state is IdempotencyState.REPLAY and outcome_idem.stored is not None:
+                return _replay_response(outcome_idem.stored)
+            claim_lease = idempotency.lease(
+                identity.sub,
+                idem_key,
+                fp,
+                outcome_idem.claim_id,
+            )
+
+        assembled_response: Response | None = None
+
+        async def _complete_idempotency(outcome_exec: ExecutionOutcome) -> None:
+            nonlocal assembled_response
+            assembled_response = _assemble_response(outcome_exec, ctx_req)
+            if claim_lease is not None:
+                raw_pairs = [
+                    (k.decode("latin-1"), v.decode("latin-1"))
+                    for k, v in assembled_response.raw_headers
+                    if k.decode("latin-1").lower() != "content-length"
+                ]
+                with stage(ServerTimingStage.IDEMPOTENCY):
+                    await claim_lease.complete(
+                        status_code=assembled_response.status_code,
+                        headers=raw_pairs,
+                        body=bytes(assembled_response.body),
+                    )
+
+        async with claim_lease if claim_lease is not None else contextlib.nullcontext():
+            outcome = await _execute_buffered(
+                request,
+                ctx_req,
+                ctx,
+                identity,
+                runner,
+                body,
+                selected_credential=selected_credential,
+                allowed_credential_ids=allowed_credential_ids,
+                on_dispatched=claim_lease.mark_dispatched if claim_lease is not None else None,
+                on_pre_send_error=(
+                    claim_lease.mark_pre_send_failure if claim_lease is not None else None
+                ),
+                on_outcome=_complete_idempotency if claim_lease is not None else None,
+            )
+
+        return (
+            assembled_response
+            if assembled_response is not None
+            else _assemble_response(outcome, ctx_req)
+        )
+    finally:
+        reset_current_cookie_scope(cookie_scope_token)
 
 
 async def _execute_buffered(
@@ -892,8 +919,14 @@ async def _execute_buffered(
             allowed_credential_ids=allowed_credential_ids,
             credential_id=request.headers.get("jentic-credential-id"),
         )
+        set_current_cookie_scope(format_cookie_scope_key(identity.sub, injection.credential_id))
         ctx_req.upstream_url, forwarded = _apply_injection(
-            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+            ctx_req.upstream_url,
+            injection,
+            request,
+            ctx_req.server_variable_defaults,
+            actor_id=identity.sub,
+            credential_id=injection.credential_id,
         )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
@@ -964,8 +997,14 @@ async def _handle_streaming(
             allowed_credential_ids=allowed_credential_ids,
             credential_id=request.headers.get("jentic-credential-id"),
         )
+        set_current_cookie_scope(format_cookie_scope_key(identity.sub, injection.credential_id))
         ctx_req.upstream_url, forwarded = _apply_injection(
-            ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+            ctx_req.upstream_url,
+            injection,
+            request,
+            ctx_req.server_variable_defaults,
+            actor_id=identity.sub,
+            credential_id=injection.credential_id,
         )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
@@ -1254,6 +1293,7 @@ def _captured_cookie(
     *,
     upstream_url: str | None = None,
     server_variables_unresolved: bool = False,
+    scope_key: str | None = None,
 ) -> str | None:
     """The caller's ``Cookie`` encrypted for an async or held job payload.
 
@@ -1276,7 +1316,7 @@ def _captured_cookie(
             pre_send=True,
         )
     if upstream_url and not server_variables_unresolved:
-        cookie = filter_inbound_cookie(cookie, upstream_url)
+        cookie = filter_inbound_cookie(cookie, upstream_url, scope_key=scope_key)
         if cookie is None:
             return None
     try:
@@ -1312,6 +1352,8 @@ async def _handle_hold(
     ctx: Context,
     identity: Identity,
     authorization: ExecutionAuthorization,
+    *,
+    cookie_scope: str | None = None,
 ) -> Response:
     """File (or join) a require-approval hold and answer the 202 held envelope.
 
@@ -1352,6 +1394,7 @@ async def _handle_hold(
             ctx,
             upstream_url=ctx_req.upstream_url,
             server_variables_unresolved=ctx_req.server_variables_unresolved,
+            scope_key=cookie_scope,
         ),
         identity=identity,
         auth_token_sha256=token_sha256,
@@ -1473,6 +1516,7 @@ async def _handle_async(
     *,
     selected_credential_id: str | None = None,
     allowed_credential_ids: list[str] | None = None,
+    cookie_scope: str | None = None,
 ) -> Response:
     """Enqueue an async (202) execution. The worker shares the same pipeline.
 
@@ -1499,6 +1543,7 @@ async def _handle_async(
             ctx,
             upstream_url=ctx_req.upstream_url,
             server_variables_unresolved=ctx_req.server_variables_unresolved,
+            scope_key=cookie_scope,
         ),
         identity=identity,
         auth_token_sha256=token_sha256,

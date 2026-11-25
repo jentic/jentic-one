@@ -52,6 +52,7 @@ from jentic_one.shared.broker.protocols import RunnerCapabilities
 from jentic_one.shared.egress import UpstreamHostUnresolvedError
 from jentic_one.shared.http.injection import (
     filter_inbound_cookie,
+    get_current_cookie_scope,
     record_upstream_set_cookie,
 )
 from jentic_one.shared.url_validation import UpstreamUrlInvalidError, reject_url_userinfo
@@ -281,7 +282,12 @@ class HttpRunner(UpstreamRunner):
         return HTTP_RUNNER_CAPABILITIES
 
     @staticmethod
-    def _outbound_headers(headers: dict[str, str], url: str | None = None) -> dict[str, str]:
+    def _outbound_headers(
+        headers: dict[str, str],
+        url: str | None = None,
+        *,
+        scope_key: str | None = None,
+    ) -> dict[str, str]:
         """Ensure Accept-Encoding is explicit and strip Connection-nominated or foreign cookies.
 
         When the caller omits Accept-Encoding, httpx silently adds
@@ -289,6 +295,7 @@ class HttpRunner(UpstreamRunner):
         caller never opted into. We inject ``identity`` as a sentinel to suppress
         the default while signalling "no encoding" to the upstream.
         """
+        effective_scope = get_current_cookie_scope() if scope_key is None else scope_key
         nominated = connection_nominated_headers(headers)
         out: dict[str, str] = {}
         for key, value in headers.items():
@@ -296,7 +303,9 @@ class HttpRunner(UpstreamRunner):
             if lowered == "connection" or lowered in nominated:
                 continue
             if lowered == "cookie" and url:
-                filtered_cookie = filter_inbound_cookie(value, url, allow_untracked=True)
+                filtered_cookie = filter_inbound_cookie(
+                    value, url, allow_untracked=True, scope_key=effective_scope
+                )
                 if not filtered_cookie:
                     continue
                 value = filtered_cookie
@@ -312,17 +321,25 @@ class HttpRunner(UpstreamRunner):
 
     async def _run(self, request: RunnerRequest, host: str) -> HttpRunnerResult:
         start = time.perf_counter()
+        cookie_scope = get_current_cookie_scope()
         with _tracer.start_as_current_span("broker.upstream_request") as span:
             span.set_attribute("http.url_host", host)
             try:
+                outbound_headers = self._outbound_headers(
+                    request.headers, request.url, scope_key=cookie_scope
+                )
+                self._client.cookies.clear()
                 req = self._client.build_request(
                     method=request.method,
                     url=request.url,
                     content=request.body,
-                    headers=self._outbound_headers(request.headers, request.url),
+                    headers=outbound_headers,
                     timeout=request.timeout_s,
                 )
+                if not any(k.lower() == "cookie" for k in outbound_headers):
+                    req.headers.pop("cookie", None)
                 resp = await self._client.send(req, stream=True)
+                self._client.cookies.clear()
                 try:
                     body = await self._read_capped(resp)
                 finally:
@@ -341,7 +358,7 @@ class HttpRunner(UpstreamRunner):
         raw_headers = tuple((k, v) for k, v in resp.headers.multi_items())
         for header_name, header_val in raw_headers:
             if header_name.lower() == "set-cookie":
-                record_upstream_set_cookie(request.url, header_val)
+                record_upstream_set_cookie(request.url, header_val, scope_key=cookie_scope)
         return HttpRunnerResult(
             status_code=resp.status_code,
             body=body,
@@ -442,19 +459,26 @@ class HttpRunner(UpstreamRunner):
         stream lifetime.
         """
         host = _parse_request_url(request.url).host
+        cookie_scope = get_current_cookie_scope()
         async with self._bulkhead.guard(host):
             try:
+                self._client.cookies.clear()
                 async with self._client.stream(
                     method=request.method,
                     url=request.url,
                     content=request.body,
-                    headers=self._outbound_headers(request.headers, request.url),
+                    headers=self._outbound_headers(
+                        request.headers, request.url, scope_key=cookie_scope
+                    ),
                     timeout=request.timeout_s,
                 ) as resp:
+                    self._client.cookies.clear()
                     raw_headers = tuple((k, v) for k, v in resp.headers.multi_items())
                     for header_name, header_val in raw_headers:
                         if header_name.lower() == "set-cookie":
-                            record_upstream_set_cookie(request.url, header_val)
+                            record_upstream_set_cookie(
+                                request.url, header_val, scope_key=cookie_scope
+                            )
                     yield HttpStreamingResult(
                         status_code=resp.status_code,
                         headers=ResponseHeaderMap(dict(resp.headers), raw_headers=raw_headers),

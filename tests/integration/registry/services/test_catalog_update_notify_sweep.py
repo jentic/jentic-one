@@ -10,10 +10,12 @@ digest-based dedupe against persisted state — the parts unit mocks can't catch
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -196,6 +198,39 @@ async def test_sweep_dedupes_across_runs(integration_context: Context, registere
 
     events = await _events(integration_context)
     assert len(events) == 1  # deduped on the persisted last_notified_digest
+
+
+async def test_context_exit_drains_triggered_sweep_before_disposing_db(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """Exiting a Context cancels and drains an in-flight triggered sweep before DB close."""
+    cfg = deepcopy(integration_context.config)
+    cfg.catalog.update_check_interval_seconds = 86400
+
+    entered_fetch = asyncio.Event()
+    unblock = asyncio.Event()
+    cancelled = False
+
+    async def _slow_fetch(*_args: Any, **_kwargs: Any) -> ConditionalFetch:
+        nonlocal cancelled
+        entered_fetch.set()
+        try:
+            await unblock.wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+    async with Context(
+        cfg, allowed_dbs={"registry", "admin"}, refresh_providers_on_boot=False
+    ) as local_ctx:
+        svc = CatalogService(local_ctx)
+        with patch(f"{_SWEEP}.fetch_bytes_conditional", side_effect=_slow_fetch):
+            svc.trigger_update_notify_sweep()
+            await asyncio.wait_for(entered_fetch.wait(), timeout=2.0)
+
+    assert cancelled is True
+    assert local_ctx._background_tasks == set()
 
 
 async def test_sweep_no_event_when_upstream_matches_registered(

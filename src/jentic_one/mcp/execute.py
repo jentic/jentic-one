@@ -78,25 +78,50 @@ def _is_loopback_host(hostname: str | None) -> bool:
         return False
 
 
-def resolve_broker_target(broker_url: str) -> tuple[str, str]:
-    """Resolve the broker scheme/host from ``server.mcp.broker_url``.
+def _malformed_broker_url(broker_url: str, reason: str) -> ToolError:
+    return ToolError(
+        CODE_RESOLVE_FAILED,
+        f"server.mcp.broker_url is malformed ({broker_url!r}): {reason}",
+        actionable="Ask your operator to set server.mcp.broker_url to the broker's "
+        "HTTP(S) base URL, e.g. https://<broker-host>:<port> (or http://127.0.0.1:8100 "
+        "for a local install).",
+    )
 
-    The two Go fail-closed guards port unchanged (``resolveMCPBrokerTarget``
-    M2 + ``BuildRequest`` SEC-1): a malformed URL errors rather than silently
-    dialing a default, and plaintext ``http`` is refused for a non-loopback
-    host — the caller's bearer rides this hop.
+
+def resolve_broker_target(broker_url: str) -> tuple[str, str]:
+    """Resolve the broker scheme and authority (+ path prefix) from ``server.mcp.broker_url``.
+
+    The Go fail-closed guards port unchanged (``resolveMCPBrokerTarget``
+    M2 + ``BuildRequest`` SEC-1): a malformed or non-HTTP(S) URL errors rather
+    than dialing an unsupported transport or default, plaintext ``http`` is
+    refused for a non-loopback host (the caller's bearer rides this hop), and
+    any non-empty reverse-proxy path prefix on ``broker_url`` is preserved
+    without trailing slashes.
     """
     parts = urlsplit(broker_url)
-    if not parts.scheme or not parts.netloc:
-        raise ToolError(
-            CODE_RESOLVE_FAILED,
-            f"server.mcp.broker_url is malformed ({broker_url!r}): "
-            "it must be an absolute URL with a scheme and host",
-            actionable="Ask your operator to set server.mcp.broker_url to the broker's "
-            "base URL, e.g. https://<broker-host>:<port> (or http://127.0.0.1:8100 for "
-            "a local install).",
-        )
-    if parts.scheme != "https" and not _is_loopback_host(parts.hostname):
+    scheme = parts.scheme.lower()
+    if not scheme or not parts.netloc:
+        raise _malformed_broker_url(broker_url, "it must be an absolute URL with a scheme and host")
+    if scheme not in ("http", "https"):
+        raise _malformed_broker_url(broker_url, "scheme must be 'http' or 'https'")
+    if parts.username is not None or parts.password is not None:
+        raise _malformed_broker_url(broker_url, "credentials in the URL are not supported")
+    if parts.query or parts.fragment:
+        raise _malformed_broker_url(broker_url, "query and fragment components are not allowed")
+    try:
+        port = parts.port
+    except ValueError:
+        raise _malformed_broker_url(broker_url, "port must be an integer in 1..65535") from None
+    if not parts.hostname or (port is not None and not (1 <= port <= 65535)):
+        raise _malformed_broker_url(broker_url, "host and valid port (1..65535) are required")
+    base_path = parts.path.rstrip("/")
+    if base_path:
+        segments = base_path.split("/")[1:]
+        if any(seg in ("", ".", "..") for seg in segments):
+            raise _malformed_broker_url(
+                broker_url, "path prefix must not contain empty or dot segments"
+            )
+    if scheme != "https" and not _is_loopback_host(parts.hostname):
         raise ToolError(
             CODE_TRANSPORT_ERROR,
             f"refusing to send the caller's bearer over plaintext to the non-loopback "
@@ -104,7 +129,7 @@ def resolve_broker_target(broker_url: str) -> tuple[str, str]:
             actionable="Use an https broker URL, or a loopback (127.0.0.1/localhost) "
             "http broker for local installs.",
         )
-    return parts.scheme, parts.netloc
+    return scheme, f"{parts.netloc}{base_path}"
 
 
 def parse_method_path(target: str) -> tuple[str, str]:
@@ -169,11 +194,28 @@ def build_upstream_url(
     return upstream
 
 
-def broker_request_url(scheme: str, host: str, upstream: str, *, broker_relative: bool) -> str:
-    """Address the broker as the catch-all proxy (Go: ``BuildRequest``)."""
+def broker_request_url(
+    scheme: str,
+    host: str,
+    upstream: str,
+    *,
+    broker_relative: bool,
+    base_path: str = "",
+) -> str:
+    """Address the broker as the catch-all proxy (Go: ``BuildRequest``).
+
+    ``host`` may carry a normalized ``/prefix`` from :func:`resolve_broker_target`
+    (or an explicit ``base_path``); trailing slashes are stripped so reverse-proxy
+    prefixes prepend cleanly without double slashes.
+    """
+    authority = host.rstrip("/")
+    prefix = base_path.strip("/")
+    if prefix:
+        authority = f"{authority}/{prefix}"
     if broker_relative:
-        return f"{scheme}://{host}{upstream}"
-    return f"{scheme}://{host}/{upstream}"
+        rel = upstream if upstream.startswith("/") else f"/{upstream}"
+        return f"{scheme}://{authority}{rel}"
+    return f"{scheme}://{authority}/{upstream.lstrip('/')}"
 
 
 def _error_origin(headers: httpx.Headers) -> str:

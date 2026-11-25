@@ -8,6 +8,7 @@ security schemes of the newly-live revision) and must not raise
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -196,3 +197,110 @@ async def test_promote_already_published_raises_conflict(
     svc = RevisionService(integration_context)
     with pytest.raises(RevisionStateConflictError):
         await svc.promote(vendor, name, version, str(live_id), identity=_IDENTITY)
+
+
+async def test_promote_updates_operation_count_and_archive_resets_it(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Promoting drafts updates Api.operation_count; archiving current resets it to 0."""
+    api = Api(
+        vendor="acme.com",
+        name="ops-counter",
+        version="v1",
+        operation_count=0,
+        created_by="usr_test",
+    )
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        draft_v1 = ApiRevision(
+            api_id=api.id,
+            state=ApiRevisionState.DRAFT,
+            origin="catalog",
+            spec_digest="sha256:ops-v1",
+            source_type="url",
+            source_url="https://example.com/v1.yaml",
+            operation_count=5,
+            created_by="usr_test",
+        )
+        draft_v2 = ApiRevision(
+            api_id=api.id,
+            state=ApiRevisionState.DRAFT,
+            origin="catalog",
+            spec_digest="sha256:ops-v2",
+            source_type="url",
+            source_url="https://example.com/v2.yaml",
+            operation_count=9,
+            created_by="usr_test",
+        )
+        session.add_all([draft_v1, draft_v2])
+        await session.commit()
+        api_id = api.id
+        v1_id = draft_v1.id
+        v2_id = draft_v2.id
+
+    svc = RevisionService(integration_context)
+
+    # First promotion: 0 -> 5
+    view1 = await svc.promote(api.vendor, api.name, api.version, str(v1_id), identity=_IDENTITY)
+    assert view1.operation_count == 5
+    async with registry_db.session() as session:
+        loaded = await session.get(Api, api_id)
+        assert loaded is not None
+        assert loaded.operation_count == 5
+
+    # Second promotion across drafts: 5 -> 9
+    view2 = await svc.promote(api.vendor, api.name, api.version, str(v2_id), identity=_IDENTITY)
+    assert view2.operation_count == 9
+    async with registry_db.session() as session:
+        loaded = await session.get(Api, api_id)
+        assert loaded is not None
+        assert loaded.operation_count == 9
+
+    # Archiving the current revision clears current_revision_id and resets operation_count to 0.
+    await svc.archive(api.vendor, api.name, api.version, str(v2_id), identity=_IDENTITY)
+    async with registry_db.session() as session:
+        loaded = await session.get(Api, api_id)
+        assert loaded is not None
+        assert loaded.current_revision_id is None
+        assert loaded.operation_count == 0
+
+
+async def test_concurrent_promote_serializes_cleanly(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Two concurrent promotes of the same draft yield one success and one 409 conflict."""
+    api = Api(vendor="acme.com", name="race-promote", version="v1", created_by="usr_test")
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        draft_id = await _create_revision(
+            session,
+            api_id=api.id,
+            state=ApiRevisionState.DRAFT,
+            spec_digest="sha256:race-draft",
+            host="race.acme.com",
+            scheme_type="http",
+        )
+        await session.commit()
+        api_id = api.id
+
+    svc = RevisionService(integration_context)
+    outcomes = await asyncio.gather(
+        svc.promote(api.vendor, api.name, api.version, str(draft_id), identity=_IDENTITY),
+        svc.promote(api.vendor, api.name, api.version, str(draft_id), identity=_IDENTITY),
+        return_exceptions=True,
+    )
+    conflicts = [o for o in outcomes if isinstance(o, RevisionStateConflictError)]
+    successes = [o for o in outcomes if not isinstance(o, BaseException)]
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+
+    async with registry_db.session() as session:
+        loaded = await session.get(Api, api_id)
+        assert loaded is not None
+        assert loaded.current_revision_id == draft_id

@@ -21,6 +21,8 @@ Two discovery surfaces live here:
 
 from __future__ import annotations
 
+import hashlib
+from collections import OrderedDict
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -38,20 +40,28 @@ from jentic_one.shared.web.openapi_responses import route_not_found
 
 router = APIRouter()
 
-_jwks_publishers: dict[tuple[tuple[str, str], ...], CachedJWKSPublisher] = {}
+_MAX_JWKS_PUBLISHERS = 8
+_jwks_publishers: OrderedDict[tuple[tuple[str, str], ...], CachedJWKSPublisher] = OrderedDict()
 
 
 def _publisher_key(config: AuthConfig) -> tuple[tuple[str, str], ...]:
-    """Identity of the active signing material, so a key rotation rebuilds the JWKS."""
-    return tuple((k.kid, k.private_key_pem.get_secret_value()) for k in config.id_signing)
+    """SHA-256 digest identity of the active signing material so key rotation rebuilds the JWKS."""
+    return tuple(
+        (k.kid, hashlib.sha256(k.private_key_pem.get_secret_value().encode("utf-8")).hexdigest())
+        for k in config.id_signing
+    )
 
 
 def _get_publisher(config: AuthConfig) -> CachedJWKSPublisher:
     key = _publisher_key(config)
     publisher = _jwks_publishers.get(key)
-    if publisher is None:
-        publisher = CachedJWKSPublisher(config)
-        _jwks_publishers[key] = publisher
+    if publisher is not None:
+        _jwks_publishers.move_to_end(key)
+        return publisher
+    publisher = CachedJWKSPublisher(config)
+    _jwks_publishers[key] = publisher
+    while len(_jwks_publishers) > _MAX_JWKS_PUBLISHERS:
+        _jwks_publishers.popitem(last=False)
     return publisher
 
 

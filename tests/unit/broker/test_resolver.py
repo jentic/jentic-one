@@ -13,6 +13,7 @@ from jentic_one.broker.services.credentials.errors import (
     CredentialNotProvisionedError,
 )
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.shared.auth.actor_status import UserStatus
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.schemas import APIReference
 
@@ -566,3 +567,63 @@ async def test_resolve_failure_loads_no_material(
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
 
     load_material_spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "creator_status",
+    [
+        UserStatus(active=False, session_generation=1, deleted=False),
+        UserStatus(active=False, session_generation=1, deleted=True),
+    ],
+    ids=["disabled-creator", "deleted-creator"],
+)
+async def test_resolve_refuses_credential_created_by_inactive_user_when_admin_db_available(
+    load_material_spy: AsyncMock, creator_status: UserStatus
+) -> None:
+    """Split-DB broker refuses active credentials whose human creator is disabled or deleted."""
+    stale_cred = _make_credential(cred_id="cred_stale", created_by="usr_disabled")
+    live_cred = _make_credential(cred_id="cred_live", created_by="usr_active")
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:live"
+    live_cred.token_value_credential = tvc
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    ctx.is_db_allowed.side_effect = lambda name: name == "admin"
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    async def fake_read_user_status(_admin_db: object, user_id: str) -> UserStatus:
+        if user_id == "usr_disabled":
+            return creator_status
+        return UserStatus(active=True, session_generation=0, deleted=False)
+
+    with (
+        patch(
+            "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+            new_callable=AsyncMock,
+            return_value=[stale_cred],
+        ),
+        patch(
+            "jentic_one.broker.services.credentials.resolver.read_user_status",
+            side_effect=fake_read_user_status,
+        ),
+        pytest.raises(CredentialNotProvisionedError),
+    ):
+        await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+    load_material_spy.assert_not_awaited()
+
+    with (
+        patch(
+            "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+            new_callable=AsyncMock,
+            return_value=[stale_cred, live_cred],
+        ),
+        patch(
+            "jentic_one.broker.services.credentials.resolver.read_user_status",
+            side_effect=fake_read_user_status,
+        ),
+    ):
+        resolved = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+    assert resolved.credential_id == "cred_live"

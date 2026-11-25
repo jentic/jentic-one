@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import delete
 
 from jentic_one.admin.core.permissions import ORG_ADMIN
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
@@ -16,17 +17,20 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
 from jentic_one.shared.auth.verify import verify_token
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorStatus
 
 pytestmark = pytest.mark.integration
 
 _GRANTER_ID = "usr_verify_granter"
 _USER_ID = "usr_token_test_1"
 _PARENT_ID = "usr_parent_1"
+_AGENT_ID = "agnt_token_test_1"
 _SEEDED_IDS = (_GRANTER_ID, _USER_ID, _PARENT_ID)
 
 
 async def _delete_seeded(ctx: Context) -> None:
     async with ctx.admin_db.session() as session:
+        await session.execute(delete(Agent).where(Agent.id == _AGENT_ID))
         await session.execute(
             delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(_SEEDED_IDS))
         )
@@ -90,9 +94,21 @@ async def test_verify_token_agent_does_not_inherit_parent_permissions(
     parent_id = _PARENT_ID
     await svc.set_assigned(parent_id, [ORG_ADMIN], identity=granter)
 
-    # 2. Mint a JWT for the AGENT
+    # 2. Seed an active owned agent and mint a JWT for it
     secret = "test-secret"
-    agent_id = "agt_token_test_1"
+    agent_id = _AGENT_ID
+    async with ctx.admin_db.session() as session:
+        session.add(
+            Agent(
+                id=agent_id,
+                name="verify-token-agent",
+                owner_id=parent_id,
+                registered_by=parent_id,
+                created_by=parent_id,
+                status=ActorStatus.ACTIVE,
+            )
+        )
+        await session.commit()
     claims = {
         "sub": agent_id,
         "email": "",

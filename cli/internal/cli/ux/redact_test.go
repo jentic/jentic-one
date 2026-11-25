@@ -10,13 +10,19 @@ import (
 
 func TestCamelToSnake(t *testing.T) {
 	cases := map[string]string{
-		"apiKey":        "api_key",
-		"APIKey":        "api_key",
-		"HTTPSProxy":    "https_proxy",
-		"clientSecret":  "client_secret",
-		"refreshToken":  "refresh_token",
-		"already_snake": "already_snake",
-		"PublicKey":     "public_key",
+		"apiKey":                 "api_key",
+		"APIKey":                 "api_key",
+		"HTTPSProxy":             "https_proxy",
+		"clientSecret":           "client_secret",
+		"refreshToken":           "refresh_token",
+		"already_snake":          "already_snake",
+		"PublicKey":              "public_key",
+		"X-Auth-Token":           "x_auth_token",
+		"X-Shopify-Access-Token": "x_shopify_access_token",
+		"Api-Key":                "api_key",
+		"Proxy-Authorization":    "proxy_authorization",
+		"next-token":             "next_token",
+		"multi---sep__key":       "multi_sep_key",
 	}
 	for in, want := range cases {
 		if got := camelToSnake(in); got != want {
@@ -30,10 +36,17 @@ func TestIsSensitiveKey(t *testing.T) {
 		"authorization", "password", "secret", "token", "api_key", "apiKey",
 		"private_key", "client_secret", "access_token", "refresh_token",
 		"webhook_secret", "db_password", "clientSecret", "credentials",
+		"X-Auth-Token", "X-Access-Token", "X-Shopify-Access-Token",
+		"Api-Key", "x-api-key", "X-API-Key",
+		"access-token", "refresh-token", "client-secret", "private-key",
+		"Proxy-Authorization", "proxy-authorization", "Set-Cookie",
 	}
 	notSensitive := []string{
-		"next_token", "token_count", "public_key", "key_id", "secret_name",
-		"password_policy", "name", "id", "url", "count", "has_api_key",
+		"next_token", "next-token", "Next-Token",
+		"token_count", "public_key", "key_id", "secret_name",
+		"password_policy", "name", "id", "url", "count",
+		"has_api_key", "has-api-key", "has-credentials", "has-credential",
+		"content-type", "x-request-id", "idempotency-key",
 	}
 	for _, k := range sensitive {
 		if !isSensitiveKey(k) {
@@ -454,5 +467,241 @@ func TestRedactBytes_EscapedQuoteJSONFragment(t *testing.T) {
 	}
 	if !strings.Contains(got, `"user":"alice"`) {
 		t.Errorf("non-sensitive field in fragment mangled: %s", got)
+	}
+}
+
+func TestRedact_HyphenatedSecretKeysAndProxyAuthorization(t *testing.T) {
+	payload := map[string]any{
+		"X-Auth-Token":           "xat_secret_val_101",            // pragma: allowlist secret
+		"X-Access-Token":         "xact_secret_val_102",           // pragma: allowlist secret
+		"X-Shopify-Access-Token": "shpat_secret_val_103",          // pragma: allowlist secret
+		"Api-Key":                "ak_hyphen_secret_104",          // pragma: allowlist secret
+		"access-token":           "at_hyphen_secret_105",          // pragma: allowlist secret
+		"refresh-token":          "rt_hyphen_secret_106",          // pragma: allowlist secret
+		"client-secret":          "cs_hyphen_secret_107",          // pragma: allowlist secret
+		"private-key":            "pk_hyphen_secret_108",          // pragma: allowlist secret
+		"Proxy-Authorization":    "opaque_proxy_cred_secret_109",  // pragma: allowlist secret
+		"next-token":             "cursor_hyphen_allowlisted_999", // pragma: allowlist secret
+	}
+	allSecrets := []string{
+		"xat_secret_val_101",           // pragma: allowlist secret
+		"xact_secret_val_102",          // pragma: allowlist secret
+		"shpat_secret_val_103",         // pragma: allowlist secret
+		"ak_hyphen_secret_104",         // pragma: allowlist secret
+		"at_hyphen_secret_105",         // pragma: allowlist secret
+		"rt_hyphen_secret_106",         // pragma: allowlist secret
+		"cs_hyphen_secret_107",         // pragma: allowlist secret
+		"pk_hyphen_secret_108",         // pragma: allowlist secret
+		"opaque_proxy_cred_secret_109", // pragma: allowlist secret
+	}
+
+	// Structured redactValue pass.
+	redMap := redactValue(payload).(map[string]any)
+	for k, v := range redMap {
+		if k == "next-token" {
+			if v != "cursor_hyphen_allowlisted_999" {
+				t.Errorf("allowlisted next-token clobbered in redactValue: %v", v)
+			}
+			continue
+		}
+		if v != "[REDACTED]" {
+			t.Errorf("hyphenated key %q leaked in redactValue: %v", k, v)
+		}
+	}
+
+	// Raw JSON bytes through BOTH RedactBytes and redactSensitive.
+	rawJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	for _, fn := range []struct {
+		name string
+		run  func([]byte) []byte
+	}{
+		{"RedactBytes", RedactBytes},
+		{"redactSensitive", redactSensitive},
+	} {
+		out := fn.run(rawJSON)
+		got := string(out)
+		if !json.Valid(out) {
+			t.Errorf("%s produced invalid JSON: %s", fn.name, got)
+		}
+		for _, sec := range allSecrets {
+			if strings.Contains(got, sec) {
+				t.Errorf("%s leaked secret %q: %s", fn.name, sec, got)
+			}
+		}
+		if !strings.Contains(got, `"next-token":"cursor_hyphen_allowlisted_999"`) {
+			t.Errorf("%s clobbered allowlisted next-token: %s", fn.name, got)
+		}
+	}
+
+	// Proxy-Authorization and Authorization with Bearer + opaque schemes across
+	// quoted/truncated/header forms, including direct reAuthScheme matching.
+	authInputs := []struct {
+		name   string
+		in     string
+		secret string
+	}{
+		{
+			name:   "Proxy-Authorization Bearer in JSON",
+			in:     `{"Proxy-Authorization": "Bearer proxy_bearer_secret_201"}`, // pragma: allowlist secret
+			secret: "proxy_bearer_secret_201",                                   // pragma: allowlist secret
+		},
+		{
+			name:   "Proxy-Authorization opaque in JSON",
+			in:     `{"Proxy-Authorization": "opaque_proxy_token_202"}`, // pragma: allowlist secret
+			secret: "opaque_proxy_token_202",                            // pragma: allowlist secret
+		},
+		{
+			name:   "Truncated JSON quoted Proxy-Authorization Bearer",
+			in:     `upstream trace: {"Proxy-Authorization": "Bearer proxy_trunc_secret_203`, // pragma: allowlist secret
+			secret: "proxy_trunc_secret_203",                                                 // pragma: allowlist secret
+		},
+		{
+			name:   "Truncated JSON quoted Authorization Token",
+			in:     `upstream trace: {"Authorization": "Token auth_trunc_secret_204`, // pragma: allowlist secret
+			secret: "auth_trunc_secret_204",                                          // pragma: allowlist secret
+		},
+		{
+			name:   "Header Proxy-Authorization opaque",
+			in:     "Proxy-Authorization: opaque_header_proxy_205", // pragma: allowlist secret
+			secret: "opaque_header_proxy_205",                      // pragma: allowlist secret
+		},
+	}
+	for _, tc := range authInputs {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(redactSensitive([]byte(tc.in)))
+			if strings.Contains(got, tc.secret) {
+				t.Errorf("redactSensitive leaked %q in: %s", tc.secret, got)
+			}
+			gotScheme := string(reAuthScheme.ReplaceAll([]byte(tc.in), []byte(`${1}${2}${3}${4}${5}[REDACTED]`)))
+			if strings.Contains(gotScheme, tc.secret) {
+				t.Errorf("reAuthScheme failed to match %q in: %s", tc.secret, gotScheme)
+			}
+		})
+	}
+}
+
+func TestRedact_NestedJSONStringPayloads(t *testing.T) {
+	innerBody := `{"access_token":"ya29_nested_secret_301","refresh-token":"rt_nested_secret_302","nested":{"client-secret":"cs_nested_secret_303","api_key":987654321},"next-token":"cursor_nested_ok","ok":true}` // pragma: allowlist secret
+	envelope := map[string]any{
+		"status_code":  200,
+		"content_type": "text/plain",
+		"body":         innerBody,
+	}
+	secrets := []string{
+		"ya29_nested_secret_301", // pragma: allowlist secret
+		"rt_nested_secret_302",   // pragma: allowlist secret
+		"cs_nested_secret_303",   // pragma: allowlist secret
+		"987654321",
+	}
+
+	// 1. Structured redactValue pass on execute-style envelope.
+	redEnv := redactValue(envelope).(map[string]any)
+	redBody, ok := redEnv["body"].(string)
+	if !ok {
+		t.Fatalf("expected redacted body to remain a string, got %T", redEnv["body"])
+	}
+	if !json.Valid([]byte(redBody)) {
+		t.Fatalf("redacted body string is not valid JSON: %s", redBody)
+	}
+	for _, sec := range secrets {
+		if strings.Contains(redBody, sec) {
+			t.Errorf("redactValue leaked nested JSON string secret %q: %s", sec, redBody)
+		}
+	}
+	if !strings.Contains(redBody, `"next-token":"cursor_nested_ok"`) {
+		t.Errorf("redactValue clobbered allowlisted next-token inside body string: %s", redBody)
+	}
+	if !strings.Contains(redBody, `"ok":true`) {
+		t.Errorf("redactValue corrupted non-sensitive field inside body string: %s", redBody)
+	}
+
+	// 2. Raw JSON bytes through safeMarshal, RedactBytes, and direct redactSensitive.
+	rawEnvelope, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	for _, fn := range []struct {
+		name string
+		out  []byte
+	}{
+		{"safeMarshal", safeMarshal(envelope)},
+		{"RedactBytes", RedactBytes(rawEnvelope)},
+		{"redactSensitive", redactSensitive(rawEnvelope)},
+	} {
+		t.Run(fn.name, func(t *testing.T) {
+			if !json.Valid(fn.out) {
+				t.Fatalf("%s produced invalid JSON: %s", fn.name, fn.out)
+			}
+			s := string(fn.out)
+			for _, sec := range secrets {
+				if strings.Contains(s, sec) {
+					t.Errorf("%s leaked nested JSON secret %q: %s", fn.name, sec, s)
+				}
+			}
+			if !strings.Contains(s, `cursor_nested_ok`) {
+				t.Errorf("%s clobbered allowlisted next-token: %s", fn.name, s)
+			}
+		})
+	}
+
+	// 3. Prefixed non-JSON log line and truncated escaped JSON fragment on stderr/raw path.
+	prefixedLog := append([]byte("upstream 502 error: "), rawEnvelope...)
+	gotLog := string(redactSensitive(prefixedLog))
+	for _, sec := range secrets {
+		if strings.Contains(gotLog, sec) {
+			t.Errorf("prefixed log redactSensitive leaked %q: %s", sec, gotLog)
+		}
+	}
+	if !strings.Contains(gotLog, "cursor_nested_ok") {
+		t.Errorf("prefixed log redactSensitive clobbered next-token: %s", gotLog)
+	}
+
+	truncatedEscaped := []byte(`truncated body: "{\"access_token\":\"ya29_trunc_304\",\"client-secret\":\"cs_trunc_305\",\"next-token\":\"cursor_trunc_ok\"`) // pragma: allowlist secret
+	gotTrunc := string(redactSensitive(truncatedEscaped))
+	if strings.Contains(gotTrunc, "ya29_trunc_304") || strings.Contains(gotTrunc, "cs_trunc_305") { // pragma: allowlist secret
+		t.Errorf("truncated escaped JSON leaked secret: %s", gotTrunc)
+	}
+	if !strings.Contains(gotTrunc, `\"next-token\":\"cursor_trunc_ok\"`) {
+		t.Errorf("truncated escaped JSON clobbered allowlisted next-token: %s", gotTrunc)
+	}
+
+	// 4. Non-sensitive embedded JSON string preserves exact outer and inner shape.
+	safeEnvelope := `{"z":"keep","body":"{\"b\":\"2\",\"a\":\"1\",\"next-token\":\"cursor_safe\"}"}`
+	if gotSafe := string(RedactBytes([]byte(safeEnvelope))); gotSafe != safeEnvelope {
+		t.Errorf("safe nested JSON string reshaped:\ngot  %s\nwant %s", gotSafe, safeEnvelope)
+	}
+}
+
+// A backslash inside a form-style or header value must not end the match early
+// and leave the rest of the secret in the output.
+func TestRedactBytesBackslashInSecretValueIsFullyRedacted(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		secret string
+		keep   string
+	}{
+		{"form value with backslash", `password=abc\def&x=1`, `def`, `&x=1`},                                              // pragma: allowlist secret
+		{"form value in JSON string", `{"msg":"password=ab\\cd"}`, `cd`, `"msg"`},                                         // pragma: allowlist secret
+		{"form value with escaped quote stops at the quote", `{"msg":"token=ab\"c\" ok"}`, `token=ab`, ` ok`},             // pragma: allowlist secret
+		{"authorization header value with backslash", `{"log":"Authorization: Bearer abc\\xyz failed"}`, `xyz`, `failed`}, // pragma: allowlist secret
+		{"authorization form value with backslash", `authorization=sekret\tail next`, `tail`, ` next`},                    // pragma: allowlist secret
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(RedactBytes([]byte(tc.body)))
+			if strings.Contains(got, tc.secret) {
+				t.Errorf("secret suffix %q leaked: %s", tc.secret, got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Errorf("nothing redacted: %s", got)
+			}
+			if !strings.Contains(got, tc.keep) {
+				t.Errorf("non-secret text %q was swallowed: %s", tc.keep, got)
+			}
+		})
 	}
 }

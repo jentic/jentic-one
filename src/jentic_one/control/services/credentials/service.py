@@ -712,22 +712,29 @@ class CredentialService(_CredentialAccessMixin):
         """
         self._validate_update_fields(payload)
         access_filters = build_access_filters(identity, Credential, for_write=True)
+        oauth2_token_affecting = payload.type == CredentialType.OAUTH2 and (
+            payload.token_url is not None
+            or payload.client_secret is not None
+            or payload.scopes is not None
+        )
         validated_token_url: str | None = None
-        if payload.type == CredentialType.OAUTH2 and payload.token_url is not None:
+        if oauth2_token_affecting:
             async with self._ctx.control_db.session() as session:
                 await self._get_updatable(session, credential_id, payload, access_filters)
             validated_token_url = await self._validate_update_token_url(payload)
         oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
-            if validated_token_url is not None:
+            if oauth2_token_affecting:
                 # Serialise with the broker's single-flight refresh, with a
-                # connect's token write and with a concurrent token_url edit:
+                # connect's token write and with concurrent OAuth2 client edits:
                 # a refresh already holding the lock finishes against the
-                # stored origin, and the next one finds the token row gone
-                # (needs-reconnect) rather than presenting the old refresh
-                # token to the new origin; a connect writing after this commits
-                # re-checks the endpoint and discards a grant minted at the old
-                # origin. It is the transaction's first statement, so the
+                # stored client config, and any secret rotation or scope
+                # invalidation drops the token row before the next refresh runs
+                # rather than letting an in-flight refresh persist a token
+                # minted with pre-update secret or scopes; a connect writing
+                # after this commits re-checks the endpoint and discards a grant
+                # minted at the old origin. It is the transaction's first
+                # statement, so the
                 # credential and client rows the origin comparison reads are
                 # loaded after any edit that held the lock has committed: a
                 # path edit queued behind a cross-origin move compares against
@@ -907,21 +914,33 @@ class CredentialService(_CredentialAccessMixin):
     async def delete(self, credential_id: str, *, identity: Identity) -> None:
         """Delete a credential by ID (cascade removes siblings) and its agent bindings."""
         access_filters = build_access_filters(identity, Credential, for_write=True)
-        async with self._ctx.control_db.transaction() as session:
+        async with self._ctx.control_db.session() as session:
             existing = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
             )
             if existing is None:
                 raise CredentialNotFoundError(credential_id)
             credential_name = existing.name
+
+        # Purge admin-DB bindings before deleting the control credential so an
+        # admin-DB failure propagates while the credential still exists; a
+        # retry then finds the credential and finishes cleanly instead of
+        # returning 404 and stranding bindings or locking attached rule sets.
+        removed_bindings = await self._remove_agent_bindings(
+            credential_id, credential_name=credential_name, identity=identity
+        )
+
+        async with self._ctx.control_db.transaction() as session:
+            existing = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+            if existing is None:
+                raise CredentialNotFoundError(credential_id)
             before_state = {"name": existing.name, "active": existing.active}
             deleted = await CredentialRepository.delete(session, credential_id)
             if not deleted:
                 raise CredentialNotFoundError(credential_id)
 
-        removed_bindings = await self._remove_agent_bindings(
-            credential_id, credential_name=credential_name, identity=identity
-        )
         self._ctx.invalidate_broker_caches(credential_id=credential_id)
 
         await record_audit_best_effort(
@@ -949,7 +968,8 @@ class CredentialService(_CredentialAccessMixin):
         cross-DB foreign key to ``control.credentials``, so deleting a
         credential control-side must sweep its bindings explicitly or orphan
         bindings stay active and keep any attached ``rule_set_id`` undeletable.
-        Best-effort after the control delete commits (no 2PC across databases).
+        Runs before the control delete commits so admin-DB failures propagate
+        and keep the delete retryable.
         """
         if not self._ctx.is_db_allowed("admin"):
             logger.warning(
@@ -958,51 +978,45 @@ class CredentialService(_CredentialAccessMixin):
                 credential_id=credential_id,
             )
             return 0
-        try:
-            async with self._ctx.admin_db.transaction() as session:
-                removed = await EffectsRepository.delete_bindings_for_credential(
-                    session, credential_id=credential_id
-                )
-                cred_label = summary_label(credential_name, credential_id)
-                for binding in removed:
-                    await record_audit(
-                        session,
-                        action=AuditAction.REVOKE,
-                        target_type=AuditTargetType.CREDENTIAL_BINDING,
-                        target_id=credential_id,
-                        actor_type=identity.actor_type,
-                        actor_id=identity.sub,
-                        target_parent_id=binding.agent_id,
-                        reason="credential_deleted",
-                        origin=identity.origin.value,
-                    )
-                    agent_label = summary_label(binding.agent_name, binding.agent_id)
-                    async with session.begin_nested():
-                        await emit_event_best_effort(
-                            session,
-                            type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
-                            severity=EventSeverity.INFO,
-                            summary=(
-                                f"Credential {cred_label} unbound from agent {agent_label} "
-                                "because the credential was deleted"
-                            ),
-                            data={
-                                "agent_id": binding.agent_id,
-                                "credential_id": credential_id,
-                            },
-                            # Subject is the agent, so its owner sees the removal.
-                            created_by=binding.agent_id,
-                            actor_id=identity.sub,
-                            actor_type=identity.actor_type.value,
-                        )
-                return len(removed)
-        except Exception:
-            logger.warning(
-                "credential_delete_binding_cleanup_failed",
-                credential_id=credential_id,
-                exc_info=True,
+        async with self._ctx.admin_db.transaction() as session:
+            removed = await EffectsRepository.delete_bindings_for_credential(
+                session, credential_id=credential_id
             )
-            return 0
+            cred_label = summary_label(credential_name, credential_id)
+            for binding in removed:
+                await record_audit(
+                    session,
+                    action=AuditAction.REVOKE,
+                    target_type=AuditTargetType.CREDENTIAL_BINDING,
+                    target_id=credential_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    target_parent_id=binding.agent_id,
+                    reason="credential_deleted",
+                    origin=identity.origin.value,
+                )
+                agent_label = summary_label(binding.agent_name, binding.agent_id)
+                async with session.begin_nested():
+                    await emit_event_best_effort(
+                        session,
+                        type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+                        severity=EventSeverity.INFO,
+                        summary=(
+                            f"Credential {cred_label} unbound from agent {agent_label} "
+                            "because the credential was deleted"
+                        ),
+                        data={
+                            "agent_id": binding.agent_id,
+                            "credential_id": credential_id,
+                        },
+                        # Subject is the agent, so its owner sees the removal.
+                        created_by=binding.agent_id,
+                        actor_id=identity.sub,
+                        actor_type=identity.actor_type.value,
+                    )
+        for binding in removed:
+            self._ctx.invalidate_broker_caches(agent_id=binding.agent_id)
+        return len(removed)
 
     def _to_redacted(
         self, credential: Any, *, registration_names: dict[str, str]
@@ -1181,11 +1195,11 @@ class CredentialService(_CredentialAccessMixin):
                 "edit the registration instead"
             )
 
-        if StoredCredentialType(credential.type) == StoredCredentialType.OAUTH2_DEVICE_CODE:
-            await self._apply_device_code_update(
-                session, credential_id, payload, validated_token_url=validated_token_url
+        stored_type = StoredCredentialType(credential.type)
+        if stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE:
+            return await self._apply_device_code_update(
+                session, credential, payload, validated_token_url=validated_token_url
             )
-            return False
 
         occ = await OAuthClientCredentialRepository.get_by_credential(session, credential_id)
         if occ is None:
@@ -1198,6 +1212,19 @@ class CredentialService(_CredentialAccessMixin):
                 "Changing the token_url origin (scheme, host or port) requires "
                 "re-entering client_secret in the same request"
             )
+        old_scopes = set(occ.scope.split()) if occ.scope else set()
+        if not old_scopes and credential.oauth_token is not None and credential.oauth_token.scope:
+            old_scopes = set(credential.oauth_token.scope.split())
+        scopes_invalidated = False
+        if payload.scopes is not None:
+            new_scopes = set(payload.scopes)
+            if stored_type == StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS:
+                # Client-credentials tokens mint non-interactively; any scope
+                # change drops the cached token so the next call mints with the
+                # exact configured scope set.
+                scopes_invalidated = new_scopes != old_scopes
+            else:
+                scopes_invalidated = not old_scopes.issubset(new_scopes)
         await OAuthClientCredentialRepository.update(
             session,
             credential_id,
@@ -1209,7 +1236,7 @@ class CredentialService(_CredentialAccessMixin):
             token_url=validated_token_url,
             scope=" ".join(payload.scopes) if payload.scopes is not None else SCOPE_UNSET,
         )
-        if not cross_origin:
+        if not (cross_origin or payload.client_secret is not None or scopes_invalidated):
             return False
         dropped = await OAuthTokenRepository.delete_by_credential(session, credential_id)
         if dropped:
@@ -1221,11 +1248,11 @@ class CredentialService(_CredentialAccessMixin):
     @staticmethod
     async def _apply_device_code_update(
         session: Any,
-        credential_id: str,
+        credential: Credential,
         payload: CredentialUpdate,
         *,
         validated_token_url: str | None,
-    ) -> None:
+    ) -> bool:
         """Apply a device_code (RFC 8628) client-config edit; see ``_apply_oauth2_update``.
 
         Device flow is a public client: there is no secret to rotate or to
@@ -1235,6 +1262,7 @@ class CredentialService(_CredentialAccessMixin):
         origin. A pending flow polls with the stored token_url and stamps the
         confirmed scopes on success, so both stay frozen until it ends.
         """
+        credential_id = credential.id
         if payload.client_secret is not None:
             raise InvalidCredentialInputError(
                 "client_secret is not used by device_code credentials"
@@ -1258,6 +1286,12 @@ class CredentialService(_CredentialAccessMixin):
                 "device_code credentials cannot move token_url to a different origin "
                 "(scheme, host or port); create a new credential instead"
             )
+        old_scopes = set(dfc.granted_scopes or dfc.requested_scopes or ())
+        if not old_scopes and credential.oauth_token is not None and credential.oauth_token.scope:
+            old_scopes = set(credential.oauth_token.scope.split())
+        scopes_narrowed = payload.scopes is not None and not old_scopes.issubset(
+            set(payload.scopes)
+        )
         device_fields: dict[str, Any] = {}
         if validated_token_url is not None:
             device_fields["token_url"] = validated_token_url
@@ -1265,12 +1299,17 @@ class CredentialService(_CredentialAccessMixin):
             device_fields["requested_scopes"] = payload.scopes or None
             # ``granted_scopes`` records what the last connect asked for and
             # takes precedence in the redacted view; the next connect stamps
-            # it again, so drop it or the edit is masked. The live token keeps
-            # its own granted ``scope``.
+            # it again, so drop it or the edit is masked.
             device_fields["granted_scopes"] = None
         await DeviceAuthorizationCredentialRepository.update_fields(
             session, credential_id, **device_fields
         )
+        if not scopes_narrowed:
+            return False
+        dropped = await OAuthTokenRepository.delete_by_credential(session, credential_id)
+        if dropped:
+            await session.refresh(credential, attribute_names=["oauth_token"])
+        return dropped
 
     async def _validate_update_token_url(self, payload: CredentialUpdate) -> str | None:
         """Require an https OAuth2 ``token_url`` edit that passes ``control.egress``.

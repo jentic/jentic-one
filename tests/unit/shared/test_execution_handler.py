@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -25,7 +26,11 @@ from sqlalchemy.exc import OperationalError
 from jentic_one.shared.config import EncryptionConfig
 from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
-from jentic_one.shared.http.injection import record_upstream_set_cookie
+from jentic_one.shared.http.injection import (
+    clear_upstream_cookie_scopes,
+    get_current_cookie_scope,
+    record_upstream_set_cookie,
+)
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.hold import INBOUND_COOKIE_PAYLOAD_KEY
 from jentic_one.shared.jobs.protocols import (
@@ -41,6 +46,14 @@ from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.schemas import OperationInfo
 from tests.unit.fake_tx import FailingTransactions, SessionScope, post_upstream_write_failures
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cookie_scopes() -> Iterator[None]:
+    """Start and end every test with no tracked upstream cookies."""
+    clear_upstream_cookie_scopes()
+    yield
+    clear_upstream_cookie_scopes()
 
 
 class _FakeSession:
@@ -336,7 +349,9 @@ async def test_handler_appends_cookie_creds_to_the_captured_inbound_cookie() -> 
     """An upstream-scoped cookie captured at enqueue reaches that same upstream,
     with cookie credentials appended rather than replacing it."""
     for pair in ("sid=agent", "theme=dark"):
-        record_upstream_set_cookie("https://api.example.com/v1/things", f"{pair}; Path=/")
+        record_upstream_set_cookie(
+            "https://api.example.com/v1/things", f"{pair}; Path=/", actor_id="usr_test"
+        )
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
@@ -367,7 +382,9 @@ async def test_handler_appends_cookie_creds_to_the_captured_inbound_cookie() -> 
 
 @pytest.mark.asyncio
 async def test_handler_without_injector_still_sends_the_scoped_cookie() -> None:
-    record_upstream_set_cookie("https://api.example.com/v1/things", "sid=agent; Path=/")
+    record_upstream_set_cookie(
+        "https://api.example.com/v1/things", "sid=agent; Path=/", actor_id="usr_test"
+    )
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
@@ -384,6 +401,92 @@ async def test_handler_without_injector_still_sends_the_scoped_cookie() -> None:
     req = executor.last_request
     assert req is not None
     assert req.headers == {"Cookie": "sid=agent"}
+
+
+class _ScopeRecordingExecutor(_RecordingExecutor):
+    """Records the cookie scope active while the upstream call runs."""
+
+    def __init__(self, result: UpstreamExecResult) -> None:
+        super().__init__(result)
+        self.cookie_scope: str | None = None
+
+    async def execute(self, request: UpstreamExecRequest, *, db: Any) -> UpstreamExecResult:
+        self.cookie_scope = get_current_cookie_scope()
+        return await super().execute(request, db=db)
+
+
+@pytest.mark.asyncio
+async def test_handler_runs_upstream_in_the_callers_cookie_scope() -> None:
+    """The worker uses the sync route's (actor, credential) cookie partition.
+
+    The caller's cookie recorded under that partition is forwarded, the
+    upstream call runs with that partition current (so the runner records any
+    Set-Cookie there), and the scope is restored once the job finishes.
+    """
+    url = "https://api.example.com/v1/things"
+    record_upstream_set_cookie(
+        url, "sid=caller; Path=/", actor_id="usr_test", credential_id="cred_1"
+    )
+    executor = _ScopeRecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(
+            InjectedAuth(headers={}, query_params={}, cookies={}, credential_id="cred_1")
+        ),
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+        encryption=_COOKIE_ENCRYPTION,
+    )
+    before = get_current_cookie_scope()
+
+    await handler.execute(
+        "job-cookie-scope",
+        SessionScope(_FakeSession()),
+        payload=_payload(**{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=caller")}),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.headers == {"Cookie": "sid=caller"}
+    assert executor.cookie_scope == "usr_test:cred_1"
+    assert get_current_cookie_scope() == before
+
+
+@pytest.mark.asyncio
+async def test_handler_strips_a_cookie_tracked_for_another_actor() -> None:
+    """A cookie another actor received from the upstream is not replayed for this caller."""
+    url = "https://api.example.com/v1/things"
+    record_upstream_set_cookie(
+        url, "sid=other; Path=/", actor_id="usr_other", credential_id="cred_1"
+    )
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(
+            InjectedAuth(headers={}, query_params={}, cookies={}, credential_id="cred_1")
+        ),
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+        encryption=_COOKIE_ENCRYPTION,
+    )
+
+    await handler.execute(
+        "job-cookie-other",
+        SessionScope(_FakeSession()),
+        payload=_payload(**{INBOUND_COOKIE_PAYLOAD_KEY: _COOKIE_ENCRYPTION.encrypt("sid=other")}),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert "Cookie" not in req.headers
 
 
 @pytest.mark.asyncio

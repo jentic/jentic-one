@@ -8,9 +8,11 @@ recorded. For the step-by-step upgrade procedure itself, see
 
 ## Support window (N-1 and N-2 minor series)
 
-Direct, single-hop upgrades to a target `0.N.x` release are supported and
-tested from the **previous two minor series (`N-1` and `N-2`)**, with each
-minor series collapsed to its **latest published patch release**:
+Direct, single-hop upgrades to a target `0.N.x` release are supported from the
+**previous two minor series (`N-1` and `N-2`)**, with each minor series
+collapsed to its **latest published patch release** (see
+[Backends and CI enforcement](#backends-and-ci-enforcement) for Phase 1 CI leg
+gating):
 
 - Operators on an older patch within a supported minor series (`0.(N-1).0` when
   `0.(N-1).2` exists) should upgrade from the latest patch of that minor series,
@@ -72,6 +74,11 @@ the concrete window when CI runs:
   tagged release commit targets its own series.
 - **Sources** are the latest released patch of each of the previous two minors,
   read from the `v*` git tags. A minor with no release is omitted.
+- **Which legs run (`enabled_roles`).** Both `N-1` and `N-2` are in the
+  supported window, but CI runs a leg only for the roles listed in
+  `window.enabled_roles` and only on `enabled: true` backends. During Phase 1
+  that is `enabled_roles: ["n-1"]` on PostgreSQL; the `N-2` leg is held pending
+  Phase 2 matrix expansion.
 - **Source images** are pulled by the multi-arch manifest digest GHCR reports
   for the tag when the matrix is built, so every leg in a run tests the same
   image. A tag whose image is not published yet (the minutes between tagging
@@ -84,9 +91,10 @@ the concrete window when CI runs:
   on the migrated data, or the post-upgrade verifier. A leg that never reaches
   the upgrade step (image pull, source-release startup, seeding against the
   source API) is reported as *inconclusive* with a warning.
-- **PostgreSQL** (`postgres`) is the primary production backend (`blocking: true`).
-- **SQLite** (`sqlite`, the quickstart topology) is tracked in the matrix as an
-  advisory leg (`blocking: false`) while Phase 2 coverage is rolled out.
+- **PostgreSQL** (`postgres`) is the primary production backend (`blocking: true`,
+  `enabled: true`).
+- **SQLite** (`sqlite`, the quickstart topology) is declared in the policy as an
+  advisory leg (`blocking: false`, `enabled: false`) pending Phase 2 rollout.
 
 ## Refresh-token survival policy
 

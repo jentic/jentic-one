@@ -603,3 +603,120 @@ async def test_set_status_cas_requires_api_serving_non_overlay(
         )
         await session.commit()
     assert rows == expected_rows
+
+
+async def test_update_fields_cas_guards_against_rolled_back_or_stale_revision(
+    registry_db: DatabaseSession,
+    sample_api: Api,
+) -> None:
+    """update_fields with expected_status + expected_confirmed_revision_id rejects stale state."""
+    rev_live = uuid.uuid4()
+    rev_other = uuid.uuid4()
+
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"v": 1}, created_by="usr_test"
+        )
+        await session.execute(
+            update(Overlay)
+            .where(Overlay.id == overlay.id)
+            .values(status=OverlayStatus.CONFIRMED, confirmed_revision_id=rev_live)
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    # Mismatched confirmed_revision_id matches 0 rows.
+    async with registry_db.session() as session:
+        locked = await OverlayRepository.get_for_api(
+            session, sample_api.id, overlay_id, for_update=True
+        )
+        assert locked is not None
+        rows = await OverlayRepository.update_fields(
+            session,
+            overlay_id,
+            document={"v": 2},
+            expected_status=OverlayStatus.CONFIRMED,
+            expected_confirmed_revision_id=rev_other,
+        )
+        await session.commit()
+    assert rows == 0
+
+    # Matching status and confirmed_revision_id updates 1 row.
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.update_fields(
+            session,
+            overlay_id,
+            document={"v": 2},
+            expected_status=OverlayStatus.CONFIRMED,
+            expected_confirmed_revision_id=rev_live,
+        )
+        await session.commit()
+    assert rows == 1
+
+    # Once rolled back (DEPRECATED), CAS refuses further confirmed edits.
+    async with registry_db.session() as session:
+        await OverlayRepository.set_status(
+            session, overlay_id, OverlayStatus.DEPRECATED, deprecated_at=datetime.now(UTC)
+        )
+        rows = await OverlayRepository.update_fields(
+            session,
+            overlay_id,
+            document={"v": 3},
+            expected_status=OverlayStatus.CONFIRMED,
+            expected_confirmed_revision_id=rev_live,
+        )
+        await session.commit()
+    assert rows == 0
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_by_id(session, overlay_id)
+    assert fetched is not None
+    assert fetched.document == {"v": 2}
+
+
+async def test_set_confirmed_revision_skips_deprecated_or_archived_revision(
+    registry_db: DatabaseSession,
+    sample_api: Api,
+) -> None:
+    """Stale materialization jobs cannot relink a deprecated overlay or archived revision."""
+    async with registry_db.session() as session:
+        archived_rev = ApiRevision(
+            api_id=sample_api.id, state="archived", spec_digest="sha256:stale-mat"
+        )
+        active_rev = ApiRevision(
+            api_id=sample_api.id, state="imported", spec_digest="sha256:active-mat"
+        )
+        session.add_all([archived_rev, active_rev])
+        await session.flush()
+
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"m": 1}, created_by="usr_test"
+        )
+        await OverlayRepository.set_status(
+            session, overlay.id, OverlayStatus.CONFIRMED, confirmed_at=datetime.now(UTC)
+        )
+        await OverlayRepository.set_confirmed_revision(session, overlay.id, active_rev.id)
+        await session.commit()
+        overlay_id = overlay.id
+        archived_id = archived_rev.id
+        active_id = active_rev.id
+
+    # Stale job trying to point at an already-archived revision is rejected.
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.set_confirmed_revision(session, overlay_id, archived_id)
+        await session.commit()
+    assert rows == 0
+
+    # Deprecated/rolled-back overlay refuses relinking even to an active revision.
+    async with registry_db.session() as session:
+        await OverlayRepository.set_status(
+            session, overlay_id, OverlayStatus.DEPRECATED, deprecated_at=datetime.now(UTC)
+        )
+        rows = await OverlayRepository.set_confirmed_revision(session, overlay_id, uuid.uuid4())
+        await session.commit()
+    assert rows == 0
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_by_id(session, overlay_id)
+    assert fetched is not None
+    assert fetched.confirmed_revision_id == active_id

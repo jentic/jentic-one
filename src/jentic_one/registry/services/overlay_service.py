@@ -748,7 +748,10 @@ class OverlayService:
         # deterministic recovery. We keep the row authoritative and let the served spec catch
         # up, consistent with confirm.
         async with self._ctx.registry_db.transaction() as session:
-            current = await OverlayRepository.get_for_api(session, api.id, overlay_id)
+            live = await ApiRepository.get_by_id_for_update(session, api.id)
+            current = await OverlayRepository.get_for_api(
+                session, api.id, overlay_id, for_update=True
+            )
             if (
                 current is None
                 or current.status != OverlayStatus.CONFIRMED
@@ -759,16 +762,23 @@ class OverlayService:
                     api.id, overlay_id, vendor, name, version
                 )
                 return self._view(vendor, name, version, refreshed)
-            live = await ApiRepository.get_by_id(session, api.id)
-            if live is None or live.current_revision_id != current.confirmed_revision_id:
+            expected_rev_id = current.confirmed_revision_id
+            if live is None or live.current_revision_id != expected_rev_id:
                 return self._view(vendor, name, version, current)
 
-            await OverlayRepository.update_fields(
+            updated = await OverlayRepository.update_fields(
                 session,
                 overlay_id,
                 document=document,
                 target_revision_id=target_revision_id,
+                expected_status=OverlayStatus.CONFIRMED,
+                expected_confirmed_revision_id=expected_rev_id,
             )
+            session.expire_all()
+
+        if updated == 0:
+            refreshed = await self._get_overlay_or_raise(api.id, overlay_id, vendor, name, version)
+            return self._view(vendor, name, version, refreshed)
 
         # Enqueue the re-ingest. The worker supersedes the overlay's current revision with
         # the new one and re-links confirmed_revision_id (keeping the clean-base superseded

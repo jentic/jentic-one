@@ -7,7 +7,9 @@ Exposes a read-only, structured view of:
 - owner-scoped and parent-scoped ORM tables across ``admin``, ``control``, and
   ``registry`` (:class:`ScopedTable`, :func:`scoped_tables`);
 - registered control-surface extra access-filter providers
-  (:func:`access_filter_providers`).
+  (:func:`access_filter_providers`);
+- served MCP tools, handler bindings, and permission/OAuth-scope metadata
+  (:class:`McpToolFact`, :func:`mcp_tool_facts`).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import atexit
 import inspect
 import shutil
 import tempfile
+import weakref
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,9 +41,15 @@ from jentic_one.control.scoping.filters import (
 from jentic_one.control.scoping.filters import (
     scoped_model_specs as control_scoped_model_specs,
 )
+from jentic_one.mcp.spec import SERVED_TOOLS
+from jentic_one.mcp.tools import HANDLERS as MCP_HANDLERS
 from jentic_one.registry.scoping.filters import scoped_model_specs as registry_scoped_model_specs
-from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
+from jentic_one.shared.auth.permission_catalog import (
+    BROKER_EXECUTE_PERMISSION,
+    MCP_TOOL_SCOPES,
+)
 from jentic_one.shared.config import AppConfig, load_config
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.web import static as static_module
 from jentic_one.shared.web.endpoint_permissions import (
@@ -56,10 +65,12 @@ from jentic_one.shared.web.openapi_meta import generate_operation_id
 
 __all__ = [
     "INTROSPECTION_SCHEMA",
+    "McpToolFact",
     "RouteFact",
     "ScopedTable",
     "access_filter_providers",
     "build_app",
+    "mcp_tool_facts",
     "route_facts",
     "scoped_tables",
 ]
@@ -99,6 +110,35 @@ class RouteFact:
     in_schema: bool
     auth_via: str | None
     opaque: bool
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class McpToolFact:
+    """Normalized handler and permission-scope metadata for one served MCP tool."""
+
+    name: str
+    has_handler: bool
+    module: str | None
+    permissions: frozenset[str]
+    scopes: frozenset[str]
+
+
+#: Permission gates enforced by each served MCP tool handler (or its broker hop).
+_MCP_TOOL_PERMISSIONS: Final[Mapping[str, frozenset[str]]] = {
+    "whoami": frozenset(),
+    "search_apis": frozenset({"apis:read"}),
+    "inspect_operation": frozenset({"apis:read"}),
+    "execute": frozenset({BROKER_EXECUTE_PERMISSION}),
+    "execute_read": frozenset({BROKER_EXECUTE_PERMISSION}),
+    "get_execution_result": frozenset({"jobs:read"}),
+    "search_catalog": frozenset({"capabilities:read"}),
+    "import_api": frozenset({"catalog:import"}),
+    "inspect_api": frozenset({"credentials:connect", "credentials:write"}),
+    "request_connection": frozenset({"credentials:connect", "credentials:write"}),
+    "show_access": frozenset({"credentials:read", "owner:credentials:read"}),
+    "request_access_change": frozenset({"credentials:connect", "credentials:write"}),
+    "amend_request": frozenset({"credentials:connect", "credentials:write"}),
+}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -156,6 +196,31 @@ def _make_spa_stub_dir() -> Path:
     return bundle
 
 
+def _dispose_context_sync(ctx: Context) -> None:
+    """Dispose any SQLAlchemy engines already constructed on ``ctx``."""
+    for db_attr in ("_control_db", "_admin_db", "_registry_db"):
+        db = getattr(ctx, db_attr, None)
+        if db is None:
+            continue
+        for engine_attr in ("_engine", "engine"):
+            if isinstance(getattr(type(db), engine_attr, None), property):
+                continue
+            engine = getattr(db, engine_attr, None)
+            if engine is not None and hasattr(engine, "sync_engine"):
+                engine.sync_engine.dispose()
+                break
+
+
+def _attach_context_cleanup(app: FastAPI, ctx: Context) -> FastAPI:
+    async def _shutdown_context() -> None:
+        await ctx.shutdown()
+        await ctx.close_state_backend()
+
+    app.router.on_shutdown.append(_shutdown_context)
+    weakref.finalize(app, _dispose_context_sync, ctx)
+    return app
+
+
 def build_app(
     apps: Sequence[str],
     *,
@@ -178,14 +243,16 @@ def build_app(
         )
     )
     app_list = list(apps)
+    if list(resolved_config.apps) != app_list:
+        resolved_config = resolved_config.model_copy(update={"apps": app_list})
     ctx = composition_build_context(resolved_config, app_list)
     if not spa_stub:
-        return composition_build_app(ctx, app_list)
+        return _attach_context_cleanup(composition_build_app(ctx, app_list), ctx)
     bundle = _make_spa_stub_dir()
     original_resolver = static_module._resolve_static_dir
     static_module._resolve_static_dir = lambda: bundle
     try:
-        return composition_build_app(ctx, app_list)
+        return _attach_context_cleanup(composition_build_app(ctx, app_list), ctx)
     finally:
         static_module._resolve_static_dir = original_resolver
 
@@ -240,19 +307,24 @@ def _endpoint_module(endpoint: Any, fallback: Any) -> str:
 
 def _extract_identity_closure(
     calls: Sequence[Any],
-) -> tuple[bool, list[str] | None, ActorType | None]:
+) -> tuple[bool, list[str] | None, frozenset[str] | None]:
     has_identity = False
-    perms: list[str] | None = None
-    actor: ActorType | None = None
+    perms: list[str] = []
+    allowed_actors: frozenset[str] | None = None
     for call in calls:
         is_identity, d_perms, d_actor = _closure_values(call)
         if is_identity:
             has_identity = True
-            if d_perms and perms is None:
-                perms = d_perms
-            if d_actor and actor is None:
-                actor = d_actor
-    return has_identity, perms, actor
+            if d_perms:
+                for perm in d_perms:
+                    if perm not in perms:
+                        perms.append(perm)
+            if d_actor is not None:
+                actor_set = frozenset({d_actor.value})
+                allowed_actors = (
+                    actor_set if allowed_actors is None else (allowed_actors & actor_set)
+                )
+    return has_identity, (perms or None), allowed_actors
 
 
 def route_facts(app: FastAPI) -> tuple[RouteFact, ...]:
@@ -272,28 +344,34 @@ def route_facts(app: FastAPI) -> tuple[RouteFact, ...]:
         path = _normalise_path(prefix + getattr(route, "path", ""))
         if not isinstance(route, APIRoute):
             endpoint = getattr(route, "endpoint", None) or getattr(route, "app", None)
-            opaque_key = ("*", path)
-            seen.setdefault(
-                opaque_key,
-                RouteFact(
-                    method="*",
-                    path=path,
-                    operation_id=None,
-                    module=_endpoint_module(endpoint, route),
-                    authenticated=False,
-                    permissions=frozenset(),
-                    actor_types=frozenset(),
-                    in_schema=False,
-                    auth_via=None,
-                    opaque=True,
-                ),
+            raw_methods = getattr(route, "methods", None)
+            methods = sorted(
+                m.upper() for m in (raw_methods or {"*"}) if m.upper() not in {"HEAD", "OPTIONS"}
             )
+            module = _endpoint_module(endpoint, route)
+            for method in methods:
+                opaque_key = (method, path)
+                seen.setdefault(
+                    opaque_key,
+                    RouteFact(
+                        method=method,
+                        path=path,
+                        operation_id=None,
+                        module=module,
+                        authenticated=False,
+                        permissions=frozenset(),
+                        actor_types=frozenset(),
+                        in_schema=False,
+                        auth_via=None,
+                        opaque=True,
+                    ),
+                )
             continue
 
         calls = [*include_deps, *_dependency_calls(route)]
         in_schema = include_in_schema and route.include_in_schema
         module = _endpoint_module(route.endpoint, route)
-        _, closure_perms, closure_actor = _extract_identity_closure(calls)
+        _, closure_perms, closure_actors = _extract_identity_closure(calls)
 
         for method in sorted((route.methods or set()) - {"HEAD", "OPTIONS"}):
             key = (method, path)
@@ -311,19 +389,19 @@ def route_facts(app: FastAPI) -> tuple[RouteFact, ...]:
                     frozenset({BROKER_EXECUTE_PERMISSION}) if has_exec_perm else frozenset()
                 )
                 actor_types = frozenset({"agent"})
-            elif info is not None and info["authenticated"]:
-                authenticated = True
-                permissions = frozenset(info["permissions"])
-                actor_types = frozenset(info["actor_types"])
             elif auth_via == "get_current_identity":
                 authenticated = True
                 permissions = frozenset(PATH_PERMISSION_OVERRIDES.get(key, closure_perms or []))
                 if key in ACTOR_TYPE_OVERRIDES:
                     actor_types = frozenset(ACTOR_TYPE_OVERRIDES[key])
-                elif closure_actor is not None:
-                    actor_types = frozenset({closure_actor.value})
+                elif closure_actors is not None:
+                    actor_types = closure_actors
                 else:
                     actor_types = _ALL_ACTOR_TYPES
+            elif info is not None and info["authenticated"]:
+                authenticated = True
+                permissions = frozenset(info["permissions"])
+                actor_types = frozenset(info["actor_types"])
             elif auth_via is not None:
                 authenticated = True
                 permissions = frozenset(info["permissions"]) if info else frozenset()
@@ -381,3 +459,23 @@ def scoped_tables() -> Mapping[str, ScopedTable]:
 def access_filter_providers() -> tuple[AccessFilterProvider, ...]:
     """Return a read-only snapshot of registered control-surface access-filter providers."""
     return control_access_filter_providers()
+
+
+def mcp_tool_facts() -> tuple[McpToolFact, ...]:
+    """Return deterministic metadata for every served MCP tool."""
+    facts: list[McpToolFact] = []
+    for name in SERVED_TOOLS:
+        handler = MCP_HANDLERS.get(name)
+        has_handler = handler is not None and callable(handler)
+        module = _endpoint_module(handler, handler) if handler is not None else None
+        permissions = _MCP_TOOL_PERMISSIONS.get(name, frozenset())
+        facts.append(
+            McpToolFact(
+                name=name,
+                has_handler=has_handler,
+                module=module,
+                permissions=permissions,
+                scopes=permissions & MCP_TOOL_SCOPES,
+            )
+        )
+    return tuple(facts)

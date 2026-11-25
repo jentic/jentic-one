@@ -65,14 +65,6 @@ from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_c
 
 logger = structlog.get_logger(__name__)
 
-#: Strong references to in-flight fire-and-forget sweep tasks. ``CatalogService``
-#: is constructed per-request and GC'd when the request returns, so a task held
-#: only on ``self`` could be collected mid-flight (asyncio keeps only weak refs to
-#: tasks). Parking them here until they finish keeps them alive; the done-callback
-#: discards on completion. Bounded in practice by the max-age + advisory-lock gates
-#: on the refresh that spawns them.
-_SWEEP_TASKS: set[asyncio.Task[None]] = set()
-
 #: Registry-DB advisory-lock key that single-flights the update-notify sweep across
 #: processes (scanner and request-triggered sweeps on every replica/worker).
 UPDATE_SWEEP_LOCK_KEY = advisory_lock_key("jentic_one.registry.catalog_update_sweep")
@@ -215,8 +207,8 @@ class CatalogService:
         The sweep issues up to N conditional GETs, so awaiting it inline would make
         an unlucky user's (max-age-gated) catalog read block on the whole batch. We
         detach it into a background task instead; failures are logged, never raised
-        back to the reader. The task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
-        before it finishes (this service instance is per-request and short-lived).
+        back to the reader. The task is registered on ``self._ctx`` so it is held by a
+        strong reference while running and cancelled/drained before DB pools close.
 
         No-ops when the sweep is disabled (kill switch) so a disabled install never
         spawns a throwaway task per refresh.
@@ -231,10 +223,9 @@ class CatalogService:
             # safe inline fallback without a loop.
             logger.debug("catalog_update_sweep_skipped_no_running_loop")
             return
-        _SWEEP_TASKS.add(task)
+        self._ctx.register_background_task(task)
 
         def _done(t: asyncio.Task[None]) -> None:
-            _SWEEP_TASKS.discard(t)
             if not t.cancelled() and (exc := t.exception()) is not None:
                 logger.warning("catalog_update_sweep_task_failed", exc_info=exc)
 

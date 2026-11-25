@@ -37,7 +37,7 @@ between your version and the target before you start.
    [Cross-owner rule set attachments](#cross-owner-rule-set-attachments)).
    A step that has never run — after `--skip-upgrade-steps`, or a partial
    run such as `--db control` — is reported by a `--check` that covers the
-   control and admin databases (the default) as a
+   control, admin, and registry databases (the default) as a
    `STATUS upgrade-step:<name> pending` line and `OVERALL pending` (exit
    `3`), once every database is at head; a full run clears it. If the
    schemas are at head but the step ledger cannot be read, `--check` prints

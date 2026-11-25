@@ -28,7 +28,7 @@ from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import AgentPermissionRuleRepository
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import InviteState, StoredCredentialType
+from jentic_one.shared.models import ActorStatus, InviteState, StoredCredentialType
 from jentic_one.shared.models.events import EventType
 from tests.web.auth.conftest import (
     OWNER_EMAIL,
@@ -280,7 +280,7 @@ def test_verbs_on_archived_agent(admin_client: TestClient, test_agent_id: str) -
 
 @pytest.fixture()
 async def binding_agent_id(web_context: Context, owner_user_id: str) -> AsyncGenerator[str, None]:
-    """An agent for direct credential-binding tests, with full binding cleanup."""
+    """An active agent for direct credential-binding tests, with full binding cleanup."""
     async with web_context.admin_db.transaction() as session:
         agent = await AgentRepository.create(
             session,
@@ -288,6 +288,7 @@ async def binding_agent_id(web_context: Context, owner_user_id: str) -> AsyncGen
             owner_id=owner_user_id,
             registered_by=owner_user_id,
             created_by="usr_test",
+            status=ActorStatus.ACTIVE,
         )
     yield agent.id
 
@@ -1147,7 +1148,10 @@ def test_claim_agent_wrong_token(member_client: TestClient, claimable_agent_id: 
 
 
 def test_claim_agent_non_user_actor_forbidden(
-    web_context: Context, claimable_agent_id: str
+    web_context: Context,
+    claimable_agent_id: str,
+    binding_agent_id: str,
+    owner_user_id: str,
 ) -> None:
     """A non-user actor (agent) with a valid token is refused (403) — owner_id is
     a FK to users.id, so only a human user can own an agent. The ``:claim``
@@ -1157,9 +1161,10 @@ def test_claim_agent_non_user_actor_forbidden(
     an integrity error / 500."""
     config = web_context.config.admin.auth
     claims = {
-        "sub": "agnt_selfclaimer",
+        "sub": binding_agent_id,
         "email": "",
         "actor_type": "agent",
+        "parent_actor_id": owner_user_id,
         "permissions": [],
         "must_change_password": False,
     }

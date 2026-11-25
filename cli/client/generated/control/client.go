@@ -13330,9 +13330,11 @@ type ClientInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
-	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
-	// credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user
+	// and for an ``actor_type: agent`` token whose subject is not an active agent,
+	// and 401 ``invalid_credentials`` for a token missing the ``auth_time``
+	// anchor, an active agent's token, or opaque (non-JWT) credentials. Clients
+	// should then send the user back to login.
 	//
 	// Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 	RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -17221,9 +17223,11 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
-// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
-// credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user
+// and for an “actor_type: agent“ token whose subject is not an active agent,
+// and 401 “invalid_credentials“ for a token missing the “auth_time“
+// anchor, an active agent's token, or opaque (non-JWT) credentials. Clients
+// should then send the user back to login.
 //
 // Corresponds with POST /auth/refresh (the `RefreshSession` operationId).
 func (c *Client) RefreshSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -30862,9 +30866,11 @@ type ClientWithResponsesInterface interface {
 	// ``must_change_password`` gate are re-read from the database at re-mint.
 	// Refusal modes: 401 ``session_expired`` once the original authentication is
 	// older than the absolute window (``admin.auth.session_ttl_seconds``), 401
-	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user,
-	// and 401 ``invalid_credentials`` for non-user tokens or opaque (non-JWT)
-	// credentials. Clients should then send the user back to login.
+	// ``unauthorized`` from the auth gate for a disabled, deleted or unknown user
+	// and for an ``actor_type: agent`` token whose subject is not an active agent,
+	// and 401 ``invalid_credentials`` for a token missing the ``auth_time``
+	// anchor, an active agent's token, or opaque (non-JWT) credentials. Clients
+	// should then send the user back to login.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -50629,9 +50635,11 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 // “must_change_password“ gate are re-read from the database at re-mint.
 // Refusal modes: 401 “session_expired“ once the original authentication is
 // older than the absolute window (“admin.auth.session_ttl_seconds“), 401
-// “unauthorized“ from the auth gate for a disabled, deleted or unknown user,
-// and 401 “invalid_credentials“ for non-user tokens or opaque (non-JWT)
-// credentials. Clients should then send the user back to login.
+// “unauthorized“ from the auth gate for a disabled, deleted or unknown user
+// and for an “actor_type: agent“ token whose subject is not an active agent,
+// and 401 “invalid_credentials“ for a token missing the “auth_time“
+// anchor, an active agent's token, or opaque (non-JWT) credentials. Clients
+// should then send the user back to login.
 //
 // Returns a wrapper object for the known response body format(s).
 //

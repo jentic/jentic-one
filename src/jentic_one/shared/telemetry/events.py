@@ -20,6 +20,16 @@ from enum import StrEnum
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.events import EventTag, EventType
 
+__all__ = [
+    "TELEMETRY_EVENTS",
+    "EventTag",
+    "EventType",
+    "TelemetryEvent",
+    "TelemetryEventName",
+    "register_telemetry_event",
+    "resolve_wire_name",
+]
+
 
 class TelemetryEventName(StrEnum):
     """Every event name the client may put on the wire (the allowlist)."""

@@ -127,6 +127,61 @@ async def test_set_current_revision(registry_db: DatabaseSession, clean_registry
         assert loaded.current_revision_id == rev_id
 
 
+async def test_current_version_for_catalog_api_id_is_deterministic_and_requires_live(
+    registry_db: DatabaseSession, clean_registry: None
+) -> None:
+    """current_version_for_catalog_api_id skips unpromoted rows and orders by (created_at, id)."""
+    base_time = datetime(2024, 2, 1, tzinfo=UTC)
+    catalog_id = "acme.com/payments"
+
+    async with registry_db.session() as session:
+        unpromoted = Api(
+            vendor="acme.com", name="payments", version="v0", catalog_api_id=catalog_id
+        )
+        older_live = Api(
+            vendor="acme.com", name="payments", version="v1", catalog_api_id=catalog_id
+        )
+        newer_live = Api(
+            vendor="acme.com", name="payments", version="v2", catalog_api_id=catalog_id
+        )
+        session.add_all([unpromoted, older_live, newer_live])
+        await session.flush()
+
+        for idx, row in enumerate((unpromoted, older_live, newer_live)):
+            await session.execute(
+                update(Api)
+                .where(Api.id == row.id)
+                .values(created_at=base_time + timedelta(minutes=idx))
+            )
+        await session.commit()
+        older_id = older_live.id
+        newer_id = newer_live.id
+
+    # Before any revision is current, current_version_for_catalog_api_id returns None.
+    async with registry_db.session() as session:
+        assert await ApiRepository.current_version_for_catalog_api_id(session, catalog_id) is None
+
+    # Populate current revisions on v1 and v2; deterministic (created_at, id) picks v1.
+    async with registry_db.session() as session:
+        rev1 = ApiRevision(api_id=older_id, spec_digest="sha256:v1", source_type="url")
+        rev2 = ApiRevision(api_id=newer_id, spec_digest="sha256:v2", source_type="url")
+        session.add_all([rev1, rev2])
+        await session.flush()
+        await ApiRepository.set_current_revision(session, older_id, rev1.id, operation_count=4)
+        await ApiRepository.set_current_revision(session, newer_id, rev2.id, operation_count=7)
+        await session.commit()
+
+    async with registry_db.session() as session:
+        version = await ApiRepository.current_version_for_catalog_api_id(session, catalog_id)
+        locked = await ApiRepository.get_by_id_for_update(session, older_id)
+        locked_ident = await ApiRepository.get_by_identifier_for_update(
+            session, "acme.com", "payments", "v1"
+        )
+        assert version == "v1"
+        assert locked is not None and locked.operation_count == 4
+        assert locked_ident is not None and locked_ident.id == older_id
+
+
 async def test_apply_counts(registry_db: DatabaseSession, clean_registry: None) -> None:
     """apply_counts increments revision_count and sets operation_count."""
     async with registry_db.session() as session:

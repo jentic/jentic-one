@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
+
+import structlog
 
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
 from jentic_one.admin.core.schema.users import User
@@ -43,9 +46,12 @@ from jentic_one.admin.services.schemas.users import (
 from jentic_one.admin.services.user_hooks import run_user_deleted_hooks
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.jobs.hold import withdraw_pending_for_agent
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.pagination import Page, decode_cursor, encode_cursor
+
+logger = structlog.get_logger(__name__)
 
 
 def _tombstone_email(user_id: str) -> str:
@@ -183,10 +189,10 @@ class UserService:
     async def create(self, payload: UserCreatePayload, *, identity: Identity) -> UserCreatedView:
         granted_by = identity.sub
         perm_service = PermissionService(self._ctx)
-        if payload.permissions:
-            await perm_service.validate_grants(granted_by, payload.permissions)
 
         async with self._ctx.admin_db.transaction() as session:
+            if payload.permissions:
+                await perm_service.validate_grants(granted_by, payload.permissions, session=session)
             existing = await UserRepository.get_by_email(session, payload.email)
             if existing is not None:
                 raise EmailAlreadyExistsError(payload.email)
@@ -394,7 +400,8 @@ class UserService:
         included: that is how an operator re-runs a hook that failed.
         """
         owned_agent_ids = await self._delete_in_transaction(user_id, identity=identity)
-        self._invalidate_broker_caches(user_id, owned_agent_ids)
+        deactivated_credential_ids = await self._sweep_control_for_user(user_id, deactivate=True)
+        self._invalidate_broker_caches(user_id, owned_agent_ids, deactivated_credential_ids)
         await run_user_deleted_hooks(self._ctx, user_id, identity=identity)
 
     async def _delete_in_transaction(self, user_id: str, *, identity: Identity) -> list[str]:
@@ -423,6 +430,22 @@ class UserService:
                 cause="was deleted",
                 identity=identity,
             )
+            for agent_id in owned_agent_ids:
+                await withdraw_pending_for_agent(
+                    session,
+                    agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                    origin=identity.origin.value,
+                    reason="agent owner was deleted",
+                )
+                await cancel_queued_executions_for_actor(
+                    session,
+                    actor_id=agent_id,
+                    target_type=AuditTargetType.AGENT,
+                    cause="owner was deleted",
+                    identity=identity,
+                )
             await AuditRepository.record(
                 session,
                 action=AuditAction.DELETE,
@@ -463,6 +486,22 @@ class UserService:
                 cause="was disabled",
                 identity=identity,
             )
+            for agent_id in owned_agent_ids:
+                await withdraw_pending_for_agent(
+                    session,
+                    agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                    origin=identity.origin.value,
+                    reason="agent owner was disabled",
+                )
+                await cancel_queued_executions_for_actor(
+                    session,
+                    actor_id=agent_id,
+                    target_type=AuditTargetType.AGENT,
+                    cause="owner was disabled",
+                    identity=identity,
+                )
             await AuditRepository.record(
                 session,
                 action=AuditAction.DISABLE,
@@ -474,6 +513,10 @@ class UserService:
             audit_events_counter.add(
                 1, {"action": AuditAction.DISABLE, "target_type": AuditTargetType.USER}
             )
+        # The user's control credentials stay active so re-enabling restores
+        # them: while the user is disabled the broker's credential resolver
+        # refuses every credential they created.
+        await self._sweep_control_for_user(user_id, deactivate=False)
         self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
 
@@ -499,7 +542,44 @@ class UserService:
         self._invalidate_broker_caches(user_id, owned_agent_ids)
         return True
 
-    def _invalidate_broker_caches(self, user_id: str, owned_agent_ids: list[str]) -> None:
+    async def _sweep_control_for_user(self, user_id: str, *, deactivate: bool) -> list[str]:
+        """Cancel ``user_id``'s open connect sessions; return deactivated credential ids.
+
+        With ``deactivate`` the user's control credentials are also switched
+        off and their OAuth tokens dropped, which nothing undoes, so only
+        delete asks for it.
+
+        Best-effort: it runs after the admin change has committed, so a
+        control-DB failure is logged instead of raised and the caller's
+        cache invalidation and user-deleted hooks still run. Credentials the
+        sweep missed are still refused, because the broker's credential
+        resolver checks that each credential's creator is active.
+        """
+        if self._ctx.is_db_allowed("control") is not True:
+            return []
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                if deactivate:
+                    return await UserRepository.deactivate_control_resources(
+                        session, user_id=user_id
+                    )
+                await UserRepository.cancel_open_connect_sessions(session, user_id=user_id)
+                return []
+        except Exception:
+            logger.error(
+                "user_control_sweep_failed",
+                user_id=user_id,
+                deactivate=deactivate,
+                exc_info=True,
+            )
+            return []
+
+    def _invalidate_broker_caches(
+        self,
+        user_id: str,
+        owned_agent_ids: list[str],
+        credential_ids: Sequence[str] = (),
+    ) -> None:
         """Evict the broker's cached verdicts for ``user_id`` and the agents it owns.
 
         Runs after the account change commits. An owned agent's effective
@@ -513,6 +593,8 @@ class UserService:
         self._ctx.invalidate_broker_caches(user_id=user_id)
         for agent_id in owned_agent_ids:
             self._ctx.invalidate_broker_caches(agent_id=agent_id)
+        for credential_id in credential_ids:
+            self._ctx.invalidate_broker_caches(credential_id=credential_id)
 
     async def reissue_invite(self, user_id: str, *, identity: Identity) -> InviteIssued:
         async with self._ctx.admin_db.session() as session:

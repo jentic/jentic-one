@@ -37,9 +37,12 @@ server:
 
 Flipping the flag needs no rebuild; the gate is evaluated per request. The
 endpoint accepts only `POST` (stateless — no SSE stream, no `Mcp-Session-Id`),
-validates the `Origin` header strictly (403 on mismatch), and requires a
-credential for everything except surface discovery (`tools/list`, `ping`,
-the resource listings). A `GET`/`HEAD` that offers **no** credential answers
+validates the `Origin` header strictly (`http`/`https` schemes only; 403 on
+mismatch), and requires a credential for every JSON-RPC method except the
+pre-auth discovery and handshake whitelist (`initialize`,
+`notifications/initialized`, `ping`, `tools/list`, `resources/list`,
+`resources/templates/list`, and bundled public `skill://` reads via
+`resources/read`). A `GET`/`HEAD` that offers **no** credential answers
 `405 Method Not Allowed` (`Allow: POST`) rather than an auth challenge: no
 caller ever gets a stream here, and the MCP SDK reads the 405 as "no stream
 offered" without starting an OAuth flow — which keeps OAuth-capable bridges
@@ -165,14 +168,19 @@ stateless server-side, so no session flags are needed on the client leg:
   authenticated independently. Revoking the agent (or the key) cuts access
   immediately.
 - **Strict `Origin` validation.** A browser-context request whose `Origin`
-  is neither the configured canonical origin (`auth.canonical_base_url`)
-  nor loopback is refused with 403 (the spec's DNS-rebinding rule).
-  Non-browser MCP clients send no `Origin` and pass.
+  is not an `http`/`https` web origin matching either the configured canonical
+  origin (`auth.canonical_base_url`, else `server.public_base_url`) or loopback
+  is refused with 403 (the spec's DNS-rebinding rule; non-HTTP(S) schemes such
+  as `capacitor://`, `tauri://`, or `ws://` are rejected). Non-browser MCP
+  clients send no `Origin` and pass.
 - **Serve it over TLS** when the deployment is reachable beyond loopback —
   the bearer rides every request.
-- **Discovery is public by design**: `tools/list` answers without a
-  credential, like the deployment's other self-description documents
-  (`/llms.txt` advertises the endpoint only when it is enabled).
+- **Discovery is public by design**: the pre-auth whitelist (`initialize`,
+  `notifications/initialized`, `ping`, `tools/list`, `resources/list`,
+  `resources/templates/list`, and bundled public `skill://` `resources/read`)
+  answers without a credential, like the deployment's other self-description
+  documents (`/llms.txt` and `/skills/*`; `/llms.txt` advertises the endpoint
+  only when it is enabled).
 
 For interactive OAuth (Claude/Cursor-style browser consent instead of
 bearer-paste), see [oauth-clients.md](oauth-clients.md) — the `/mcp`

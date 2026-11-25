@@ -34,7 +34,7 @@ _REDIRECT_POLICY_ALLOWLIST = {
 def _is_async_client_call(node: ast.Call, tree: ast.Module) -> bool:
     module_names = {"httpx"}
     client_names: set[str] = set()
-    for statement in tree.body:
+    for statement in ast.walk(tree):
         if isinstance(statement, ast.Import):
             module_names.update(
                 alias.asname or alias.name for alias in statement.names if alias.name == "httpx"
@@ -160,3 +160,27 @@ def test_redirect_policy_checker_accepts_explicit_opt_out_and_validated_hops(
 
     assert _check_file(explicit, source_root=tmp_path) == []
     assert _check_file(bounded, source_root=tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "client_expression"),
+    [
+        ("from httpx import AsyncClient", "AsyncClient()"),
+        ("from httpx import AsyncClient as AC", "AC()"),
+        ("import httpx as hx", "hx.AsyncClient()"),
+    ],
+)
+def test_redirect_policy_checker_catches_function_scoped_imports(
+    tmp_path: Path, import_statement: str, client_expression: str
+) -> None:
+    path = tmp_path / "broker" / "lazy_client.py"
+    path.parent.mkdir()
+    path.write_text(
+        f"async def make_client():\n    {import_statement}\n    return {client_expression}\n",
+        encoding="utf-8",
+    )
+
+    violations = _check_file(path, source_root=tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].startswith(f"{path}:3 —")
