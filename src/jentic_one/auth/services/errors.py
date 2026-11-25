@@ -45,6 +45,38 @@ class CredentialBindingNotFoundError(AuthServiceError):
         self.credential_id = credential_id
 
 
+class CredentialBindingCutOffError(AuthServiceError):
+    """Raised when an agent binds itself over its own suspended or expired binding.
+
+    The agent holds a binding that is suspended or has expired to a
+    credential serving an API the new credential also serves. Binding the new
+    one would hand the agent that access again beside it, routing around the
+    cut-off; only the operator may lift it (resume, renew or remove the
+    binding). Raised as one of the two subclasses, one wire type each.
+    """
+
+    reason = "cut-off"
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(
+            f"Agent '{agent_id}' has a {self.reason} credential binding for this API; "
+            "only an operator can lift it"
+        )
+        self.agent_id = agent_id
+
+
+class SelfBindOverSuspendedBindingError(CredentialBindingCutOffError):
+    """:class:`CredentialBindingCutOffError` for a suspended binding (reported first)."""
+
+    reason = "suspended"
+
+
+class SelfBindOverExpiredBindingError(CredentialBindingCutOffError):
+    """:class:`CredentialBindingCutOffError` for an expired binding."""
+
+    reason = "expired"
+
+
 class CredentialNotVisibleError(AuthServiceError):
     """Raised when the bind target credential does not exist or is not visible.
 

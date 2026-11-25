@@ -12,6 +12,7 @@ from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
     CredentialBindingView,
+    EndingSoonBindingView,
 )
 from jentic_one.auth.web.deps import get_agent_auth_service, get_agent_service
 from jentic_one.auth.web.schemas.agents import (
@@ -25,16 +26,24 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyHistoryResponse,
     ApiKeyInfoResponse,
     ApiKeyResponse,
+    ApiLastUseResponse,
     ClaimRequest,
     CredentialBindingListResponse,
+    CredentialBindingPatchRequest,
     CredentialBindingResponse,
     CredentialBindRequest,
     DenyRequest,
+    DurationLimitResponse,
+    EndingSoonBindingListResponse,
+    EndingSoonBindingResponse,
+    GrantPolicyLimitsResponse,
     JwksUpdateRequest,
 )
+from jentic_one.shared.auth.grant_policy import UNSET, AfterExpiry, GrantEndReason
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
@@ -138,6 +147,65 @@ async def list_agents(
         data=[_agent_response(a) for a in page.data],
         has_more=page.has_more,
         next_cursor=page.next_cursor,
+    )
+
+
+@router.get(
+    "/agents/credentials:policy",
+    operation_id="getGrantPolicyLimits",
+    summary="Get the org's grant defaults and maximums",
+)
+async def get_grant_policy_limits(
+    identity: Identity = get_current_identity(),
+    ctx: Context = Depends(get_ctx),
+) -> GrantPolicyLimitsResponse:
+    """The org's defaults and maximums for new credential grants.
+
+    A default applies when a request creating a grant sets no
+    policy; a maximum refuses (422 `grant_policy_limit_exceeded`) anything
+    longer, or no limit at all, on every path that creates or renews one. The
+    console preselects the defaults and disables choices above a maximum.
+    Readable by any signed-in caller.
+    """
+    del identity
+    cfg = ctx.config.grant_expiry
+    return GrantPolicyLimitsResponse(
+        expires_in=DurationLimitResponse(default=cfg.default_expires_in, max=cfg.max_expires_in),
+        idle_period=DurationLimitResponse(default=cfg.default_idle_period, max=cfg.max_idle_period),
+        single_use_by_default=cfg.single_use_by_default,
+    )
+
+
+@router.get(
+    "/agents/credentials:ending-soon",
+    operation_id="listCredentialBindingsEndingSoon",
+    summary="List credential bindings ending soon",
+)
+async def list_credential_bindings_ending_soon(
+    identity: Identity = get_current_identity(required_permissions=["agents:read"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> EndingSoonBindingListResponse:
+    """List bindings that will reach their end date or idle limit soon.
+
+    Only bindings whose owner turned on the warning (`idle_warning`) and which
+    have not been suspended or ended, where either the end date is within the
+    next 48 hours (for a binding granted for 4 days or more) or the idle
+    deadline (`idle_expires_at`) is (for an idle limit of 4 days or more).
+    `ends_at` and `ending` give the nearer of the two. The same bindings get a
+    `credential_grant.expiring` or `credential_grant.idle_expiring` event, once
+    per end date or idle period. Soonest first. Scoped like the agents list: `org:admin` sees
+    every agent's bindings, anyone else their own agents'.
+    """
+    views = await agent_svc.list_bindings_ending_soon(identity=identity)
+    return EndingSoonBindingListResponse(data=[_ending_soon_response(v) for v in views])
+
+
+def _ending_soon_response(view: EndingSoonBindingView) -> EndingSoonBindingResponse:
+    return EndingSoonBindingResponse(
+        **_credential_binding_response(view).model_dump(),
+        agent_name=view.agent_name,
+        ends_at=view.ends_at,
+        ending="idle" if view.ending == GrantEndReason.IDLE else "end_date",
     )
 
 
@@ -425,8 +493,28 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
         bound_at=view.bound_at,
         suspended=view.suspended,
         suspended_reason=view.suspended_reason,
+        expires_at=view.expires_at,
+        expired=view.expired,
+        expired_reason=view.expired_reason,
+        max_idle_period=view.max_idle_period,
+        idle_expires_at=view.idle_expires_at,
+        renewed_at=view.renewed_at,
+        idle_warning=view.idle_warning,
+        after_expiry=AfterExpiry(view.after_expiry),
+        max_quota=view.max_quota,
+        quota_remaining=view.quota_remaining,
         rule_set_id=view.rule_set_id,
         serves=view.serves,
+        last_used_at=view.last_used_at,
+        last_used_by_api=[
+            ApiLastUseResponse(
+                api_vendor=u.api_vendor,
+                api_name=u.api_name,
+                api_version=u.api_version,
+                last_used_at=u.last_used_at,
+            )
+            for u in view.last_used_by_api
+        ],
     )
 
 
@@ -451,8 +539,9 @@ async def list_credentials(
     """List the credentials bound directly to an agent.
 
     Each binding names the credential, the API it serves, when it was bound,
-    whether it is `suspended` (and why), and any attached permission
-    `rule_set_id`. Credential secrets are never returned. Readable like
+    whether it is `suspended` (and why), any attached permission
+    `rule_set_id`, and `last_used_at`: when the agent last made a call through
+    the credential (null if never). Credential secrets are never returned. Readable like
     `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
     caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
     The list is not paginated.
@@ -473,7 +562,10 @@ async def list_credentials(
             "(`credential_not_found`)"
         ),
         conflict(
-            "The same credential is already bound to this agent (`credential_binding_conflict`)"
+            "The same credential is already bound to this agent "
+            "(`credential_binding_conflict`), or an agent binding itself already holds a "
+            "suspended (`credential_binding_suspended`) or expired "
+            "(`credential_binding_expired`) binding for an API the credential serves"
         ),
     ),
 )
@@ -490,11 +582,84 @@ async def bind_credential(
     must be able to see the agent and must own the credential (or hold
     `org:admin`). A credential that does not exist or that the caller does
     not own returns 404; binding the same credential twice returns 409
-    (`credential_binding_conflict`).
-    Returns the new binding.
+    (`credential_binding_conflict`). An agent binding itself is refused with
+    409 while it holds a suspended (`credential_binding_suspended`) or expired
+    (`credential_binding_expired`) binding for an API the credential also
+    serves: only the operator lifts that cut-off, and a second binding would
+    route around it (suspension is reported first). An optional `expires_at`
+    (future only, otherwise 422) ends the binding at that time; omit it for a
+    binding that never expires. Returns the new binding.
     """
     binding = await agent_svc.bind_credential(
-        agent_id, credential_id=body.credential_id, identity=identity
+        agent_id,
+        credential_id=body.credential_id,
+        # A limit left out of the body is unset: with none set, the org's
+        # default policy applies.
+        expires_at=body.expires_at if "expires_at" in body.model_fields_set else UNSET,
+        max_idle_period=(
+            body.max_idle_period if "max_idle_period" in body.model_fields_set else UNSET
+        ),
+        idle_warning=body.idle_warning,
+        after_expiry=body.after_expiry,
+        max_quota=body.max_quota if "max_quota" in body.model_fields_set else UNSET,
+        identity=identity,
+    )
+    return _credential_binding_response(binding)
+
+
+@router.patch(
+    "/agents/{agent_id}/credentials/{credential_id}",
+    status_code=200,
+    operation_id="renewAgentCredentialBinding",
+    summary="Renew a credential binding",
+    responses=with_responses(
+        not_found(
+            "No binding exists (`credential_binding_not_found`), the agent is not "
+            "visible to the caller (`actor_not_found`), or the credential is not "
+            "owned by the caller — including an agent renewing its own binding "
+            "(`credential_not_found`)"
+        )
+    ),
+)
+async def renew_credential_binding(
+    agent_id: AgentIdPath,
+    credential_id: CredentialIdPath,
+    body: CredentialBindingPatchRequest,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> CredentialBindingResponse:
+    """Re-certify a binding: restart its idle clock, and set, extend or clear its limits.
+
+    `expires_at` (future only, otherwise 422) sets or moves the end date; null
+    clears it. Left out, the binding runs again for as long as it was granted
+    for, capped at the org's maximum (one with no end date takes the maximum,
+    or keeps none without one). `max_idle_period` (an ISO 8601 duration, P1D to P999D)
+    sets the idle limit; null removes it. Left out, the binding keeps its own,
+    capped at the org's maximum idle limit (one with none takes the org's
+    default, or the maximum). Any other field left out stays as it is, and
+    every renewal restarts the idle clock, so an empty body re-certifies a
+    binding that is still needed. This is how an expired binding is
+    renewed, and it never changes `suspended`: renewing does not resume a
+    suspension, and resuming does not extend an expiry. Renewing re-grants the
+    credential, so it takes the same checks as `:resume`: the caller must own
+    the credential (or hold `org:admin`) as well as see the agent, and an agent
+    cannot renew its own binding. Audited; broker caches are invalidated, so
+    a shortened deadline is checked on every broker. A separate broker may cache a denial
+    until its binding-cache TTL elapses. Returns the binding.
+    """
+    binding = await agent_svc.renew_credential(
+        agent_id,
+        credential_id=credential_id,
+        # A field left out of the body is never read as a clear; an end date left
+        # out takes the renewal default (the service works it out).
+        expires_at=body.expires_at if "expires_at" in body.model_fields_set else UNSET,
+        max_idle_period=(
+            body.max_idle_period if "max_idle_period" in body.model_fields_set else UNSET
+        ),
+        idle_warning=body.idle_warning if body.idle_warning is not None else UNSET,
+        after_expiry=body.after_expiry if body.after_expiry is not None else UNSET,
+        max_quota=body.max_quota if "max_quota" in body.model_fields_set else UNSET,
+        identity=identity,
     )
     return _credential_binding_response(binding)
 

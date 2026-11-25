@@ -31,6 +31,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.errors import (
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BindingExpiredError,
     BindingSuspendedError,
     ConnectOpenError,
     InvalidOAuthAppRegistrationError,
@@ -159,6 +160,58 @@ async def test_overlong_reason_is_invalid_params() -> None:
     assert _FakeConnectSessionService.calls == []
 
 
+async def test_requested_expires_in_is_parsed_to_seconds() -> None:
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]),
+        "request_connection",
+        {"vendor": "github", "requested_expires_in": "7d"},
+    )
+    assert not result.is_error, result.content
+    (call,) = _FakeConnectSessionService.calls
+    assert call["requested_expires_in"] == 604_800
+
+
+async def test_requested_max_idle_period_is_parsed_and_bounded() -> None:
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]),
+        "request_connection",
+        {"vendor": "github", "requested_max_idle_period": "14d"},
+    )
+    assert not result.is_error, result.content
+    (call,) = _FakeConnectSessionService.calls
+    assert call["requested_max_idle_period"] == 1_209_600
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]), {"vendor": "github", "requested_max_idle_period": "12h"}
+        )
+    assert "between 1 day and 999 days" in str(err.value)
+
+
+async def test_requested_max_idle_period_takes_an_iso_8601_duration() -> None:
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]),
+        "request_connection",
+        {"vendor": "github", "requested_max_idle_period": "P2W"},
+    )
+    assert not result.is_error, result.content
+    (call,) = _FakeConnectSessionService.calls
+    assert call["requested_max_idle_period"] == 1_209_600
+    with pytest.raises(MCPError):
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]), {"vendor": "github", "requested_max_idle_period": "P1M"}
+        )
+
+
+@pytest.mark.parametrize("value", ["1w", "0d", "1000d"])
+async def test_bad_requested_expires_in_is_invalid_params(value: str) -> None:
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]), {"vendor": "github", "requested_expires_in": value}
+        )
+    assert "requested_expires_in" in str(err.value)
+    assert _FakeConnectSessionService.calls == []
+
+
 async def test_too_many_scopes_is_invalid_params() -> None:
     """Twin of the Go mount's connectScopesMax cap (100)."""
     scopes = [f"scope{i}" for i in range(101)]
@@ -224,6 +277,8 @@ async def test_success_returns_session_without_poll_token() -> None:
         "preferred_flow": None,
         "reason": "read PRs",
         "oauth_app_registration_id": None,
+        "requested_expires_in": None,
+        "requested_max_idle_period": None,
     }
 
 
@@ -674,6 +729,7 @@ _TARGET = "stripe-com/stripe-com-api/2024-06-20"
         (TooManyOpenSessionsError("agent", 10), "BROKER_DENIED", None, "Do not open more"),
         (RecentlyRejectedError(3600), "BROKER_DENIED", None, "Do not ask again"),
         (BindingSuspendedError("agt_1"), "BROKER_DENIED", None, "ask your operator to resume"),
+        (BindingExpiredError("agt_1"), "BROKER_DENIED", None, "ask your operator to renew"),
     ],
 )
 async def test_api_target_errors_map_like_the_go_mount(
@@ -722,4 +778,19 @@ async def test_suspended_binding_on_a_vendor_target_tells_the_agent_to_ask_its_o
     assert payload["retryable"] is False
     assert "next_tool" not in payload
     assert "ask your operator to resume" in payload["actionable_step"]
+    assert "request_connection" not in payload["actionable_step"]
+
+
+async def test_expired_binding_on_a_vendor_target_tells_the_agent_to_ask_its_operator() -> None:
+    _FakeConnectSessionService.error = BindingExpiredError("agt_1")
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "github"}
+    )
+    assert result.is_error
+
+    payload = _payload(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["retryable"] is False
+    assert "next_tool" not in payload
+    assert "ask your operator to renew" in payload["actionable_step"]
     assert "request_connection" not in payload["actionable_step"]

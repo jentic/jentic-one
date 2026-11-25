@@ -311,6 +311,14 @@
             "description": "Why you need this connection (optional, max 1024 chars). Shown to the approver — a clear one-liner gets you approved faster.",
             "type": "string"
           },
+          "requested_expires_in": {
+            "description": "How long you need the access (optional), e.g. \"7d\", \"8h\", \"30m\" or \"P7D\" (at most 999d). Shown to the approver, who decides the actual end date; ask for only as long as the task needs.",
+            "type": "string"
+          },
+          "requested_max_idle_period": {
+            "description": "Ask for the access to end once you leave it unused this long (optional), e.g. \"14d\" or \"P14D\" (1d to 999d). The approver decides; it never cuts you off while you keep using it.",
+            "type": "string"
+          },
           "requested_permission_rules": {
             "description": "Permission rules you are asking for on the new binding (optional, max 100; \"permission_rules\" is an accepted alias), e.g. [{\"effect\": \"allow\", \"methods\": [\"GET\"], \"path\": \"/repos/.*\"}]. The approver reviews and edits them before anything is granted; an allow rule must constrain methods, path, or operations.",
             "items": {
@@ -372,7 +380,7 @@
     {
       "name": "show_access",
       "title": "Show your access through a credential",
-      "description": "Show what your binding to one credential lets you do: its permission rules with their ids (data, first match wins, default deny), the shared rule set it points at (whose rules apply instead of data), the credential's granted OAuth scopes, and whether the binding is suspended. Example: {\"credential_id\": \"cred_…\"} — credential ids come from whoami's bindings. Call it before asking for a change to your access, and when such a request fails. A credential you are not bound to (or whose binding is suspended) is not found: call whoami to list your bindings.",
+      "description": "Show what your binding to one credential lets you do: its permission rules with their ids (data, first match wins, default deny), the shared rule set it points at (whose rules apply instead of data), the credential's granted OAuth scopes, and whether the binding is suspended or expired. Example: {\"credential_id\": \"cred_…\"} — credential ids come from whoami's bindings. Call it before asking for a change to your access, and when such a request fails. A suspended or expired binding is your operator's to resume or renew: no change to your access brings it back, so ask your operator. A credential you are not bound to (or cannot read) is not found: call whoami to list your bindings.",
       "input_schema": {
         "properties": {
           "credential_id": {

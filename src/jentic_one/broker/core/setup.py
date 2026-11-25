@@ -142,14 +142,15 @@ def install_broker_auth(app: FastAPI, ctx: Context) -> None:
         max_entries=ctx.config.broker.rule_cache_max_entries,
     )
     app.state.broker_agent_rule_evaluator = rule_evaluator
-    credential_deriver: CredentialDeriverProtocol = CredentialBindingResolver(
-        ctx.admin_db, ctx.control_db
-    )
+    binding_resolver = CredentialBindingResolver(ctx.admin_db, ctx.control_db)
+    credential_deriver: CredentialDeriverProtocol = binding_resolver
     caching_deriver: CachingCredentialDeriver | None = None
     binding_cache_ttl_s = ctx.config.broker.toolkit_cache_ttl_s
     if binding_cache_ttl_s > 0:
         caching_deriver = CachingCredentialDeriver(
-            credential_deriver, cache_ttl_seconds=binding_cache_ttl_s
+            binding_resolver,
+            cache_ttl_seconds=binding_cache_ttl_s,
+            candidates_live=binding_resolver.cached_candidates_live,
         )
         credential_deriver = caching_deriver
     app.state.broker_credential_deriver = credential_deriver

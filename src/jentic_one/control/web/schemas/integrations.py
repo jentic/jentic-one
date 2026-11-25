@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Discriminator,
@@ -16,8 +17,50 @@ from pydantic import (
 )
 
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.shared.auth.grant_policy import (
+    AFTER_EXPIRY_DESCRIPTION,
+    MAX_QUOTA,
+    WARNING_DESCRIPTION,
+    AfterExpiry,
+)
+from jentic_one.shared.iso_duration import (
+    IdlePeriodRequest,
+    IdlePeriodResponse,
+    IsoDurationResponse,
+    LifetimeRequest,
+)
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
+
+#: Longest duration a connect request may ask for (999 days, the console's
+#: largest custom amount).
+MAX_REQUESTED_EXPIRES_IN_S = 999 * 86_400  # also bounds the MCP tool's parse
+
+
+def _future_expiry(value: datetime | None) -> datetime | None:
+    """An approver's end date must still be ahead when the confirm lands."""
+    if value is None:
+        return None
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if aware <= datetime.now(UTC):
+        raise ValueError("expires_at must be in the future")
+    return aware
+
+
+#: Idle limits a connect may ask for or set, in seconds (1 to 999 days).
+MIN_IDLE_PERIOD_S = 86_400
+MAX_IDLE_PERIOD_S = 999 * 86_400
+
+#: The binding's end date chosen on confirm; null or absent binds with none.
+ConfirmExpiresAt = Annotated[datetime | None, AfterValidator(_future_expiry)]
+
+_CONFIRM_EXPIRES_AT_DESCRIPTION = (
+    "When the new binding stops authorizing calls (RFC 3339, in the future), as the "
+    "approver chose it; worked out when the approver confirms. Null binds with no expiry "
+    "(refused under an org maximum). A body that sets none of `expires_at`, "
+    "`max_idle_period` and `max_quota` gets the org's default policy. Ignored when the "
+    "agent is already bound to the credential: that binding keeps its own end date."
+)
 
 # ---------------------------------------------------------------------------
 # Vendor discovery
@@ -257,6 +300,25 @@ class IntegrationsConnectRequest(BaseModel):
         max_length=1024,
         examples=["Needs read access to triage issues in the platform repo."],
         description="Free-text reason for the request, shown to the approver.",
+    )
+    requested_expires_in: LifetimeRequest | None = Field(
+        default=None,
+        examples=["P7D"],
+        description=(
+            "How long the requested access should last, as an ISO 8601 duration counted "
+            "from approval (e.g. P7D or PT8H; at most P999D). Shown preselected on the "
+            "review page; the approver decides the binding's actual end date. Omit to ask "
+            "for nothing in particular."
+        ),
+    )
+    requested_max_idle_period: IdlePeriodRequest | None = Field(
+        default=None,
+        examples=["P14D"],
+        description=(
+            "The idle limit to ask for, as an ISO 8601 duration (P1D to P999D, e.g. P14D): "
+            "the access would end once "
+            "it goes this long without a call. Shown on the review page; the approver decides."
+        ),
     )
     # As-requested permission rules — typically the initiating agent's ask,
     # rendered on the review page as pre-filled rows the human owner can
@@ -785,6 +847,39 @@ class EditAgentRef(BaseModel):
     name: str | None = None
 
 
+class SessionAgentBindingResponse(BaseModel):
+    """The session agent's own binding to a credential it already holds.
+
+    Binding that credential again creates nothing: the binding keeps these
+    limits, and the limits chosen on the review do not apply to it.
+    """
+
+    expires_at: datetime | None = Field(
+        default=None,
+        description="When the binding stops authorizing calls (RFC 3339); null never expires.",
+        examples=["2026-12-31T23:59:00Z"],
+    )
+    max_idle_period: IdlePeriodResponse | None = Field(
+        default=None,
+        description="Its idle limit as an ISO 8601 duration; null without one.",
+        examples=["P14D"],
+    )
+    max_quota: int | None = Field(
+        default=None,
+        description="Its use count (1 is single use); null without one.",
+        examples=[1],
+    )
+    quota_remaining: int | None = Field(
+        default=None,
+        description="The uses it has left; null without a use count.",
+        examples=[1],
+    )
+    suspended: bool = Field(description="Whether the binding is suspended.", examples=[False])
+    expired: bool = Field(
+        description="Whether one of its limits has been reached.", examples=[False]
+    )
+
+
 class ExistingCredentialResponse(BaseModel):
     """A credential the viewer already holds for the target.
 
@@ -823,6 +918,13 @@ class ExistingCredentialResponse(BaseModel):
         default=False,
         description="Binding it first runs a vendor consent for missing_scopes.",
         examples=[True],
+    )
+    agent_binding: SessionAgentBindingResponse | None = Field(
+        default=None,
+        description=(
+            "The session agent's own binding to this credential, when it already has one: "
+            "confirming with it binds nothing new, so the binding keeps these limits."
+        ),
     )
 
 
@@ -975,6 +1077,22 @@ class ReviewSessionResponse(BaseModel):
     api_reference: SessionApiReferenceResponse
     target_kind: Literal["vendor", "api"] = Field(default="vendor", examples=["vendor"])
     requested_scopes: list[str] = Field(default_factory=list, examples=[["repo", "read:user"]])
+    requested_expires_in: IsoDurationResponse | None = Field(
+        default=None,
+        examples=["P7D"],
+        description=(
+            "How long the requester asked the access to last, as an ISO 8601 duration from "
+            "approval; null when nothing was asked. The approver chooses the actual end "
+            "date on confirm."
+        ),
+    )
+    requested_max_idle_period: IdlePeriodResponse | None = Field(
+        default=None,
+        examples=["P14D"],
+        description=(
+            "The idle limit the requester asked for, as an ISO 8601 duration; null when none."
+        ),
+    )
     provenance: ReviewProvenanceResponse | None = None
     agent: ReviewAgentResponse | None = None
     scheme: ReviewSchemeResponse | None = None
@@ -1150,6 +1268,41 @@ class OAuthConfirmSessionRequest(BaseModel):
             "revision_required, a newer one 409 revision_changed."
         ),
     )
+    expires_at: ConfirmExpiresAt = Field(
+        default=None,
+        examples=["2026-12-31T23:59:00Z"],
+        description=_CONFIRM_EXPIRES_AT_DESCRIPTION,
+    )
+    max_idle_period: IdlePeriodRequest | None = Field(
+        default=None,
+        examples=["P14D"],
+        description=(
+            "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as "
+            "the approver chose "
+            "it: the binding ends once it goes this long without a call. Null or absent sets "
+            "none. Ignored when the agent is already bound to the credential."
+        ),
+    )
+    idle_warning: bool = Field(
+        default=False,
+        examples=[False],
+        description=WARNING_DESCRIPTION + " Applies to the new binding.",
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        examples=["hold"],
+        description=AFTER_EXPIRY_DESCRIPTION + " Applies to the new binding.",
+    )
+    max_quota: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_QUOTA,
+        examples=[1],
+        description=(
+            "How many calls the new binding allows before it ends (1 is single use). Null or"
+            " absent sets no count. Ignored when the agent is already bound to the credential."
+        ),
+    )
 
 
 class _ReviewedConfirm(BaseModel):
@@ -1186,6 +1339,41 @@ class _ReviewedConfirm(BaseModel):
         description=(
             "The revision the approver reviewed (`revision.id`); required. Missing is 422 "
             "revision_required, a newer one 409 revision_changed."
+        ),
+    )
+    expires_at: ConfirmExpiresAt = Field(
+        default=None,
+        examples=["2026-12-31T23:59:00Z"],
+        description=_CONFIRM_EXPIRES_AT_DESCRIPTION,
+    )
+    max_idle_period: IdlePeriodRequest | None = Field(
+        default=None,
+        examples=["P14D"],
+        description=(
+            "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as "
+            "the approver chose "
+            "it: the binding ends once it goes this long without a call. Null or absent sets "
+            "none. Ignored when the agent is already bound to the credential."
+        ),
+    )
+    idle_warning: bool = Field(
+        default=False,
+        examples=[False],
+        description=WARNING_DESCRIPTION + " Applies to the new binding.",
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        examples=["hold"],
+        description=AFTER_EXPIRY_DESCRIPTION + " Applies to the new binding.",
+    )
+    max_quota: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_QUOTA,
+        examples=[1],
+        description=(
+            "How many calls the new binding allows before it ends (1 is single use). Null or"
+            " absent sets no count. Ignored when the agent is already bound to the credential."
         ),
     )
 

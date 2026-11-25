@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 import structlog
@@ -42,6 +43,7 @@ from jentic_one.control.services.credentials.errors import (
 )
 from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
+from jentic_one.shared.auth.grant_policy import GrantPolicy
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.events import emit_event_best_effort, summary_label
@@ -74,6 +76,10 @@ class BindingAccess(NamedTuple):
     rule_set_rules: list[PermissionRuleSetRule]
     granted_scopes: list[str] | None
     suspended: bool
+    #: When the binding stops authorizing calls; ``None`` never expires.
+    expires_at: datetime | None = None
+    #: The binding's whole policy (end date, idle limit and its clock).
+    policy: GrantPolicy = GrantPolicy()
 
 
 logger = structlog.get_logger()
@@ -133,10 +139,23 @@ class _CredentialAccessMixin:
                 limit=limit + 1,
                 visible_to=self._bound_agent_visibility(credential, identity),
             )
-
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            last_used = await PrerequisiteRepository.last_used_by_agents(
+                session, credential_id=credential_id, agent_ids=[r.agent_id for r in rows]
+            )
+        # "Last used" is the later of the recorded executions and the binding's
+        # own stamp, so it stays current while the idle limit reads the stamp.
+        rows = [
+            r._replace(
+                last_used_at=max(
+                    (t for t in (last_used.get(r.agent_id), r.idle_used_at) if t is not None),
+                    default=None,
+                )
+            )
+            for r in rows
+        ]
 
         next_cursor = None
         if has_more and rows:
@@ -313,6 +332,8 @@ class _CredentialAccessMixin:
             rule_set_rules=rule_set_rules,
             granted_scopes=token.scope.split() if token is not None and token.scope else None,
             suspended=binding.suspended,
+            expires_at=binding.expires_at,
+            policy=binding.policy,
         )
 
     async def replace_agent_permissions(

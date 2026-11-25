@@ -84,6 +84,10 @@ _PUBLIC_CATALOG = "public upstream API catalog, no per-caller rows; gated by cap
 
 #: ``<surface>/<module>.<handler>`` -> why it is safe not to pass identity to a service.
 _ALLOWLIST: dict[str, str] = {
+    # --- auth ---
+    "auth/agents.get_grant_policy_limits": (
+        "org-wide grant defaults and maximums from deployment config, no rows; any signed-in caller"
+    ),
     # --- admin ---
     "admin/auth.get_current_user": "self-lookup keyed on identity.sub (GET /users/me)",
     "admin/auth.refresh_session": (

@@ -170,6 +170,11 @@ class ConnectSession(AuditableMixin, ControlBase):
     requested_permission_rules: Mapped[list[dict[str, object]]] = mapped_column(
         json_variant(), nullable=False, default=list, server_default="[]"
     )
+    # As-requested binding policy from the initiator: how long the access it
+    # asks for should last (``{"expires_in": seconds}``; later limits add
+    # keys). Like the requested rules it is only a request: the approver
+    # decides the binding's actual policy on confirm. NULL = nothing asked.
+    requested_policy: Mapped[dict[str, Any] | None] = mapped_column(json_variant(), nullable=True)
     # Edit sessions: the binding as it was when the session opened (rules
     # with their ids, rule set, ``suspended``, granted scopes). Every
     # revision of the edit resolves against it. NULL for create sessions.

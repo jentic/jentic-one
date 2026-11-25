@@ -68,7 +68,10 @@ your human operator, who approves in their browser (and enters the key, for
 an `--api` connect); you never open or approve it. `--auth-type` picks a
 scheme when the spec declares several (the error lists them); `--rules`
 proposes the binding's rules (a denial's `suggested_rules` fit as-is);
-`--scopes` names vendor scopes. For a `manual_*` or `awaiting_app` flow,
+`--scopes` names vendor scopes; `--expires-in 7d` (or `8h`, `30m`) says how
+long you need the access — the approver decides the actual end date, so ask
+for only as long as the task needs — and `--max-idle 14d` asks for it to end
+once you stop using it (1d to 999d). For a `manual_*` or `awaiting_app` flow,
 relay the URL, **end your turn**, and retry later — `--wait` returns at
 once for those unless you pass `--timeout`. Otherwise `--wait` polls until
 the session connects or ends (exit 3 if the timeout lapses). Once they
@@ -137,6 +140,10 @@ code:
 - **`credential_binding_suspended` (403)** — your operator suspended your
   binding for this API. Do not run `jentic connect` for it; ask your
   operator to resume the binding, then retry.
+- **`credential_binding_expired` (403)** — your binding for this API has
+  expired. Do not run `jentic connect` for it (it is refused with 409
+  `connect_session_binding_expired`); ask your operator to renew the
+  binding, then retry.
 - **`credential_identity_mismatch` (403)** — read the directive's
   `parameters.expected` vs `parameters.found` and ask your operator to fix
   or re-provision the credential so it targets `expected`, then retry.

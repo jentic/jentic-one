@@ -31,6 +31,7 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy import select
 
+from jentic_one.auth.services.grant_renewer import AgentGrantRenewer
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.mcp.installer import (
     install_mcp_challenge_placeholder,
@@ -231,6 +232,19 @@ def install_credential_creator_lookup(app: FastAPI, ctx: Context) -> None:
     app.state.credential_creator_lookup = CredentialService(ctx)
 
 
+def install_grant_renewer(app: FastAPI, ctx: Context) -> None:
+    """Inject the grant renewer onto the app state for ``grant_renewal`` holds.
+
+    Approving a held call whose binding ended renews the binding first. The
+    binding and the rule for who may renew it live with the agents service,
+    which the admin surface may not import, so the admin decide route reaches
+    it through ``app.state.grant_renewer``. Installed on a process that serves
+    admin and can read the control DB (the renewal checks the credential's
+    owner there); without it, a renewal hold can only be denied.
+    """
+    app.state.grant_renewer = AgentGrantRenewer(ctx)
+
+
 def build_default_container(
     ctx: Context,
     *,
@@ -277,6 +291,10 @@ def build_default_container(
     if "admin" in active_apps and ctx.is_db_allowed("control"):
         container = replace(
             container,
-            extra_installers=(*container.extra_installers, install_credential_creator_lookup),
+            extra_installers=(
+                *container.extra_installers,
+                install_credential_creator_lookup,
+                install_grant_renewer,
+            ),
         )
     return container

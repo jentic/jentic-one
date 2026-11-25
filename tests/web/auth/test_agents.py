@@ -7,21 +7,25 @@ import hashlib
 import json
 from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     ActorPermissionGrantRepository,
     AgentCredentialBindingRepository,
     AgentRepository,
     EventRepository,
+    ExecutionRecordRepository,
     UserRepository,
 )
 from jentic_one.admin.services._support.tokens import issue_jwt
@@ -387,6 +391,64 @@ def test_credential_binding_lifecycle(
     assert resp.json()["type"] == "credential_binding_not_found"
 
 
+async def test_credential_binding_last_used(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """A binding reports when the agent last called through it, overall and per
+    API; one never used reads null with no per-API entries."""
+    agent_id = binding_agent_id
+    resp = admin_client.post(
+        f"/agents/{agent_id}/credentials", json={"credential_id": control_credential_id}
+    )
+    assert resp.status_code == 201
+    assert resp.json()["last_used_at"] is None
+    assert resp.json()["last_used_by_api"] == []
+
+    latest = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+    async with web_context.admin_db.transaction() as session:
+        for started_at, api_name, status in (
+            (latest - timedelta(days=2), "payments", "completed"),
+            (latest - timedelta(days=1), "payments", "failed"),
+            (latest, "billing", "completed"),
+        ):
+            await ExecutionRecordRepository.create(
+                session,
+                toolkit_id="tk_test000000000000000000",
+                trace_id="abcdef1234567890abcdef12",
+                started_at=started_at,
+                status=status,
+                api_vendor="stripe",
+                api_name=api_name,
+                created_by=agent_id,
+                actor_id=agent_id,
+                actor_type="agent",
+                credential_id=control_credential_id,
+            )
+    try:
+        resp = admin_client.get(f"/agents/{agent_id}/credentials")
+        assert resp.status_code == 200
+        (binding,) = resp.json()["data"]
+        assert datetime.fromisoformat(binding["last_used_at"]) == latest
+        by_api = [
+            (u["api_vendor"], u["api_name"], datetime.fromisoformat(u["last_used_at"]))
+            for u in binding["last_used_by_api"]
+        ]
+        # Most recent first; the failed call still counts as use.
+        assert by_api == [
+            ("stripe", "billing", latest),
+            ("stripe", "payments", latest - timedelta(days=1)),
+        ]
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                delete(ExecutionRecord).where(ExecutionRecord.actor_id == agent_id)
+            )
+            await session.commit()
+
+
 def test_bind_unknown_credential_is_404(admin_client: TestClient, binding_agent_id: str) -> None:
     resp = admin_client.post(
         f"/agents/{binding_agent_id}/credentials", json={"credential_id": "cred_missing"}
@@ -605,6 +667,547 @@ def test_agent_cannot_resume_its_own_suspended_binding(
     resp = owner_client.post(f"{url}/{control_credential_id}:resume")
     assert resp.status_code == 200
     assert resp.json()["suspended"] is False
+
+
+def _binding_row(client: TestClient, agent_id: str, credential_id: str) -> dict[str, Any]:
+    rows = client.get(f"/agents/{agent_id}/credentials").json()["data"]
+    return next(b for b in rows if b["credential_id"] == credential_id)
+
+
+def test_bind_with_expiry_and_renew_binding(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    """A binding takes a future expiry at creation; PATCH moves and clears it."""
+    url = f"/agents/{binding_agent_id}/credentials"
+    first = (datetime.now(UTC) + timedelta(days=1)).replace(microsecond=0)
+    resp = admin_client.post(
+        url, json={"credential_id": control_credential_id, "expires_at": first.isoformat()}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["expired"] is False
+    assert body["expired_reason"] is None
+    assert datetime.fromisoformat(body["expires_at"]) == first
+
+    later = (datetime.now(UTC) + timedelta(days=30)).replace(microsecond=0)
+    resp = admin_client.patch(
+        f"{url}/{control_credential_id}", json={"expires_at": later.isoformat()}
+    )
+    assert resp.status_code == 200
+    assert datetime.fromisoformat(resp.json()["expires_at"]) == later
+    row = _binding_row(admin_client, binding_agent_id, control_credential_id)
+    assert datetime.fromisoformat(row["expires_at"]) == later
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"expires_at": None})
+    assert resp.status_code == 200
+    assert resp.json()["expires_at"] is None
+    assert resp.json()["expired"] is False
+
+
+async def test_binding_audit_records_the_policy_it_granted(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """An operator can reconstruct the access originally granted, not only later renewals."""
+    end = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0)
+    resp = admin_client.post(
+        f"/agents/{binding_agent_id}/credentials",
+        json={
+            "credential_id": control_credential_id,
+            "expires_at": end.isoformat(),
+            "max_idle_period": "P14D",
+            "max_quota": 1,
+            "after_expiry": "refuse",
+        },
+    )
+    assert resp.status_code == 201
+
+    async with web_context.admin_db.session() as session:
+        entry = (
+            await session.execute(
+                select(AuditEntry).where(
+                    AuditEntry.target_id == resp.json()["id"],
+                    AuditEntry.reason == "bind_credential",
+                )
+            )
+        ).scalar_one()
+    granted = entry.after
+    assert granted is not None
+    assert datetime.fromisoformat(granted["expires_at"]) == end
+    assert granted["max_idle_period"] == 14 * 86_400
+    assert granted["max_quota"] == 1
+    assert granted["after_expiry"] == "refuse"
+
+
+def test_binding_expiry_must_be_in_the_future(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    resp = admin_client.post(url, json={"credential_id": control_credential_id, "expires_at": past})
+    assert resp.status_code == 422
+    assert admin_client.get(url).json()["data"] == []
+
+    assert admin_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"expires_at": past})
+    assert resp.status_code == 422
+    assert _binding_row(admin_client, binding_agent_id, control_credential_id)["expires_at"] is None
+
+
+def test_renew_missing_binding_is_404(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    resp = admin_client.patch(
+        f"/agents/{binding_agent_id}/credentials/{control_credential_id}",
+        json={"expires_at": future},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_binding_not_found"
+
+
+def test_renew_without_expires_at_reruns_the_grant_and_restarts_the_idle_clock(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    """Leaving ``expires_at`` out runs the binding again for as long as it was granted for."""
+    url = f"/agents/{binding_agent_id}/credentials"
+    expires = datetime.now(UTC) + timedelta(days=1)
+    resp = admin_client.post(
+        url,
+        json={
+            "credential_id": control_credential_id,
+            "expires_at": expires.isoformat(),
+            "max_idle_period": "P7D",
+        },
+    )
+    assert resp.status_code == 201
+    granted = datetime.fromisoformat(resp.json()["renewed_at"])
+    length = datetime.fromisoformat(resp.json()["expires_at"]) - granted
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert resp.status_code == 200
+    body = resp.json()
+    renewed = datetime.fromisoformat(body["renewed_at"])
+    assert renewed >= granted
+    assert abs(datetime.fromisoformat(body["expires_at"]) - (renewed + length)) < timedelta(
+        seconds=1
+    )
+    assert body["max_idle_period"] == "P7D"
+    assert datetime.fromisoformat(body["idle_expires_at"]) == renewed + timedelta(days=7)
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"unknown": 1})
+    assert resp.status_code == 422
+
+
+def test_renew_without_expires_at_keeps_no_end_date_without_a_maximum(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    assert admin_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["expires_at"] is None
+
+
+def test_bind_with_idle_limit_then_change_and_remove_it(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    resp = admin_client.post(
+        url, json={"credential_id": control_credential_id, "max_idle_period": "P2W"}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["max_idle_period"] == "P14D"
+    assert body["expires_at"] is None
+    assert body["expired"] is False
+    assert body["idle_expires_at"] is not None
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"max_idle_period": "PT24H"})
+    assert resp.status_code == 200
+    assert resp.json()["max_idle_period"] == "P1D"
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"max_idle_period": None})
+    assert resp.status_code == 200
+    assert resp.json()["max_idle_period"] is None
+    assert resp.json()["idle_expires_at"] is None
+
+
+@pytest.mark.parametrize(
+    "seconds",
+    [
+        pytest.param("PT1H", id="under-a-day"),
+        pytest.param("PT86399S", id="a-second-short"),
+        pytest.param("P1000D", id="over-999-days"),
+        pytest.param(1_209_600, id="bare-seconds"),
+        pytest.param("14d", id="not-iso"),
+        pytest.param("P1M", id="months"),
+    ],
+)
+def test_idle_limit_out_of_range_is_422(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str, seconds: object
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    resp = admin_client.post(
+        url, json={"credential_id": control_credential_id, "max_idle_period": seconds}
+    )
+    assert resp.status_code == 422
+    assert admin_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"max_idle_period": seconds})
+    assert resp.status_code == 422
+
+
+def test_idle_warning_is_set_on_bind_and_changed_on_renewal(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    resp = admin_client.post(
+        url,
+        json={
+            "credential_id": control_credential_id,
+            "max_idle_period": "P14D",
+            "idle_warning": True,
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["idle_warning"] is True
+
+    # Left out, it is unchanged; false turns it off; null is not a value for it.
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert resp.json()["idle_warning"] is True
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"idle_warning": False})
+    assert resp.status_code == 200
+    assert resp.json()["idle_warning"] is False
+    assert (
+        _binding_row(admin_client, binding_agent_id, control_credential_id)["idle_warning"] is False
+    )
+
+
+async def test_bindings_ending_soon_lists_warned_bindings_near_their_idle_limit(
+    admin_client: TestClient,
+    owner_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    ending_soon = "/agents/credentials:ending-soon"
+    resp = admin_client.post(
+        url,
+        json={
+            "credential_id": control_credential_id,
+            "max_idle_period": "P5D",
+            "idle_warning": True,
+        },
+    )
+    assert resp.status_code == 201
+    # Five days left: not yet.
+    assert admin_client.get(ending_soon).json()["data"] == []
+
+    async def set_binding(**values: object) -> None:
+        async with web_context.admin_db.transaction() as session:
+            await session.execute(
+                update(AgentCredentialBinding)
+                .where(AgentCredentialBinding.agent_id == binding_agent_id)
+                .where(AgentCredentialBinding.credential_id == control_credential_id)
+                .values(**values)
+            )
+
+    # Unused for four of its five days: a day left.
+    await set_binding(renewed_at=datetime.now(UTC) - timedelta(days=4), last_used_at=None)
+    resp = admin_client.get(ending_soon)
+    assert resp.status_code == 200
+    (row,) = resp.json()["data"]
+    assert row["agent_id"] == binding_agent_id
+    assert row["agent_name"] == "credential-binding-agent"
+    assert row["credential_id"] == control_credential_id
+    assert row["name"] == "Binding Test Credential"
+    assert row["idle_warning"] is True
+    assert row["ending"] == "idle"
+    assert row["ends_at"] == row["idle_expires_at"]
+    left = datetime.fromisoformat(row["idle_expires_at"]) - datetime.now(UTC)
+    assert timedelta(hours=23) < left <= timedelta(days=1)
+    # The agent's owner sees it too.
+    assert [r["credential_id"] for r in owner_client.get(ending_soon).json()["data"]] == [
+        control_credential_id
+    ]
+
+    # With the warning off it is not listed, though it still ends on time.
+    await set_binding(idle_warning=False)
+    assert admin_client.get(ending_soon).json()["data"] == []
+
+    # A renewal restarts the idle clock, which takes it off the list too.
+    await set_binding(idle_warning=True)
+    assert len(admin_client.get(ending_soon).json()["data"]) == 1
+    assert admin_client.patch(f"{url}/{control_credential_id}", json={}).status_code == 200
+    assert admin_client.get(ending_soon).json()["data"] == []
+
+
+def test_after_expiry_defaults_to_hold_and_changes_on_renewal(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    resp = admin_client.post(url, json={"credential_id": control_credential_id})
+    assert resp.status_code == 201
+    assert resp.json()["after_expiry"] == "hold"
+
+    # Left out, it is unchanged; a value sets it; anything else is refused.
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"after_expiry": "refuse"})
+    assert resp.status_code == 200
+    assert resp.json()["after_expiry"] == "refuse"
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert resp.json()["after_expiry"] == "refuse"
+    assert (
+        _binding_row(admin_client, binding_agent_id, control_credential_id)["after_expiry"]
+        == "refuse"
+    )
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"after_expiry": "ask"})
+    assert resp.status_code == 422
+
+
+async def test_bindings_ending_soon_lists_warned_bindings_near_their_end_date(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    ending_soon = "/agents/credentials:ending-soon"
+    end = datetime.now(UTC) + timedelta(days=1)
+    resp = admin_client.post(
+        url,
+        json={
+            "credential_id": control_credential_id,
+            "expires_at": end.isoformat(),
+            "idle_warning": True,
+        },
+    )
+    assert resp.status_code == 201
+    # Granted for only a day: too short to warn about.
+    assert admin_client.get(ending_soon).json()["data"] == []
+
+    # Granted ten days ago, with a day left.
+    async with web_context.admin_db.transaction() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.agent_id == binding_agent_id)
+            .values(renewed_at=datetime.now(UTC) - timedelta(days=9))
+        )
+    (row,) = admin_client.get(ending_soon).json()["data"]
+    assert row["ending"] == "end_date"
+    assert datetime.fromisoformat(row["ends_at"]) == datetime.fromisoformat(row["expires_at"])
+
+
+async def test_single_use_is_set_on_bind_and_restored_on_renewal(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    resp = admin_client.post(url, json={"credential_id": control_credential_id, "max_quota": 1})
+    assert resp.status_code == 201
+    assert (resp.json()["max_quota"], resp.json()["quota_remaining"]) == (1, 1)
+    assert resp.json()["expired"] is False
+
+    # The use is taken: the binding ends, and says why.
+    async def use_up() -> None:
+        async with web_context.admin_db.transaction() as session:
+            await session.execute(
+                update(AgentCredentialBinding)
+                .where(AgentCredentialBinding.agent_id == binding_agent_id)
+                .values(quota_remaining=0)
+            )
+
+    await use_up()
+    row = _binding_row(admin_client, binding_agent_id, control_credential_id)
+    assert (row["expired"], row["expired_reason"], row["quota_remaining"]) == (True, "uses", 0)
+
+    # "Still needed" restores the count.
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert (resp.json()["quota_remaining"], resp.json()["expired"]) == (1, False)
+    # A new count replaces it; null removes it.
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"max_quota": 5})
+    assert (resp.json()["max_quota"], resp.json()["quota_remaining"]) == (5, 5)
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"max_quota": None})
+    assert (resp.json()["max_quota"], resp.json()["quota_remaining"]) == (None, None)
+
+
+@pytest.mark.parametrize("count", [0, -1, 1.5])
+def test_a_use_count_must_be_a_positive_whole_number(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str, count: float
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    resp = admin_client.post(url, json={"credential_id": control_credential_id, "max_quota": count})
+    assert resp.status_code == 422
+
+
+def test_org_grant_limits_are_reported(
+    admin_client: TestClient, web_context: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limits = web_context.config.grant_expiry
+    monkeypatch.setattr(limits, "default_expires_in", 7 * 86_400)
+    monkeypatch.setattr(limits, "max_expires_in", 30 * 86_400)
+    monkeypatch.setattr(limits, "single_use_by_default", True)
+    resp = admin_client.get("/agents/credentials:policy")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["expires_in"] == {"default": "P7D", "max": "P30D"}
+    assert body["idle_period"] == {"default": None, "max": None}
+    assert body["single_use_by_default"] is True
+
+
+def test_a_bind_with_no_policy_gets_the_org_default(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limits = web_context.config.grant_expiry
+    monkeypatch.setattr(limits, "default_expires_in", 7 * 86_400)
+    monkeypatch.setattr(limits, "single_use_by_default", True)
+    resp = admin_client.post(
+        f"/agents/{binding_agent_id}/credentials", json={"credential_id": control_credential_id}
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    left = datetime.fromisoformat(body["expires_at"]) - datetime.now(UTC)
+    assert timedelta(days=6, hours=23) < left <= timedelta(days=7)
+    assert body["max_quota"] == 1
+
+
+def test_an_org_maximum_refuses_no_end_date_and_longer_ones(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    # Bound before the org set a maximum: no end date.
+    assert admin_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    monkeypatch.setattr(web_context.config.grant_expiry, "max_expires_in", 30 * 86_400)
+
+    # A renewal that chooses no end date brings it under the maximum.
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"idle_warning": True})
+    assert resp.status_code == 200, resp.text
+    left = datetime.fromisoformat(resp.json()["expires_at"]) - datetime.now(UTC)
+    assert timedelta(days=29, hours=23) < left <= timedelta(days=30)
+    # One that clears it, or sets it past the maximum, is refused.
+    for expires_at in (None, (datetime.now(UTC) + timedelta(days=31)).isoformat()):
+        resp = admin_client.patch(f"{url}/{control_credential_id}", json={"expires_at": expires_at})
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["type"].endswith("grant_policy_limit_exceeded")
+    within = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"expires_at": within})
+    assert resp.status_code == 200, resp.text
+
+
+def test_a_renewal_with_no_end_date_takes_the_shorter_of_its_grant_and_the_maximum(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    ninety = (datetime.now(UTC) + timedelta(days=90)).isoformat()
+    resp = admin_client.post(
+        url, json={"credential_id": control_credential_id, "expires_at": ninety}
+    )
+    assert resp.status_code == 201, resp.text
+    monkeypatch.setattr(web_context.config.grant_expiry, "max_expires_in", 30 * 86_400)
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert resp.status_code == 200, resp.text
+    left = datetime.fromisoformat(resp.json()["expires_at"]) - datetime.now(UTC)
+    assert timedelta(days=29, hours=23) < left <= timedelta(days=30)
+
+
+@pytest.mark.parametrize(
+    ("bound_idle", "default", "renewed_idle"),
+    [
+        pytest.param("P90D", None, "P14D", id="longer-is-capped"),
+        pytest.param("P7D", None, "P7D", id="shorter-is-kept"),
+        pytest.param(None, None, "P14D", id="none-takes-the-maximum"),
+        pytest.param(None, "P10D", "P10D", id="none-takes-the-default"),
+    ],
+)
+def test_a_renewal_that_leaves_the_idle_limit_out_is_held_to_the_maximum(
+    admin_client: TestClient,
+    web_context: Context,
+    binding_agent_id: str,
+    control_credential_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    bound_idle: str | None,
+    default: str | None,
+    renewed_idle: str,
+) -> None:
+    """A binding made before the org set an idle maximum can't keep a longer one."""
+    url = f"/agents/{binding_agent_id}/credentials"
+    body: dict[str, object] = {"credential_id": control_credential_id, "expires_at": None}
+    if bound_idle:
+        body["max_idle_period"] = bound_idle
+    assert admin_client.post(url, json=body).status_code == 201
+    limits = web_context.config.grant_expiry
+    monkeypatch.setattr(limits, "max_idle_period", 14 * 86_400)
+    monkeypatch.setattr(limits, "default_idle_period", 10 * 86_400 if default else None)
+
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["max_idle_period"] == renewed_idle
+
+
+def test_renew_does_not_resume_a_suspended_binding(
+    admin_client: TestClient, binding_agent_id: str, control_credential_id: str
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    assert admin_client.post(url, json={"credential_id": control_credential_id}).status_code == 201
+    assert admin_client.delete(f"{url}/{control_credential_id}").status_code == 204
+    future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    resp = admin_client.patch(f"{url}/{control_credential_id}", json={"expires_at": future})
+    assert resp.status_code == 200
+    assert resp.json()["suspended"] is True
+
+
+def test_agent_cannot_renew_its_own_binding(
+    owner_client: TestClient,
+    self_agent_client: TestClient,
+    binding_agent_id: str,
+    control_credential_id: str,
+) -> None:
+    """Renewal is re-certification: the agent cannot extend its own binding (404)."""
+    url = f"/agents/{binding_agent_id}/credentials"
+    soon = (datetime.now(UTC) + timedelta(hours=1)).replace(microsecond=0)
+    assert (
+        owner_client.post(
+            url, json={"credential_id": control_credential_id, "expires_at": soon.isoformat()}
+        ).status_code
+        == 201
+    )
+    later = (datetime.now(UTC) + timedelta(days=90)).isoformat()
+    resp = self_agent_client.patch(f"{url}/{control_credential_id}", json={"expires_at": later})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
+    row = _binding_row(owner_client, binding_agent_id, control_credential_id)
+    assert datetime.fromisoformat(row["expires_at"]) == soon
+
+
+def test_owner_without_rights_on_credential_cannot_renew(
+    owner_client: TestClient,
+    admin_client: TestClient,
+    binding_agent_id: str,
+    foreign_credential_id: str,
+) -> None:
+    url = f"/agents/{binding_agent_id}/credentials"
+    assert admin_client.post(url, json={"credential_id": foreign_credential_id}).status_code == 201
+    future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    resp = owner_client.patch(f"{url}/{foreign_credential_id}", json={"expires_at": future})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "credential_not_found"
 
 
 def test_agent_cannot_purge_its_own_binding(

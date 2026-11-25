@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncGenerator, Iterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import delete, text
 
-from jentic_one.admin.repos import AgentCredentialBindingRepository
+from jentic_one.admin.repos import AgentCredentialBindingRepository, ExecutionRecordRepository
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
 from jentic_one.control.services.credentials.providers.registry import ProviderRegistry
 from jentic_one.registry.core.schema.apis import Api
@@ -29,6 +29,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import PipedreamProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
+from tests.web.conftest import seeded_jwt_user
 from tests.web.control.conftest import CRED_WRITER_IDENTITY, _build_app, _effective
 
 pytestmark = pytest.mark.integration
@@ -702,6 +703,95 @@ async def test_list_credential_agents_paginates(
     assert seen == set(agent_ids)
 
 
+async def test_list_credential_agents_last_used(
+    cred_writer_client: TestClient, web_context: Context, bound_agents: tuple[str, list[str]]
+) -> None:
+    """Each bound agent carries its latest execution through this credential;
+    an agent that never called through it reads null."""
+    credential_id, (active_id, suspended_id) = bound_agents
+    latest = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
+    async with web_context.admin_db.transaction() as session:
+        for started_at, cred in (
+            (latest - timedelta(days=3), credential_id),
+            (latest, credential_id),
+            # A later call through another credential doesn't count here.
+            (latest + timedelta(days=1), "cred_some_other"),
+        ):
+            await ExecutionRecordRepository.create(
+                session,
+                toolkit_id="tk_test000000000000000000",
+                trace_id="abcdef1234567890abcdef12",
+                started_at=started_at,
+                status="completed",
+                created_by=active_id,
+                actor_id=active_id,
+                actor_type="agent",
+                credential_id=cred,
+            )
+    try:
+        resp = cred_writer_client.get(f"/credentials/{credential_id}/agents")
+        assert resp.status_code == 200, resp.text
+        rows = {r["agent_id"]: r for r in resp.json()["data"]}
+        assert datetime.fromisoformat(rows[active_id]["last_used_at"]) == latest
+        assert rows[suspended_id]["last_used_at"] is None
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                text("DELETE FROM execution_records WHERE actor_id = :aid"), {"aid": active_id}
+            )
+            await session.commit()
+
+
+async def test_list_credential_agents_expiry(
+    cred_writer_client: TestClient, web_context: Context, bound_agents: tuple[str, list[str]]
+) -> None:
+    """Each row carries the binding's ``expires_at`` and whether it has passed;
+    an expired binding is listed, not hidden, and a binding with none reads null."""
+    credential_id, (expired_id, open_id) = bound_agents
+    past = datetime.now(UTC) - timedelta(hours=1)
+    async with web_context.admin_db.transaction() as session:
+        await AgentCredentialBindingRepository.set_expires_at(
+            session, agent_id=expired_id, credential_id=credential_id, expires_at=past
+        )
+
+    resp = cred_writer_client.get(f"/credentials/{credential_id}/agents")
+    assert resp.status_code == 200, resp.text
+    rows = {r["agent_id"]: r for r in resp.json()["data"]}
+    assert datetime.fromisoformat(rows[expired_id]["expires_at"]) == past
+    assert rows[expired_id]["expired"] is True
+    assert rows[expired_id]["expired_reason"] == "end_date"
+    assert rows[open_id]["expires_at"] is None
+    assert rows[open_id]["expired"] is False
+    assert rows[open_id]["expired_reason"] is None
+
+
+async def test_list_credential_agents_owner(
+    cred_writer_client: TestClient, web_context: Context, bound_agents: tuple[str, list[str]]
+) -> None:
+    """Each row names the bound agent's owner, so a client can offer a change to
+    the binding (renewing it, say) only where the agent's owner check would pass;
+    an unclaimed agent reads null."""
+    credential_id, (owned_id, unclaimed_id) = bound_agents
+    async with seeded_jwt_user(web_context, "usr_webtest_agent_owner") as owner_id:
+        async with web_context.admin_db.transaction() as session:
+            await session.execute(
+                text("UPDATE agents SET owner_id = :owner WHERE id = :id"),
+                {"owner": owner_id, "id": owned_id},
+            )
+        try:
+            resp = cred_writer_client.get(f"/credentials/{credential_id}/agents")
+            assert resp.status_code == 200, resp.text
+            rows = {r["agent_id"]: r for r in resp.json()["data"]}
+            assert rows[owned_id]["owner_id"] == owner_id
+            assert rows[unclaimed_id]["owner_id"] is None
+        finally:
+            # The owner row goes when this block ends; the agent can't point at it.
+            async with web_context.admin_db.transaction() as session:
+                await session.execute(
+                    text("UPDATE agents SET owner_id = NULL WHERE id = :id"), {"id": owned_id}
+                )
+
+
 def test_list_credential_agents_empty(cred_writer_client: TestClient) -> None:
     """A credential with no direct bindings returns an empty page, not 404."""
     credential_id = _create_api_key(cred_writer_client)
@@ -764,6 +854,9 @@ def test_agent_permissions_lifecycle(
         "rule_set": None,
         "granted_scopes": None,
         "suspended": False,
+        "expires_at": None,
+        "expired": False,
+        "expired_reason": None,
         "scopes_editable": False,
         "scope_catalog": None,
     }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Index, String, UniqueConstraint, text
+from sqlalchemy import Boolean, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -78,3 +78,41 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     # credential serves is deleted, so a later re-import under the same
     # identity does not silently re-adopt the binding. Cleared on resume.
     suspended_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # When the binding stops authorizing calls (fixed expiry). NULL never
+    # expires. Enforced at read time by the broker resolver, never by a sweep,
+    # and independent of ``suspended``: resuming never extends it and renewing
+    # never resumes. A renewal (PATCH) sets, moves or clears it.
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Idle limit, in whole seconds: the binding ends once it has gone this
+    # long without a use. None = no idle limit. Enforced at read time like
+    # ``expires_at``; the idle clock runs from the later of ``last_used_at``
+    # and ``renewed_at`` (falling back to ``bound_at``).
+    max_idle_period: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # When the agent last made a call through the binding, written by the
+    # broker at most about once an hour. None = never used.
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # When the binding was granted or last renewed (PATCH): restarts the idle
+    # clock without counting as a use.
+    renewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Opt-in warning to the agent's owner before the binding ends — its idle
+    # limit or its end date (always off by default). ``idle_warned_at`` marks
+    # the idle warning (cleared by a use or a renewal, so each idle period
+    # warns at most once); ``expiry_warned_at`` marks the end-date warning
+    # (cleared by a renewal, so each end date warns once).
+    idle_warning: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    idle_warned_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    expiry_warned_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # What a call through the binding gets once it has ended: ``hold`` keeps
+    # the first such call for the owner to renew and run; ``refuse`` answers a
+    # plain 403 telling the agent to ask its owner (``AfterExpiry``).
+    after_expiry: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="hold", server_default=text("'hold'")
+    )
+    # Use count (NULL = unlimited): the binding ends once ``quota_remaining``
+    # reaches zero. The broker takes one use per call through it (failed or
+    # refused calls included) with an
+    # atomic decrement; a renewal restores it to ``max_quota``.
+    max_quota: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quota_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True)

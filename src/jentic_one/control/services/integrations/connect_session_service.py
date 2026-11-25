@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -113,6 +113,7 @@ from jentic_one.control.services.integrations.errors import (
     AgentNotFoundError,
     AmendFieldsMismatchError,
     BaselineChangedError,
+    BindingExpiredError,
     BindingSuspendedError,
     ConfirmationForbiddenError,
     ConfirmKindMismatchError,
@@ -171,6 +172,11 @@ from jentic_one.control.services.integrations.flow_handlers.manual import (
     manual_handler_for_scheme,
 )
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
+from jentic_one.control.services.integrations.requested_policy import (
+    requested_expires_in_of,
+    requested_max_idle_period_of,
+    requested_policy,
+)
 from jentic_one.control.services.integrations.revisions import create_revision, revision_digest
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
@@ -183,6 +189,10 @@ from jentic_one.control.services.vendors.service import (
 )
 from jentic_one.shared.access_guidance import catalog_api_id_covers, catalog_import_name
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
+from jentic_one.shared.auth.binding_write import guard_binding_write
+from jentic_one.shared.auth.expiry import binding_expired
+from jentic_one.shared.auth.grant_limits import check_grant_limits
+from jentic_one.shared.auth.grant_policy import grant_ended
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
     AGENTS_WRITE,
@@ -450,6 +460,10 @@ class ReviewData:
     api_version: str | None
     target_kind: str = TARGET_KIND_VENDOR
     requested_scopes: list[str] = field(default_factory=list)
+    # How long the requester asked the access to last (seconds from approval).
+    requested_expires_in: int | None = None
+    # The idle limit the requester asked for (seconds).
+    requested_max_idle_period: int | None = None
     # Server data the approver decides on (never echoed from the caller).
     provenance: ProvenanceView | None = None
     agent: AgentView | None = None
@@ -508,6 +522,24 @@ class SchemeView:
 
 
 @dataclass(slots=True, frozen=True)
+class SessionAgentBindingView:
+    """The session's own agent's binding to a credential it could be bound to again.
+
+    Confirming with that credential binds nothing new: a binding that exists
+    keeps its own limits, so the review says what they are rather than offering
+    to set them.
+    """
+
+    expires_at: datetime | None
+    max_idle_period: int | None
+    max_quota: int | None
+    quota_remaining: int | None
+    suspended: bool
+    #: A limit of the binding has been reached (its end date, idle limit or uses).
+    ended: bool
+
+
+@dataclass(slots=True, frozen=True)
 class ExistingCredentialView:
     """A credential the approver could bind instead of connecting a new one.
 
@@ -532,6 +564,8 @@ class ExistingCredentialView:
     other_bound_agents_truncated: bool
     can_bind: bool
     needs_vendor_consent: bool
+    #: The session agent's own binding to it, when it already has one.
+    agent_binding: SessionAgentBindingView | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -607,6 +641,16 @@ class ConfirmChecks:
     digest: str | None
     agent_id: str | None = None
     revision_id: str | None = None
+    # The new binding's end date as the approver chose it (None = no expiry).
+    expires_at: datetime | None = None
+    # The new binding's idle limit in seconds (None = none).
+    max_idle_period: int | None = None
+    # Whether the owner is warned before that idle limit is reached.
+    idle_warning: bool = False
+    # What a call through it gets once it has ended (``hold`` or ``refuse``).
+    after_expiry: str = "hold"
+    # The new binding's use count (None = unlimited; 1 is single use).
+    max_quota: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1164,6 +1208,12 @@ class ConnectSessionService:
         # scheme's name or kind. The spec decides; this only picks among
         # what it declares.
         auth_type: str | None = None,
+        # How long the requested access should last, in seconds from
+        # approval. Stored as the session's ``requested_policy``; the
+        # approver picks the binding's actual end date on confirm.
+        requested_expires_in: int | None = None,
+        # The idle limit the request asks for, in seconds.
+        requested_max_idle_period: int | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
@@ -1201,6 +1251,8 @@ class ConnectSessionService:
                 requested_permission_rules=requested_permission_rules or [],
                 credential_name=credential_name,
                 oauth_app_registration_id=oauth_app_registration_id,
+                requested_expires_in=requested_expires_in,
+                requested_max_idle_period=requested_max_idle_period,
             )
 
         # Entry, flow and minting app come from one source — the pinned
@@ -1221,7 +1273,7 @@ class ConnectSessionService:
         handler = handler_cls(self._ctx)
 
         api_scope = await self._vendor_api_scope(entry.vendor)
-        await self._refuse_suspended_binding(agent_id, api_scope)
+        await self._refuse_cut_off_binding(agent_id, api_scope)
         # The hold is on the agent asking again; a person can still connect for it.
         await self._check_rejection_cooldown(
             agent_id if agent_id == initiator_actor_id else None,
@@ -1299,6 +1351,10 @@ class ConnectSessionService:
                     dedupe_key=dedupe_key,
                     requested_scopes=requested_scopes or [],
                     requested_permission_rules=requested_permission_rules or [],
+                    requested_policy=requested_policy(
+                        expires_in=requested_expires_in,
+                        max_idle_period=requested_max_idle_period,
+                    ),
                     preferred_flow=preferred_flow,
                     reason=reason,
                     created_by=initiator_actor_id,
@@ -1372,6 +1428,8 @@ class ConnectSessionService:
         requested_permission_rules: list[dict[str, object]],
         credential_name: str | None,
         oauth_app_registration_id: str | None,
+        requested_expires_in: int | None = None,
+        requested_max_idle_period: int | None = None,
     ) -> CreatedSession:
         """Open a session for a registry API identity.
 
@@ -1400,7 +1458,7 @@ class ConnectSessionService:
         api_scope = canonical_credential_scope(
             vendor=view.vendor, name=view.name, version=view.version
         )
-        await self._refuse_suspended_binding(agent_id, api_scope)
+        await self._refuse_cut_off_binding(agent_id, api_scope)
         await self._check_rejection_cooldown(
             agent_id if agent_id == initiator_actor_id else None,
             target_kind=TARGET_KIND_API,
@@ -1520,6 +1578,10 @@ class ConnectSessionService:
                     poll_token_hash=hash_secret(poll_token),
                     requested_scopes=requested_scopes,
                     requested_permission_rules=requested_permission_rules,
+                    requested_policy=requested_policy(
+                        expires_in=requested_expires_in,
+                        max_idle_period=requested_max_idle_period,
+                    ),
                     preferred_flow=preferred_flow,
                     reason=reason,
                     created_by=initiator_actor_id,
@@ -1622,28 +1684,28 @@ class ConnectSessionService:
         )
         raise ConnectOpenError(row.id, self._approval_url_for(row.id))
 
-    async def _refuse_suspended_binding(self, agent_id: str | None, scope: CredentialScope) -> None:
-        """Refuse a connect for an agent whose suspended binding covers the requested API.
+    async def _refuse_cut_off_binding(self, agent_id: str | None, scope: CredentialScope) -> None:
+        """Refuse a connect for an agent whose suspended or expired binding covers the API.
 
         A suspended binding is the operator's cut-off for that agent and
-        credential; a new connect for an API the suspended credential covers
-        would hand the agent that access again, so only the operator may lift
-        it (resume or remove the binding). Coverage is the bind-time rule: a
-        NULL credential axis is a wildcard, and an unscoped requested axis
-        matches any credential value. Called only after the caller's right to
-        name the agent is settled, so it says nothing about another owner's
-        agent.
+        credential, and an expired one has stopped authorizing calls; a new
+        connect for an API either credential covers would hand the agent that
+        access again, so only the operator may lift it (resume, renew or
+        remove the binding). Suspension is reported first
+        (:class:`BindingSuspendedError`), then expiry
+        (:class:`BindingExpiredError`), as the broker does. Coverage is the
+        bind-time rule: a NULL credential axis is a wildcard, and an unscoped
+        requested axis matches any credential value. Called only after the
+        caller's right to name the agent is settled, so it says nothing about
+        another owner's agent.
 
         Accepted semantics:
 
-        - Any suspended binding covering the API refuses the connect, even
-          when another, active binding already covers the same API. The
-          suspension stands until the operator resumes or removes it.
-        - The check reads in its own sessions before the bind transaction,
-          so a suspension that lands in the milliseconds between this check
-          and a ``confirm`` bind is not caught here. A suspension made after
-          the bind is outside this check by design; the broker enforces it
-          per call.
+        - Any suspended or expired binding covering the API refuses the
+          connect, even when another, active binding already covers the same
+          API. The cut-off stands until the operator acts on that binding.
+        - This preflight gives early feedback. The write path locks overlapping
+          bindings and checks again when the grant is applied.
         """
         if agent_id is None:
             return
@@ -1651,28 +1713,30 @@ class ConnectSessionService:
             suspended = await EffectsRepository.list_suspended_credential_ids(
                 admin_session, agent_id
             )
-        if not suspended:
+            expired = await EffectsRepository.list_expired_credential_ids(admin_session, agent_id)
+        if not suspended and not expired:
             return
         async with self._ctx.control_db.session() as session:
-            covered = await CredentialRepository.any_covering(
-                session,
-                credential_ids=suspended,
-                vendor=scope.vendor,
-                name=scope.name,
-                version=scope.version,
-            )
-        if covered:
-            raise BindingSuspendedError(agent_id)
+            for credential_ids, error in (
+                (suspended, BindingSuspendedError),
+                (expired, BindingExpiredError),
+            ):
+                if credential_ids and await CredentialRepository.any_covering(
+                    session,
+                    credential_ids=credential_ids,
+                    vendor=scope.vendor,
+                    name=scope.name,
+                    version=scope.version,
+                ):
+                    raise error(agent_id)
 
-    async def _refuse_suspended_binding_for_session(
-        self, row: ConnectSession, agent_id: str
-    ) -> None:
-        """:meth:`_refuse_suspended_binding` for the API a session's pending credential targets."""
+    async def _refuse_cut_off_binding_for_session(self, row: ConnectSession, agent_id: str) -> None:
+        """:meth:`_refuse_cut_off_binding` for the API a session's pending credential targets."""
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
         if credential is None:
             return
-        await self._refuse_suspended_binding(
+        await self._refuse_cut_off_binding(
             agent_id,
             canonical_credential_scope(
                 vendor=credential.api_vendor,
@@ -2982,19 +3046,11 @@ class ConnectSessionService:
             )
 
     async def _apply_admin_change(self, row: ConnectSession, change: dict[str, Any]) -> None:
-        """The admin-DB half of an approved change: bind, detach a curated set, resume."""
+        """Detach a curated set or resume a binding after an approved edit."""
         assert row.agent_id is not None
-        if not (change["bind"] or change["detach_rule_set"] or change["resume"]):
+        if not (change["detach_rule_set"] or change["resume"]):
             return
         async with self._ctx.admin_db.transaction() as admin_session:
-            if change["bind"]:
-                await EffectsRepository.bind_agent_to_credential(
-                    admin_session,
-                    agent_id=row.agent_id,
-                    credential_id=row.credential_id,
-                    rule_set_id=None,
-                    created_by=change["approved_by"],
-                )
             if change["detach_rule_set"]:
                 await PrerequisiteRepository.set_binding_rule_set(
                     admin_session,
@@ -3401,11 +3457,14 @@ class ConnectSessionService:
     ) -> AgentCredentialBindingRow:
         """The binding an edit opens on, refusing callers who may not edit it.
 
-        An agent may edit only its own active binding. A human must be the
-        agent's approver *and* the credential's owner, as the direct rule
-        write and the direct resume both require: the rules bound what the
-        agent does with someone else's secret, and a suspension is that
-        owner's cut-off. Every refusal is the same not-found error.
+        An agent may edit only its own active binding: a suspended or expired
+        one is hidden from it, as it is from the agent's credential reads, and
+        no rule change would bring it back (only the operator resumes or
+        renews it). A human must be the agent's approver *and* the
+        credential's owner, as the direct rule write and the direct resume
+        both require: the rules bound what the agent does with someone else's
+        secret, and a suspension is that owner's cut-off. Every refusal is the
+        same not-found error.
         """
         if identity.actor_type == ActorType.AGENT:
             if agent_id != identity.sub:
@@ -3418,7 +3477,10 @@ class ConnectSessionService:
             binding = await PrerequisiteRepository.get_agent_credential_binding(
                 admin_session, agent_id=agent_id, credential_id=credential_id
             )
-        if binding is None or (binding.suspended and identity.actor_type == ActorType.AGENT):
+        if binding is None or (
+            identity.actor_type == ActorType.AGENT
+            and (binding.suspended or grant_ended(binding.policy))
+        ):
             raise EditBindingNotFoundError(credential_id)
         return binding
 
@@ -3683,6 +3745,8 @@ class ConnectSessionService:
             requested_by_actor_id=row.initiator_actor_id,
             scopes=scopes,
             requested_permission_rules=row.requested_permission_rules or [],
+            requested_expires_in=requested_expires_in_of(row.requested_policy),
+            requested_max_idle_period=requested_max_idle_period_of(row.requested_policy),
             api_vendor=api_vendor,
             api_name=api_name,
             api_version=api_version,
@@ -3865,6 +3929,11 @@ class ConnectSessionService:
                 visible_to=bound_agent_visibility(credential.created_by, identity),
             )
             wire_type = to_wire(StoredCredentialType(credential.type)).value
+            own_binding = await self._session_agent_binding(
+                credential.id,
+                row.agent_id,
+                visible_to=bound_agent_visibility(credential.created_by, identity),
+            )
             if not _is_oauth_type(credential.type):
                 views.append(
                     ExistingCredentialView(
@@ -3877,6 +3946,7 @@ class ConnectSessionService:
                         other_bound_agents_truncated=more_others,
                         can_bind=True,
                         needs_vendor_consent=False,
+                        agent_binding=own_binding,
                     )
                 )
                 continue
@@ -3900,6 +3970,7 @@ class ConnectSessionService:
                     other_bound_agents_truncated=more_others,
                     can_bind=not missing or (consentable and may_widen),
                     needs_vendor_consent=consentable,
+                    agent_binding=own_binding,
                 )
             )
         return views
@@ -4025,6 +4096,34 @@ class ConnectSessionService:
             return await CredentialRepository.get_creators_by_ids(
                 session, sorted(credential_ids), filters=filters
             )
+
+    async def _session_agent_binding(
+        self,
+        credential_id: str,
+        agent_id: str | None,
+        *,
+        visible_to: AgentVisibility | None = None,
+    ) -> SessionAgentBindingView | None:
+        """The session agent's own binding to the credential, or ``None`` if it has none."""
+        if agent_id is None:
+            return None
+        async with self._ctx.admin_db.session() as admin_session:
+            found = await PrerequisiteRepository.get_agent_credential_binding(
+                admin_session,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                visible_to=visible_to,
+            )
+        if found is None:
+            return None
+        return SessionAgentBindingView(
+            expires_at=found.expires_at,
+            max_idle_period=found.policy.max_idle_period,
+            max_quota=found.policy.max_quota,
+            quota_remaining=found.policy.quota_remaining,
+            suspended=found.suspended,
+            ended=grant_ended(found.policy),
+        )
 
     async def _other_bound_agents(
         self,
@@ -4306,6 +4405,13 @@ class ConnectSessionService:
         # The approver's browser: an authorization-code flow binds its
         # callback to it, since the approver is the one who goes to the vendor.
         browser_binding: BrowserBindingClaim | None = None,
+        # The new binding's end date as the approver chose it (None = none).
+        expires_at: datetime | None = None,
+        # The new binding's idle limit in seconds (None = none).
+        max_idle_period: int | None = None,
+        idle_warning: bool = False,
+        after_expiry: str = "hold",
+        max_quota: int | None = None,
     ) -> ConfirmResult:
         """Confirm scopes + permissions and kick off the vendor-side flow.
 
@@ -4371,6 +4477,8 @@ class ConnectSessionService:
         # freshly-persisted value without another read round-trip.
         late_bound = row.agent_id is None and agent_id is not None
         effective_agent_id = row.agent_id if row.agent_id is not None else agent_id
+        if effective_agent_id is not None:
+            self._enforce_grant_limits(expires_at=expires_at, max_idle_period=max_idle_period)
 
         # The agent named on the session (agent-initiated) or in the
         # payload (late-bind) has never been validated — it must exist
@@ -4382,8 +4490,8 @@ class ConnectSessionService:
                 effective_agent_id, identity, late_bound=late_bound
             )
             # A late-bound agent was never checked at create, and a binding
-            # may have been suspended since the session opened.
-            await self._refuse_suspended_binding_for_session(row, effective_agent_id)
+            # may have been suspended, or expired, since the session opened.
+            await self._refuse_cut_off_binding_for_session(row, effective_agent_id)
         credential_owner_id = (
             target_agent.owner_id
             if target_agent is not None and target_agent.owner_id is not None
@@ -4482,14 +4590,22 @@ class ConnectSessionService:
             # the cross-DB binding is applied idempotently, so a re-connect
             # over an existing binding leaves the operator-owned row
             # untouched). ``_mark_terminal`` sweeps it if the flow dies.
-            async with self._ctx.admin_db.transaction() as admin_session:
-                await EffectsRepository.bind_agent_to_credential(
-                    admin_session,
-                    agent_id=effective_agent_id,
-                    credential_id=row.credential_id,
-                    rule_set_id=None,
-                    created_by=identity.sub,
-                )
+            try:
+                async with self._ctx.admin_db.transaction() as admin_session:
+                    await self._checked_bind(
+                        admin_session,
+                        agent_id=effective_agent_id,
+                        credential_id=row.credential_id,
+                        created_by=identity.sub,
+                        expires_at=expires_at,
+                        max_idle_period=max_idle_period,
+                        idle_warning=idle_warning,
+                        after_expiry=after_expiry,
+                        max_quota=max_quota,
+                    )
+            except (BindingSuspendedError, BindingExpiredError) as exc:
+                await self._fail_cut_off_bind(row, exc)
+                raise
 
         _logger.info(
             "connect_session.confirmed",
@@ -4579,6 +4695,10 @@ class ConnectSessionService:
         await self._require_revision(row, checks.revision_id)
         late_bound = row.agent_id is None and checks.agent_id is not None
         effective_agent_id = row.agent_id if row.agent_id is not None else checks.agent_id
+        if effective_agent_id is not None:
+            self._enforce_grant_limits(
+                expires_at=checks.expires_at, max_idle_period=checks.max_idle_period
+            )
         if isinstance(variant, ExistingCredentialConfirm) and effective_agent_id is None:
             # Binding an existing credential needs an agent to bind it to.
             raise ConfirmKindMismatchError(kind, [_allowed_confirm_kinds(row)[0]])
@@ -4588,8 +4708,8 @@ class ConnectSessionService:
                 effective_agent_id, identity, late_bound=late_bound
             )
             # A late-bound agent was never checked at create, and a binding
-            # may have been suspended since the session opened.
-            await self._refuse_suspended_binding_for_session(row, effective_agent_id)
+            # may have been suspended, or expired, since the session opened.
+            await self._refuse_cut_off_binding_for_session(row, effective_agent_id)
         credential_owner_id = (
             target_agent.owner_id
             if target_agent is not None and target_agent.owner_id is not None
@@ -4715,8 +4835,77 @@ class ConnectSessionService:
             raise RulesRequiredError()
         return view
 
+    def _enforce_grant_limits(
+        self, *, expires_at: datetime | None, max_idle_period: int | None
+    ) -> None:
+        """Refuse a grant beyond the org's maximums (422), wherever the confirm came from.
+
+        Checked here, where an agent is bound, so a caller other than the HTTP
+        route cannot confirm past the maximum; a confirm that binds no agent has
+        no grant to limit.
+        """
+        check_grant_limits(
+            self._ctx.config.grant_expiry,
+            now=datetime.now(UTC),
+            expires_at=expires_at,
+            max_idle_period=max_idle_period,
+        )
+
+    async def _checked_bind(
+        self,
+        admin_session: Any,
+        *,
+        agent_id: str,
+        credential_id: str,
+        created_by: str,
+        control_session: Any | None = None,
+        expires_at: datetime | None = None,
+        max_idle_period: int | None = None,
+        idle_warning: bool = False,
+        after_expiry: str = "hold",
+        max_quota: int | None = None,
+    ) -> tuple[str, bool]:
+        async with guard_binding_write(
+            admin_session,
+            self._ctx.control_db,
+            agent_id=agent_id,
+            credential_id=credential_id,
+            suspended_error=BindingSuspendedError,
+            expired_error=BindingExpiredError,
+            control_session=control_session,
+        ):
+            bound = await EffectsRepository.bind_agent_to_credential(
+                admin_session,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                rule_set_id=None,
+                created_by=created_by,
+                expires_at=expires_at,
+                max_idle_period=max_idle_period,
+                idle_warning=idle_warning,
+                after_expiry=after_expiry,
+                max_quota=max_quota,
+            )
+            # The end date was chosen at confirm, but a binding is written when
+            # consent lands, possibly later: a new binding must not be created
+            # already ended. An existing binding keeps its own policy (the
+            # insert ignores this one), so only a fresh one is refused. Raising
+            # rolls the caller's transaction back, so nothing is written.
+            if not bound[1] and binding_expired(expires_at):
+                raise BindingExpiredError(agent_id)
+            return bound
+
     async def _bind_for_confirm(
-        self, agent_id: str, credential_id: str, *, created_by: str
+        self,
+        agent_id: str,
+        credential_id: str,
+        *,
+        created_by: str,
+        expires_at: datetime | None = None,
+        max_idle_period: int | None = None,
+        idle_warning: bool = False,
+        after_expiry: str = "hold",
+        max_quota: int | None = None,
     ) -> bool:
         """Bind the agent (idempotent) and re-check it is still usable; True if newly bound.
 
@@ -4725,12 +4914,16 @@ class ConnectSessionService:
         removed; one that commits after revokes the binding itself.
         """
         async with self._ctx.admin_db.transaction() as admin_session:
-            _, already_bound = await EffectsRepository.bind_agent_to_credential(
+            _, already_bound = await self._checked_bind(
                 admin_session,
                 agent_id=agent_id,
                 credential_id=credential_id,
-                rule_set_id=None,
                 created_by=created_by,
+                expires_at=expires_at,
+                max_idle_period=max_idle_period,
+                idle_warning=idle_warning,
+                after_expiry=after_expiry,
+                max_quota=max_quota,
             )
         async with self._ctx.admin_db.session() as admin_session:
             agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
@@ -4807,7 +5000,14 @@ class ConnectSessionService:
         newly_bound = False
         if agent_id is not None:
             newly_bound = await self._bind_for_confirm(
-                agent_id, row.credential_id, created_by=identity.sub
+                agent_id,
+                row.credential_id,
+                created_by=identity.sub,
+                expires_at=variant.checks.expires_at,
+                max_idle_period=variant.checks.max_idle_period,
+                idle_warning=variant.checks.idle_warning,
+                after_expiry=variant.checks.after_expiry,
+                max_quota=variant.checks.max_quota,
             )
         cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
         try:
@@ -4878,6 +5078,22 @@ class ConnectSessionService:
         chosen = next((c for c in candidates if c.credential_id == variant.credential_id), None)
         if chosen is None:
             raise ExistingCredentialNotFoundError(variant.credential_id)
+        # The confirm checked the API the session asks for, but an existing
+        # credential can serve more than that (a NULL name or version is a
+        # wildcard). Checked against the chosen credential's own scope, the
+        # rule becomes an overlap: a cut-off binding for any API it serves
+        # refuses the bind, or a broader credential would route around it.
+        async with self._ctx.control_db.session() as session:
+            chosen_row = await CredentialRepository.get_by_id(session, chosen.credential_id)
+        if chosen_row is not None:
+            await self._refuse_cut_off_binding(
+                agent_id,
+                canonical_credential_scope(
+                    vendor=chosen_row.api_vendor,
+                    name=chosen_row.api_name,
+                    version=chosen_row.api_version,
+                ),
+            )
         if chosen.missing_scopes:
             if not chosen.needs_vendor_consent:
                 raise InsufficientGrantedScopesError(chosen.credential_id, chosen.missing_scopes)
@@ -4892,7 +5108,14 @@ class ConnectSessionService:
             )
 
         newly_bound = await self._bind_for_confirm(
-            agent_id, chosen.credential_id, created_by=identity.sub
+            agent_id,
+            chosen.credential_id,
+            created_by=identity.sub,
+            expires_at=variant.checks.expires_at,
+            max_idle_period=variant.checks.max_idle_period,
+            idle_warning=variant.checks.idle_warning,
+            after_expiry=variant.checks.after_expiry,
+            max_quota=variant.checks.max_quota,
         )
         cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
         try:
@@ -4980,6 +5203,15 @@ class ConnectSessionService:
             "outcome": OUTCOME_CONNECTED,
             "approved_by": identity.sub,
             "revision_id": variant.checks.revision_id,
+            "expires_at": (
+                variant.checks.expires_at.isoformat()
+                if variant.checks.expires_at is not None
+                else None
+            ),
+            "max_idle_period": variant.checks.max_idle_period,
+            "idle_warning": variant.checks.idle_warning,
+            "after_expiry": variant.checks.after_expiry,
+            "max_quota": variant.checks.max_quota,
         }
         cas_fields: dict[str, Any] = {"agent_id": agent_id} if late_bound else {}
         # Taking the edit intent means the review reads this session as an
@@ -5136,14 +5368,22 @@ class ConnectSessionService:
             # Same intent-then-apply order as the OAuth confirm: the broker
             # ignores the binding until the credential is ``connected``, and
             # ``_mark_terminal`` removes it if the flow dies.
-            async with self._ctx.admin_db.transaction() as admin_session:
-                await EffectsRepository.bind_agent_to_credential(
-                    admin_session,
-                    agent_id=agent_id,
-                    credential_id=row.credential_id,
-                    rule_set_id=None,
-                    created_by=identity.sub,
-                )
+            try:
+                async with self._ctx.admin_db.transaction() as admin_session:
+                    await self._checked_bind(
+                        admin_session,
+                        agent_id=agent_id,
+                        credential_id=row.credential_id,
+                        created_by=identity.sub,
+                        expires_at=variant.checks.expires_at,
+                        max_idle_period=variant.checks.max_idle_period,
+                        idle_warning=variant.checks.idle_warning,
+                        after_expiry=variant.checks.after_expiry,
+                        max_quota=variant.checks.max_quota,
+                    )
+            except (BindingSuspendedError, BindingExpiredError) as exc:
+                await self._fail_cut_off_bind(row, exc)
+                raise
         return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
 
     async def _require_session_agent_allowed(
@@ -5726,6 +5966,13 @@ class ConnectSessionService:
             bound_scopes=tokens.granted_scopes,
         )
 
+    async def _fail_cut_off_bind(
+        self, row: ConnectSession, exc: BindingSuspendedError | BindingExpiredError
+    ) -> StatusResult:
+        code = "binding_suspended" if isinstance(exc, BindingSuspendedError) else "binding_expired"
+        await self._mark_terminal(row.id, "failed", str(exc), error_code=code)
+        return StatusResult(status="failed", error_code=code)
+
     async def _finalise_edit(
         self,
         row: ConnectSession,
@@ -5847,7 +6094,12 @@ class ConnectSessionService:
         # approver made.
         reopen = False
         try:
-            async with self._ctx.control_db.transaction() as session:
+            async with (
+                self._ctx.admin_db.transaction()
+                if change["bind"]
+                else nullcontext(None) as admin_session,
+                self._ctx.control_db.transaction() as session,
+            ):
                 won = await ConnectSessionRepository.transition_state(
                     session,
                     row.id,
@@ -5868,6 +6120,26 @@ class ConnectSessionService:
                     change, reopen = await self._write_change(
                         session, row, change, on_rules_moved="reopen"
                     )
+                    if admin_session is not None:
+                        assert row.agent_id is not None
+                        await self._checked_bind(
+                            admin_session,
+                            agent_id=row.agent_id,
+                            credential_id=row.credential_id,
+                            created_by=change["approved_by"],
+                            control_session=session,
+                            expires_at=(
+                                datetime.fromisoformat(change["expires_at"])
+                                if change.get("expires_at")
+                                else None
+                            ),
+                            max_idle_period=change.get("max_idle_period"),
+                            idle_warning=bool(change.get("idle_warning", False)),
+                            after_expiry=str(change.get("after_expiry") or "hold"),
+                            max_quota=change.get("max_quota"),
+                        )
+        except (BindingSuspendedError, BindingExpiredError) as exc:
+            return await self._fail_cut_off_bind(row, exc)
         except TokenEndpointMovedError as exc:
             return await self._fail_token_endpoint_moved(row, exc)
         if not won:

@@ -12,10 +12,12 @@ too (consumed by ``routers/credentials.py`` and ``schemas/credentials.py``).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from jentic_one.shared.auth.grant_policy import GrantEndReason
 from jentic_one.shared.permissions.matching import MatchMode, validate_path
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -249,6 +251,31 @@ class BindingAccessResponse(PermissionRuleListResponse):
     suspended: bool = Field(
         description="True when the binding is suspended and the agent cannot use it.",
         examples=[False],
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        examples=["2026-12-31T23:59:00Z"],
+        description=(
+            "When the binding stops authorizing calls (RFC 3339); null if it never "
+            "expires. Independent of `suspended`."
+        ),
+    )
+    expired: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "True when `expires_at` has passed: the agent cannot use the binding, and "
+            "no rule change brings it back. Only the operator can renew it."
+        ),
+    )
+    expired_reason: GrantEndReason | None = Field(
+        default=None,
+        examples=[None],
+        description=(
+            "Which limit ended the binding while `expired` is true: `end_date`"
+            " (`expires_at` passed), `idle` (unused for its idle limit) or `uses`"
+            " (no uses left). Null while the binding holds."
+        ),
     )
     scopes_editable: bool = Field(
         default=False,

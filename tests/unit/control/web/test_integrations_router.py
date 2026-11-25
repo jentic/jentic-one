@@ -58,6 +58,7 @@ from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.control.web.schemas.integrations import AmendSessionRequest
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import GrantExpiryConfig
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.resilience import RateLimiter
@@ -105,6 +106,7 @@ _CTX = SimpleNamespace(
     config=SimpleNamespace(
         credentials=SimpleNamespace(connect=SimpleNamespace(state_ttl_seconds=600)),
         server=SimpleNamespace(public_base_url=""),
+        grant_expiry=GrantExpiryConfig(),
     )
 )
 

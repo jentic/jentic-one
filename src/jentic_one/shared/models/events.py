@@ -25,6 +25,12 @@ class EventType:
     EXECUTION_REPEATED_FAILURE = "execution.repeated_failure"
     CREDENTIAL_EXPIRING_SOON = "credential.expiring_soon"
     CREDENTIAL_EXPIRED = "credential.expired"
+    #: A credential grant (an agent's binding) with the idle warning on will
+    #: reach its idle limit within 48 hours; addressed to the agent's owner.
+    CREDENTIAL_GRANT_IDLE_EXPIRING = "credential_grant.idle_expiring"
+    #: A credential grant with the warning on will reach its end date within
+    #: 48 hours; addressed to the agent's owner.
+    CREDENTIAL_GRANT_EXPIRING = "credential_grant.expiring"
     CREDENTIAL_ACCESSED = "credential.accessed"
     # A credential was created whose API scope covers no imported registry API
     # identity — the create succeeds (importing the API later is a legitimate
@@ -181,6 +187,8 @@ class EventType:
             EXECUTION_REPEATED_FAILURE,
             CREDENTIAL_EXPIRING_SOON,
             CREDENTIAL_EXPIRED,
+            CREDENTIAL_GRANT_IDLE_EXPIRING,
+            CREDENTIAL_GRANT_EXPIRING,
             CREDENTIAL_ACCESSED,
             CREDENTIAL_UNMATCHED_API,
             UPSTREAM_CIRCUIT_OPEN,
@@ -498,6 +506,8 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.IMPORT_FAILED: frozenset({EventSeverity.ERROR}),
     EventType.JOB_FAILED_PERMANENTLY: frozenset({EventSeverity.ERROR}),
     EventType.CREDENTIAL_EXPIRED: frozenset({EventSeverity.ERROR}),
+    EventType.CREDENTIAL_GRANT_IDLE_EXPIRING: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_GRANT_EXPIRING: frozenset({EventSeverity.WARNING}),
     # --- ERROR escalating to CRITICAL: a failure PATTERN, not one instance -
     EventType.EXECUTION_REPEATED_FAILURE: frozenset({EventSeverity.ERROR, EventSeverity.CRITICAL}),
 }

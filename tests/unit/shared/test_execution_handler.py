@@ -88,6 +88,7 @@ class _FakeInjector:
     def __init__(self, injection: InjectedAuth) -> None:
         self._injection = injection
         self.last_trace_id: str | None = None
+        self.last_use_key: str | None = None
         self.last_identity: Any = None
         self.last_allowed_credential_ids: Any = "unset"
         self.last_credential_id: str | None = None
@@ -107,8 +108,10 @@ class _FakeInjector:
         trace_id: str | None = None,
         request_server_variables: Any = None,
         server_variables_unresolved: bool = False,
+        use_key: str | None = None,
     ) -> InjectedAuth:
         self.last_trace_id = trace_id
+        self.last_use_key = use_key
         self.last_identity = identity
         self.last_allowed_credential_ids = allowed_credential_ids
         self.last_credential_id = credential_id
@@ -1604,3 +1607,26 @@ async def test_handler_audit_failure_before_dispatch_propagates(error: Exception
         )
 
     assert executor.called is False
+
+
+async def test_the_job_id_is_the_use_key_so_a_retry_is_never_charged_twice() -> None:
+    """The binding's use is charged once per queued job, however often it is attempted."""
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+        ),
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(),
+        actor_status=_FakeActorStatus(),
+    )
+
+    await handler.execute(
+        "job_charged_once",
+        SessionScope(_FakeSession()),
+        payload=_payload(),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert injector.last_use_key == "job_charged_once"

@@ -8,8 +8,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.shared.auth.binding_write import scopes_overlap
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.api_identity import CredentialScope
 
 _OWNER = "usr_owner"
 _OTHER = "usr_other"
@@ -80,3 +82,28 @@ def test_can_bind_credential_is_ownership_scoped(
 ) -> None:
     service = AgentService(MagicMock())
     assert service._can_bind_credential(identity, created_by) is allowed
+
+
+def _ref(name: str | None, version: str | None, vendor: str = "acme") -> CredentialScope:
+    return CredentialScope(vendor, name, version)
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "overlap"),
+    [
+        (_ref("pets", "v1"), _ref("pets", "v1"), True),
+        # A NULL axis on either side is the vendor-wide wildcard.
+        (_ref(None, None), _ref("pets", "v1"), True),
+        (_ref("pets", "v1"), _ref(None, None), True),
+        (_ref("pets", None), _ref("pets", "v2"), True),
+        (_ref("pets", "v1"), _ref("pets", "v2"), False),
+        (_ref("pets", "v1"), _ref("stores", "v1"), False),
+        (_ref(None, None), _ref(None, None, vendor="other"), False),
+    ],
+)
+def test_two_credentials_overlap_when_they_serve_a_common_api(
+    a: CredentialScope, b: CredentialScope, overlap: bool
+) -> None:
+    """The self-bind cut-off check's coverage rule: the broker's, made symmetric."""
+    assert scopes_overlap(a, b) is overlap
+    assert scopes_overlap(b, a) is overlap

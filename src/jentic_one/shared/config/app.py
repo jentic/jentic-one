@@ -25,6 +25,7 @@ from jentic_one.shared.config.credentials import (
 )
 from jentic_one.shared.config.database import DatabasesConfig
 from jentic_one.shared.config.egress import EgressConfig
+from jentic_one.shared.config.grant_expiry import GrantExpiryConfig
 from jentic_one.shared.config.observability import LoggingConfig, ObservabilityConfig
 from jentic_one.shared.config.platform import (
     EntitlementConfig,
@@ -71,6 +72,7 @@ class AppConfig(BaseModel):
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     held_executions: HeldExecutionsConfig = Field(default_factory=HeldExecutionsConfig)
+    grant_expiry: GrantExpiryConfig = Field(default_factory=GrantExpiryConfig)
     apps: list[str] = Field(
         default_factory=lambda: ["registry", "admin", "control", "auth"],
         description=(

@@ -11,12 +11,14 @@ right denial directive.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.broker.repos.caching_credential_deriver import CachingCredentialDeriver
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.broker.protocols import CredentialDeriverProtocol
@@ -86,6 +88,13 @@ async def _bind(
     credential_id: str,
     suspended: bool = False,
     rule_set_id: str | None = None,
+    expires_at: datetime | None = None,
+    max_idle_period: int | None = None,
+    last_used_at: datetime | None = None,
+    renewed_at: datetime | None = None,
+    max_quota: int | None = None,
+    quota_remaining: int | None = None,
+    after_expiry: str = "hold",
 ) -> None:
     async with admin_db.session() as session:
         session.add(
@@ -95,6 +104,13 @@ async def _bind(
                 credential_id=credential_id,
                 suspended=suspended,
                 rule_set_id=rule_set_id,
+                expires_at=expires_at,
+                max_idle_period=max_idle_period,
+                last_used_at=last_used_at,
+                renewed_at=renewed_at,
+                max_quota=max_quota,
+                quota_remaining=quota_remaining,
+                after_expiry=after_expiry,
             )
         )
         await session.commit()
@@ -318,3 +334,399 @@ async def test_pending_covering_binding_is_not_an_identity_mismatch(
     assert result.credentials == ()
     assert result.binding_pending is True
     assert result.identity_mismatch is None
+
+
+_NOW = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+
+
+def _clock() -> datetime:
+    return _NOW
+
+
+async def test_future_expiry_authorizes_and_sets_valid_until(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A binding that has not yet expired authorizes, and caps the derivation's lifetime."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    expiry = _NOW + timedelta(hours=1)
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_id, expires_at=expiry)
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert [bc.credential_id for bc in result.credentials] == [cred_id]
+    assert result.valid_until == expiry
+    assert result.binding_expired is False
+
+
+async def test_no_expiry_has_no_valid_until(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_id)
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert len(result.credentials) == 1
+    assert result.valid_until is None
+
+
+@pytest.mark.parametrize("offset", [timedelta(0), timedelta(seconds=-1), timedelta(days=-30)])
+async def test_expired_binding_is_not_granted_at_or_after_expiry(
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    clean_tables: None,
+    offset: timedelta,
+) -> None:
+    """``expires_at <= now`` is expired: the boundary instant itself is already refused."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_id, expires_at=_NOW + offset)
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.credentials == ()
+    assert result.binding_expired is True
+    assert result.binding_suspended is False
+    assert result.valid_until is None
+
+
+async def test_suspended_and_expired_reports_suspended_only(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A suspended binding that has also expired is reported as suspended, not expired."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_id,
+        suspended=True,
+        expires_at=_NOW - timedelta(days=1),
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.credentials == ()
+    assert result.binding_suspended is True
+    assert result.binding_expired is False
+
+
+async def test_expired_binding_for_unrelated_api_is_not_flagged(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    other = await _seed_credential(
+        control_db, name="other", vendor="other.com", api_name="x-api", version="v1"
+    )
+    await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db, agent_id=agent_id, credential_id=other, expires_at=_NOW - timedelta(days=1)
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.credentials == ()
+    assert result.binding_expired is False
+
+
+async def test_valid_until_is_earliest_candidate_expiry_and_expired_sibling_dropped(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Only unexpired covering bindings are candidates; valid_until is the earliest."""
+    cred_soon = await _seed_credential(
+        control_db, name="soon", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    cred_later = await _seed_credential(
+        control_db, name="later", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    cred_never = await _seed_credential(
+        control_db, name="never", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    cred_gone = await _seed_credential(
+        control_db, name="gone", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    soon = _NOW + timedelta(minutes=5)
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_soon, expires_at=soon)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_later,
+        expires_at=_NOW + timedelta(days=2),
+    )
+    await _bind(admin_db, agent_id=agent_id, credential_id=cred_never)
+    await _bind(
+        admin_db, agent_id=agent_id, credential_id=cred_gone, expires_at=_NOW - timedelta(hours=1)
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert {bc.credential_id for bc in result.credentials} == {cred_soon, cred_later, cred_never}
+    assert result.valid_until == soon
+    # A usable sibling means this is not a denial, so the expired flag stays off.
+    assert result.binding_expired is False
+
+
+async def test_cached_candidates_observe_a_deadline_changed_on_another_node(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    cred = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent, credential_id=cred)
+    resolver = CredentialBindingResolver(admin_db, control_db, clock=_clock)
+    cache = CachingCredentialDeriver(
+        resolver, clock=_clock, candidates_live=resolver.cached_candidates_live
+    )
+    args = {"agent_id": agent, "vendor": "acme.com", "name": "pets-api", "version": "v1"}
+    assert (await cache.derive_credentials(**args)).credentials
+    async with admin_db.transaction() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.agent_id == agent)
+            .values(expires_at=_NOW)
+        )
+    assert (await cache.derive_credentials(**args)).binding_expired
+
+
+async def test_idle_limit_caps_valid_until_while_in_use(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A binding used within its idle limit authorizes until one idle period after that use."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    used = _NOW - timedelta(days=3)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_id,
+        max_idle_period=7 * 86_400,
+        last_used_at=used,
+        renewed_at=_NOW - timedelta(days=30),
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert [bc.credential_id for bc in result.credentials] == [cred_id]
+    assert result.valid_until == used + timedelta(days=7)
+
+
+async def test_idle_ended_binding_is_refused_and_says_why(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A binding never used within its idle limit ends one idle period after it was granted."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_id,
+        max_idle_period=86_400,
+        renewed_at=_NOW - timedelta(days=1),
+        expires_at=_NOW + timedelta(days=30),
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.credentials == ()
+    assert result.binding_expired is True
+    assert result.expired_reason == "idle"
+    assert result.expired_credential_id == cred_id
+
+
+async def test_a_use_count_is_never_cached(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Every call must reach the counter, so the derivation is never cached.
+
+    Its time limits still bound it: ``valid_until`` is the end date, not now.
+    """
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_id,
+        max_quota=1,
+        quota_remaining=1,
+        expires_at=_NOW + timedelta(days=30),
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert [bc.credential_id for bc in result.credentials] == [cred_id]
+    assert result.cacheable is False
+    assert result.valid_until == _NOW + timedelta(days=30)
+
+
+async def test_a_used_up_binding_is_refused_and_says_why(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_id,
+        max_quota=1,
+        quota_remaining=0,
+        last_used_at=_NOW - timedelta(minutes=5),
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.credentials == ()
+    assert result.binding_expired is True
+    assert result.expired_reason == "uses"
+    assert result.expired_credential_id == cred_id
+
+
+@pytest.mark.parametrize(("after_expiry", "holds"), [("hold", True), ("refuse", False)])
+async def test_an_ended_binding_says_whether_it_holds_the_call(
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    clean_tables: None,
+    after_expiry: str,
+    holds: bool,
+) -> None:
+    """``after_expiry`` decides whether the execute route files a renewal hold."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=cred_id,
+        expires_at=_NOW - timedelta(minutes=1),
+        after_expiry=after_expiry,
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.binding_expired is True
+    assert result.expired_credential_id == cred_id
+    assert result.expired_holds is holds
+
+
+async def test_an_ended_binding_is_never_cached(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A denial that can file a renewal hold must be read live, so it is not kept."""
+    cred_id = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(
+        admin_db, agent_id=agent_id, credential_id=cred_id, expires_at=_NOW - timedelta(minutes=1)
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert result.binding_expired is True
+    assert result.cacheable is False
+
+
+async def test_a_binding_renewed_elsewhere_is_seen_through_the_cache(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A renewal another broker's cache never heard of must not leave a call held for it."""
+    cred = await _seed_credential(
+        control_db, name="acme", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent = await _seed_agent(admin_db)
+    await _bind(
+        admin_db, agent_id=agent, credential_id=cred, expires_at=_NOW - timedelta(minutes=1)
+    )
+    resolver = CredentialBindingResolver(admin_db, control_db, clock=_clock)
+    cache = CachingCredentialDeriver(
+        resolver, clock=_clock, candidates_live=resolver.cached_candidates_live
+    )
+    args = {"agent_id": agent, "vendor": "acme.com", "name": "pets-api", "version": "v1"}
+    assert (await cache.derive_credentials(**args)).binding_expired
+    async with admin_db.transaction() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.agent_id == agent)
+            .values(expires_at=_NOW + timedelta(days=30))
+        )
+
+    renewed = await cache.derive_credentials(**args)
+
+    assert [bc.credential_id for bc in renewed.credentials] == [cred]
+    assert renewed.binding_expired is False
+
+
+async def test_an_ended_binding_is_listed_beside_a_live_one_without_being_the_denial(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A call naming the ended one can be told it ended; nothing else about the derivation moves."""
+    live = await _seed_credential(
+        control_db, name="live", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    ended = await _seed_credential(
+        control_db, name="ended", vendor="acme.com", api_name="pets-api", version="v1"
+    )
+    agent_id = await _seed_agent(admin_db)
+    await _bind(admin_db, agent_id=agent_id, credential_id=live)
+    await _bind(
+        admin_db,
+        agent_id=agent_id,
+        credential_id=ended,
+        expires_at=_NOW - timedelta(minutes=1),
+    )
+
+    result = await CredentialBindingResolver(admin_db, control_db, clock=_clock).derive_credentials(
+        agent_id=agent_id, vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    assert [bc.credential_id for bc in result.credentials] == [live]
+    assert [e.credential_id for e in result.ended_bindings] == [ended]
+    assert result.binding_expired is False
+    assert result.expired_credential_id is None
+    assert result.cacheable is False

@@ -47,6 +47,16 @@ class HeldExecution(AuditableMixin, AdminBase):
             postgresql_where=text("state = 'pending'"),
             sqlite_where=text("state = 'pending'"),
         ),
+        # One pending renewal per binding (D14): later calls get the 403 with
+        # the existing review link instead of a second hold.
+        Index(
+            "uq_held_executions_pending_renewal",
+            "agent_id",
+            "credential_id",
+            unique=True,
+            postgresql_where=text("state = 'pending' AND kind = 'grant_renewal'"),
+            sqlite_where=text("state = 'pending' AND kind = 'grant_renewal'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -74,6 +84,11 @@ class HeldExecution(AuditableMixin, AdminBase):
     matched_rule_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     state: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    # ``execution`` (a require-approval rule) or ``grant_renewal`` (an ended
+    # binding the owner may re-grant access); see ``HeldExecutionKind``.
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="execution", server_default=text("'execution'")
     )
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

@@ -88,6 +88,23 @@ class BindingSuspendedError(ConnectSessionServiceError):
         self.agent_id = agent_id
 
 
+class BindingExpiredError(ConnectSessionServiceError):
+    """The agent has an expired binding to a credential that covers the requested API.
+
+    Shaped like :class:`BindingSuspendedError`: an expired binding no longer
+    authorizes calls, and a new connect for the same pair would hand the
+    agent that access again beside it, routing around the expiry. Refused
+    until the operator renews (``PATCH``) or removes the expired binding.
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(
+            f"agent {agent_id!r} has an expired credential binding for this API; "
+            "only an operator can renew it"
+        )
+        self.agent_id = agent_id
+
+
 class NoOpForFlowError(ConnectSessionServiceError):
     """The resolved flow is not yet implemented in phase 1."""
 
@@ -349,7 +366,7 @@ class OwnClientInvalidError(ConnectSessionServiceError):
 class EditBindingNotFoundError(ConnectSessionServiceError):
     """The edit names a binding that does not exist, or one the caller may not edit.
 
-    An agent's suspended binding answers the same: suspension hides the
+    An agent's suspended or expired binding answers the same: both hide the
     credential from its agent.
     """
 

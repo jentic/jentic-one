@@ -44,6 +44,21 @@ def _ctx() -> MagicMock:
     return ctx
 
 
+@pytest.fixture(autouse=True)
+def binding_without_a_use_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The audit transaction here is a no-op, so the binding's use count is
+    stubbed as absent (nothing to take). The real take runs against a real
+    admin DB in ``tests/integration/broker/test_binding_use_repo.py``."""
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.BindingUseRepository.take_use",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.BindingUseRepository.record_use",
+        AsyncMock(return_value=True),
+    )
+
+
 @pytest.mark.asyncio
 async def test_credential_name_none_when_header_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """When Jentic-Credential-Name is absent, credential_name=None is forwarded."""

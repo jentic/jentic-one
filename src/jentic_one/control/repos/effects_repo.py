@@ -7,13 +7,15 @@ NOTHING for idempotent inserts without requiring rollback.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.shared.auth.grant_policy import GRANT_POLICY_COLUMNS, GrantPolicy, grant_ended
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.db.locks import lock_credential_bindings
+from jentic_one.shared.db.locks import lock_agent_bindings, lock_credential_bindings
 
 
 class AgentOwnerRow(NamedTuple):
@@ -70,21 +72,33 @@ class EffectsRepository:
         credential_id: str,
         rule_set_id: str | None,
         created_by: str,
+        expires_at: datetime | None = None,
+        max_idle_period: int | None = None,
+        idle_warning: bool = False,
+        max_quota: int | None = None,
+        after_expiry: str = "hold",
     ) -> tuple[str, bool]:
         """Create a direct agent↔credential binding idempotently via raw SQL (admin DB).
 
         Returns ``(binding_id, already_bound)``. An existing binding is left
-        untouched (its ``rule_set_id``/``suspended`` state is authoritative) —
-        the retry/reconcile path must converge without clobbering operator
-        edits made between attempts.
+        untouched (its ``rule_set_id``/``suspended`` state and its policy are
+        authoritative) — the retry/reconcile path must converge without
+        clobbering operator edits made between attempts. ``expires_at`` is the
+        end date the approver chose, ``max_idle_period`` the idle limit and
+        ``max_quota`` the use count; they apply only to a new binding.
         """
+        await lock_agent_bindings(session, agent_id)
         await lock_credential_bindings(session, credential_id)
         binding_id = generate_ksuid("acb")
         result = await session.execute(
             text(
                 "INSERT INTO agent_credential_bindings "
-                "(id, agent_id, credential_id, rule_set_id, created_by) "
-                "VALUES (:id, :agent_id, :credential_id, :rule_set_id, :created_by) "
+                "(id, agent_id, credential_id, rule_set_id, created_by, expires_at, "
+                "max_idle_period, renewed_at, idle_warning, max_quota, quota_remaining, "
+                "after_expiry) "
+                "VALUES (:id, :agent_id, :credential_id, :rule_set_id, :created_by, :expires_at, "
+                ":max_idle_period, :renewed_at, :idle_warning, :max_quota, :max_quota, "
+                ":after_expiry) "
                 "ON CONFLICT (agent_id, credential_id) DO NOTHING "
                 "RETURNING id"
             ),
@@ -94,6 +108,13 @@ class EffectsRepository:
                 "credential_id": credential_id,
                 "rule_set_id": rule_set_id,
                 "created_by": created_by,
+                "expires_at": expires_at,
+                "max_idle_period": max_idle_period,
+                "idle_warning": idle_warning,
+                "max_quota": max_quota,
+                "after_expiry": after_expiry,
+                # Granting starts the idle clock.
+                "renewed_at": datetime.now(UTC),
             },
         )
         inserted_id = result.scalar_one_or_none()
@@ -126,6 +147,36 @@ class EffectsRepository:
             {"agent_id": agent_id},
         )
         return [str(row[0]) for row in result.all()]
+
+    @staticmethod
+    async def list_expired_credential_ids(
+        session: AsyncSession, agent_id: str, *, now: datetime | None = None
+    ) -> list[str]:
+        """The credentials the agent holds an expired, unsuspended binding to (admin DB).
+
+        An expired binding no longer authorizes calls; only the operator can
+        renew it, so the connect flow refuses a new connect that the expired
+        credential's API identity covers (a second binding would route around
+        the expiry). A suspended binding is left to
+        :meth:`list_suspended_credential_ids`, which is reported first. Expiry
+        is compared in Python against ``now`` (default: the clock), with the
+        broker's rule.
+        """
+        result = await session.execute(
+            text(
+                f"SELECT credential_id, {GRANT_POLICY_COLUMNS} FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND suspended = false "
+                # Every limit that can end a binding, a used-up count included.
+                "AND (expires_at IS NOT NULL OR max_idle_period IS NOT NULL "
+                "OR max_quota IS NOT NULL)"
+            ),
+            {"agent_id": agent_id},
+        )
+        return [
+            str(row.credential_id)
+            for row in result.all()
+            if grant_ended(GrantPolicy.from_row(row), now=now)
+        ]
 
     @staticmethod
     async def unbind_agent_from_credential(

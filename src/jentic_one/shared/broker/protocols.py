@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -196,6 +197,21 @@ class BoundCredential:
 
 
 @dataclass(frozen=True, slots=True)
+class EndedBinding:
+    """One of the agent's ended bindings that covers the API (denial path only)."""
+
+    credential_id: str
+    #: The credential's name, for a ``Jentic-Credential-Name`` selector.
+    name: str | None
+    #: Which limit ended it (``end_date``, ``idle``, ``uses``).
+    reason: str
+    #: Whether it holds the call for renewal (``after_expiry`` ``hold``).
+    holds: bool
+    #: Whether its credential is active: only an active one can be renewed and run.
+    active: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CredentialDerivation:
     """Result of direct-binding credential derivation (theme-5).
 
@@ -218,6 +234,15 @@ class CredentialDerivation:
     - ``binding_pending`` — an active binding covers the API through a credential
       whose connect flow is still pending. Recovery completes that existing flow;
       the credential's identity is not a mismatch.
+    - ``binding_expired`` — the agent holds an *expired* (fixed-expiry) binding to a
+      credential covering the API and no other binding authorizes the call.
+      Only the operator can renew it; suspension is reported first.
+    - ``valid_until`` — the earliest moment (timezone-aware) at which one of the
+      candidate credentials' bindings expires, or ``None`` when none expires.
+      A cache must never serve this derivation at or after it.
+    - ``cacheable`` — ``False`` when a candidate binding carries a use count:
+      every call must reach the counter, so a cache must not keep this
+      derivation at all (its time-based ``valid_until`` still applies).
     """
 
     credentials: tuple[BoundCredential, ...]
@@ -226,6 +251,20 @@ class CredentialDerivation:
     identity_mismatch: IdentityMismatch | None
     binding_suspended: bool = False
     binding_pending: bool = False
+    binding_expired: bool = False
+    #: With ``binding_expired``: the credential whose binding ended, and which
+    #: limit ended it (``end_date`` or ``idle``) — for the denial's detail.
+    expired_credential_id: str | None = None
+    expired_reason: str | None = None
+    #: With ``binding_expired``: whether that binding holds the call for its
+    #: owner to renew (``after_expiry`` ``hold``) or refuses it (``refuse``).
+    expired_holds: bool = True
+    #: With ``binding_expired``: every ended binding covering the API, sorted by
+    #: credential id, so the denial can honour the caller's credential selector
+    #: and refuse to guess between several.
+    ended_bindings: tuple[EndedBinding, ...] = ()
+    valid_until: datetime | None = None
+    cacheable: bool = True
 
 
 @runtime_checkable

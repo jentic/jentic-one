@@ -27,6 +27,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.services.integrations.edits import EditRequest
 from jentic_one.control.services.integrations.errors import (
     ConnectOpenError,
+    EditBindingNotFoundError,
     EditOpenError,
     RevisionChangedError,
     SessionClosedError,
@@ -210,6 +211,27 @@ async def test_a_refusal_that_no_retry_can_fix_says_so(
         assert payload["agent_directive"]["parameters"]["credential_id"] == "cred_1"
     else:
         assert "agent_directive" not in payload
+
+
+async def test_a_binding_the_agent_cannot_edit_points_at_its_operator() -> None:
+    """No binding, or a suspended or expired one: no edit brings it back.
+
+    "Fix the request, then retry" would loop the agent between show_access
+    (which still shows an expired binding) and this tool; it is told to ask
+    its operator instead, and never to connect around the binding.
+    """
+    _FakeService.error = EditBindingNotFoundError("cred_1")
+    result = await dispatch_tool_call(
+        _env(), "request_access_change", {"credential_id": "cred_1", "resume": True}
+    )
+    assert result.is_error
+    payload = _payload(result)
+    assert (payload["error_code"], payload["next_tool"]) == ("RESOLVE_FAILED", "whoami")
+    assert payload["retryable"] is False
+    step = payload["actionable_step"]
+    assert "suspended or expired" in step and "operator" in step
+    assert "then retry" not in step
+    assert "request_connection" not in step
 
 
 async def test_set_with_add_is_invalid_params() -> None:

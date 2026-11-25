@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from jentic_one.shared.auth.grant_renewal import GrantRenewalPolicy
 from jentic_one.shared.models.held_executions import ApprovalDecision
 
 
@@ -26,6 +27,8 @@ class HeldExecutionView(BaseModel):
     path: str
     matched_rule_id: str | None = None
     state: str
+    #: ``execution`` (a require-approval rule) or ``grant_renewal`` (an ended binding).
+    kind: str = "execution"
     expires_at: datetime
     decided_at: datetime | None = None
     decided_by: str | None = None
@@ -50,16 +53,51 @@ class HeldRequestView(BaseModel):
     body_truncated: bool = False
 
 
+class RenewalContextView(BaseModel):
+    """What a reviewer of a ``grant_renewal`` hold decides on: the binding as it stands."""
+
+    #: Which limit ended it (``end_date``, ``idle``, ``uses``); None if renewed since.
+    expired_reason: str | None = None
+    #: Its last recorded use (the idle clock's stamp); None if never used.
+    last_used_at: datetime | None = None
+    #: Its current policy.
+    expires_at: datetime | None = None
+    max_idle_period: int | None = None
+    idle_warning: bool = False
+    after_expiry: str = "hold"
+    max_quota: int | None = None
+    quota_remaining: int | None = None
+    #: Whether the reader may re-grant access (else only deny).
+    can_renew: bool = False
+    #: Whether approving can renew the binding itself (``renewal`` on the
+    #: decision). False where this process cannot read the control database (a
+    #: split deployment): the reviewer renews the binding through its own renew
+    #: endpoint, then approves without ``renewal``.
+    renew_on_decide: bool = True
+
+
 class HeldExecutionDetailView(HeldExecutionView):
     """An approval plus the agent context and the held request."""
 
     agent_name: str | None = None
     agent_owner_id: str | None = None
     request: HeldRequestView | None = None
+    #: For a ``grant_renewal`` hold: the binding it would renew.
+    renewal: RenewalContextView | None = None
 
 
 class DecideInput(BaseModel):
-    """A reviewer's decision."""
+    """A reviewer's decision.
+
+    ``renewal`` is the fresh policy for a ``grant_renewal`` hold's binding
+    (required to approve one, refused on any other hold); ``run`` says whether
+    the held call then runs (``False``: the binding is renewed and the call
+    fails, for a stale call).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     decision: ApprovalDecision
     reason: str | None = None
+    renewal: GrantRenewalPolicy | None = None
+    run: bool = True

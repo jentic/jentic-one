@@ -89,6 +89,7 @@ from jentic_one.shared.config.encryption import (
     EncryptionConfig,
     EncryptionKey,
 )
+from jentic_one.shared.config.grant_expiry import GrantExpiryConfig
 from jentic_one.shared.config.loader import _CONFIG_EXTENSIONS as _CONFIG_EXTENSIONS
 from jentic_one.shared.config.loader import _ONESHOT_CONFIG_CACHE as _ONESHOT_CONFIG_CACHE
 from jentic_one.shared.config.loader import _apps_for_secret_guard as _apps_for_secret_guard
@@ -164,6 +165,7 @@ __all__ = [
     "EncryptionConfig",
     "EncryptionKey",
     "EntitlementConfig",
+    "GrantExpiryConfig",
     "HeldExecutionsConfig",
     "IdempotencyConfig",
     "IdpConfig",

@@ -30,6 +30,9 @@ class DenialReason(StrEnum):
     CREDENTIAL_BINDING_SUSPENDED = "credential_binding_suspended"
     """The agent's binding to a credential covering the API is suspended (403)."""
 
+    CREDENTIAL_BINDING_EXPIRED = "credential_binding_expired"
+    """The agent's binding to a credential covering the API has expired (403)."""
+
     CREDENTIAL_PENDING = "credential_pending"
     """A bound credential covering the API is waiting for connect completion (403)."""
 

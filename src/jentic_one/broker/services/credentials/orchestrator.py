@@ -11,8 +11,10 @@ call-sites get identical problem+json semantics.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import Collection, Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -23,11 +25,13 @@ from jentic_one.broker.core.directives import (
     api_connect_hint,
     api_connect_parameters,
     connect_parameters,
+    credential_binding_expired_directive,
     credential_server_variable_mismatch_directive,
     suggested_permission_rules,
 )
 from jentic_one.broker.core.errors import (
     AmbiguousCredentialMatchError,
+    CredentialBindingExpiredError,
     CredentialNeedsReconnectError,
     CredentialRefreshTransientError,
     CredentialUndecryptableError,
@@ -40,6 +44,7 @@ from jentic_one.broker.core.errors import (
     CredentialServerVariableMismatchError as DomainCredentialServerVariableMismatchError,
 )
 from jentic_one.broker.core.injection import inject_auth
+from jentic_one.broker.repos.binding_use_repo import BindingUseRepository
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
@@ -59,6 +64,7 @@ from jentic_one.broker.services.credentials.resolver import (
     ResolvedCredential,
 )
 from jentic_one.shared.access_guidance import ConnectTarget
+from jentic_one.shared.auth.grant_policy import AfterExpiry
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProtocol
 from jentic_one.shared.context import Context
@@ -70,12 +76,23 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.api_identity import CredentialScope
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger()
+
+#: Shared-state namespace that throttles ``last_used_at`` writes per binding.
+BINDING_USE_NAMESPACE = "binding-use"
+#: How stale ``last_used_at`` may get before a use stamps it again. Idle
+#: limits are at least a day, so an hour of drift never matters.
+BINDING_USE_INTERVAL = timedelta(hours=1)
+#: Shared-state namespace that marks a queued job's charge, so a retry of it spends nothing more.
+BINDING_USE_JOB_NAMESPACE = "binding-use-job"
+#: How long that marker outlives the charge: well past any retry window of a queued job.
+BINDING_USE_JOB_TTL = timedelta(days=1)
 
 _EMPTY = InjectedAuth(headers={}, query_params={}, cookies={})
 
@@ -114,6 +131,7 @@ class CredentialService:
         preresolved: ResolvedCredential | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
+        use_key: str | None = None,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -138,6 +156,10 @@ class CredentialService:
         have to fabricate one. A malformed value degrades to an uncorrelated
         event rather than failing the injection (#903).
 
+        ``use_key`` names the unit of work the call belongs to (a queued job):
+        the binding's use is charged once per key, so a retry of the same job
+        never spends another one.
+
         ``preresolved`` short-circuits resolution: the sync router's direct
         path already ran :meth:`select` (it needed the credential id for rule
         evaluation *before* any secret is decrypted), so injection reuses that
@@ -159,6 +181,13 @@ class CredentialService:
                 request_server_variables=request_server_variables,
                 server_variables_unresolved=server_variables_unresolved,
             )
+        )
+        # Every call through a binding is a use of it, whether or not it then
+        # succeeds: take it (and restart the idle clock) before anything below
+        # can fail. Losing the race for the last use is refused like any ended
+        # binding.
+        await self.spend_binding_use(
+            identity=identity, credential_id=resolved.credential_id, api=api, use_key=use_key
         )
         try:
             try:
@@ -446,6 +475,84 @@ class CredentialService:
                 extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
             ) from exc
 
+    async def spend_binding_use(
+        self,
+        *,
+        identity: Identity,
+        credential_id: str,
+        api: APIReference,
+        use_key: str | None = None,
+    ) -> None:
+        """Count one call through the agent's binding, before it can fail.
+
+        Any call that reaches a live binding is a use of it, including one its
+        permission rules refuse or one that fails afterwards (refresh,
+        decryption, upstream). Every route that authorizes a call through a
+        binding comes through here, so ``/execute``, MCP and queued or
+        approved calls all count. A caller that is not an agent spends nothing.
+
+        - A binding with a use count gives up one use, atomically, so two calls
+          never both take the last one; with none left the call is refused as
+          an ended binding (``_uses_exhausted_denial``). Taking a use also
+          restarts the idle clock.
+        - Otherwise the idle clock restarts (``last_used_at``) at most once per
+          :data:`BINDING_USE_INTERVAL` per binding: a shared-state claim skips
+          the write in between, and the UPDATE itself only fires on a stale
+          value.
+
+        Both writes share one short admin transaction, committed before the
+        call goes on.
+
+        With ``use_key`` (a queued job), the charge is once per key: a retry of
+        the same job finds its marker and spends nothing more. The marker is
+        set only after the charge succeeds, and a state backend that cannot
+        be read or written fails open to charging, as before.
+        """
+        if identity.actor_type != ActorType.AGENT:
+            return
+        charged_key = f"{BINDING_USE_JOB_NAMESPACE}:{use_key}:{credential_id}" if use_key else None
+        if charged_key is not None:
+            # Fail open: a backend that cannot be read charges, never lets a call through free.
+            with contextlib.suppress(Exception):
+                if await self._ctx.state_backend.get(charged_key) is not None:
+                    return
+        key = f"{BINDING_USE_NAMESPACE}:{identity.sub}:{credential_id}"
+        try:
+            stamp = await self._ctx.state_backend.set_if_absent(
+                key, b"1", ttl_s=BINDING_USE_INTERVAL.total_seconds()
+            )
+        except Exception:  # the UPDATE's own staleness guard still applies
+            stamp = True
+        now = datetime.now(UTC)
+        async with self._ctx.admin_db.transaction() as session:
+            taken = await BindingUseRepository.take_use(
+                session, agent_id=identity.sub, credential_id=credential_id, now=now
+            )
+            if taken and stamp:
+                await BindingUseRepository.record_use(
+                    session,
+                    agent_id=identity.sub,
+                    credential_id=credential_id,
+                    now=now,
+                    min_interval=BINDING_USE_INTERVAL,
+                )
+        if not taken:
+            async with self._ctx.admin_db.session() as session:
+                after_expiry = await BindingUseRepository.after_expiry(
+                    session, agent_id=identity.sub, credential_id=credential_id
+                )
+            raise _uses_exhausted_denial(
+                api,
+                credential_id=credential_id,
+                holds=after_expiry == AfterExpiry.HOLD.value,
+            )
+        if charged_key is not None:
+            # Never fail the call over its marker: the next attempt would just charge again.
+            with contextlib.suppress(Exception):
+                await self._ctx.state_backend.set(
+                    charged_key, b"1", ttl_s=BINDING_USE_JOB_TTL.total_seconds()
+                )
+
     async def _emit_credential_failure(
         self,
         *,
@@ -622,3 +729,24 @@ class CredentialService:
                 human_readable_instruction=instruction,
             ),
         )
+
+
+def _uses_exhausted_denial(
+    api: APIReference, *, credential_id: str, holds: bool
+) -> CredentialBindingExpiredError:
+    """The 403 for a binding whose last use another call took first.
+
+    It names the ended binding and whether the call is held for its renewal, so
+    the execute route handles it like any other ended binding: with
+    ``after_expiry`` ``hold`` the call is held for the owner, not refused.
+    """
+    error = CredentialBindingExpiredError(
+        "The credential binding for this API has expired: its uses have run out",
+        extra={"expired_reason": "uses"},
+        directive=credential_binding_expired_directive(
+            vendor=api.vendor, name=api.name, version=api.version
+        ),
+    )
+    error.ended_credential_id = credential_id
+    error.holds_for_renewal = holds
+    return error

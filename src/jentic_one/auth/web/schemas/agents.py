@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Annotated, Any
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from jentic_one.shared.auth.grant_policy import (
+    AFTER_EXPIRY_DESCRIPTION,
+    MAX_QUOTA,
+    WARNING_DESCRIPTION,
+    AfterExpiry,
+    GrantEndReason,
+)
+from jentic_one.shared.iso_duration import (
+    IdlePeriodRequest,
+    IdlePeriodResponse,
+    IsoDurationResponse,
+)
 from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -18,6 +30,43 @@ _EX_AGENT_DESCRIPTION = "Reconciles Stripe invoices against the ledger every nig
 _EX_PERMISSIONS = ["apis:read", "capabilities:execute"]
 _EX_DENIAL_REASON = "Requested permissions exceed the agent's stated purpose."
 _EX_CREDENTIAL_NAME = "Stripe production key"
+
+
+_EX_EXPIRES_AT = "2026-12-31T23:59:00Z"
+
+
+def _require_future(value: datetime | None) -> datetime | None:
+    """Reject an ``expires_at`` that is not in the future (naive values read as UTC)."""
+    if value is None:
+        return None
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if aware <= datetime.now(UTC):
+        raise ValueError("expires_at must be in the future")
+    return aware
+
+
+_BINDING_EXPIRES_AT_DESCRIPTION = (
+    "When the binding stops authorizing calls (RFC 3339, in the future). After this"
+    " moment the broker refuses the agent's calls through it with 403"
+    " `credential_binding_expired`, whatever its token. The binding keeps its permission"
+    " rules; an owner renews it by setting a later time or null."
+)
+
+_BINDING_IDLE_WARNING_DESCRIPTION = WARNING_DESCRIPTION
+
+_BINDING_QUOTA_DESCRIPTION = (
+    "How many calls the binding allows before it ends (1 is single use); each authorized"
+    " call takes one, whatever the upstream answers, and renewing restores the count."
+)
+
+_BINDING_IDLE_DESCRIPTION = (
+    "Idle limit, as an ISO 8601 duration of weeks, days, hours, minutes or seconds (P1D"
+    " to P999D, e.g. P14D; no years or months): the binding ends"
+    " once it has gone this long without a call, and the broker then refuses calls"
+    " through it with 403 `credential_binding_expired`. Each call restarts the clock"
+    " (counted at most about hourly), and so does every renewal; a binding that is never"
+    " used ends one idle period after it was granted."
+)
 
 
 class AgentResponse(BaseModel):
@@ -120,6 +169,22 @@ class ClaimRequest(BaseModel):
     )
 
 
+class ApiLastUseResponse(BaseModel):
+    """When an agent last called one API through a bound credential."""
+
+    api_vendor: str = Field(description="Vendor of the API called.", examples=["github.com"])
+    api_name: str | None = Field(
+        default=None,
+        description="Name of the API called; null when the recorded calls carry none.",
+        examples=["github"],
+    )
+    api_version: str | None = Field(default=None, description="Recorded API version, when known.")
+    last_used_at: datetime = Field(
+        description="When the agent last called this API through the credential (RFC 3339).",
+        examples=["2026-02-03T14:05:00Z"],
+    )
+
+
 class CredentialBindingResponse(BaseModel):
     """Direct agent↔credential binding representation in API responses."""
 
@@ -154,6 +219,68 @@ class CredentialBindingResponse(BaseModel):
         ),
         examples=["api_deleted"],
     )
+    expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the binding stops authorizing calls (RFC 3339); null if it never expires."
+        ),
+        examples=[_EX_EXPIRES_AT],
+    )
+    expired: bool = Field(
+        default=False,
+        description="Whether `expires_at` has passed.",
+        examples=[False],
+    )
+    expired_reason: GrantEndReason | None = Field(
+        default=None,
+        description=(
+            "Which limit ended the binding while `expired` is true: `end_date`"
+            " (`expires_at` passed), `idle` (unused for `max_idle_period`) or `uses`"
+            " (no uses left). Null while the binding holds."
+        ),
+        examples=[None],
+    )
+    max_idle_period: IdlePeriodResponse | None = Field(
+        default=None,
+        description=_BINDING_IDLE_DESCRIPTION + " Null when it has no idle limit.",
+        examples=["P14D"],
+    )
+    idle_expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the idle limit ends the binding if it is not used before then (RFC 3339);"
+            " null without an idle limit. Each use moves it later."
+        ),
+        examples=[_EX_EXPIRES_AT],
+    )
+    renewed_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the binding was granted or last renewed (RFC 3339); the idle clock"
+            " restarts at the later of this and its last use."
+        ),
+        examples=[_EX_EXPIRES_AT],
+    )
+    idle_warning: bool = Field(
+        default=False,
+        description=_BINDING_IDLE_WARNING_DESCRIPTION,
+        examples=[False],
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        description=AFTER_EXPIRY_DESCRIPTION,
+        examples=["hold"],
+    )
+    max_quota: int | None = Field(
+        default=None,
+        description=_BINDING_QUOTA_DESCRIPTION + " Null for unlimited calls.",
+        examples=[1],
+    )
+    quota_remaining: int | None = Field(
+        default=None,
+        description="How many calls the binding still allows; null without a use count.",
+        examples=[1],
+    )
     # Shared permission rule set the binding points at (None = inline rules).
     rule_set_id: str | None = Field(
         default=None,
@@ -163,6 +290,21 @@ class CredentialBindingResponse(BaseModel):
     serves: list[ServedApiRef] = Field(
         default=[], description="The APIs the bound credential serves; empty if unresolvable."
     )
+    last_used_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the agent last made a call through this credential, whatever its outcome"
+            " (RFC 3339); null if it never has."
+        ),
+        examples=["2026-02-03T14:05:00Z"],
+    )
+    last_used_by_api: list[ApiLastUseResponse] = Field(
+        default=[],
+        description=(
+            "`last_used_at` per API the agent called through this credential, most recent"
+            " first; a vendor-wide credential has one entry per API used."
+        ),
+    )
 
 
 class CredentialBindingListResponse(BaseModel):
@@ -170,6 +312,60 @@ class CredentialBindingListResponse(BaseModel):
 
     data: list[CredentialBindingResponse] = Field(
         description="The agent's direct credential bindings."
+    )
+
+
+class DurationLimitResponse(BaseModel):
+    """A default and a maximum for one duration, as ISO 8601 durations; null when unset."""
+
+    default: IsoDurationResponse | None = Field(
+        default=None,
+        description="Applied when a creation sets no policy; null for none.",
+        examples=["P30D"],
+    )
+    max: IsoDurationResponse | None = Field(
+        default=None,
+        description="The longest allowed; when set, every grant (or agent) must have one.",
+        examples=["P90D"],
+    )
+
+
+class GrantPolicyLimitsResponse(BaseModel):
+    """The org's defaults and maximums for new grants."""
+
+    expires_in: DurationLimitResponse = Field(
+        description="A grant's end date, as a lifetime from when it is granted or renewed."
+    )
+    idle_period: DurationLimitResponse = Field(description="A grant's idle limit.")
+    single_use_by_default: bool = Field(
+        description="Whether a grant created with no policy allows a single call.",
+        examples=[False],
+    )
+
+
+class EndingSoonBindingResponse(CredentialBindingResponse):
+    """A binding whose end date or idle limit will end it soon."""
+
+    agent_name: str = Field(
+        description="Name of the agent the credential is bound to.", examples=[_EX_AGENT_NAME]
+    )
+    ends_at: datetime = Field(
+        description="When the binding ends (RFC 3339): the nearer of its end date and its"
+        " idle deadline, of those due a warning.",
+        examples=[_EX_EXPIRES_AT],
+    )
+    ending: Literal["end_date", "idle"] = Field(
+        description="Which limit ends it at `ends_at`: its end date (`end_date`) or its idle"
+        " limit unless the agent uses it first (`idle`).",
+        examples=["end_date"],
+    )
+
+
+class EndingSoonBindingListResponse(BaseModel):
+    """Bindings that will soon reach their idle limit."""
+
+    data: list[EndingSoonBindingResponse] = Field(
+        description="Bindings with the warning on that end soon, soonest first."
     )
 
 
@@ -309,6 +505,62 @@ class ApiKeyHistoryResponse(BaseModel):
     data: list[ApiKeyHistoryEntryResponse] = Field(description="API key events, newest first.")
 
 
+class CredentialBindingPatchRequest(BaseModel):
+    """Request body for renewing a credential binding: re-certify it, and change its limits.
+
+    Every renewal restarts the binding's idle clock. Each limit sent is set, and
+    null clears it; an absent field is never read as clearing. An end date left
+    out runs the binding again for as long as it was granted for, capped at the
+    org's maximum; any other limit left out stays as it is. An empty body
+    re-certifies ("still needed").
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            _BINDING_EXPIRES_AT_DESCRIPTION
+            + " Send null to clear the end date. Left out, the binding runs again for as long"
+            " as it was granted for (its end date less when it was granted or last renewed),"
+            " capped at the org's maximum; one with no end date takes the maximum, or keeps"
+            " none without one."
+        ),
+        examples=[_EX_EXPIRES_AT],
+    )
+    max_idle_period: IdlePeriodRequest | None = Field(
+        default=None,
+        description=(
+            _BINDING_IDLE_DESCRIPTION
+            + " Send null to remove the idle limit; leave it out to keep it."
+        ),
+        examples=["P14D"],
+    )
+    idle_warning: bool | None = Field(
+        default=None,
+        description=_BINDING_IDLE_WARNING_DESCRIPTION + " Leave it out to keep it as it is.",
+        examples=[True],
+    )
+    after_expiry: AfterExpiry | None = Field(
+        default=None,
+        description=AFTER_EXPIRY_DESCRIPTION + " Leave it out to keep it as it is.",
+        examples=["refuse"],
+    )
+    max_quota: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_QUOTA,
+        description=(
+            _BINDING_QUOTA_DESCRIPTION
+            + " Send null to remove the count; leave it out to keep it (every renewal"
+            " restores the uses left)."
+        ),
+        examples=[1],
+    )
+
+    _check_expires_at = field_validator("expires_at")(_require_future)
+
+
 class CredentialBindRequest(BaseModel):
     """Request body for directly binding a credential to an agent."""
 
@@ -318,6 +570,38 @@ class CredentialBindRequest(BaseModel):
         description="ID of the credential to bind to the agent.",
         examples=[ex.CREDENTIAL_ID],
     )
+    expires_at: datetime | None = Field(
+        default=None,
+        description=_BINDING_EXPIRES_AT_DESCRIPTION
+        + " Null for a binding that never expires (refused under an org maximum). A body"
+        " that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's"
+        " default policy (`GET /agents/credentials:policy`; none unless the org sets one).",
+        examples=[_EX_EXPIRES_AT],
+    )
+    max_idle_period: IdlePeriodRequest | None = Field(
+        default=None,
+        description=_BINDING_IDLE_DESCRIPTION + " Omit for no idle limit.",
+        examples=["P14D"],
+    )
+    idle_warning: bool = Field(
+        default=False,
+        description=_BINDING_IDLE_WARNING_DESCRIPTION,
+        examples=[False],
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        description=AFTER_EXPIRY_DESCRIPTION,
+        examples=["hold"],
+    )
+    max_quota: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_QUOTA,
+        description=_BINDING_QUOTA_DESCRIPTION + " Omit for unlimited calls.",
+        examples=[1],
+    )
+
+    _check_expires_at = field_validator("expires_at")(_require_future)
 
 
 class JwksUpdateRequest(BaseModel):

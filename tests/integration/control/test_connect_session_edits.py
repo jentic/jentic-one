@@ -10,7 +10,7 @@ credential, however it ends.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -470,6 +470,42 @@ async def test_resuming_a_suspended_binding(integration_context: Context, bindin
     )
     row = await _binding_row(ctx, binding)
     assert row.suspended is False
+
+
+async def _set_expiry(ctx: Context, credential_id: str, expires_at: datetime | None) -> None:
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(
+                AgentCredentialBinding.agent_id == _AGENT,
+                AgentCredentialBinding.credential_id == credential_id,
+            )
+            .values(expires_at=expires_at)
+        )
+
+
+async def test_an_expired_binding_is_hidden_from_its_agents_edits(
+    integration_context: Context, binding: str
+) -> None:
+    """No rule change brings an expired binding back, so its agent cannot ask for one.
+
+    The owner still can: a human may edit the rules of a binding they will renew.
+    """
+    ctx = integration_context
+    await _set_expiry(ctx, binding, datetime.now(UTC) - timedelta(minutes=1))
+    with pytest.raises(EditBindingNotFoundError):
+        await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]), identity=_OWNER)
+    assert created.revision_id.startswith("csr_")
+
+
+async def test_a_binding_with_a_future_expiry_is_still_editable_by_its_agent(
+    integration_context: Context, binding: str
+) -> None:
+    ctx = integration_context
+    await _set_expiry(ctx, binding, datetime.now(UTC) + timedelta(days=1))
+    created = await _begin(ctx, binding, EditRequest(add=[RuleAdd(_SEND)]))
+    assert created.revision_id.startswith("csr_")
 
 
 async def _attach_rule_set(ctx: Context, credential_id: str, *, curated: bool) -> str:
