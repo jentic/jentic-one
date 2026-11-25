@@ -2222,6 +2222,8 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		const step = await screen.findByTestId('queue-access-step');
 		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
 		await user.click(within(step).getByRole('radio', { name: preset }));
+		// How long the access lasts (with none, adding asks first).
+		await user.selectOptions(within(step).getByTestId('queue-access-duration-preset'), '7d');
 		const add = screen.getByTestId('queue-add');
 		await waitFor(() => expect(add).toBeEnabled());
 		expect(add).toHaveTextContent(`Add ${label}`);
@@ -2327,6 +2329,8 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
 		const step = await screen.findByTestId('queue-access-step');
 		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
+		// How long the access lasts (with none, adding asks first).
+		await user.selectOptions(within(step).getByTestId('queue-access-duration-preset'), '7d');
 		await user.click(within(step).getByTestId('queue-add-without-rules'));
 		await user.click(within(step).getByRole('button', { name: 'Add without rules' }));
 		await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
@@ -3236,5 +3240,101 @@ describe('AgentsPage — held calls waiting on the viewer', () => {
 		expect(screen.queryByRole('article', { name: 'Waiting for you' })).toBeNull();
 		expect(screen.queryByTestId('strip-waiting-chip')).toBeNull();
 		expect(screen.queryByRole('button', { name: /^Approvals/ })).toBeNull();
+	});
+});
+
+describe('AgentsPage — access ending soon', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		window.localStorage.clear();
+		resetAgentsStore();
+		seedComposedStores();
+		resetOrphanPurgeAttemptsForTest();
+		resetConnectSessionsStore();
+		clearApprovalsStore();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		resetConnectSessionsStore();
+		resetApprovalsStore();
+	});
+
+	function endingSoon(credential: string, hoursLeft: number) {
+		const idleEnd = new Date(Date.now() + hoursLeft * 3_600_000).toISOString();
+		return {
+			id: `acb_${credential}`,
+			agent_id: 'agnt_active_1',
+			agent_name: 'inbox-triage-bot',
+			credential_id: `cred_${credential}`,
+			name: credential,
+			bound_at: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+			suspended: false,
+			expires_at: null,
+			expired: false,
+			expired_reason: null,
+			max_idle_period: 'P14D',
+			idle_expires_at: idleEnd,
+			idle_warning: true,
+			serves: [],
+			last_used_by_api: [],
+			ends_at: idleEnd,
+			ending: 'idle',
+		};
+	}
+
+	it('lists a binding about to go idle, linking to its agent', async () => {
+		worker.use(
+			http.get('/agents/credentials\\:ending-soon', () =>
+				HttpResponse.json({ data: [endingSoon('Gmail', 30)] }),
+			),
+		);
+		renderPage();
+		const section = await screen.findByRole('region', { name: 'Waiting for you' });
+		const row = within(section).getByTestId('waiting-ending-soon');
+		expect(row).toHaveTextContent('inbox-triage-bot');
+		expect(row).toHaveTextContent('has access to Gmail that ends in 1 day unless used');
+		const link = within(row).getByRole('link', { name: /^Review/ });
+		expect(link.getAttribute('href')).toBe('/agents?agent=agnt_active_1');
+		await checkA11y(section);
+	});
+
+	it('lists a binding whose end date is near, without "unless used"', async () => {
+		const end = new Date(Date.now() + 30 * 3_600_000).toISOString();
+		worker.use(
+			http.get('/agents/credentials\\:ending-soon', () =>
+				HttpResponse.json({
+					data: [
+						{
+							...endingSoon('Gmail', 30),
+							max_idle_period: null,
+							idle_expires_at: null,
+							expires_at: end,
+							ends_at: end,
+							ending: 'end_date',
+						},
+					],
+				}),
+			),
+		);
+		renderPage();
+		const section = await screen.findByRole('region', { name: 'Waiting for you' });
+		const row = within(section).getByTestId('waiting-ending-soon');
+		expect(row).toHaveTextContent('has access to Gmail that expires in 1 day');
+		expect(row).not.toHaveTextContent('unless used');
+	});
+
+	it("collapses an agent's bindings into one row", async () => {
+		worker.use(
+			http.get('/agents/credentials\\:ending-soon', () =>
+				HttpResponse.json({ data: [endingSoon('Gmail', 20), endingSoon('Slack', 40)] }),
+			),
+		);
+		renderPage();
+		const section = await screen.findByRole('region', { name: 'Waiting for you' });
+		const rows = within(section).getAllByTestId('waiting-ending-soon');
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toHaveTextContent('has access to 2 credentials ending soon unless used');
 	});
 });

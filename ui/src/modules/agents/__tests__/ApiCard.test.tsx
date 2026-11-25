@@ -53,6 +53,7 @@ function renderCard(
 		accountCount?: number;
 		expanded?: boolean;
 		onOpen?: () => void;
+		width?: number;
 	} = {},
 ) {
 	const {
@@ -60,10 +61,11 @@ function renderCard(
 		agentServing = true,
 		expanded = false,
 		onOpen = () => {},
+		width = 900,
 		...rest
 	} = extra;
 	return renderWithProviders(
-		<ul style={{ width: 900 }}>
+		<ul style={{ width }}>
 			<li>
 				<ApiCard
 					agentId="agnt_card_test"
@@ -124,6 +126,28 @@ describe('ApiCard', () => {
 		renderCard(makeTile({ suspended: true }));
 		expect(card()).toHaveAttribute('data-suspended', 'true');
 		expect(screen.getByTestId('card-status')).toHaveTextContent('Paused');
+	});
+
+	it('shows when the binding ends beside its credential, and names it in full', () => {
+		const expiresAt = new Date(Date.now() + 3 * 86_400_000 + 60_000).toISOString();
+		renderCard(makeTile({ expiresAt, expired: false }));
+		expect(screen.getByTestId('card-expiry')).toHaveTextContent('Ends in 3d');
+		expect(card()).toHaveAccessibleName(
+			'Slack, Slack bot token, Ends in 3d, Ready. Expires in 3 days. Open access details.',
+		);
+	});
+
+	it('reads an expired binding as Expired, with no end date line', () => {
+		const expiresAt = new Date(Date.now() - 86_400_000).toISOString();
+		renderCard(makeTile({ expiresAt, expired: true }));
+		expect(card()).toHaveAttribute('data-status', 'expired');
+		expect(screen.getByTestId('card-status')).toHaveTextContent('Expired');
+		expect(screen.queryByTestId('card-expiry')).not.toBeInTheDocument();
+	});
+
+	it('shows no end date for a binding that never expires', () => {
+		renderCard(makeTile({ expiresAt: null }));
+		expect(screen.queryByTestId('card-expiry')).not.toBeInTheDocument();
 	});
 
 	it('shows Sign-in needed when the credential awaits consent', () => {
@@ -237,5 +261,31 @@ describe('ApiCard', () => {
 	it('names the credential count in the accessible name for a multi-credential API', () => {
 		renderCard(makeTile(), { accountCount: 3 });
 		expect(card()).toHaveAccessibleName(/one of 3 credentials for this API/);
+	});
+
+	it('shows when the binding was last used, in its text and accessible name', () => {
+		renderCard(makeTile({ lastUsedAt: new Date(Date.now() - 5 * 86_400_000).toISOString() }));
+		expect(screen.getByTestId('card-last-used')).toHaveTextContent('Used 5d ago');
+		expect(card()).toHaveAccessibleName(/, Used 5d ago\b/);
+	});
+
+	it('shortens the label on a narrow card so the age is never cut off', () => {
+		renderCard(makeTile({ lastUsedAt: new Date(Date.now() - 5 * 86_400_000).toISOString() }), {
+			width: 160,
+		});
+		const label = screen.getByTestId('card-last-used');
+		expect(label.innerText).toBe('Used 5d');
+		expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+		expect(card()).toHaveAccessibleName(/, Used 5d ago\b/);
+	});
+
+	it('says a binding that was never used is "Never used"', () => {
+		renderCard(makeTile({ lastUsedAt: null }));
+		expect(screen.getByTestId('card-last-used')).toHaveTextContent('Never used');
+	});
+
+	it('claims nothing about use when the server does not report it', () => {
+		renderCard(makeTile());
+		expect(screen.queryByTestId('card-last-used')).not.toBeInTheDocument();
 	});
 });

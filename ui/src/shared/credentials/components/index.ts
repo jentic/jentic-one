@@ -38,6 +38,24 @@ export { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 export type { ApiPickerProps } from '@/shared/credentials/components/ApiPicker';
 export { AccessRulesStep } from '@/shared/credentials/components/AccessRulesStep';
 export type { AccessRulesStepProps } from '@/shared/credentials/components/AccessRulesStep';
+export {
+	BindingDurationField,
+	formatDurationEnd,
+} from '@/shared/credentials/components/BindingDurationField';
+export type { BindingDurationFieldProps } from '@/shared/credentials/components/BindingDurationField';
+export {
+	NoExpiryConfirmDialog,
+	useNoExpiryConfirm,
+} from '@/shared/credentials/components/NoExpiryConfirmDialog';
+export type { NoExpiryConfirmDialogProps } from '@/shared/credentials/components/NoExpiryConfirmDialog';
+export { RenewBindingControl } from '@/shared/credentials/components/RenewBindingControl';
+export { AccessEndFields } from '@/shared/credentials/components/AccessEndFields';
+export type { AccessEndFieldsProps } from '@/shared/credentials/components/AccessEndFields';
+export { IdleLimitField } from '@/shared/credentials/components/IdleLimitField';
+export type { IdleLimitFieldProps } from '@/shared/credentials/components/IdleLimitField';
+export { SingleUseField } from '@/shared/credentials/components/SingleUseField';
+export type { SingleUseFieldProps } from '@/shared/credentials/components/SingleUseField';
+export type { RenewBindingControlProps } from '@/shared/credentials/components/RenewBindingControl';
 export { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
 export {
 	MatchedRuleText,

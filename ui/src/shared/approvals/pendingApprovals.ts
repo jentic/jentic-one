@@ -37,6 +37,32 @@ export function groupApprovalsByAgent(
 		.sort((a, b) => Date.parse(a.since) - Date.parse(b.since));
 }
 
+/** "POST /v1/charges on api.stripe.com/payments" — what one held call does. */
+export function describeHeldCall(approval: HeldExecutionResponse): string {
+	return `${approval.method} ${approval.path} on ${approval.api_vendor}/${approval.api_name}`;
+}
+
+/** Whether the call is held because the agent's access ended, to re-grant access. */
+export function isRenewalHold(approval: HeldExecutionResponse): boolean {
+	return approval.kind === 'grant_renewal';
+}
+
+/** "access to api.stripe.com/payments re-granted", "access to 2 APIs re-granted" — a renewal group's headline. */
+export function summariseRenewals(approvals: readonly HeldExecutionResponse[]): string {
+	const apis = new Set(approvals.map((a) => `${a.api_vendor}/${a.api_name}`));
+	return apis.size === 1
+		? `access to ${[...apis][0]} re-granted`
+		: `access to ${apis.size} APIs re-granted`;
+}
+
+/** "a call to api.stripe.com/payments", "3 calls" — a group's headline. */
+export function summariseHeldCalls(approvals: readonly HeldExecutionResponse[]): string {
+	if (approvals.length === 1) {
+		return `a call to ${approvals[0].api_vendor}/${approvals[0].api_name}`;
+	}
+	return `${approvals.length} calls`;
+}
+
 /**
  * Whether the waiting signals read held calls for the viewer: once the viewer
  * is known, whatever their permissions. The server scopes the list to the held

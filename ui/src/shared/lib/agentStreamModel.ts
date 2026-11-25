@@ -145,12 +145,13 @@ export function isRetiredEventType(type: string): boolean {
  *
  * `connect_session.*` events are an agent asking for a credential, so they
  * share the `credential` kind (filter chip, label) with the credential
- * lifecycle they start.
+ * lifecycle they start. So do `credential_grant.*` events (a binding about to
+ * reach its end date or idle limit), which open the agent they name.
  */
 export function kindForType(type: string): StreamKind {
 	const ns = type.split('.', 1)[0];
 	if (ns === 'overlay') return 'catalog';
-	if (ns === 'connect_session') return 'credential';
+	if (ns === 'connect_session' || ns === 'credential_grant') return 'credential';
 	if (ns === 'oauth_client' || ns === 'oauth_grant') return 'oauth';
 	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }

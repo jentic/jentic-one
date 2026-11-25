@@ -39,7 +39,7 @@ import {
 	type HeldCall,
 } from '@/shared/approvals';
 import { ATTENTION_TILE_CLASS } from '@/shared/approvals/attentionTone';
-import { heldCallAsk, stripBidiControls, waitingSince } from '@/shared/approvals/heldCallCopy';
+import { stripBidiControls, waitingCallAsk, waitingSince } from '@/shared/approvals/heldCallCopy';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 import { cn } from '@/shared/lib/utils';
@@ -190,7 +190,8 @@ export function InboxToast() {
 											New request · {waitingSince(arrival.created_at, now)}
 										</p>
 										<p className="text-foreground-sub text-xs leading-[18px]">
-											{heldCallAsk(
+											{waitingCallAsk(
+												arrival,
 												nameOf(arrival.agent_id),
 												headlineOf(arrival),
 											)}

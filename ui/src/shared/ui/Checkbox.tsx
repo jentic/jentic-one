@@ -11,6 +11,8 @@ interface CheckboxProps {
 	size?: CheckboxSize;
 	className?: string;
 	ariaLabel?: string;
+	/** Id of the element that describes the box (a hint, or why it is disabled). */
+	ariaDescribedBy?: string;
 	children?: ReactNode;
 	id?: string;
 }
@@ -28,6 +30,7 @@ export function Checkbox({
 	size = 'md',
 	className,
 	ariaLabel,
+	ariaDescribedBy,
 	children,
 }: CheckboxProps): JSX.Element {
 	const sizeClasses = SIZE_CLASSES[size];
@@ -55,6 +58,7 @@ export function Checkbox({
 				role="checkbox"
 				aria-checked={checked}
 				aria-label={ariaLabel || 'Select item'}
+				aria-describedby={ariaDescribedBy}
 				onClick={(e) => {
 					e.stopPropagation();
 					if (!disabled) onChange(!checked);
@@ -77,6 +81,7 @@ export function Checkbox({
 			role="checkbox"
 			aria-checked={checked}
 			aria-label={ariaLabel}
+			aria-describedby={ariaDescribedBy}
 			onClick={(e) => {
 				e.stopPropagation();
 				if (!disabled) onChange(!checked);

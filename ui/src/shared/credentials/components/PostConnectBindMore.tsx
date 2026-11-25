@@ -1,9 +1,36 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, ErrorAlert, Label, Skeleton } from '@/shared/ui';
 import {
 	useAgentsForPicker,
 	useBindCredentialToAgents,
+	useGrantPolicyLimits,
 } from '@/shared/credentials/api/vendors-hooks';
+import { grantDefaults, usePreselectGrantDefaults } from '@/shared/credentials/lib/grantDefaults';
+import {
+	expiresAtFromDuration,
+	expiresAtIso,
+	type BindingDuration,
+} from '@/shared/credentials/lib/bindingDuration';
+import { idleLimitError, idleSeconds, type IdleLimit } from '@/shared/credentials/lib/idleLimit';
+import {
+	DEFAULT_AFTER_EXPIRY,
+	expiryWarnable,
+	expiryWarning,
+	type AfterExpiry,
+} from '@/shared/credentials/lib/accessEnd';
+import { AccessEndFields } from '@/shared/credentials/components/AccessEndFields';
+import { IdleLimitField } from '@/shared/credentials/components/IdleLimitField';
+import { SingleUseField } from '@/shared/credentials/components/SingleUseField';
+import {
+	NO_DURATION_HINT,
+	choosesNoExpiry,
+	durationChosen,
+} from '@/shared/credentials/lib/bindingExpiry';
+import { BindingDurationField } from '@/shared/credentials/components/BindingDurationField';
+import {
+	NoExpiryConfirmDialog,
+	useNoExpiryConfirm,
+} from '@/shared/credentials/components/NoExpiryConfirmDialog';
 
 /**
  * Post-connect CTA rendered on the credentials-dialog terminal step:
@@ -12,7 +39,9 @@ import {
  * mode (no rules) — the user has already authored per-binding rules
  * for the primary (agent, credential) pair at ``:confirm``, so
  * additional agents get a suspended row and grant them access from
- * each agent's page.
+ * each agent's page. How long the new bindings last is chosen here too (the
+ * shared duration control, which Bind waits for); "No expiry" asks for
+ * confirmation.
  *
  * Lives under ``shared/credentials`` (not ``modules/agents``) because
  * both the credential inventory and the Agents page mount it via
@@ -27,10 +56,25 @@ export function PostConnectBindMore({
 	credentialId: string;
 	boundAgentId: string | null;
 }) {
+	const accessSummaryId = useId();
 	const agents = useAgentsForPicker();
 	const bindMany = useBindCredentialToAgents();
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [done, setDone] = useState(false);
+	const [duration, setDuration] = useState<BindingDuration | null>(null);
+	const [idle, setIdle] = useState<IdleLimit | null>(null);
+	const [uses, setUses] = useState<number | null>(null);
+	const [warn, setWarn] = useState(false);
+	const [afterExpiry, setAfterExpiry] = useState<AfterExpiry>(DEFAULT_AFTER_EXPIRY);
+	// The org's defaults preselect the controls; its maximums bound them.
+	const limits = useGrantPolicyLimits();
+	usePreselectGrantDefaults(limits, (d) => {
+		setDuration((cur) => cur ?? d.duration);
+		setIdle((cur) => cur ?? d.idle);
+		setUses((cur) => cur ?? d.uses);
+	});
+	const durationRef = useRef<HTMLSelectElement>(null);
+	const noExpiry = useNoExpiryConfirm();
 
 	const candidates = useMemo(() => {
 		const all = agents.data?.data ?? [];
@@ -59,11 +103,30 @@ export function PostConnectBindMore({
 	const handleBind = (): void => {
 		if (selected.size === 0) return;
 		bindMany.mutate(
-			{ credentialId, agentIds: Array.from(selected) },
+			// The end date runs from now, as the operator confirms.
+			{
+				credentialId,
+				agentIds: Array.from(selected),
+				expiresAt: expiresAtIso(duration),
+				maxIdlePeriod: idleSeconds(idle),
+				idleWarning: expiryWarning(
+					warn,
+					expiresAtFromDuration(duration),
+					idleSeconds(idle),
+				),
+				maxQuota: uses,
+				afterExpiry,
+			},
 			{
 				onSuccess: () => {
 					setDone(true);
 					setSelected(new Set());
+					const fresh = grantDefaults(limits);
+					setDuration(fresh.duration);
+					setIdle(fresh.idle);
+					setUses(fresh.uses);
+					setWarn(false);
+					setAfterExpiry(DEFAULT_AFTER_EXPIRY);
 				},
 			},
 		);
@@ -90,6 +153,43 @@ export function PostConnectBindMore({
 					);
 				})}
 			</div>
+			<BindingDurationField
+				maxSeconds={limits.expires.maxSeconds}
+				value={duration}
+				onChange={setDuration}
+				disabled={bindMany.isPending}
+				label="Access expires after"
+				selectRef={durationRef}
+				testIdPrefix="bind-more"
+				describedBy={accessSummaryId}
+			/>
+			<IdleLimitField
+				maxSeconds={limits.idle.maxSeconds}
+				value={idle}
+				onChange={setIdle}
+				disabled={bindMany.isPending}
+				testIdPrefix="bind-more"
+				describedBy={accessSummaryId}
+			/>
+			<SingleUseField
+				value={uses}
+				onChange={setUses}
+				end={expiresAtFromDuration(duration)}
+				idleSeconds={idleSeconds(idle)}
+				disabled={bindMany.isPending}
+				testIdPrefix="bind-more"
+				summaryId={accessSummaryId}
+				emptyHint={NO_DURATION_HINT}
+			/>
+			<AccessEndFields
+				warn={warn}
+				onWarnChange={setWarn}
+				warnable={expiryWarnable(expiresAtFromDuration(duration), idleSeconds(idle))}
+				afterExpiry={afterExpiry}
+				onAfterExpiryChange={setAfterExpiry}
+				disabled={bindMany.isPending}
+				testIdPrefix="bind-more"
+			/>
 			{bindMany.error && <ErrorAlert message={bindMany.error} />}
 			{done && !bindMany.error && (
 				<p className="text-success text-xs">Bound to selected agents.</p>
@@ -98,8 +198,18 @@ export function PostConnectBindMore({
 				type="button"
 				variant="secondary"
 				size="sm"
-				onClick={handleBind}
-				disabled={selected.size === 0 || bindMany.isPending}
+				onClick={(): void =>
+					noExpiry.request(
+						choosesNoExpiry(duration) && idleSeconds(idle) === null && uses === null,
+						handleBind,
+					)
+				}
+				disabled={
+					selected.size === 0 ||
+					bindMany.isPending ||
+					!durationChosen(duration, limits.expires.maxSeconds) ||
+					idleLimitError(idle, limits.idle.maxSeconds) !== null
+				}
 				loading={bindMany.isPending}
 			>
 				Bind{' '}
@@ -107,6 +217,12 @@ export function PostConnectBindMore({
 					? `to ${selected.size} agent${selected.size === 1 ? '' : 's'}`
 					: ''}
 			</Button>
+			<NoExpiryConfirmDialog
+				{...noExpiry.dialogProps}
+				subject={selected.size === 1 ? 'This agent' : 'These agents'}
+				confirmLabel="Bind without expiry"
+				fieldRef={durationRef}
+			/>
 		</div>
 	);
 }

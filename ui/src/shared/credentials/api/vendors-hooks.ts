@@ -5,6 +5,7 @@
  * `@/shared/api` imports from views are forbidden by ESLint.
  */
 
+import { isoDurationSeconds } from '@/shared/lib';
 import {
 	skipToken,
 	useMutation,
@@ -30,10 +31,14 @@ import {
 	listAgentsForPicker,
 	listAllVendorOperations,
 	listConnectSessionRevisions,
+	getGrantPolicyLimits,
+	listBindingsEndingSoon,
 	listOpenConnectRequests,
 	listVendors,
 	pollConnectSessionStatus,
 	rejectConnectSession,
+	renewCredentialBinding,
+	type BindingRenewal,
 	startEditConnection,
 	startIntegrationConnect,
 	type VendorOperation,
@@ -44,12 +49,14 @@ import type {
 	AgentListResponse,
 	BindingAccessResponse,
 	ConnectSessionSummaryResponse,
+	EndingSoonBindingResponse,
 	PermissionRuleReadSchema,
 	PermissionRuleSchema,
 	RuleSetResponse,
 } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
+import { NO_GRANT_LIMITS, type GrantLimits } from '@/shared/credentials/lib/grantLimits';
 import type {
 	AmendSessionBody,
 	AmendedSession,
@@ -447,6 +454,7 @@ export function invalidateBindingSurfaces(
 			}),
 		]),
 		client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) }),
+		client.invalidateQueries({ queryKey: bindingsEndingSoonKey }),
 	]);
 }
 
@@ -500,7 +508,10 @@ export interface BindResult {
  * or reported. A failed bind stops the run (agents before it stay bound); a
  * failed rules save doesn't — it lands in `rulesFailed` for a retry
  * ({@link useApplyBindingRules}). Caches are invalidated whatever the outcome,
- * so a run that fails partway still shows the binds that landed.
+ * so a run that fails partway still shows the binds that landed. Every binding
+ * gets the same `expiresAt` (RFC 3339), worked out once when the run starts;
+ * `null` is a confirmed "No expiry", sent as such (see
+ * {@link bindCredentialToAgentBlocked}).
  */
 export function useBindCredentialToAgents() {
 	const client = useQueryClient();
@@ -511,12 +522,21 @@ export function useBindCredentialToAgents() {
 			credentialId: string;
 			agentIds: readonly string[];
 			rules?: readonly PermissionRuleSchema[];
+			expiresAt?: string | null;
+			/** The idle limit in seconds, the same for every binding. */
+			maxIdlePeriod?: number | null;
+			/** Warn the owner before the access ends (its end date or idle limit). */
+			idleWarning?: boolean;
+			/** The use count (1 is single use), the same for every binding. */
+			maxQuota?: number | null;
+			/** What a call gets once the access has ended, the same for every binding. */
+			afterExpiry?: 'hold' | 'refuse';
 		}
 	>({
-		mutationFn: async ({ credentialId, agentIds, rules }) => {
+		mutationFn: async ({ credentialId, agentIds, rules, ...policy }) => {
 			const rulesFailed: string[] = [];
 			for (const aid of agentIds) {
-				await bindCredentialToAgentBlocked(aid, credentialId);
+				await bindCredentialToAgentBlocked(aid, credentialId, policy);
 				if (!rules) continue;
 				try {
 					await replaceBindingPermissions(aid, credentialId, [...rules]);
@@ -528,6 +548,27 @@ export function useBindCredentialToAgents() {
 		},
 		onSettled: (_res, _err, { credentialId, agentIds }) =>
 			invalidateBindingSurfaces(client, credentialId, agentIds),
+	});
+}
+
+/**
+ * Renew one binding (`PATCH /agents/{id}/credentials/{cid}`): restart its idle
+ * clock and change the limits given (see {@link BindingRenewal}). Every surface
+ * showing the binding refetches before the mutation settles, so its status
+ * never reads "Expired" after a renewal.
+ */
+export function useRenewCredentialBinding() {
+	const client = useQueryClient();
+	// Resolves to the binding's end date after the renewal (null: none).
+	return useMutation<
+		string | null,
+		Error,
+		{ agentId: string; credentialId: string } & BindingRenewal
+	>({
+		mutationFn: ({ agentId, credentialId, ...renewal }) =>
+			renewCredentialBinding(agentId, credentialId, renewal),
+		onSettled: (_res, _err, { agentId, credentialId }) =>
+			invalidateBindingSurfaces(client, credentialId, [agentId]),
 	});
 }
 
@@ -725,6 +766,57 @@ export function useOpenConnectRequests(options?: { enabled?: boolean }) {
 		queryFn: listOpenConnectRequests,
 		enabled: options?.enabled ?? true,
 		staleTime: 30_000,
+		refetchInterval: CONNECT_REQUESTS_REFETCH_MS,
+	});
+}
+
+const grantLimitsKey = ['grant-policy-limits'] as const;
+
+/**
+ * The org's defaults and maximums for new grants and agents. Deployment config,
+ * so read once a session; while loading, or if the read fails, there are none
+ * (the server still enforces its own).
+ */
+export function useGrantPolicyLimits(): GrantLimits {
+	const query = useQuery({
+		queryKey: grantLimitsKey,
+		queryFn: getGrantPolicyLimits,
+		staleTime: Infinity,
+		retry: false,
+	});
+	const data = query.data;
+	if (!data) return NO_GRANT_LIMITS;
+	return {
+		expires: {
+			defaultSeconds: isoDurationSeconds(data.expires_in.default),
+			maxSeconds: isoDurationSeconds(data.expires_in.max),
+		},
+		idle: {
+			defaultSeconds: isoDurationSeconds(data.idle_period.default),
+			maxSeconds: isoDurationSeconds(data.idle_period.max),
+		},
+		singleUseByDefault: data.single_use_by_default,
+		loaded: true,
+	};
+}
+
+/** The "Ending soon" list's key, under the attention root like the other inbox rows. */
+export const bindingsEndingSoonKey = [
+	...sharedQueryKeys.attentionRoot,
+	'bindings-ending-soon',
+] as const;
+
+/**
+ * Bindings that will soon reach their end date or idle limit, with the warning on (see
+ * {@link listBindingsEndingSoon}). The window is two days, so the inbox's
+ * cadence is plenty; any renewal refreshes it at once.
+ */
+export function useBindingsEndingSoon(options?: { enabled?: boolean }) {
+	return useQuery<EndingSoonBindingResponse[]>({
+		queryKey: bindingsEndingSoonKey,
+		queryFn: listBindingsEndingSoon,
+		enabled: options?.enabled ?? true,
+		staleTime: 60_000,
 		refetchInterval: CONNECT_REQUESTS_REFETCH_MS,
 	});
 }

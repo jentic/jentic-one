@@ -59,7 +59,7 @@ import {
 	usePendingApprovals,
 	type HeldCall,
 } from '@/shared/approvals';
-import { heldCallAsk } from '@/shared/approvals/heldCallCopy';
+import { waitingCallAsk } from '@/shared/approvals/heldCallCopy';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -250,7 +250,7 @@ export function useAttentionItems(): AttentionState {
 					key: `held_execution:${call.id}`,
 					kind: 'held_execution',
 					urgency: 2,
-					title: heldCallAsk(name, headlines[i] ?? ''),
+					title: waitingCallAsk(call, name, headlines[i] ?? ''),
 					detail: null,
 					since: call.created_at,
 					href: ROUTE_PATHS.approval(call.id),

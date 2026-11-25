@@ -8,10 +8,23 @@
  * offers Retry. Back keeps this mounted; {@link reconcileQueue} folds the edited
  * batch back in so per-item progress survives.
  *
+ * The Access step also asks how long the access lasts (the shared duration
+ * control, the idle limit, single use, the warning and what happens after it
+ * ends; nothing preselected beyond the org's defaults). Adding waits for a
+ * choice, and "No expiry" asks for confirmation first.
+ *
  * An API the agent already reaches is set up the same way: the pane names the
  * credentials it has and offers only unbound ones (rules are per binding).
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type ReactNode,
+} from 'react';
 import { useReducedMotionConfig } from 'framer-motion';
 import {
 	AlertTriangle,
@@ -39,7 +52,13 @@ import {
 	type PermissionRuleInput,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { isCredentialGone, useCredential, useImportCatalogEntry } from '@/shared/credentials/api';
+import {
+	isCredentialGone,
+	useCredential,
+	useGrantPolicyLimits,
+	useImportCatalogEntry,
+} from '@/shared/credentials/api';
+import { grantDefaults, usePreselectGrantDefaults } from '@/shared/credentials/lib/grantDefaults';
 import {
 	useApplyBindingRules,
 	useBindCredentialToAgents,
@@ -47,6 +66,12 @@ import {
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 import {
 	AccessRulesStep,
+	AccessEndFields,
+	BindingDurationField,
+	IdleLimitField,
+	SingleUseField,
+	NoExpiryConfirmDialog,
+	useNoExpiryConfirm,
 	useDeviceAwareConnect,
 	type ConnectedCredentialInfo,
 	CreateCredentialFlow,
@@ -62,6 +87,23 @@ import {
 	type ScopeReach,
 } from '@/shared/credentials/lib/accessPresets';
 import { apiScopeReach, sharedApiLabels } from '@/shared/credentials/lib/apiIdentity';
+import {
+	expiresAtFromDuration,
+	expiresAtIso,
+	type BindingDuration,
+} from '@/shared/credentials/lib/bindingDuration';
+import { idleLimitError, idleSeconds, type IdleLimit } from '@/shared/credentials/lib/idleLimit';
+import {
+	DEFAULT_AFTER_EXPIRY,
+	expiryWarnable,
+	expiryWarning,
+	type AfterExpiry,
+} from '@/shared/credentials/lib/accessEnd';
+import {
+	NO_DURATION_HINT,
+	choosesNoExpiry,
+	durationChosen,
+} from '@/shared/credentials/lib/bindingExpiry';
 import {
 	credentialAwaitsConsent,
 	type CredentialChoice,
@@ -127,14 +169,51 @@ function errorText(e: unknown): string {
 	return e instanceof Error && e.message ? e.message : 'Something went wrong.';
 }
 
-/** One item's access draft: the preset and its custom rules. */
+/** One item's access draft: the preset and its custom rules, and how long the
+ * access lasts (duration null = nothing chosen yet: adding waits). */
 interface AccessDraft {
 	preset: RulesPreset | null;
 	customRules: PermissionRule[];
+	duration: BindingDuration | null;
+	/** The optional idle limit; null = off. */
+	idle: IdleLimit | null;
+	/** The optional use count (1 = "End after one use"); null = off. */
+	uses: number | null;
+	/** Warn the owner before the access ends (off to start). */
+	warn: boolean;
+	/** What a call gets once the access has ended. */
+	afterExpiry: AfterExpiry;
 }
 
-/** Read only by default: the least access that still lets it work. */
-const DEFAULT_DRAFT: AccessDraft = { preset: 'read', customRules: [] };
+/** Read only by default: the least access that still lets it work. No
+ * duration: the operator must choose one ("No expiry" included, confirmed). */
+const DEFAULT_DRAFT: AccessDraft = {
+	preset: 'read',
+	customRules: [],
+	duration: null,
+	idle: null,
+	uses: null,
+	warn: false,
+	afterExpiry: DEFAULT_AFTER_EXPIRY,
+};
+
+/** Whether adding must wait: no end date chosen yet, or an idle limit the org refuses. */
+function accessDurationMissing(
+	draft: AccessDraft,
+	limits: ReturnType<typeof useGrantPolicyLimits>,
+): boolean {
+	return (
+		!durationChosen(draft.duration, limits.expires.maxSeconds) ||
+		idleLimitError(draft.idle, limits.idle.maxSeconds) !== null
+	);
+}
+
+/** Whether adding needs the "No expiry" confirm: no end date, idle limit or use count. */
+function expiryNeedsConfirm(draft: AccessDraft): boolean {
+	return (
+		choosesNoExpiry(draft.duration) && idleSeconds(draft.idle) === null && draft.uses === null
+	);
+}
 
 const RULES_SAVE_FAILED = "The access rules weren't saved.";
 
@@ -336,11 +415,37 @@ export function ApiSetupQueue({
 		if (hadOne) paneRef.current?.focus({ preventScroll: true });
 	}, [currentKey]);
 
-	const draftFor = (key: string): AccessDraft => drafts[key] ?? DEFAULT_DRAFT;
+	// A new draft starts on the org's defaults (none in open source).
+	const limits = useGrantPolicyLimits();
+	const freshDraft = (): AccessDraft => ({ ...DEFAULT_DRAFT, ...grantDefaults(limits) });
+	// Edited before the org's limits arrived, a draft stored nothing for its
+	// duration and idle limit: give it the defaults once they do, leaving any
+	// choice the operator already made alone.
+	usePreselectGrantDefaults(limits, (defaults) =>
+		setDrafts((current) =>
+			Object.fromEntries(
+				Object.entries(current).map(([key, draft]) => [
+					key,
+					{
+						...draft,
+						duration: draft.duration ?? defaults.duration,
+						idle: draft.idle ?? defaults.idle,
+						uses: draft.uses ?? defaults.uses,
+					},
+				]),
+			),
+		),
+	);
+	const draftFor = (key: string): AccessDraft => drafts[key] ?? freshDraft();
+	// "No expiry" is confirmed before an item binds with no limit at all.
+	const durationRef = useRef<HTMLSelectElement>(null);
+	const noExpiry = useNoExpiryConfirm();
+	const guardExpiry = (entry: QueueEntry, run: () => void): void =>
+		noExpiry.request(!entry.bound && expiryNeedsConfirm(draftFor(entry.key)), run);
 	const setDraft = (key: string, patch: Partial<AccessDraft>): void =>
 		setDrafts((current) => ({
 			...current,
-			[key]: { ...(current[key] ?? DEFAULT_DRAFT), ...patch },
+			[key]: { ...(current[key] ?? freshDraft()), ...patch },
 		}));
 
 	const choiceFor = (entry: QueueEntry): CredentialChoice | null =>
@@ -490,6 +595,16 @@ export function ApiSetupQueue({
 						credentialId: chosen.credential_id,
 						agentIds: [agentId],
 						rules: rules ?? undefined,
+						// Worked out as the bind goes out: the duration runs from here.
+						expiresAt: expiresAtIso(draftFor(entry.key).duration),
+						maxIdlePeriod: idleSeconds(draftFor(entry.key).idle),
+						idleWarning: expiryWarning(
+							draftFor(entry.key).warn,
+							expiresAtFromDuration(draftFor(entry.key).duration),
+							idleSeconds(draftFor(entry.key).idle),
+						),
+						maxQuota: draftFor(entry.key).uses,
+						afterExpiry: draftFor(entry.key).afterExpiry,
 					}));
 				} catch (e) {
 					if (isCredentialGone(e)) {
@@ -712,7 +827,9 @@ export function ApiSetupQueue({
 				? 'Reading what this credential covers — the access wording depends on it'
 				: rules == null && unapplied.staged === 0
 					? 'Add at least one rule'
-					: null;
+					: !current.bound && accessDurationMissing(draft, limits)
+						? 'Choose when this access ends'
+						: null;
 		const blocked = reason != null;
 		// `aria-disabled`, not `disabled`: it stays in the tab order, described by the
 		// reason, and the click no-ops.
@@ -727,18 +844,20 @@ export function ApiSetupQueue({
 				)}
 				onClick={(): void => {
 					if (blocked || working) return;
-					unapplied.settle(`before adding ${current.api.label}`, (applied) => {
-						// Applying staged choices changes the rules this add saves.
-						const toSave = applied ? rulesForPreset(draft.preset, applied) : rules;
-						if (chosen && toSave && draft.preset)
-							// Custom rules that are exactly a preset's are recorded as that preset.
-							void commit(
-								current,
-								chosen,
-								toSave,
-								presetForRules(toSave) ?? draft.preset,
-							);
-					});
+					guardExpiry(current, (): void =>
+						unapplied.settle(`before adding ${current.api.label}`, (applied) => {
+							// Applying staged choices changes the rules this add saves.
+							const toSave = applied ? rulesForPreset(draft.preset, applied) : rules;
+							if (chosen && toSave && draft.preset)
+								// Custom rules that are exactly a preset's are recorded as that preset.
+								void commit(
+									current,
+									chosen,
+									toSave,
+									presetForRules(toSave) ?? draft.preset,
+								);
+						}),
+					);
 				}}
 				data-testid="queue-add"
 			>
@@ -930,9 +1049,12 @@ export function ApiSetupQueue({
 											reach={reach}
 											reachUnknown={reachUnknown}
 											sectionRef={accessRef}
+											durationRef={durationRef}
 											stagedRef={unapplied.stagedRef}
 											onStagedChange={unapplied.onStagedChange}
-											onLater={(): void => later(current)}
+											onLater={(): void =>
+												guardExpiry(current, (): void => later(current))
+											}
 											importJobId={importJobs[current.key]}
 										/>
 									</>
@@ -994,6 +1116,12 @@ export function ApiSetupQueue({
 			/>
 			{unapplied.dialog}
 			{deviceDialog}
+			<NoExpiryConfirmDialog
+				{...noExpiry.dialogProps}
+				subject={<AgentNameText name={agentName} />}
+				confirmLabel={`Add ${current?.api.label ?? 'this API'} without expiry`}
+				fieldRef={durationRef}
+			/>
 		</SheetPrimitive>
 	);
 }
@@ -1432,11 +1560,14 @@ function AccessSection({
 	reach,
 	reachUnknown,
 	sectionRef,
+	durationRef,
 	stagedRef,
 	onStagedChange,
 	importJobId,
 }: {
 	sectionRef: React.RefObject<HTMLDivElement | null>;
+	/** The duration dropdown, which the queue's "No expiry" confirm returns focus to. */
+	durationRef: React.RefObject<HTMLSelectElement | null>;
 	/** By action's staged choices, for the queue to settle before it moves on. */
 	stagedRef: React.MutableRefObject<UnappliedChoices | null>;
 	onStagedChange: (count: number) => void;
@@ -1454,8 +1585,15 @@ function AccessSection({
 	/** Reach still loading: the body stays inert so no preset commits under a wrong caption. */
 	reachUnknown: boolean;
 }) {
+	const accessSummaryId = useId();
 	const working = entry.status === 'working';
 	const [laterPending, setLaterPending] = useState(false);
+	// How long the access lasts — asked only while the binding is still to be
+	// made (a bound item owes just its rules). The queue's Add waits for a
+	// choice and confirms "No expiry" (`durationMissing`, `expiryNeedsConfirm`).
+	const limits = useGrantPolicyLimits();
+	const askDuration = !entry.bound;
+	const durationMissing = askDuration && accessDurationMissing(draft, limits);
 	// Focus returns to the opening row once the confirm closes.
 	const laterRef = useRef<HTMLButtonElement>(null);
 	// The API whose operations ② reads: the workspace API, or the one the save's
@@ -1517,7 +1655,7 @@ function AccessSection({
 									ref={laterRef}
 									variant="ghost"
 									size="xs"
-									disabled={working || reachUnknown}
+									disabled={working || reachUnknown || durationMissing}
 									onClick={(): void => setLaterPending(true)}
 									data-testid="queue-add-without-rules"
 									className="text-foreground-sub hover:text-foreground hover:bg-warning/10 gap-1.5 px-2 text-xs font-medium"
@@ -1528,6 +1666,52 @@ function AccessSection({
 							) : undefined
 						}
 					/>
+					{askDuration && (
+						<div className="space-y-3" data-testid="queue-access-duration">
+							<BindingDurationField
+								maxSeconds={limits.expires.maxSeconds}
+								value={draft.duration}
+								onChange={(duration): void => onDraftChange({ duration })}
+								disabled={working}
+								label="Access expires after"
+								selectRef={durationRef}
+								testIdPrefix="queue-access"
+								describedBy={accessSummaryId}
+							/>
+							<IdleLimitField
+								maxSeconds={limits.idle.maxSeconds}
+								value={draft.idle}
+								onChange={(idle): void => onDraftChange({ idle })}
+								disabled={working}
+								testIdPrefix="queue-access"
+								describedBy={accessSummaryId}
+							/>
+							<SingleUseField
+								value={draft.uses}
+								onChange={(uses): void => onDraftChange({ uses })}
+								end={expiresAtFromDuration(draft.duration)}
+								idleSeconds={idleSeconds(draft.idle)}
+								disabled={working}
+								testIdPrefix="queue-access"
+								summaryId={accessSummaryId}
+								emptyHint={NO_DURATION_HINT}
+							/>
+							<AccessEndFields
+								warn={draft.warn}
+								onWarnChange={(warn): void => onDraftChange({ warn })}
+								warnable={expiryWarnable(
+									expiresAtFromDuration(draft.duration),
+									idleSeconds(draft.idle),
+								)}
+								afterExpiry={draft.afterExpiry}
+								onAfterExpiryChange={(afterExpiry): void =>
+									onDraftChange({ afterExpiry })
+								}
+								disabled={working}
+								testIdPrefix="queue-access"
+							/>
+						</div>
+					)}
 					{entry.rulesError && (
 						<div data-testid="queue-rules-failed">
 							<ErrorAlert

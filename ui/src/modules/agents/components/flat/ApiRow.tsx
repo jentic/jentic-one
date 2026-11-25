@@ -63,6 +63,11 @@ import {
 	API_ROW_METRIC_STATUS_LG,
 } from '@/modules/agents/components/flat/apiRowGrid';
 import type { ApiRowActivity } from '@/modules/agents/lib/apiRowActivity';
+import {
+	bindingExpiresSoon,
+	bindingExpiryLabel,
+	bindingExpiryShortLabel,
+} from '@/shared/credentials/lib/bindingExpiry';
 import { useActionRulesHealth } from '@/modules/agents/lib/useActionRulesHealth';
 import type { SiblingApiReference } from '@/shared/credentials/components';
 
@@ -148,6 +153,7 @@ export const ApiRow = memo(function ApiRow({
 	const health = useActionRulesHealth(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
+		expired: tile.expired,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
@@ -171,7 +177,12 @@ export const ApiRow = memo(function ApiRow({
 		.filter(Boolean)
 		.join(' · ');
 	const AuthIcon = tile.authLabel && tile.authType ? credentialTypeIcon(tile.authType) : null;
-	const idle = tile.suspended || !agentServing;
+	const idle = tile.suspended || status === 'expired' || !agentServing;
+	// When the binding ends, beside its rules: "Expires in 3 days", or how long
+	// ago an expired one did. Nothing for a binding that never expires.
+	const expiry = bindingExpiryLabel(tile);
+	const expiryShort = bindingExpiryShortLabel(tile);
+	const expiryCaution = status === 'expired' || bindingExpiresSoon(tile);
 
 	// Reveal: pinned by the list, or previewed — a mouse at rest on the row,
 	// or keyboard focus anywhere in it. Pointer focus never reveals and blur
@@ -418,7 +429,7 @@ export const ApiRow = memo(function ApiRow({
 							onOpenRules={() => openSheet(onOpenRules ?? onOpen)}
 							onRetry={onRetryRules}
 						/>
-						{(summary || tile.suspended) && (
+						{(summary || tile.suspended || expiry) && (
 							<div className="flex max-w-full min-w-0 items-center gap-1.5">
 								{summary && (
 									<p
@@ -426,6 +437,30 @@ export const ApiRow = memo(function ApiRow({
 										data-testid="tile-rules-summary"
 									>
 										{summary}
+									</p>
+								)}
+								{expiry && (
+									<p
+										className={cn(
+											'shrink-0 text-[11.5px] leading-4 whitespace-nowrap',
+											expiryCaution
+												? 'text-caution'
+												: 'text-foreground-faint',
+										)}
+										data-testid="tile-expiry"
+									>
+										{summary && (
+											<span
+												aria-hidden="true"
+												className="text-foreground-faint"
+											>
+												·{' '}
+											</span>
+										)}
+										{/* Compact on the row, so the rules summary keeps its
+										    room; the whole phrase is read to screen readers. */}
+										<span aria-hidden="true">{expiryShort}</span>
+										<span className="sr-only">{expiry}</span>
 									</p>
 								)}
 								{tile.suspended && onResume && (

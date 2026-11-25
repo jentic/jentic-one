@@ -4,7 +4,9 @@
  * carries one), a total only where the amounts share a currency, then
  * "Approve N".
  *
- * Deletes are never approved in bulk: any that reach this list are set aside
+ * Deletes are never approved in bulk, and nor are calls held because the
+ * agent's access ended (they need the re-granted access chosen, one at a
+ * time): any that reach this list are set aside
  * with a Review link that opens the single-call pop-up on just those deletes,
  * and once the rest have run without a failure the pop-up opens on the first
  * of them by itself. Calls that stopped
@@ -17,7 +19,7 @@
  * named and stays waiting, and a delete set aside is said to be next.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
+import { ShieldQuestion, Trash2 } from 'lucide-react';
 import type { HeldExecutionResponse } from '@/shared/api';
 import {
 	Button,
@@ -39,7 +41,13 @@ import {
 	useDecideApproval,
 	useRefreshApprovalSurfaces,
 } from '@/shared/approvals/hooks';
-import { isDeleteCall, isRouteHeadline, useHeldCallHeadlines } from '@/shared/approvals/heldCall';
+import {
+	isDeleteCall,
+	isRouteHeadline,
+	needsOwnReview,
+	ownReviewWords,
+	useHeldCallHeadlines,
+} from '@/shared/approvals/heldCall';
 import { ReviewSkeleton } from '@/shared/approvals/review/ReviewStates';
 import { bodyAmount, totalAmount, type BodyAmount } from '@/shared/approvals/review/reviewFormat';
 
@@ -79,12 +87,13 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 			.map((id) => byId.get(id))
 			.filter((c): c is HeldExecutionResponse => !!c);
 		return {
-			calls: picked.filter((c) => !isDeleteCall(c)),
-			deletes: picked.filter(isDeleteCall),
+			calls: picked.filter((c) => !needsOwnReview(c)),
+			deletes: picked.filter(needsOwnReview),
 			gone: data ? heldIds.length - picked.length : 0,
 		};
 	}, [data, heldIds]);
 	const shown = running ?? calls;
+	const ownWords = ownReviewWords(deletes);
 
 	// The details carry the amounts; the names come from the actor directory.
 	// Held still while the run goes: each decision invalidates the approvals
@@ -131,12 +140,7 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 		// unless a call failed: the toast names it, and the card still lists it.
 		const handOver = setAside.length > 0 && failed.length === 0;
 		toast(
-			batchToast(
-				batch,
-				headlineOf,
-				{ approved, already, failed },
-				handOver ? setAside.length : 0,
-			),
+			batchToast(batch, headlineOf, { approved, already, failed }, handOver ? setAside : []),
 		);
 		if (!alive.current) return;
 		if (handOver) onReviewOne(setAside[0].id, { only: setAside.map((call) => call.id) });
@@ -191,10 +195,14 @@ export function BulkApproveDialog({ heldIds, onClose, onReviewOne }: BulkApprove
 				{deletes.length > 0 && (
 					<div className="bg-surface-field rounded-lg px-3.5 pt-2.5 pb-1">
 						<p className="text-foreground-sub flex items-center gap-1.5 text-[12.5px] font-semibold">
-							<Trash2 className="text-danger h-3.5 w-3.5" aria-hidden="true" />
+							{deletes.every(isDeleteCall) ? (
+								<Trash2 className="text-danger h-3.5 w-3.5" aria-hidden="true" />
+							) : (
+								<ShieldQuestion className="h-3.5 w-3.5" aria-hidden="true" />
+							)}
 							{shown.length > 0
-								? `Next: ${plural(deletes.length, 'delete', 'deletes')}, approved one at a time`
-								: 'Deletes are approved one at a time'}
+								? `Next: ${plural(deletes.length, ownWords.one, ownWords.many)}, approved one at a time`
+								: `${ownWords.lead} are approved one at a time`}
 						</p>
 						<ul className="divide-hairline-row divide-y">
 							{deletes.map((call) => (
@@ -312,15 +320,16 @@ function batchToast(
 	batch: readonly HeldExecutionResponse[],
 	headlineOf: (call: HeldExecutionResponse) => string,
 	{ approved, already, failed }: { approved: number; already: number; failed: string[] },
-	setAside: number,
+	setAside: readonly HeldExecutionResponse[],
 ) {
 	const total = batch.length;
+	const words = ownReviewWords(setAside);
 	const next =
-		setAside === 0
+		setAside.length === 0
 			? null
-			: setAside === 1
-				? 'The delete is next, to approve on its own.'
-				: `The ${setAside} deletes are next, to approve one at a time.`;
+			: setAside.length === 1
+				? `The ${words.one} is next, to approve on its own.`
+				: `The ${setAside.length} ${words.many} are next, to approve one at a time.`;
 	if (approved === total) {
 		return {
 			title:

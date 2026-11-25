@@ -18,6 +18,7 @@ import {
 	seedCredentialBindings,
 	seedExtraAgents,
 	setBindingPermissions,
+	setCredentialBindingExpiry,
 } from '@/modules/agents/mocks/handlers';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 import {
@@ -2139,6 +2140,81 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		});
 	});
 
+	// --- When access ends: the end date, Expired, renewing ----------------------
+
+	it('an expired binding reads Expired on its row and in the sheet; renewing restores it', async () => {
+		setCredentialBindingExpiry(
+			'agnt_active_1',
+			'cred_slack_1',
+			new Date(Date.now() - 2 * 86_400_000 - 60_000).toISOString(),
+		);
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('Expired · renew to restore');
+		const slackTile = tileOpener('Slack').closest('[data-testid="api-tile"]') as HTMLElement;
+		expect(within(slackTile).getByTestId('tile-expiry')).toHaveTextContent(
+			'Expired 2 days ago',
+		);
+
+		const inDialog = within(await openSidebar('Slack'));
+		expect(inDialog.getByTestId('sidebar-status-chip')).toHaveAttribute(
+			'data-status',
+			'expired',
+		);
+		expect(inDialog.getByTestId('sidebar-expiry-status')).toHaveTextContent(
+			/^Expired 2 days ago \(.+\)\. Calls through this credential are refused until it is renewed\.$/,
+		);
+		const save = inDialog.getByTestId('sidebar-renew-save');
+		expect(save).toHaveTextContent('Renew');
+		expect(save).toBeDisabled();
+
+		await user.selectOptions(inDialog.getByTestId('sidebar-renew-duration-preset'), '7d');
+		await user.click(save);
+		await waitFor(() =>
+			expect(inDialog.getByTestId('sidebar-status-chip')).toHaveAttribute(
+				'data-status',
+				'ready',
+			),
+		);
+		expect(inDialog.getByTestId('sidebar-expiry-status')).toHaveTextContent(
+			/^Expires in 7 days/,
+		);
+		expect(screen.queryByText('Expired · renew to restore')).not.toBeInTheDocument();
+		expect(within(slackTile).getByTestId('tile-expiry')).toHaveTextContent('Expires in 7 days');
+	});
+
+	it('says when there is no end date, and clearing one asks first', async () => {
+		setCredentialBindingExpiry(
+			'agnt_active_1',
+			'cred_slack_1',
+			new Date(Date.now() + 3 * 86_400_000 + 60_000).toISOString(),
+		);
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+		expect(inDialog.getByTestId('sidebar-expiry-status')).toHaveTextContent(
+			/^Expires in 3 days/,
+		);
+
+		await user.selectOptions(inDialog.getByTestId('sidebar-renew-duration-preset'), 'custom');
+		await user.selectOptions(inDialog.getByTestId('sidebar-renew-duration-unit'), 'never');
+		await user.click(inDialog.getByTestId('sidebar-renew-save'));
+		const warning = await screen.findByRole('dialog', { name: 'Remove the expiry?' });
+		expect(within(warning).getByTestId('no-expiry-warning')).toHaveTextContent(
+			'support-agent will keep this access until someone removes it.',
+		);
+		await user.click(within(warning).getByRole('button', { name: 'Remove expiry' }));
+
+		await waitFor(() =>
+			expect(inDialog.getByTestId('sidebar-expiry-status')).toHaveTextContent(
+				/^No expiry — this access lasts until someone removes it\./,
+			),
+		);
+		// The sheet behind the warning is still open.
+		expect(screen.getByRole('dialog', { name: 'Slack' })).toBeVisible();
+	});
+
 	// --- Read-only: an archived agent ----------------------------------------
 
 	it('an archived agent’s panel is view only: no Edit access, no danger zone, no Pause', async () => {
@@ -2272,6 +2348,18 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 		expect(
 			inDialog.getByRole('button', { name: 'Unbind Slack bot token from support-agent' }),
 		).toBeInTheDocument();
+	});
+
+	it('offers no renewal on a credential shared with the viewer, only its end date', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const shared = within(await openSidebar('Slack'));
+		expect(shared.getByTestId('sidebar-expiry-status')).toHaveTextContent(/^No expiry/);
+		expect(shared.queryByTestId('sidebar-renew')).not.toBeInTheDocument();
+		// The viewer's own credential can be renewed.
+		await userEvent.setup().keyboard('{Escape}');
+		const own = within(await openSidebar('GitHub'));
+		expect(own.getByTestId('sidebar-renew')).toBeInTheDocument();
 	});
 
 	it('counts only the viewer’s agents on a shared credential', async () => {

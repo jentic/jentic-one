@@ -369,6 +369,9 @@ test('Add APIs → the setup queue: ① Credential, ② Access defaulting to Rea
 		/^0 allow · 0 ask · 0 deny · \d+ not set$/,
 	);
 	await preset('Read only').click();
+	// How long access lasts is a required choice (nothing is preselected), and it gates
+	// "Add without rules…" as well as Add.
+	await queue.getByTestId('queue-access-duration-preset').selectOption('7d');
 
 	// Under the presets: Effective access, Try a request, Add without rules….
 	await expect(step.getByTestId('queue-access-tools').getByRole('listitem')).toHaveText([

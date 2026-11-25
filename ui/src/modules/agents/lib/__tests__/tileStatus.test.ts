@@ -18,6 +18,24 @@ describe('deriveTileStatus', () => {
 		expect(deriveTileStatus({ ...live, rules: rules(2, 3) })).toBe('ready');
 	});
 
+	it('says Expired once the end date passes, whatever the rules', () => {
+		const status = deriveTileStatus({ ...live, expired: true, rules: rules(3, 0) });
+		expect(status).toBe('expired');
+		expect(TILE_STATUS_LABEL[status]).toBe('Expired · renew to restore');
+	});
+
+	it('reports a suspension before an expiry, as the broker does', () => {
+		expect(
+			deriveTileStatus({ ...live, suspended: true, expired: true, rules: rules(1, 0) }),
+		).toBe('suspended');
+	});
+
+	it('reports an expiry before the agent not serving', () => {
+		expect(
+			deriveTileStatus({ ...live, agentServing: false, expired: true, rules: rules(1, 0) }),
+		).toBe('expired');
+	});
+
 	it('says Blocked when there are no rules, never Ready', () => {
 		const status = deriveTileStatus({ ...live, rules: rules(0, 0) });
 		expect(status).toBe('blocked-no-rules');

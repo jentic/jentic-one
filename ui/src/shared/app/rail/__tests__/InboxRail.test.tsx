@@ -176,6 +176,28 @@ describe('rail — Inbox tab', () => {
 		await checkA11y(container);
 	});
 
+	it('marks a call held because access ended, and no other', async () => {
+		rows = [
+			...rows,
+			heldCall({
+				id: 'held_ended',
+				kind: 'grant_renewal' as HeldExecutionResponse['kind'],
+				created_at: minutesAgo(1),
+			}),
+		];
+		window.localStorage.setItem(RAIL_COLLAPSED_STORAGE_KEY, '0');
+		window.localStorage.setItem(RAIL_TAB_STORAGE_KEY, 'inbox');
+		renderRail(<AgentRail />);
+
+		const billing = await screen.findByRole('region', { name: 'billing-ops' });
+		const ended = (await within(billing).findAllByRole('listitem')).filter((row) =>
+			row.querySelector('[data-held-id="held_ended"]'),
+		);
+		expect(ended).toHaveLength(1);
+		expect(within(ended[0]).getByTestId('access-ended-chip')).toHaveTextContent('Access ended');
+		expect(within(billing).getAllByTestId('access-ended-chip')).toHaveLength(1);
+	});
+
 	it("opens a call's review from its row, and a group's oldest from Review all", async () => {
 		window.localStorage.setItem(RAIL_COLLAPSED_STORAGE_KEY, '0');
 		window.localStorage.setItem(RAIL_TAB_STORAGE_KEY, 'inbox');

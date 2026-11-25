@@ -40,7 +40,6 @@ import {
 	replaceAgentPermissions,
 	revokeAgentApiKey,
 	listAgentCredentialBindings,
-	bindCredentialToAgent,
 	unbindCredentialFromAgent,
 	resumeAgentCredentialBinding,
 	listAgentBindingPermissions,
@@ -445,37 +444,6 @@ export function usePrimeBindingPermissions(agentId: string | null) {
 		},
 		[agentId, qc],
 	);
-}
-
-/**
- * Bind a credential to this agent with the wizard's chosen initial grant.
- * `rules: null` is the deliberate "start blocked" mode. `silent` suppresses the
- * toasts for callers that bind several credentials and report each themselves.
- */
-export function useBindAgentCredential(agentId: string | null, options?: { silent?: boolean }) {
-	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
-	const silent = options?.silent ?? false;
-	return useMutation<
-		CredentialBindingEntity,
-		Error,
-		{ credentialId: string; rules: PermissionRuleInput[] | null }
-	>({
-		mutationFn: ({ credentialId, rules }) => {
-			if (!agentId) {
-				return Promise.reject(
-					new Error('Cannot bind a credential before the agent loads.'),
-				);
-			}
-			return bindCredentialToAgent(agentId, credentialId, rules);
-		},
-		onSuccess: (_binding, { credentialId }) => {
-			invalidate(credentialId);
-			if (!silent) toast({ title: 'Credential bound', variant: 'success' });
-		},
-		onError: (e) => {
-			if (!silent) notifyError(e, 'Failed to bind the credential.');
-		},
-	});
 }
 
 /**

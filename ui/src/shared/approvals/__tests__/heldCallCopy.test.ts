@@ -5,7 +5,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { isRouteHeadline } from '@/shared/approvals/heldCall';
-import { askPhrase, expiresIn, heldCallAsk, waitingSince } from '@/shared/approvals/heldCallCopy';
+import {
+	accessEndedAsk,
+	askPhrase,
+	expiresIn,
+	heldCallAsk,
+	waitingCallAsk,
+	waitingSince,
+} from '@/shared/approvals/heldCallCopy';
 
 const NOW = Date.parse('2026-10-22T12:00:00Z');
 const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
@@ -67,5 +74,35 @@ describe('expiresIn', () => {
 		expect(expiresIn(at(20_000), NOW)).toBe('expires in 1 min');
 		expect(expiresIn(at(-MIN), NOW)).toBe('expired');
 		expect(expiresIn('not a date', NOW)).toBe('');
+	});
+});
+
+describe('a call held because access ended', () => {
+	it('reads as the access that ended, not as a call to approve', () => {
+		expect(accessEndedAsk('billing-ops', 'stripe')).toBe(
+			"billing-ops's access to stripe ended",
+		);
+		const renewal = { kind: 'grant_renewal', api_name: 'stripe' };
+		expect(waitingCallAsk(renewal, 'billing-ops', 'POST /v1/charges')).toBe(
+			"billing-ops's access to stripe ended",
+		);
+	});
+
+	it('leaves every other call as what the agent wants to run', () => {
+		for (const call of [
+			{ kind: 'execution', api_name: 'stripe' },
+			{ api_name: 'stripe' },
+			{ kind: null, api_name: 'stripe' },
+		]) {
+			expect(waitingCallAsk(call, 'billing-ops', 'Create a charge')).toBe(
+				'billing-ops wants to run “Create a charge”',
+			);
+		}
+	});
+
+	it('strips direction controls from the names it puts in the sentence', () => {
+		expect(accessEndedAsk('\u202Ebilling-ops', '\u2066stripe')).toBe(
+			"billing-ops's access to stripe ended",
+		);
 	});
 });

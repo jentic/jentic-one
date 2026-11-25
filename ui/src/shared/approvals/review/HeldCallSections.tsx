@@ -24,6 +24,7 @@ import { ROUTE_PATHS } from '@/shared/app/routes';
 import {
 	agentReasonOf,
 	isDeleteCall,
+	isRenewalCall,
 	isRouteHeadline,
 	type HeldCallDetail,
 } from '@/shared/approvals/heldCall';
@@ -235,16 +236,28 @@ export function RequestDetails({ call }: { call: HeldCallDetail }) {
  * reference for a ticket or a chat. The id stays out of the copy otherwise.
  */
 export function ReviewFooter({ call }: { call: HeldCallDetail }) {
+	// A call held because its binding ended is not held by any rule: say why it is
+	// held, and point at the agent's access rather than its rules.
+	const renewal = isRenewalCall(call);
 	return (
 		<footer className="text-foreground-faint flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11.5px]">
 			<p>
-				An Ask rule on this agent&apos;s access to <UserText>{call.api_name}</UserText>{' '}
-				holds calls like this one.{' '}
+				{renewal ? (
+					<>
+						Held because this agent&apos;s access to{' '}
+						<UserText>{call.api_name}</UserText> ended.{' '}
+					</>
+				) : (
+					<>
+						An Ask rule on this agent&apos;s access to{' '}
+						<UserText>{call.api_name}</UserText> holds calls like this one.{' '}
+					</>
+				)}
 				<AppLink
 					href={ROUTE_PATHS.agentTab(call.agent_id)}
 					className="text-primary inline-flex items-center gap-0.5 font-medium hover:underline"
 				>
-					Review the agent&apos;s rules
+					{renewal ? "Review the agent's access" : "Review the agent's rules"}
 					<ArrowUpRight className="h-3 w-3" aria-hidden="true" />
 				</AppLink>
 			</p>

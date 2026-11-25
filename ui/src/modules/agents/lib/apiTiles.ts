@@ -9,6 +9,7 @@ import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import { credentialAwaitsConsent, idTail } from '@/shared/credentials/lib/credentialIdentity';
+import { bindingIsExpired } from '@/shared/credentials/lib/bindingExpiry';
 import type { BindingRulesState } from '@/modules/agents/api';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
 import { ruleSummaryOf, rulesBlock } from '@/modules/agents/lib/tileStatus';
@@ -42,10 +43,30 @@ export interface ApiTileModel {
 	 * the credential's org row is unreachable — its owner is then unknown. */
 	credentialCreatedBy?: string | null;
 	boundAt: string;
+	/** Last call to this tile's API through the binding's credential; null =
+	 * never used, absent = not reported. See {@link tileLastUsedAt}. */
+	lastUsedAt?: string | null;
 	/** Soft-suspended — the broker excludes the binding until resumed. */
 	suspended: boolean;
 	/** Why it is suspended (`api_deleted` = its API was deleted). */
 	suspendedReason: string | null;
+	/** When the binding stops authorizing calls; null/absent = never. Shared by
+	 * every tile of the binding: a vendor-wide binding ends for all its APIs. */
+	expiresAt?: string | null;
+	/** The binding's end date has passed — refused until renewed. */
+	expired?: boolean;
+	/** Which limit ended it (`end_date`, `idle`); null while it holds. */
+	expiredReason?: string | null;
+	/** Idle limit in seconds, and when it ends the binding if unused. */
+	maxIdlePeriod?: number | null;
+	idleExpiresAt?: string | null;
+	/** Whether the owner is warned before it ends (its end date or idle limit). */
+	idleWarning?: boolean;
+	/** What a call through it gets once it has ended: `hold` or `refuse`. */
+	afterExpiry?: string | null;
+	/** The use count (1 is single use) and the uses left; null without one. */
+	maxQuota?: number | null;
+	quotaRemaining?: number | null;
 	/** OAuth sign-in not completed. Drives the dashed treatment. */
 	awaitingConsent: boolean;
 	/** The registry has an upstream spec update this API hasn't adopted. */
@@ -170,6 +191,37 @@ export function partitionBindings(
 	return { live, orphans };
 }
 
+/**
+ * When the agent last called one tile's API through the binding: null when it
+ * never has, undefined when the server doesn't report it. A vendor-wide binding
+ * fans out to a tile per API, so each reads its own API's entry; a tile with no
+ * API name (an unimported wildcard) stands for the whole binding.
+ */
+export function tileLastUsedAt(
+	binding: Pick<CredentialBindingEntity, 'lastUsedAt' | 'lastUsedByApi'>,
+	vendor: string,
+	apiName: string | null,
+	version: string | null = null,
+): string | null | undefined {
+	if (binding.lastUsedAt === undefined) return undefined;
+	if (apiName == null || binding.lastUsedByApi === undefined) return binding.lastUsedAt;
+	const uses = binding.lastUsedByApi.filter((u) => u.vendor === vendor && u.name === apiName);
+	if (version === null) return uses[0]?.lastUsedAt ?? null;
+	const match = uses.find((u) => u.version === version);
+	// Older servers and records may lack a version. Its activity cannot be attributed to this tile.
+	return match?.lastUsedAt ?? (uses.some((u) => u.version == null) ? undefined : null);
+}
+
+function lastUsedField(
+	binding: CredentialBindingEntity,
+	vendor: string,
+	apiName: string | null,
+	version: string | null = null,
+): Pick<ApiTileModel, 'lastUsedAt'> {
+	const lastUsedAt = tileLastUsedAt(binding, vendor, apiName, version);
+	return lastUsedAt === undefined ? {} : { lastUsedAt };
+}
+
 /** Compose the tile list for one agent. A binding that serves nothing — an
  * orphan (see {@link isOrphanBinding}), or any binding the backend could not
  * enrich — yields no tile. */
@@ -195,6 +247,15 @@ export function composeApiTiles(
 			boundAt: binding.boundAt,
 			suspended: binding.suspended,
 			suspendedReason: binding.suspendedReason,
+			expiresAt: binding.expiresAt ?? null,
+			expired: bindingIsExpired(binding),
+			expiredReason: binding.expiredReason ?? null,
+			maxIdlePeriod: binding.maxIdlePeriod ?? null,
+			idleExpiresAt: binding.idleExpiresAt ?? null,
+			idleWarning: binding.idleWarning ?? false,
+			afterExpiry: binding.afterExpiry ?? 'hold',
+			maxQuota: binding.maxQuota ?? null,
+			quotaRemaining: binding.quotaRemaining ?? null,
 			awaitingConsent: credentialAwaitsConsent(credential),
 			authLabel: credential ? (AUTH_TILE_LABEL[credential.type] ?? null) : null,
 			authType: credential?.type ?? null,
@@ -205,6 +266,12 @@ export function composeApiTiles(
 			// Not imported here — render from the reference's machine tuple.
 			tiles.push({
 				...base,
+				...lastUsedField(
+					binding,
+					served.vendor,
+					served.name ?? null,
+					served.version ?? null,
+				),
 				title:
 					apiRefDisplayName({ vendor: served.vendor, name: served.name }) ||
 					served.vendor,
@@ -222,6 +289,7 @@ export function composeApiTiles(
 		// `ably-io` here.
 		tiles.push({
 			...base,
+			...lastUsedField(binding, api.api.vendor, api.api.name, api.api.version),
 			title:
 				apiRefDisplayName({
 					displayName: api.display_name,
@@ -367,8 +435,8 @@ export function tileStats(
 			continue;
 		}
 		configured.add(apiKey);
-		// A pause is a deliberate exclusion, not a missing fact.
-		if (tile.suspended) continue;
+		// A pause or a lapsed end date is a deliberate exclusion, not a missing fact.
+		if (tile.suspended || tile.expired) continue;
 		const rules = rulesFor?.(tile);
 		if (rulesBlock(ruleSummaryOf(rules))) {
 			blockedBindings.add(tile.bindingId);

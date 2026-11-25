@@ -24,14 +24,38 @@ import {
 	useConfirmConnectSession,
 	useConnectSession,
 	usePollConnectSessionStatus,
+	useGrantPolicyLimits,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 } from '@/shared/credentials/api/vendors-hooks';
+import { usePreselectGrantDefaults } from '@/shared/credentials/lib/grantDefaults';
 import {
 	cancelConnectSession,
 	cancelConnectSessionOnUnload,
 } from '@/shared/credentials/api/vendors-client';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
+import {
+	expiresAtFromDuration,
+	expiresAtIso,
+	type BindingDuration,
+} from '@/shared/credentials/lib/bindingDuration';
+import { idleLimitError, idleSeconds, type IdleLimit } from '@/shared/credentials/lib/idleLimit';
+import {
+	DEFAULT_AFTER_EXPIRY,
+	expiryWarnable,
+	expiryWarning,
+	type AfterExpiry,
+} from '@/shared/credentials/lib/accessEnd';
+import { AccessEndFields } from './AccessEndFields';
+import { IdleLimitField } from './IdleLimitField';
+import { SingleUseField } from './SingleUseField';
+import {
+	NO_DURATION_HINT,
+	choosesNoExpiry,
+	durationChosen,
+} from '@/shared/credentials/lib/bindingExpiry';
+import { BindingDurationField } from './BindingDurationField';
+import { NoExpiryConfirmDialog, useNoExpiryConfirm } from './NoExpiryConfirmDialog';
 import type {
 	ConfirmResponse,
 	PermissionRule,
@@ -71,6 +95,7 @@ export function VendorSelfConnectFlow({
 	// (when set) so scope catalog / default_scopes come from *this* admin-
 	// registered OAuth app, not another source for the same slug. Without
 	// the pin, a config tile and a registration would share one catalog.
+	const accessSummaryId = useId();
 	const capabilities = useVendorAuthCapabilities(vendor.key, vendor.registration_id);
 	const agents = useAgentsForPicker();
 
@@ -95,6 +120,21 @@ export function VendorSelfConnectFlow({
 	// a specific agent), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
 	const [agentId, setAgentId] = useState<string | null>(preselectedAgentId ?? null);
+	// How long the binding lasts, when an agent is picked; nothing preselected.
+	const [duration, setDuration] = useState<BindingDuration | null>(null);
+	const [idle, setIdle] = useState<IdleLimit | null>(null);
+	const [uses, setUses] = useState<number | null>(null);
+	const [warn, setWarn] = useState(false);
+	const [afterExpiry, setAfterExpiry] = useState<AfterExpiry>(DEFAULT_AFTER_EXPIRY);
+	// The org's defaults preselect the controls; its maximums bound them.
+	const limits = useGrantPolicyLimits();
+	usePreselectGrantDefaults(limits, (d) => {
+		setDuration((cur) => cur ?? d.duration);
+		setIdle((cur) => cur ?? d.idle);
+		setUses((cur) => cur ?? d.uses);
+	});
+	const durationRef = useRef<HTMLSelectElement>(null);
+	const noExpiry = useNoExpiryConfirm();
 
 	const startMutation = useStartIntegrationConnect();
 	const confirmMutation = useConfirmConnectSession(session?.id ?? '', session?.pollToken ?? '');
@@ -318,6 +358,24 @@ export function VendorSelfConnectFlow({
 				permission_rules: finalRules,
 				agent_id: agentId,
 				revision_id: session.revisionId,
+				// Worked out now, as the user confirms: the duration runs from here.
+				...(agentId
+					? {
+							expires_at: expiresAtIso(duration) ?? null,
+							max_idle_period: idleSeconds(idle),
+							...(expiryWarning(
+								warn,
+								expiresAtFromDuration(duration),
+								idleSeconds(idle),
+							)
+								? { idle_warning: true }
+								: {}),
+							...(uses !== null ? { max_quota: uses } : {}),
+							...(afterExpiry !== DEFAULT_AFTER_EXPIRY
+								? { after_expiry: afterExpiry }
+								: {}),
+						}
+					: {}),
 			});
 			// A vendor session's OAuth confirm always answers with a vendor
 			// challenge; the other result kinds belong to approve mode.
@@ -455,6 +513,48 @@ export function VendorSelfConnectFlow({
 				onToggle={toggleScope}
 			/>
 
+			{agentId && (
+				<BindingDurationField
+					maxSeconds={limits.expires.maxSeconds}
+					value={duration}
+					onChange={setDuration}
+					label="Access expires after"
+					selectRef={durationRef}
+					testIdPrefix="self-connect"
+					describedBy={accessSummaryId}
+				/>
+			)}
+			{agentId && (
+				<IdleLimitField
+					maxSeconds={limits.idle.maxSeconds}
+					value={idle}
+					onChange={setIdle}
+					testIdPrefix="self-connect"
+					describedBy={accessSummaryId}
+				/>
+			)}
+			{agentId && (
+				<SingleUseField
+					value={uses}
+					onChange={setUses}
+					end={expiresAtFromDuration(duration)}
+					idleSeconds={idleSeconds(idle)}
+					testIdPrefix="self-connect"
+					summaryId={accessSummaryId}
+					emptyHint={NO_DURATION_HINT}
+				/>
+			)}
+			{agentId && (
+				<AccessEndFields
+					warn={warn}
+					onWarnChange={setWarn}
+					warnable={expiryWarnable(expiresAtFromDuration(duration), idleSeconds(idle))}
+					afterExpiry={afterExpiry}
+					onAfterExpiryChange={setAfterExpiry}
+					testIdPrefix="self-connect"
+				/>
+			)}
+
 			{flowError && <ErrorAlert message={flowError} />}
 
 			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
@@ -465,7 +565,15 @@ export function VendorSelfConnectFlow({
 				<Button
 					type="button"
 					variant="primary"
-					onClick={(): void => void goToRules()}
+					onClick={(): void =>
+						noExpiry.request(
+							agentId != null &&
+								choosesNoExpiry(duration) &&
+								idleSeconds(idle) === null &&
+								uses === null,
+							() => void goToRules(),
+						)
+					}
 					// ``:connect`` fires from this button (not on mount) so
 					// the user's credential-name pick is captured first.
 					// Scope-less vendors (empty catalog) proceed with the
@@ -475,13 +583,24 @@ export function VendorSelfConnectFlow({
 					// ``:confirm`` (connect unbound, bind later via the
 					// credentials API).
 					disabled={
-						(scopes.length > 0 && selectedScopes.size === 0) || startMutation.isPending
+						(scopes.length > 0 && selectedScopes.size === 0) ||
+						// Binding an agent waits for how long the access lasts.
+						(agentId != null &&
+							(!durationChosen(duration, limits.expires.maxSeconds) ||
+								idleLimitError(idle, limits.idle.maxSeconds) !== null)) ||
+						startMutation.isPending
 					}
 					loading={startMutation.isPending}
 				>
 					Continue
 				</Button>
 			</div>
+			<NoExpiryConfirmDialog
+				{...noExpiry.dialogProps}
+				subject={agents.data?.data.find((a) => a.id === agentId)?.name ?? 'The agent'}
+				confirmLabel="Continue without expiry"
+				fieldRef={durationRef}
+			/>
 		</div>
 	);
 }

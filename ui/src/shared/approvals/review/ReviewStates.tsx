@@ -227,6 +227,8 @@ export interface ReviewReceipt {
 	kind: 'approved' | 'denied' | 'conflict' | 'expired';
 	heldId: string;
 	headline: string;
+	/** An approval that re-granted the agent's ended access first. */
+	regranted?: boolean;
 }
 
 export function ReceiptLine({
@@ -254,7 +256,11 @@ export function ReceiptLine({
 					</ReceiptIcon>
 					<p className="text-foreground-sub min-w-0 flex-1 text-[12.5px] leading-5">
 						<span className="text-foreground-name font-semibold">
-							{receipt.kind === 'approved' ? 'Approved' : 'Denied'}
+							{receipt.kind === 'approved'
+								? receipt.regranted
+									? 'Re-granted access'
+									: 'Approved'
+								: 'Denied'}
 						</span>{' '}
 						· <UserText>{receipt.headline}</UserText>
 					</p>

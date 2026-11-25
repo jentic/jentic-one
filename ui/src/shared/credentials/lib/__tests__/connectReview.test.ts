@@ -15,4 +15,18 @@ describe('describeConfirmError', () => {
 		);
 		expect(copy.message).not.toContain('agt_1');
 	});
+
+	it('ends the dialog when the agent has an expired binding for the API', () => {
+		const copy = describeConfirmError({
+			status: 409,
+			code: 'connect_session_binding_expired',
+			message: "agent 'agt_1' has an expired credential binding for this API",
+		});
+
+		expect(copy.action).toBe('ended');
+		expect(copy.message).toBe(
+			"This agent's access to this API has expired. Renew or remove that binding before approving a new connection.",
+		);
+		expect(copy.message).not.toContain('agt_1');
+	});
 });

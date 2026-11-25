@@ -54,6 +54,16 @@ export interface ReviewSession {
 	target_kind?: 'vendor' | 'api';
 	/** OAuth scopes the session asks for — compared with an existing credential's grant. */
 	requested_scopes?: string[];
+	/**
+	 * How long the requester asked the access to last, in seconds from
+	 * approval; null when nothing was asked. Preselected on the review page;
+	 * the approver decides the binding's actual end date on confirm.
+	 */
+	/** ISO 8601 duration (`"P7D"`). */
+	requested_expires_in?: string | null;
+	/** The idle limit the requester asked for, in seconds; null when none. */
+	/** ISO 8601 duration (`"P14D"`). */
+	requested_max_idle_period?: string | null;
 	/** Where an API target's live revision came from; null for vendor targets. */
 	provenance?: ReviewProvenance | null;
 	/** The agent the session binds and its owner (server data). */
@@ -212,6 +222,19 @@ export interface ExistingCredential {
 	other_bound_agents: BoundAgentRef[];
 	can_bind: boolean;
 	needs_vendor_consent: boolean;
+	/** The session agent's own binding to it, when it already has one (it keeps its limits). */
+	agent_binding?: SessionAgentBinding | null;
+}
+
+/** The session agent's existing binding to a credential, as the review reports it. */
+export interface SessionAgentBinding {
+	expires_at: string | null;
+	/** ISO 8601 duration (`"P14D"`); null without an idle limit. */
+	max_idle_period: string | null;
+	max_quota: number | null;
+	quota_remaining: number | null;
+	suspended: boolean;
+	expired: boolean;
 }
 
 /**
@@ -253,6 +276,16 @@ export interface ConfirmRequest {
 	digest?: string | null;
 	/** The revision the approver saw; a newer one is 409 ``revision_changed``. */
 	revision_id?: string | null;
+	/** The new binding's end date (future); null or absent binds with no expiry. */
+	expires_at?: string | null;
+	/** The new binding's idle limit in seconds; null or absent sets none. The client sends it as ISO 8601. */
+	max_idle_period?: number | null;
+	/** Warn the agent's owner before the new binding ends (its end date or idle limit). */
+	idle_warning?: boolean;
+	/** The new binding's use count (1 is single use); null or absent sets none. */
+	max_quota?: number | null;
+	/** What a call gets once the new binding has ended; absent holds the first call. */
+	after_expiry?: 'hold' | 'refuse';
 }
 
 /** Fields every non-OAuth confirm carries: the rules and the review it answers. */
@@ -262,6 +295,16 @@ interface ReviewedConfirm {
 	expected_agent_id: string | null;
 	digest: string;
 	revision_id: string | null;
+	/** The new binding's end date (future); null or absent binds with no expiry. */
+	expires_at?: string | null;
+	/** The new binding's idle limit in seconds; null or absent sets none. The client sends it as ISO 8601. */
+	max_idle_period?: number | null;
+	/** Warn the agent's owner before the new binding ends (its end date or idle limit). */
+	idle_warning?: boolean;
+	/** The new binding's use count (1 is single use); null or absent sets none. */
+	max_quota?: number | null;
+	/** What a call gets once the new binding has ended; absent holds the first call. */
+	after_expiry?: 'hold' | 'refuse';
 }
 
 export interface ApiKeyConfirmRequest extends ReviewedConfirm {

@@ -249,6 +249,7 @@ export {
 	isEmptyAllowRule,
 	cleanPermissionRule,
 	allowAllRule,
+	askAllRule,
 	grantsEverything,
 } from '@/shared/ui/PermissionRuleEditor';
 export type {

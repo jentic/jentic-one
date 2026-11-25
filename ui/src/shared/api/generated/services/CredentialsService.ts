@@ -234,6 +234,9 @@ export class CredentialsService {
      * the caller may see.
      * Suspended bindings are included with their flag set and, when known, the
      * reason (`api_deleted` when the credential's API was deleted).
+     * Expired bindings are included too, with `expires_at` and `expired` set.
+     * Each row carries `last_used_at`: when that agent last made a call through
+     * this credential (null if never).
      * @returns CredentialAgentListResponse Successful Response
      * @throws ApiError
      */

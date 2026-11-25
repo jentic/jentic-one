@@ -27,6 +27,7 @@ import {
 	type HeldExecutionDetailResponse,
 	type HeldExecutionResponse,
 } from '@/shared/api';
+import { isoDurationOrNull } from '@/shared/lib';
 import { ORG_ADMIN } from '@/shared/auth/usePermission';
 import type { HeldCallDetail } from '@/shared/approvals/heldCall';
 
@@ -184,14 +185,40 @@ export async function getApproval(heldExecutionId: string): Promise<HeldCallDeta
 	}
 }
 
+/**
+ * A decision as the review builds it: the generated request, with a renewal's
+ * `after_expiry` as its plain wire value (`hold` or `refuse`) and its idle
+ * limit in whole seconds (sent as an ISO 8601 duration).
+ */
+export type DecideApprovalBody = Omit<DecideHeldExecutionRequest, 'renewal'> & {
+	renewal?:
+		| (Omit<
+				NonNullable<DecideHeldExecutionRequest['renewal']>,
+				'after_expiry' | 'max_idle_period'
+		  > & {
+				after_expiry?: 'hold' | 'refuse' | null;
+				max_idle_period?: number | null;
+		  })
+		| null;
+};
+
 export async function decideApproval(
 	heldExecutionId: string,
-	body: DecideHeldExecutionRequest,
+	body: DecideApprovalBody,
 ): Promise<HeldExecutionResponse> {
 	try {
 		return await HeldExecutionsService.decideHeldExecution({
 			heldExecutionId,
-			requestBody: body,
+			// The wire values are the generated enum's; the idle limit goes as ISO 8601.
+			requestBody: (body.renewal
+				? {
+						...body,
+						renewal: {
+							...body.renewal,
+							max_idle_period: isoDurationOrNull(body.renewal.max_idle_period),
+						},
+					}
+				: body) as DecideHeldExecutionRequest,
 		});
 	} catch (error) {
 		throw toApprovalsError(error, 'Failed to submit decision');

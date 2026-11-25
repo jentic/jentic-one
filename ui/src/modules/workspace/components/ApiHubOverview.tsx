@@ -12,7 +12,8 @@
  *                       binds an existing agent in place, with its access
  *                       rules (`BindAgentDialog`). Each bound agent shows
  *                       whether its rules let any call through (Blocked when
- *                       not). Whether a credential is needed at all comes
+ *                       not), and when its access here ends (Expired once
+ *                       it has). Whether a credential is needed at all comes
  *                       from the live spec's required security, not just the
  *                       declared schemes (`useApiAuthRequirement`); an API
  *                       with no schemes offers no Add credential. A live API
@@ -37,6 +38,7 @@ import {
 	Activity,
 	Bot,
 	ChevronRight,
+	Hourglass,
 	KeyRound,
 	Link2,
 	LockOpen,
@@ -66,6 +68,12 @@ import { CredentialType, useCreateCredential, type Credential } from '@/shared/c
 import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
 import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdentity';
+import {
+	bindingExpiresSoon,
+	bindingExpiryLabel,
+	bindingExpiryShortLabel,
+	bindingIsExpired,
+} from '@/shared/credentials/lib/bindingExpiry';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -161,6 +169,51 @@ function AgentAccessMarker({ state }: { state: BindingAccessState }): ReactNode 
 		<span className="text-muted-foreground text-[11px]" data-testid="hub-access-agent-checking">
 			{state === 'loading' ? '· checking…' : '· status unknown'}
 		</span>
+	);
+}
+
+/**
+ * A bound agent's chip status: "Expired" once every binding it reaches this
+ * API through has ended, else its access marker and — when its access here
+ * does end — "Ends in 3d", with the full phrase in the tooltip.
+ */
+function AgentChipStatus({
+	state,
+	expiry,
+}: {
+	state: BindingAccessState;
+	expiry: { expired: boolean; endsAt: string | null };
+}): ReactNode {
+	if (expiry.expired) {
+		return (
+			<span
+				className="text-foreground-sub inline-flex items-center gap-0.5 text-[11px]"
+				data-testid="hub-access-agent-expired"
+				title="Its access has expired. Renew it on the agent's page or the credential."
+			>
+				<Hourglass className="text-caution h-3 w-3" aria-hidden="true" />
+				Expired
+			</span>
+		);
+	}
+	const end = expiry.endsAt ? { expiresAt: expiry.endsAt } : null;
+	return (
+		<>
+			<AgentAccessMarker state={state} />
+			{end && (
+				<span
+					className={
+						bindingExpiresSoon(end)
+							? 'text-caution text-[11px]'
+							: 'text-muted-foreground text-[11px]'
+					}
+					data-testid="hub-access-agent-expiry"
+					title={bindingExpiryLabel(end) ?? undefined}
+				>
+					· {bindingExpiryShortLabel(end)}
+				</span>
+			)}
+		</>
 	);
 }
 
@@ -323,7 +376,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 	const agentState = (agentId: string): BindingAccessState => {
 		let state: BindingAccessState | null = null;
 		for (const b of agentAccess?.bindings ?? []) {
-			if (b.agentId !== agentId || b.suspended) continue;
+			if (b.agentId !== agentId || b.suspended || bindingIsExpired(b)) continue;
 			const s = accessStates.get(`${b.agentId}\n${b.credentialId}`) ?? 'loading';
 			// Any open binding is enough; otherwise the least-known state wins.
 			if (s === 'open') return 'open';
@@ -331,6 +384,28 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 				state = s;
 		}
 		return state ?? 'open';
+	};
+	// When the agent's access to this API ends: once every binding still in
+	// force has ended. `expired` when none is left in force but one ran out;
+	// `endsAt` — the last of their end dates — when every one has an end date.
+	const accessExpiry = (agentId: string): { expired: boolean; endsAt: string | null } => {
+		let inForce = 0;
+		let lapsed = false;
+		let endsAt: string | null = null;
+		let openEnded = false;
+		for (const b of agentAccess?.bindings ?? []) {
+			if (b.agentId !== agentId || b.suspended) continue;
+			if (bindingIsExpired(b)) {
+				lapsed = true;
+				continue;
+			}
+			inForce += 1;
+			if (!b.expiresAt) openEnded = true;
+			else if (endsAt === null || Date.parse(b.expiresAt) > Date.parse(endsAt)) {
+				endsAt = b.expiresAt;
+			}
+		}
+		return { expired: inForce === 0 && lapsed, endsAt: openEnded ? null : endsAt };
 	};
 
 	return (
@@ -456,8 +531,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 														<span className="sr-only">(suspended)</span>
 													</>
 												) : (
-													<AgentAccessMarker
+													<AgentChipStatus
 														state={agentState(a.agent_id)}
+														expiry={accessExpiry(a.agent_id)}
 													/>
 												)}
 											</AppLink>

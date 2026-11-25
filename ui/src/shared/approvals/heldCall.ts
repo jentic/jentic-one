@@ -37,6 +37,37 @@ export function isDeleteCall(call: Pick<HeldExecutionResponse, 'method'>): boole
 	return heldCallMethod(call) === 'DELETE';
 }
 
+/** Whether a held call is held because the agent's access ended (`kind: grant_renewal`). */
+export function isRenewalCall(call: { kind?: string | null }): boolean {
+	return call.kind === 'grant_renewal';
+}
+
+/**
+ * Calls bulk approve sets aside for the single-call review: deletes, and
+ * re-grants of ended access (which need the new access chosen, one at a time).
+ * The card's "Approve N" and the confirmation both ask this, so they agree.
+ */
+export function needsOwnReview(
+	call: Pick<HeldExecutionResponse, 'method'> & { kind?: string | null },
+): boolean {
+	return isDeleteCall(call) || isRenewalCall(call);
+}
+
+/**
+ * How to name the calls set aside for their own review: "delete(s)" or
+ * "re-grant(s)" when they are all one kind, "call(s)" when mixed. `lead` opens
+ * a sentence ("Deletes", "Re-grants", "These calls").
+ */
+export function ownReviewWords(
+	calls: readonly (Pick<HeldExecutionResponse, 'method'> & { kind?: string | null })[],
+): { one: string; many: string; lead: string } {
+	if (calls.length > 0 && calls.every(isDeleteCall))
+		return { one: 'delete', many: 'deletes', lead: 'Deletes' };
+	if (calls.length > 0 && calls.every(isRenewalCall))
+		return { one: 're-grant', many: 're-grants', lead: 'Re-grants' };
+	return { one: 'call', many: 'calls', lead: 'These calls' };
+}
+
 /** The method as one upper-case token, however the row spells it. */
 export function heldCallMethod(call: Pick<HeldExecutionResponse, 'method'>): string {
 	return String(call.method ?? '')

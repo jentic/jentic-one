@@ -38,6 +38,8 @@ import {
 	type AgentPendingApprovals,
 	type HeldCall,
 } from '@/shared/approvals';
+import { AccessEndedChip } from '@/shared/approvals/AccessEndedChip';
+import { isRenewalCall } from '@/shared/approvals/heldCall';
 import { waitingSince } from '@/shared/approvals/heldCallCopy';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 
@@ -241,6 +243,11 @@ function InboxRow({
 						{headline}
 					</span>
 					<span className="text-foreground-faint block truncate text-[11px] leading-4">
+						{isRenewalCall(call) && (
+							<>
+								<AccessEndedChip />{' '}
+							</>
+						)}
 						{call.api_vendor} · {waitingSince(call.created_at, now)}
 					</span>
 				</span>

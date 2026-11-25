@@ -22,15 +22,13 @@ import {
 	isAlreadySettled,
 	isDecideForbidden,
 	listOrgAdmins,
+	type DecideApprovalBody,
 	type OrgAdmins,
 } from '@/shared/approvals/client';
 import { isCallUnderWay } from '@/shared/approvals/approvalState';
 import type { HeldCallDetail } from '@/shared/approvals/heldCall';
-import {
-	sharedQueryKeys,
-	type DecideHeldExecutionRequest,
-	type HeldExecutionResponse,
-} from '@/shared/api';
+import { invalidateBindingSurfaces } from '@/shared/credentials/api';
+import { sharedQueryKeys, type HeldExecutionResponse } from '@/shared/api';
 
 export { ApprovalDecision, HeldExecutionState } from '@/shared/api';
 export {
@@ -38,6 +36,7 @@ export {
 	HELD_EXECUTION_ERRORS,
 	isAlreadySettled,
 	isDecideForbidden,
+	type DecideApprovalBody,
 	type OrgAdmin,
 	type OrgAdmins,
 } from '@/shared/approvals/client';
@@ -212,7 +211,7 @@ export function useDecideApproval(options: DecideApprovalOptions = {}) {
 	return useMutation<
 		HeldExecutionResponse,
 		Error,
-		{ heldExecutionId: string; body: DecideHeldExecutionRequest }
+		{ heldExecutionId: string; body: DecideApprovalBody }
 	>({
 		mutationFn: ({ heldExecutionId, body }) => decideApproval(heldExecutionId, body),
 		onSuccess: (data, { heldExecutionId }) => {
@@ -227,10 +226,15 @@ export function useDecideApproval(options: DecideApprovalOptions = {}) {
 			});
 			dropFromPending(qc, heldExecutionId);
 			if (!batch) refreshSurfaces(qc);
+			const renewed = data.kind === 'grant_renewal' && data.state === 'approved';
+			// Re-granting access changes the binding: every surface showing it refetches.
+			if (renewed) void invalidateBindingSurfaces(qc, data.credential_id, [data.agent_id]);
 			if (quiet) return;
 			const verb = data.state === 'approved' ? 'Approved' : 'Denied';
 			toast({
-				title: `${verb} execution for ${data.api_vendor}/${data.api_name}`,
+				title: renewed
+					? `Re-granted access to ${data.api_vendor}/${data.api_name}`
+					: `${verb} execution for ${data.api_vendor}/${data.api_name}`,
 				variant: 'success',
 			});
 		},

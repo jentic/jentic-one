@@ -29,6 +29,24 @@ import type {
 	VendorAuthCapabilities,
 } from '@/shared/credentials/api/vendors-types';
 
+/** Choose how long the access lasts (7 days) when the step asks and nothing is chosen yet. */
+async function pickDurationIfAsked(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+	for (const testId of ['approve-duration-preset', 'self-connect-duration-preset']) {
+		const field = screen.queryByTestId(testId);
+		if (field instanceof HTMLSelectElement && field.value === '') {
+			await user.selectOptions(field, '7d');
+		}
+	}
+}
+
+/** Wait until Continue can be pressed, choosing a duration (7 days) first when the step asks. */
+async function waitForContinue(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+	await waitFor(async () => {
+		await pickDurationIfAsked(user);
+		expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled();
+	});
+}
+
 /**
  * VendorConnectFlow is the credentials dialog's vendor-approval sub-flow,
  * with two entry modes:
@@ -304,9 +322,8 @@ describe('VendorConnectFlow — self mode', () => {
 		await screen.findByText('read:user');
 		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
 		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
 		await user.click(
@@ -391,9 +408,8 @@ describe('VendorConnectFlow — self mode', () => {
 		await screen.findByText('read:user');
 		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
 		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
 		await user.click(
@@ -435,9 +451,8 @@ describe('VendorConnectFlow — self mode', () => {
 		const nameInput = await screen.findByLabelText(/credential name/i);
 		await user.clear(nameInput);
 		await user.type(nameInput, 'GitHub (personal)');
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(capturedBody).not.toBeNull());
 		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub (personal)' });
@@ -461,9 +476,8 @@ describe('VendorConnectFlow — self mode', () => {
 			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
 		);
 		const user = userEvent.setup();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(capturedBody).not.toBeNull());
 		// The input is pre-filled with the vendor display name so the
@@ -502,9 +516,8 @@ describe('VendorConnectFlow — self mode', () => {
 			/>,
 		);
 		const user = userEvent.setup();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(capturedBody).not.toBeNull());
 		expect(capturedBody).toMatchObject({
@@ -539,9 +552,7 @@ describe('VendorConnectFlow — self mode', () => {
 		renderWithProviders(
 			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
 		);
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(userEvent.setup());
 		expect(screen.queryByText('Shared app')).not.toBeInTheDocument();
 	});
 
@@ -563,9 +574,8 @@ describe('VendorConnectFlow — self mode', () => {
 			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
 		);
 		const user = userEvent.setup();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(capturedBody).not.toBeNull());
 		expect(capturedBody).not.toHaveProperty('oauth_app_registration_id');
@@ -698,9 +708,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		// ``selectedScopes`` from ``requested`` scopes at that point, so
 		// the Continue button becomes enabled.
 		expect(await screen.findByText('repo')).toBeInTheDocument();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		// The rules page mounts, agent-requested row is present with the tag.
 		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
@@ -751,9 +760,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		);
 		const user = userEvent.setup();
 		expect(await screen.findByText('repo')).toBeInTheDocument();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
 		// Open the add-rule form.
@@ -820,9 +828,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		);
 		const user = userEvent.setup();
 		expect(await screen.findByText('repo')).toBeInTheDocument();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
 		// The seeded row is present.
@@ -910,9 +917,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		);
 		const user = userEvent.setup();
 		await screen.findByText('repo');
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		// Open the top-level ``/repos/`` group.
 		const groupHeader = await screen.findByRole('button', { name: /\/repos\// });
@@ -1001,9 +1007,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		);
 		const user = userEvent.setup();
 		await screen.findByText('repo');
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		// The warning appears once the ops query has resolved.
 		expect(await screen.findByText(/no ops affected/i)).toBeInTheDocument();
@@ -1063,9 +1068,8 @@ describe('VendorConnectFlow — approve mode', () => {
 		);
 		const user = userEvent.setup();
 		await screen.findByText('repo');
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		// Open the Add-rule form.
 		await user.click(await screen.findByRole('button', { name: /add rule/i }));
@@ -1153,9 +1157,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		expect(await screen.findByText(/doesn't expose any scopes/i)).toBeInTheDocument();
 		// No agent is selected either (the picker defaults to "no agent") —
 		// agent_id is optional at :confirm (M2).
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
 		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
@@ -1245,9 +1248,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		const user = userEvent.setup();
 
 		await screen.findByText('read:user');
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.click(await screen.findByRole('button', { name: /skip.*continue/i }));
 
@@ -1261,9 +1263,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		// a fresh click on Continue after Try Again produces a SECOND
 		// ``:connect`` call — asserted below.
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(connectCalls).toBe(2));
 	});
@@ -1290,9 +1291,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 
 		// Continue enables once :connect returns — no agent required.
 		await screen.findByText('read:user');
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
 	});
@@ -1377,9 +1377,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		const user = userEvent.setup();
 
 		expect(await screen.findByText('repo')).toBeInTheDocument();
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
 
@@ -1411,6 +1410,7 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 
 		// Confirm — the wire body still carries the constraint, and the
 		// poll_token rode the query string.
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await waitFor(() => expect(confirmBody).not.toBeNull());
 		expect(confirmToken).toBe('tok_ops');
@@ -1507,9 +1507,8 @@ describe('VendorConnectFlow — token-less approve (owner / org admin)', () => {
 		);
 		const user = userEvent.setup();
 		await screen.findByText(/an agent is asking to connect/i);
-		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
-		);
+		await waitForContinue(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.click(await screen.findByRole('button', { name: /skip.*continue/i }));
 		expect(await screen.findByText('MOCK-1234')).toBeInTheDocument();

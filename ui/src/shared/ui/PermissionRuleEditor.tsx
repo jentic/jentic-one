@@ -130,6 +130,18 @@ export function grantsEverything(rules: PermissionRuleInput[]): boolean {
 	);
 }
 
+/**
+ * The "Ask every time" rule: hold every call for a reviewer's approval. Like
+ * {@link allowAllRule} it matches via `path: ".*"` in regex mode, since a
+ * condition-less `require-approval` is rejected (422) and would be skipped.
+ */
+export function askAllRule(): PermissionRuleInput {
+	return {
+		...allowAllRule(),
+		effect: 'require-approval' as PermissionRuleInput['effect'],
+	};
+}
+
 /** Is this rule's path matched as a regex? `regex` is the backend default. */
 function isRegexMode(mode: PermissionRuleInput['match_mode']): boolean {
 	return mode == null || String(mode) === 'regex';

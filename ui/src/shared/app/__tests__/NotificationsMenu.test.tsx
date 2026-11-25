@@ -437,6 +437,31 @@ describe('NotificationsMenu', () => {
 			await checkA11y(dialog);
 		});
 
+		it('marks a call held because access ended, and says so in its title', async () => {
+			approvalRows = [
+				heldCall({ id: 'held_plain', path: '/v1/refunds' }),
+				heldCall({ id: 'held_ended', kind: 'grant_renewal' }),
+			];
+			const user = userEvent.setup();
+			renderMenu();
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 4/ }));
+			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+			const waiting = within(dialog).getByRole('region', { name: 'Waiting for you' });
+
+			const ended = (
+				await within(waiting).findByText("scout-bot's access to payments ended")
+			).closest('li')!;
+			expect(within(ended).getByTestId('access-ended-chip')).toHaveTextContent(
+				'Access ended',
+			);
+			// An ordinary held call keeps its wording and carries no chip.
+			const plain = within(waiting)
+				.getByText('scout-bot wants to run POST /v1/refunds')
+				.closest('li')!;
+			expect(within(plain).queryByTestId('access-ended-chip')).toBeNull();
+			await checkA11y(dialog);
+		});
+
 		it("Review closes the menu and opens the call's review pop-up", async () => {
 			approvalRows = [heldCall({ id: 'held_old', path: '/v1/refunds' })];
 			const user = userEvent.setup();
