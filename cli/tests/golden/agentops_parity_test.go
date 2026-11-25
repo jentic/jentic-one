@@ -249,7 +249,7 @@ func TestAgentopsReproducesGoldens(t *testing.T) {
 		// coded error envelope the Audience layer emits from denial.Err()). The
 		// moved renderer must reproduce the recovery block byte-for-byte.
 		var recovery bytes.Buffer
-		ux.RenderSynthesizedDenialRecovery(ctx, &recovery, denial.Status)
+		ux.RenderSynthesizedDenialRecovery(ctx, &recovery, denial.Status, denial.ProblemType)
 		if !strings.HasPrefix(wantStderr, recovery.String()) {
 			t.Errorf("ux.RenderSynthesizedDenialRecovery diverged from the golden recovery block.\n--- want prefix of ---\n%s\n--- got ---\n%s",
 				wantStderr, recovery.String())

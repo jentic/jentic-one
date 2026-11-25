@@ -82,7 +82,11 @@ the tool never polls. Pass `auth_type` when the spec declares several
 schemes (the error lists them), `requested_scopes` for vendor scopes,
 `requested_permission_rules` for the binding rules you need (e.g.
 `[{"effect": "allow", "methods": ["GET"], "path": "/repos/.*"}]` — the
-approver reviews them), and a `reason` the approver sees. When
+approver reviews them), `requested_expires_in` for how long you need the
+access (`"7d"`, `"8h"`, `"30m"`, or ISO 8601 such as `"P7D"`; the approver decides the actual end date,
+so ask for only as long as the task needs), `requested_max_idle_period`
+(`"14d"` or `"P14D"`, 1d to 999d) to have the access end once you stop using it, and a
+`reason` the approver sees. When
 `resolved_flow` is `manual_*` or `awaiting_app` (the result then points
 `next_tool` at `execute`), a human enters the credential, which can take
 hours: relay the URL, **end your turn**, and retry the blocked call later.
@@ -236,7 +240,7 @@ is still waiting — relay that link to your operator rather than calling
 `request_access_change` with `parameters.edit`, and relay the
 `approval_url`. The denial taxonomy
 (`no_credential_binding`, `credential_binding_suspended`,
-`credential_undecryptable`, `credential_identity_mismatch`,
+`credential_binding_expired`, `credential_undecryptable`, `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
 and live in `references/recovery.md`) applies unchanged — the same codes,
 delivered in the envelope instead of stderr.

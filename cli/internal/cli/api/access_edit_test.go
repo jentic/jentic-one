@@ -132,6 +132,40 @@ func TestMCPRequestAccessChange_ACheckAccessRefusalPointsAtShowAccess(t *testing
 	}
 }
 
+// TestMCPRequestAccessChange_ABindingItCannotEditPointsAtItsOperator pins the
+// recovery for 404 agent_binding_not_found: no binding, or a suspended or
+// expired one. "Fix the request, then retry" would loop the agent between
+// show_access and this tool; it is told to ask its operator, never to connect
+// around the binding (Python twin: _EDIT_BINDING_NOT_FOUND_HINT).
+func TestMCPRequestAccessChange_ABindingItCannotEditPointsAtItsOperator(t *testing.T) {
+	cp := &editControlPlane{status: http.StatusNotFound, body: `{"type":"agent_binding_not_found","status":404,
+		"detail":"no credential binding for 'cred_1' that the caller may edit"}`}
+	srv := cp.server(t)
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestAccessChange(activeCtx(srv.URL), callToolRequest("request_access_change",
+		`{"credential_id":"cred_1","resume":true}`))
+	if err != nil {
+		t.Fatalf("handleRequestAccessChange: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want a soft error")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["next_tool"] != "whoami" || payload["error_code"] != ux.CodeResolveFailed {
+		t.Errorf("payload = %v, want RESOLVE_FAILED and next_tool whoami", payload)
+	}
+	if payload["retryable"] != false {
+		t.Errorf("retryable = %v, want false", payload["retryable"])
+	}
+	step, _ := payload["actionable_step"].(string)
+	if !strings.Contains(step, "suspended or expired") || strings.Contains(step, "then retry") ||
+		strings.Contains(step, "request_connection") {
+		t.Errorf("actionable_step = %q", step)
+	}
+}
+
 func TestControlProblemDetail_ReadsAStringOrAFieldErrorList(t *testing.T) {
 	// A control refusal carries a string detail. A body whose detail is a list
 	// of field errors (FastAPI's validation shape) is rendered field by field

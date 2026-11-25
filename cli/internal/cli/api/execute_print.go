@@ -149,7 +149,7 @@ func (a *app) renderExecuteOutput(
 			// pointer would otherwise get only the generic "broker denied" line and
 			// a dead end. Synthesize a default next-step from the HTTP status the
 			// broker already returned so no denial is a dead end.
-			a.printSynthesizedDenialRecovery(cmd.Context(), denial.Status)
+			a.printSynthesizedDenialRecovery(cmd.Context(), denial.Status, denial.ProblemType)
 		}
 		return denial.Err()
 	}

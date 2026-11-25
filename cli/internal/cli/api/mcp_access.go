@@ -40,11 +40,12 @@ func (s *mcpServer) accessToolSpecs() []mcpToolSpec {
 				Description: "Show what your binding to one credential lets you do: its permission rules " +
 					"with their ids (data, first match wins, default deny), the shared rule set it points " +
 					"at (whose rules apply instead of data), the credential's granted OAuth scopes, and " +
-					"whether the binding is suspended. " +
+					"whether the binding is suspended or expired. " +
 					`Example: {"credential_id": "cred_…"} — credential ids come from whoami's bindings. ` +
 					"Call it before asking for a change to your access, and when such a request fails. " +
-					"A credential you are not bound to (or whose binding is suspended) is not found: " +
-					"call whoami to list your bindings.",
+					"A suspended or expired binding is your operator's to resume or renew: no change to " +
+					"your access brings it back, so ask your operator. A credential you are not bound to " +
+					"(or cannot read) is not found: call whoami to list your bindings.",
 				InputSchema: showAccessSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},
@@ -261,6 +262,9 @@ func (s *mcpServer) editErrorResult(ctx context.Context, err error, what string)
 		if p.Directive.Strategy == "check_access" {
 			next = "show_access"
 		}
+	} else if ok && p.Type == editBindingNotFoundType {
+		next = "whoami"
+		extra["retryable"] = false
 	}
 	return s.softErrorExtra(ctx, coded, next, extra)
 }

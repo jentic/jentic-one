@@ -192,6 +192,13 @@ conflicts. Read your access again and amend the request to fit. After the human 
   binding to the credential that serves this API. Only they can resume it.
   Do not start a new connect for the same API (it is refused while the
   suspension stands); ask your operator, then retry once they resume it.
+- **`credential_binding_expired` (403)** — your binding to the credential
+  that serves this API has expired (its end date has passed). Only your
+  operator can renew it. Do not start a new connect for the same API (it is
+  refused with 409 `connect_session_binding_expired` while the expired
+  binding stands), and don't ask for a rule change: `show_access` reports
+  the binding with `expired: true`, and `request_access_change` is refused
+  for it. Ask your operator, then retry once they renew it.
 - **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't
   cover this API (e.g. it targets a different name/version, or was stored

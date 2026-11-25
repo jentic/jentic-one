@@ -154,7 +154,7 @@ func classifyTransportErr(err error) error {
 // credential_not_provisioned) point at request_connection — the agent can
 // start the credential-provisioning leg itself — while everything else
 // (action_denied, credential_identity_mismatch, credential_binding_suspended,
-// unknown types) keeps whoami
+// credential_binding_expired, unknown types) keeps whoami
 // ("check your bindings, never execute to probe access", §3.2). Binding an
 // existing credential and scope grants stay operator actions; the hints keep
 // saying so.
@@ -186,8 +186,9 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 // action_denied (a permission rule forbids the op; connecting a fresh
 // credential must NOT be taught as a way around it),
 // credential_identity_mismatch and credential_undecryptable (operator fixes
-// the credential), credential_binding_suspended (only the operator resumes
-// the binding; a new connect is refused), and any unknown type — keeps whoami.
+// the credential), credential_binding_suspended and credential_binding_expired
+// (only the operator resumes or renews the binding; a new connect is refused),
+// and any unknown type — keeps whoami.
 var provisioningProblemTypes = map[string]bool{
 	"no_credential_binding":      true,
 	"credential_not_provisioned": true,
@@ -310,6 +311,16 @@ func synthesizedDenialHint(status int, problemType string) string {
 			"connecting a credential yourself (your operator approves the approval_url); if a credential " +
 			"already serves it, ask your operator to bind you to it (dashboard) — binding is always a " +
 			"human action."
+	}
+	// A suspended or expired binding is the operator's to lift: a new connect
+	// is refused, and a rule change would not bring the binding back.
+	switch problemType {
+	case "credential_binding_suspended":
+		return "Your operator suspended your access to this API. Do not connect a new credential; " +
+			"ask your operator to resume it."
+	case "credential_binding_expired":
+		return "Your access to this API has expired. Do not connect a new credential; " +
+			"ask your operator to renew it."
 	}
 	switch status {
 	case http.StatusForbidden:

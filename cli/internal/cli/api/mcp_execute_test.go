@@ -233,6 +233,16 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"credential_binding_suspended","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"api":{"vendor":"acme","name":"pets","version":"v1"}},"human_readable_instruction":"Your operator has suspended your access to 'acme/pets'. Ask your operator whether they will resume it."}}`, "whoami",
 		},
 		{
+			// So is an expired one: only a renewal brings it back.
+			"credential_binding_expired", http.StatusForbidden,
+			`{"type":"credential_binding_expired","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"api":{"vendor":"acme","name":"pets","version":"v1"}},"human_readable_instruction":"Your access to 'acme/pets' has expired. Ask your operator to renew it."}}`, "whoami",
+		},
+		{
+			// With no directive, the synthesized hint still offers no connect.
+			"credential_binding_expired_no_directive", http.StatusForbidden,
+			`{"type":"credential_binding_expired","detail":"denied"}`, "whoami",
+		},
+		{
 			"credential_undecryptable", http.StatusFailedDependency,
 			`{"type":"credential_undecryptable","detail":"denied"}`, "whoami",
 		},
@@ -1434,5 +1444,23 @@ func TestExecute_DotSegmentInputIsInvalidParams(t *testing.T) {
 				t.Errorf("wireErr.Message = %q, want dot-segment path parameter message", wireErr.Message)
 			}
 		})
+	}
+}
+
+// TestSynthesizedDenialHint_BindingCutOffsAskTheOperator pins the
+// directive-less hint for a suspended or expired binding: ask the operator to
+// resume or renew it, never connect (Python twin: _synthesized_denial_hint).
+func TestSynthesizedDenialHint_BindingCutOffsAskTheOperator(t *testing.T) {
+	for problemType, want := range map[string]string{
+		"credential_binding_suspended": "ask your operator to resume it",
+		"credential_binding_expired":   "ask your operator to renew it",
+	} {
+		hint := synthesizedDenialHint(http.StatusForbidden, problemType)
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint for %s = %q, want it to contain %q", problemType, hint, want)
+		}
+		if strings.Contains(hint, "request_connection") {
+			t.Errorf("hint for %s = %q must not teach request_connection", problemType, hint)
+		}
 	}
 }

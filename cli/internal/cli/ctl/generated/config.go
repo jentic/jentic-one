@@ -736,6 +736,9 @@ type ConfigSchemaJson struct {
 	// Entitlement corresponds to the JSON schema field "entitlement".
 	Entitlement *EntitlementConfig `json:"entitlement,omitempty,omitzero" yaml:"entitlement,omitempty" mapstructure:"entitlement,omitempty"`
 
+	// GrantExpiry corresponds to the JSON schema field "grant_expiry".
+	GrantExpiry *GrantExpiryConfig `json:"grant_expiry,omitempty,omitzero" yaml:"grant_expiry,omitempty" mapstructure:"grant_expiry,omitempty"`
+
 	// HeldExecutions corresponds to the JSON schema field "held_executions".
 	HeldExecutions *HeldExecutionsConfig `json:"held_executions,omitempty,omitzero" yaml:"held_executions,omitempty" mapstructure:"held_executions,omitempty"`
 
@@ -1562,6 +1565,95 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 		plain.Region = "us-east-1"
 	}
 	*j = EntitlementConfig(plain)
+	return nil
+}
+
+// Settings for credential grant (agent binding) expiry.
+type GrantExpiryConfig struct {
+	// Default lifetime of a new credential grant whose creation sets no policy (ISO
+	// 8601, e.g. P30D): it ends this long after it is granted. Unset (the open-source
+	// default): such a grant has no end date.
+	DefaultExpiresIn interface{} `json:"default_expires_in,omitempty,omitzero" yaml:"default_expires_in,omitempty" mapstructure:"default_expires_in,omitempty"`
+
+	// Default idle limit of a new credential grant whose creation sets no policy (ISO
+	// 8601, P1D to P999D, e.g. P14D). Unset: no idle limit.
+	DefaultIdlePeriod interface{} `json:"default_idle_period,omitempty,omitzero" yaml:"default_idle_period,omitempty" mapstructure:"default_idle_period,omitempty"`
+
+	// How often the job runs that warns an agent's owner before a binding with the
+	// warning on ends (ISO 8601, e.g. P1D). Defaults to once a day. Keep the warning
+	// window at least twice this: a binding is only warned when a run finds its
+	// deadline inside the window, so with a longer interval a deadline can fall
+	// between two runs and pass without a warning.
+	IdleWarningInterval string `json:"idle_warning_interval" yaml:"idle_warning_interval" mapstructure:"idle_warning_interval"`
+
+	// Shortest idle limit, or grant length before an end date, that is ever warned
+	// about (ISO 8601, e.g. P4D). Below this a warning would cover half the window or
+	// more and arrive for bindings doing exactly what they were set up to do.
+	// Defaults to 4 days.
+	IdleWarningMinLength string `json:"idle_warning_min_length" yaml:"idle_warning_min_length" mapstructure:"idle_warning_min_length"`
+
+	// How long before a binding's end date or idle deadline its owner is warned (ISO
+	// 8601, e.g. PT48H), once per deadline. Defaults to 48 hours. Keep it at least
+	// twice idle_warning_interval, or a deadline can pass between two runs of the
+	// warning job unwarned.
+	IdleWarningWindow string `json:"idle_warning_window" yaml:"idle_warning_window" mapstructure:"idle_warning_window"`
+
+	// Longest a credential grant may last from when it is granted or renewed (ISO
+	// 8601, e.g. P90D). When set, every grant must end: a grant with no end date, or
+	// one further out, is refused (422), and a creation that sets no policy gets the
+	// default (or this maximum when no default is set).
+	MaxExpiresIn interface{} `json:"max_expires_in,omitempty,omitzero" yaml:"max_expires_in,omitempty" mapstructure:"max_expires_in,omitempty"`
+
+	// Longest idle limit a credential grant may carry (ISO 8601, P1D to P999D). When
+	// set, every grant must carry one: none, or a longer one, is refused (422).
+	MaxIdlePeriod interface{} `json:"max_idle_period,omitempty,omitzero" yaml:"max_idle_period,omitempty" mapstructure:"max_idle_period,omitempty"`
+
+	// Whether a new credential grant whose creation sets no policy allows a single
+	// call (a use count of 1).
+	SingleUseByDefault bool `json:"single_use_by_default,omitempty,omitzero" yaml:"single_use_by_default,omitempty" mapstructure:"single_use_by_default,omitempty"`
+}
+
+type GrantExpiryConfigDefaultExpiresIn_0 *string
+
+type GrantExpiryConfigDefaultIdlePeriod_0 *string
+
+type GrantExpiryConfigMaxExpiresIn_0 *string
+
+type GrantExpiryConfigMaxIdlePeriod_0 *string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *GrantExpiryConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain GrantExpiryConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["idle_warning_interval"]; !ok || v == nil {
+		plain.IdleWarningInterval = "P1D"
+	}
+	if matched, _ := regexp.MatchString(`^P(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`, string(plain.IdleWarningInterval)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "IdleWarningInterval", `^P(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`)
+	}
+	if v, ok := raw["idle_warning_min_length"]; !ok || v == nil {
+		plain.IdleWarningMinLength = "P4D"
+	}
+	if matched, _ := regexp.MatchString(`^P(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`, string(plain.IdleWarningMinLength)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "IdleWarningMinLength", `^P(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`)
+	}
+	if v, ok := raw["idle_warning_window"]; !ok || v == nil {
+		plain.IdleWarningWindow = "PT48H"
+	}
+	if matched, _ := regexp.MatchString(`^P(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`, string(plain.IdleWarningWindow)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "IdleWarningWindow", `^P(\d+W)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$`)
+	}
+	if v, ok := raw["single_use_by_default"]; !ok || v == nil {
+		plain.SingleUseByDefault = false
+	}
+	*j = GrantExpiryConfig(plain)
 	return nil
 }
 

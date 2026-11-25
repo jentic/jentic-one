@@ -124,13 +124,31 @@ func RenderStoppedInstanceHint(ctx context.Context, w io.Writer) {
 }
 
 // RenderSynthesizedDenialRecovery writes a best-effort recovery hint for a
-// broker denial that carried no agent_directive, keyed off the HTTP status the
-// broker already returned (UX7). It mirrors RenderDirective's shape
+// broker denial that carried no agent_directive, keyed off the problem type
+// when it names a cut-off only the operator can lift, else off the HTTP status
+// the broker already returned (UX7). It mirrors RenderDirective's shape
 // (instruction + `run:` command) so a directive-less denial reads the same as a
 // directed one. Unknown statuses fall back to the generic setup check.
-func RenderSynthesizedDenialRecovery(ctx context.Context, w io.Writer, status int) {
+//
+// A suspended or expired binding is a 403 like a missing one, but the
+// status-keyed "ask your operator to connect a credential" would send the
+// operator the wrong way: a new connect for the same API is refused while the
+// binding stands (MCP twin: synthesizedDenialHint).
+func RenderSynthesizedDenialRecovery(ctx context.Context, w io.Writer, status int, problemType string) {
 	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(w, st.Warn.Render("Denied — recovery required:"))
+	switch problemType {
+	case "credential_binding_suspended":
+		fmt.Fprintln(w, "  Your operator suspended your access to this API. Do not run `jentic connect` for it;")
+		fmt.Fprintln(w, "  ask your operator to resume it, then retry.")
+		fmt.Fprintln(w, "  stuck? "+st.Accent.Render("jentic doctor"))
+		return
+	case "credential_binding_expired":
+		fmt.Fprintln(w, "  Your access to this API has expired. Do not run `jentic connect` for it;")
+		fmt.Fprintln(w, "  ask your operator to renew it, then retry.")
+		fmt.Fprintln(w, "  stuck? "+st.Accent.Render("jentic doctor"))
+		return
+	}
 	switch status {
 	case http.StatusForbidden: // 403: have an identity, no credential binding for this API yet
 		fmt.Fprintln(w, "  This agent has no credential binding for the API you called. Check what you can run,")

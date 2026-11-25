@@ -697,6 +697,8 @@ func TestConnect_WaitTerminalOutcomes(t *testing.T) {
 		status, code, wantCode, wantStep string
 	}{
 		{`{"status":"failed","error_code":"cancelled"}`, "cancelled", ux.CodeResolveFailed, "still want"},
+		{`{"status":"failed","error_code":"binding_expired"}`, "binding_expired", ux.CodeBrokerDenied, "renew the expired binding"},
+		{`{"status":"failed","error_code":"binding_suspended"}`, "binding_suspended", ux.CodeBrokerDenied, "resume the suspended binding"},
 		{`{"status":"failed","error_code":"scheme_changed"}`, "scheme_changed", ux.CodeResolveFailed, "jentic connect --api acme/acme-api/v1"},
 		{`{"status":"expired"}`, "", ux.CodeResolveFailed, "jentic connect --api acme/acme-api/v1"},
 		{`{"status":"failed","error_code":"vendor_error"}`, "vendor_error", ux.CodeBrokerDenied, "dashboard"},
@@ -776,6 +778,39 @@ func TestConnect_TargetArgumentErrors(t *testing.T) {
 	}
 }
 
+// A bad --expires-in / --max-idle / --rules is the closed MISSING_ARGUMENT code, marked
+// details.reason=invalid_value (and the flag) so an agent can tell a refused
+// value from a flag it forgot, and never reaches the wire.
+func TestConnect_BadAccessDurationIsAnInvalidValue(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("an argument error must never reach the wire")
+	}))
+	defer srv.Close()
+
+	for name, tc := range map[string]struct {
+		args []string
+		flag string
+	}{
+		"expires-in not a duration": {[]string{"connect", "github", "--expires-in", "soon"}, "--expires-in"},
+		"expires-in over 999 days":  {[]string{"connect", "github", "--expires-in", "1000d"}, "--expires-in"},
+		"max-idle under a day":      {[]string{"connect", "github", "--max-idle", "12h"}, "--max-idle"},
+		"max-idle not a duration":   {[]string{"connect", "github", "--max-idle", "later"}, "--max-idle"},
+		"rules not a list":          {[]string{"connect", "github", "--rules", `{"effect":"allow"}`}, "--rules"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runConnectTree(t, srv.URL, tc.args...)
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+				t.Fatalf("%v returned %T (%v), want MISSING_ARGUMENT", tc.args, err, err)
+			}
+			if coded.Details["reason"] != "invalid_value" || coded.Details["flag"] != tc.flag {
+				t.Errorf("details = %v, want reason=invalid_value flag=%s", coded.Details, tc.flag)
+			}
+		})
+	}
+}
+
 // The API-target error codes map to coded errors whose actionable step is the
 // lane's recovery: retry with --auth-type, import the API, report once, or do
 // not ask again.
@@ -814,6 +849,10 @@ func TestConnect_APITargetErrorCodes(t *testing.T) {
 		{
 			http.StatusConflict, `{"type":"connect_session_binding_suspended","detail":"suspended"}`,
 			ux.CodeBrokerDenied, "ask your operator to resume it",
+		},
+		{
+			http.StatusConflict, `{"type":"connect_session_binding_expired","detail":"expired"}`,
+			ux.CodeBrokerDenied, "ask your operator to renew it",
 		},
 	} {
 		t.Run(tc.body, func(t *testing.T) {

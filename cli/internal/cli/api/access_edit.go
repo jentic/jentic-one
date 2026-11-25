@@ -292,9 +292,23 @@ func editRequestCoded(err error, what string) *ux.CodedError {
 		}
 		return mcpCoded(err)
 	}
+	if p.Type == editBindingNotFoundType {
+		coded.Actionable = editBindingNotFoundHint
+		return coded
+	}
 	coded.Actionable = "Fix the request the error names, then retry."
 	return coded
 }
+
+// editBindingNotFoundType is the 404 an edit gets when the caller has no
+// binding to the credential it may change: none at all, or (for an agent) a
+// suspended or expired one. "Fix the request" would loop the agent between
+// show_access and request_access_change; only the operator can act.
+const editBindingNotFoundType = "agent_binding_not_found"
+
+// editBindingNotFoundHint is the recovery for editBindingNotFoundType
+// (Python twin: _EDIT_BINDING_NOT_FOUND_HINT in jentic_one/mcp/access.py).
+const editBindingNotFoundHint = "No binding of yours to this credential can be changed: you are not bound to it, or the binding is suspended or expired. No change to your access brings those back; only your operator can resume or renew them. Check whoami, and ask your operator; do not request a new connection to get around it."
 
 // requestAccessChange starts an edit of the caller's own binding. An edit
 // already open for it comes back as (nil, open session id, nil).

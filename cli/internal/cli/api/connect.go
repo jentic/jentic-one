@@ -73,6 +73,8 @@ func newConnectCmd(a *app) *cobra.Command {
 	var apiRef string
 	var authType string
 	var rulesJSON string
+	var expiresIn string
+	var maxIdle string
 	var wait bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
@@ -144,9 +146,36 @@ func newConnectCmd(a *app) *cobra.Command {
 						Msg:  "--rules: " + err.Error(),
 						Actionable: `Pass a JSON list of rules, e.g. --rules '[{"effect":"allow","methods":["GET"],` +
 							`"path":"/v1/charges","match_mode":"exact"}]' (the denial's suggested_rules fit as-is).`,
+						Details: invalidValueDetails("--rules"),
 					})
 				}
 				rules = decoded
+			}
+			var expiresInSeconds int
+			if expiresIn != "" {
+				seconds, err := parseAccessDuration(expiresIn)
+				if err != nil {
+					return reportCoded(aud, &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        "--expires-in: " + err.Error(),
+						Actionable: "Pass how long you need the access, e.g. --expires-in 7d, 8h or 30m (at most 999d).",
+						Details:    invalidValueDetails("--expires-in"),
+					})
+				}
+				expiresInSeconds = seconds
+			}
+			var maxIdleSeconds int
+			if maxIdle != "" {
+				seconds, err := parseIdleLimit(maxIdle)
+				if err != nil {
+					return reportCoded(aud, &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        "--max-idle: " + err.Error(),
+						Actionable: "Pass an idle limit between 1d and 999d, e.g. --max-idle 14d.",
+						Details:    invalidValueDetails("--max-idle"),
+					})
+				}
+				maxIdleSeconds = seconds
 			}
 			target := connectTargetLabel(vendor, api)
 			rerun := "jentic connect " + vendor
@@ -209,6 +238,12 @@ func newConnectCmd(a *app) *cobra.Command {
 			}
 			if registration != "" {
 				body.OauthAppRegistrationId = &registration
+			}
+			if expiresInSeconds > 0 {
+				body.RequestedExpiresIn = isoDuration(expiresInSeconds)
+			}
+			if maxIdleSeconds > 0 {
+				body.RequestedMaxIdlePeriod = isoDuration(maxIdleSeconds)
 			}
 			// Never set body.AgentId: an agent caller IS the agent (the
 			// control plane injects the identity and refuses an override);
@@ -313,6 +348,10 @@ func newConnectCmd(a *app) *cobra.Command {
 		"with --api: the declared scheme name or kind to use (api_key, bearer, basic, oauth2) when the spec declares several")
 	cmd.Flags().StringVar(&rulesJSON, "rules", "",
 		"permission rules you ask for on the binding, as a JSON list (the approver reviews them; a denial's suggested_rules fit as-is)")
+	cmd.Flags().StringVar(&expiresIn, "expires-in", "",
+		"how long you need the access, e.g. 7d, 8h, 30m or P7D (the approver decides the actual end date)")
+	cmd.Flags().StringVar(&maxIdle, "max-idle", "",
+		"ask for the access to end once unused this long, e.g. 14d or P14D (1d to 999d; the approver decides)")
 	cmd.Flags().BoolVar(&wait, "wait", false,
 		"poll the session until it connects or ends (rejected, expired, or cancelled)")
 	cmd.Flags().DurationVar(&timeout, "timeout", connectWaitDefault,
@@ -590,4 +629,13 @@ func isAmbiguousVendor(he *HTTPError) bool {
 func isInvalidRegistration(he *HTTPError) bool {
 	t, _ := he.Fields()["type"].(string)
 	return he.StatusCode == http.StatusBadRequest && strings.HasSuffix(t, "invalid_oauth_app_registration")
+}
+
+// invalidValueDetails marks a flag given with a value the CLI refuses, as
+// opposed to a flag left out. The closed error_code enum has one code for both
+// (MISSING_ARGUMENT), so details.reason="invalid_value" is the stable
+// discriminator an agent branches on, as details.reason="body_too_large" is
+// for an oversize upload; details.flag names the flag.
+func invalidValueDetails(flag string) map[string]any {
+	return map[string]any{"reason": "invalid_value", "flag": flag}
 }
