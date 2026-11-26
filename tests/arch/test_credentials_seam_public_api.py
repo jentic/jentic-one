@@ -140,6 +140,6 @@ def test_credentials_seam_dataclass_fields() -> None:
     """The exported dataclasses are frozen and keep their field order."""
     for name, expected in EXPECTED_FIELDS.items():
         cls = getattr(seam, name)
-        assert dataclasses.is_dataclass(cls), name
-        assert cls.__dataclass_params__.frozen, f"{name} must be frozen"  # type: ignore[attr-defined]
+        assert isinstance(cls, type) and dataclasses.is_dataclass(cls), name
+        assert cls.__dict__["__dataclass_params__"].frozen, f"{name} must be frozen"
         assert [f.name for f in dataclasses.fields(cls)] == expected, name
