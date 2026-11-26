@@ -32,9 +32,12 @@ class CredentialRef:
     api_vendor: str
     api_name: str | None
     api_version: str | None
+    # Kind of the extension object that manages the credential; ``None`` for
+    # an ordinary credential. A managed credential is never bindable.
+    managed_by_kind: str | None = None
 
 
-_COLUMNS = "id, name, created_by, active, state, api_vendor, api_name, api_version"
+_COLUMNS = "id, name, created_by, active, state, api_vendor, api_name, api_version, managed_by_kind"
 
 
 def _to_ref(row: Sequence[object]) -> CredentialRef:
@@ -47,6 +50,7 @@ def _to_ref(row: Sequence[object]) -> CredentialRef:
         api_vendor=str(row[5]),
         api_name=str(row[6]) if row[6] is not None else None,
         api_version=str(row[7]) if row[7] is not None else None,
+        managed_by_kind=str(row[8]) if row[8] is not None else None,
     )
 
 

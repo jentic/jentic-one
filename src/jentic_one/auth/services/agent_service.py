@@ -40,6 +40,7 @@ from jentic_one.auth.services.errors import (
     ClaimTokenInvalidError,
     CredentialBindingConflictError,
     CredentialBindingNotFoundError,
+    CredentialNotBindableError,
     CredentialNotVisibleError,
     InvalidOwnerError,
     InvalidTransitionError,
@@ -885,7 +886,8 @@ class AgentService:
         """Create a direct agent↔credential binding.
 
         Verifies the caller can see the target credential before writing the
-        binding (control-DB lookup).
+        binding (control-DB lookup), and refuses a credential an extension
+        manages (``CredentialNotBindableError``).
         """
         agent = await self._load_binding_agent(agent_id, identity=identity)
         ref = None
@@ -894,6 +896,8 @@ class AgentService:
                 ref = await CredentialRefRepository.get_by_id(session, credential_id)
         if ref is None or not self._can_bind_credential(identity, ref.created_by):
             raise CredentialNotVisibleError(credential_id)
+        if ref.managed_by_kind is not None:
+            raise CredentialNotBindableError(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             try:
                 binding = await AgentCredentialBindingRepository.bind(
@@ -1054,6 +1058,8 @@ class AgentService:
                 ref = await CredentialRefRepository.get_by_id(session, credential_id)
         if ref is None or not self._can_bind_credential(identity, ref.created_by):
             raise CredentialNotVisibleError(credential_id)
+        if ref.managed_by_kind is not None:
+            raise CredentialNotBindableError(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             updated = await AgentCredentialBindingRepository.set_suspended(
                 session, agent_id=agent_id, credential_id=credential_id, suspended=False
