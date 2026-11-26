@@ -425,20 +425,21 @@ header = await create_managed_credential(
         location="header",
         field_name="X-Api-Key",
     ),
-    identity=identity,      # becomes the credential's owner (created_by)
+    identity=identity,  # becomes the credential's owner (created_by)
     managed_by=marker,
 )
 
 # Rotate in place: same id, audited with `key_rotated`, broker caches invalidated.
 await update_managed_credential(
-    ctx, header.id, CredentialUpdate(type=CredentialType.API_KEY, key=new_secret),
-    identity=identity, managed_by=marker,
+    ctx,
+    header.id,
+    CredentialUpdate(type=CredentialType.API_KEY, key=new_secret),
+    identity=identity,
+    managed_by=marker,
 )
 
 # Use it — only after your own authorization decided the caller may.
-material = await resolve_credential_material(
-    ctx, header.id, expected_type=CredentialType.API_KEY
-)
+material = await resolve_credential_material(ctx, header.id, expected_type=CredentialType.API_KEY)
 
 await delete_managed_credential(ctx, header.id, identity=identity, managed_by=marker)
 ```
