@@ -65,7 +65,10 @@ from jentic_one.control.repos.device_authorization_credential_repo import (
 from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.connect_service import ConnectService
-from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.errors import (
+    CredentialManagedError,
+    CredentialNotFoundError,
+)
 from jentic_one.control.services.credentials.providers.base import NotConnectableError
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectRequest,
@@ -4817,3 +4820,117 @@ async def test_review_deleted_agent_between_reads(
         assert [s for s in admin_statements if "FROM agents WHERE id =" in s] == []
     finally:
         await _cleanup_test_agents(ctx, "agnt_qdel_")
+
+
+async def _standalone_device_credential(ctx: Context) -> str:
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type=CredentialType.OAUTH2,
+            name="standalone device credential",
+            api_vendor="foo",
+            api_name="bar",
+            api_version="v1",
+            provider="device_authorization",
+            created_by=_USER_ID,
+        )
+        await DeviceAuthorizationCredentialRepository.create(
+            session,
+            credential_id=credential.id,
+            client_id="public-client",
+            token_url="https://idp.example.com/token",
+            authorization_endpoint="https://idp.example.com/device/code",
+            requested_scopes=["read"],
+            created_by=_USER_ID,
+        )
+        return credential.id
+
+
+async def _mark_managed(ctx: Context, credential_id: str) -> None:
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.get_by_id(session, credential_id)
+        assert credential is not None
+        credential.managed_by_kind = "example_connection"
+        credential.managed_by_ref = "conn_1"
+
+
+async def _begin_device_flow(ctx: Context, credential_id: str) -> None:
+    begin = df.BeginResult(
+        device_code="device-code-a",
+        user_code="CODE-A",
+        verification_uri="https://idp.example.com/device",
+        verification_uri_complete=None,
+        expires_in=900,
+        interval=1,
+    )
+    with patch.object(df, "begin_device_authorization", new=AsyncMock(return_value=begin)):
+        challenge = await ConnectService(ctx).begin(
+            credential_id, ConnectRequest(scopes=["read"]), identity=_USER_IDENTITY
+        )
+    assert isinstance(challenge, DeviceAuthorizationChallenge)
+
+
+async def _device_flow_state(ctx: Context, credential_id: str) -> tuple[bool, str | None]:
+    """(a token is stored, the in-flight device code ciphertext)."""
+    async with ctx.control_db.session() as session:
+        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+        aux = await DeviceAuthorizationCredentialRepository.get_by_credential(
+            session, credential_id
+        )
+    assert aux is not None
+    return token is not None, aux.encrypted_device_code
+
+
+async def test_device_connect_refuses_a_managed_credential(
+    integration_context: Context, clean_session_tables: None
+) -> None:
+    ctx = integration_context
+    credential_id = await _standalone_device_credential(ctx)
+    await _mark_managed(ctx, credential_id)
+    begin = AsyncMock()
+    with (
+        patch.object(df, "begin_device_authorization", new=begin),
+        pytest.raises(CredentialManagedError),
+    ):
+        await ConnectService(ctx).begin(
+            credential_id, ConnectRequest(scopes=["read"]), identity=_USER_IDENTITY
+        )
+    begin.assert_not_awaited()
+    assert await _device_flow_state(ctx, credential_id) == (False, None)
+
+
+async def test_device_flow_in_flight_on_a_managed_credential_stores_no_grant(
+    integration_context: Context, clean_session_tables: None
+) -> None:
+    """A flow begun before the credential counted as managed is ended unpolled."""
+    ctx = integration_context
+    credential_id = await _standalone_device_credential(ctx)
+    await _begin_device_flow(ctx, credential_id)
+    await _mark_managed(ctx, credential_id)
+
+    poll = AsyncMock(
+        return_value=df.PollResult(status="success", access_token="grant-a", expires_in=3600)
+    )
+    with patch.object(df, "poll_device_authorization", new=poll):
+        await ConnectSessionService(ctx).advance_polling_credential(credential_id)
+
+    poll.assert_not_awaited()
+    assert await _device_flow_state(ctx, credential_id) == (False, None)
+
+
+async def test_device_finalise_rechecks_the_marker_before_storing_the_grant(
+    integration_context: Context, clean_session_tables: None
+) -> None:
+    """Marked managed while the vendor was polled: the grant is discarded."""
+    ctx = integration_context
+    credential_id = await _standalone_device_credential(ctx)
+    await _begin_device_flow(ctx, credential_id)
+
+    async def poll_then_manage(**_: object) -> df.PollResult:
+        await _mark_managed(ctx, credential_id)
+        return df.PollResult(status="success", access_token="grant-a", expires_in=3600)
+
+    with patch.object(df, "poll_device_authorization", new=poll_then_manage):
+        await ConnectSessionService(ctx).advance_polling_credential(credential_id)
+
+    assert await _device_flow_state(ctx, credential_id) == (False, None)
