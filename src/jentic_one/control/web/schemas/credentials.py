@@ -809,8 +809,8 @@ class CredentialRedactedResponse(BaseModel):
             "the managing object. Read-only; it is set when the extension creates "
             "the credential and never changes. A managed credential cannot be bound "
             "to an agent, is never injected into agent calls, and returns 409 "
-            "`credential_managed` on edit or delete (an `org:admin` may still "
-            "delete it). Null for every other credential. Unrelated to the "
+            "`credential_managed` on edit, OAuth reconnect or delete (an "
+            "`org:admin` may still delete it). Null for every other credential. Unrelated to the "
             "provider-level `managed` flag of `GET /credentials/providers`."
         ),
     )

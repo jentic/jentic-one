@@ -21,8 +21,9 @@ creation and never changes; no HTTP request can set it. A managed credential:
   as an existing credential in a connect session;
 - is never resolved by the broker for an agent call, even when named by
   ``Jentic-Credential-Id``;
-- returns 409 ``credential_managed`` on ``PATCH``/``DELETE /credentials/{id}``,
-  except that an ``org:admin`` may delete it;
+- returns 409 ``credential_managed`` on ``PATCH``/``DELETE /credentials/{id}``
+  (an ``org:admin`` may still delete it) and on an OAuth reconnect
+  (``POST /credentials/{id}/connect``), and no connect flow stores a grant on it;
 - is changed or deleted only through ``update_managed_credential`` and
   ``delete_managed_credential`` with the same marker.
 

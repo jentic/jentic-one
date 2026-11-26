@@ -4042,7 +4042,7 @@ type CredentialRedactedResponse struct {
 	// Examples: {"client_id":"ca_example123","connected":true,"grant_type":"authorization_code","scopes":["read_write"],"token_url":"https://connect.stripe.com/oauth/token"}
 	Details *map[string]interface{} `json:"details,omitempty"`
 
-	// ManagedBy Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.
+	// ManagedBy Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit, OAuth reconnect or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.
 	//
 	// Examples: {"kind":"example_connection","ref":"conn_2bYkT0x9Qp"}
 	ManagedBy *ManagedByResponse `json:"managed_by,omitempty"`
@@ -13836,6 +13836,8 @@ type ClientInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -13862,6 +13864,8 @@ type ClientInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -18097,6 +18101,8 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -18133,6 +18139,8 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId Pat
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -31303,6 +31311,8 @@ type ClientWithResponsesInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -31329,6 +31339,8 @@ type ClientWithResponsesInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -51194,6 +51206,8 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -51226,6 +51240,8 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup

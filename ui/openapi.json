@@ -7326,7 +7326,7 @@
                 "type": "null"
               }
             ],
-            "description": "Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.",
+            "description": "Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit, OAuth reconnect or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.",
             "examples": [
               {
                 "kind": "example_connection",
@@ -34265,7 +34265,7 @@
     "/credentials/{credential_id}/connect": {
       "description": "`POST`: Begin OAuth connect flow.",
       "post": {
-        "description": "Initiate the OAuth connect flow for a write-owned credential.\n\nRequires write ownership of the credential (creator or ``org:admin``);\nan agent that can only read the credential through owner delegation must\nuse the reviewed connect-session flow (403 ``connect_requires_review``).\nRequested ``scopes`` may only narrow the credential's stored scopes;\nwidening scopes requires a connect session (422\n``scope_widening_requires_review``).\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.\n\nAn ``authorize_url`` response also sets a short-lived ``HttpOnly``\ncookie scoped to the OAuth callback path: the callback completes only\nin the browser that called this endpoint, so call it from the browser\nthat opens the ``authorize_url``.",
+        "description": "Initiate the OAuth connect flow for a write-owned credential.\n\nRequires write ownership of the credential (creator or ``org:admin``);\nan agent that can only read the credential through owner delegation must\nuse the reviewed connect-session flow (403 ``connect_requires_review``).\nRequested ``scopes`` may only narrow the credential's stored scopes;\nwidening scopes requires a connect session (422\n``scope_widening_requires_review``).\nA credential managed by an extension (`managed_by` set) returns 409\n``credential_managed``, even for its owner or ``org:admin``.\n\nDiscriminates on the provider's returned challenge: OAuth2\nauthorization-code providers return an ``authorize_url`` for popup\nredirect; device-flow providers return ``user_code`` /\n``verification_uri`` for the RFC 8628 human step.\n\nAn ``authorize_url`` response also sets a short-lived ``HttpOnly``\ncookie scoped to the OAuth callback path: the callback completes only\nin the browser that called this endpoint, so call it from the browser\nthat opens the ``authorize_url``.",
         "operationId": "connectCredential",
         "parameters": [
           {
@@ -34358,7 +34358,7 @@
                 }
               }
             },
-            "description": "Credential is not connectable"
+            "description": "Credential is not connectable, or it is managed by an extension and is changed only through it (`credential_managed`)"
           },
           "422": {
             "content": {

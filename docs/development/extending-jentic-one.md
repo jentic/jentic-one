@@ -461,7 +461,11 @@ A managed credential:
   material through the seam instead;
 - **is changed only by its extension**: `PATCH` and `DELETE /credentials/{id}`
   return `409 credential_managed`, except that an `org:admin` may still `DELETE`
-  it (the way out when its managing object is gone). The seam's update and
+  it (the way out when its managing object is gone). An OAuth reconnect,
+  `POST /credentials/{id}/connect`, returns `409 credential_managed` for everyone,
+  and a connect flow begun before the credential was managed stores no grant on
+  it: the callback (or the device-flow poll) re-checks the marker before it
+  writes. The seam's update and
   delete refuse a marker the credential does not carry (`CredentialManagedError`).
 
 Create, update and delete run through the same `CredentialService` as the HTTP

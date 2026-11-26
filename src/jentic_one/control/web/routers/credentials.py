@@ -18,7 +18,10 @@ from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,
     ConnectService,
 )
-from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.errors import (
+    CredentialManagedError,
+    CredentialNotFoundError,
+)
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
     ProviderError,
@@ -495,6 +498,9 @@ async def _complete_oauth_callback(
         return _oauth_callback_error()
     except CredentialNotFoundError:
         _logger.warning("oauth_callback.credential_not_found")
+        return _oauth_callback_error()
+    except CredentialManagedError:
+        _logger.warning("oauth_callback.credential_managed")
         return _oauth_callback_error()
     except ProviderError as exc:
         _logger.warning("oauth_callback.provider_error", error=str(exc))
@@ -1194,7 +1200,10 @@ async def get_connect_flow_status(
             422: problem("Request validation failed or scope widening requires review"),
         },
         not_found(),
-        conflict("Credential is not connectable"),
+        conflict(
+            "Credential is not connectable, or it is managed by an extension and is "
+            "changed only through it (`credential_managed`)"
+        ),
     ),
     response_model=ConnectChallengeResponse,
 )
@@ -1218,6 +1227,8 @@ async def connect_credential(
     Requested ``scopes`` may only narrow the credential's stored scopes;
     widening scopes requires a connect session (422
     ``scope_widening_requires_review``).
+    A credential managed by an extension (`managed_by` set) returns 409
+    ``credential_managed``, even for its owner or ``org:admin``.
 
     Discriminates on the provider's returned challenge: OAuth2
     authorization-code providers return an ``authorize_url`` for popup
