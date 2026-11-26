@@ -58,6 +58,7 @@ _MARKER = seam.ManagedBy(kind="example_connection", ref="conn_one")
 _OTHER_MARKER = seam.ManagedBy(kind="example_connection", ref="conn_two")
 _API_KEY = "sk-managed-seam-secret-0001"  # pragma: allowlist secret
 _SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/managedSEAMEXAMPLE"  # pragma: allowlist secret
+_ROTATED_SECRET = "rotated/secret/value/EXAMPLE0000000000000"  # pragma: allowlist secret
 
 
 def _api_key_payload(name: str = "Managed key") -> seam.CredentialCreate:
@@ -280,7 +281,7 @@ async def test_seam_update_needs_the_matching_marker_and_audits_rotation(
     rotation = seam.CredentialUpdate(
         type=seam.CredentialType.SIGV4,
         access_key_id="AKIAROTATEDSEAMEXAMPL",  # pragma: allowlist secret
-        secret_access_key="rotated/secret/value/EXAMPLE0000000000000",  # pragma: allowlist secret
+        secret_access_key=_ROTATED_SECRET,
     )
 
     with pytest.raises(seam.CredentialManagedError):
@@ -302,7 +303,7 @@ async def test_seam_update_needs_the_matching_marker_and_audits_rotation(
     )
     assert isinstance(material, seam.SigV4Material)
     assert material.access_key_id == "AKIAROTATEDSEAMEXAMPL"  # pragma: allowlist secret
-    assert material.secret_access_key == "rotated/secret/value/EXAMPLE0000000000000"
+    assert material.secret_access_key == _ROTATED_SECRET
 
     updates = [e for e in await _audit(ctx, header.id) if e.action == AuditAction.UPDATE.value]
     assert len(updates) == 1

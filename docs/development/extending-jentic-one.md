@@ -471,7 +471,7 @@ invalidation are identical.
 
 **`resolve_credential_material` performs no authorization.** It returns the
 plaintext of any `active`, `connected` credential of the expected type
-(`api_key` → `ApiKeyMaterial`, `sigv4` → `SigV4Material`; both elide secrets in
+(an API key credential gives `ApiKeyMaterial`, a SigV4 one `SigV4Material`; both elide secrets in
 `repr`), and raises `CredentialUnavailableError` for a missing, inactive, not
 connected, wrong-type or undecryptable credential. It is a Python API with no
 route. The seam never caches or logs the plaintext; do not cache it either.
