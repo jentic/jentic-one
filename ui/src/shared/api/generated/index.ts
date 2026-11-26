@@ -149,6 +149,7 @@ export type { JobResponse } from './models/JobResponse';
 export type { JwksUpdateRequest } from './models/JwksUpdateRequest';
 export type { LoginRequest } from './models/LoginRequest';
 export type { LoginResponse } from './models/LoginResponse';
+export type { ManagedByResponse } from './models/ManagedByResponse';
 export type { McpConfigRegistrationRequest } from './models/McpConfigRegistrationRequest';
 export type { McpConfigRegistrationResponse } from './models/McpConfigRegistrationResponse';
 export { McpConfigRuntime } from './models/McpConfigRuntime';

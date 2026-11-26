@@ -100,6 +100,7 @@ export type { ConnectFlowStatusResponse } from '@/shared/api/generated/models/Co
 export type { CredentialCreateResponse } from '@/shared/api/generated/models/CredentialCreateResponse';
 export type { CredentialListResponse } from '@/shared/api/generated/models/CredentialListResponse';
 export type { CredentialRedactedResponse } from '@/shared/api/generated/models/CredentialRedactedResponse';
+export type { ManagedByResponse } from '@/shared/api/generated/models/ManagedByResponse';
 export type { ProviderDiscoveryResponse } from '@/shared/api/generated/models/ProviderDiscoveryResponse';
 export type { ProviderDiscoveryEntryResponse } from '@/shared/api/generated/models/ProviderDiscoveryEntryResponse';
 

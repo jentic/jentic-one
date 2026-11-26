@@ -3,6 +3,7 @@ import { Card, StatusText, TruncateWithTooltip, VendorIcon } from '@/shared/ui';
 import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { formatApiReference, type Credential } from '@/shared/credentials/api';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
+import { ManagedByBadge } from './managedBy';
 import {
 	CredentialActions,
 	CredentialMetaLine,
@@ -252,6 +253,7 @@ function CredentialRow({
 						</StatusText>
 					)}
 					<CredentialTypeBadge credential={cred} />
+					<ManagedByBadge managedBy={cred.managed_by} />
 					{readOnly && <SharedWithYouBadge />}
 				</div>
 				<p

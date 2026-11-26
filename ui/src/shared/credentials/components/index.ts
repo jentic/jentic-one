@@ -30,6 +30,16 @@ export {
 	credentialIsPendingSignIn,
 } from '@/shared/credentials/components/CredentialCard';
 export { CredentialsList } from '@/shared/credentials/components/CredentialsList';
+export {
+	ManagedByBadge,
+	ManagedByFallbackBadge,
+	ManagedCredentialNote,
+	isManagedCredential,
+	managedByLabel,
+	registerManagedByRenderer,
+	unregisterManagedByRenderer,
+} from '@/shared/credentials/components/managedBy';
+export type { ManagedBy, ManagedByRendererProps } from '@/shared/credentials/components/managedBy';
 export { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
 export type { CredentialOptionsProps } from '@/shared/credentials/components/CredentialOptions';
 

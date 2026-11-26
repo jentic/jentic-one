@@ -8,6 +8,7 @@ import {
 	formatCredentialDate,
 } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
+import { ManagedByBadge } from './managedBy';
 import {
 	CredentialType,
 	credentialDetails,
@@ -157,6 +158,7 @@ export function CredentialCard({
 								</span>
 							</Badge>
 						)}
+						<ManagedByBadge managedBy={cred.managed_by} />
 						{readOnly && <SharedWithYouBadge />}
 					</div>
 					{apiLine && (
