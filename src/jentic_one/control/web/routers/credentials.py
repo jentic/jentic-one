@@ -18,7 +18,10 @@ from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,
     ConnectService,
 )
-from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.errors import (
+    CredentialManagedError,
+    CredentialNotFoundError,
+)
 from jentic_one.control.services.credentials.providers.base import (
     NotConnectableError,
     ProviderError,
@@ -71,6 +74,7 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialRedactedResponse,
     CredentialUpdateRequest,
     DeviceAuthorizationConnectChallengeResponse,
+    ManagedByResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
     RuleSetAttachRequest,
@@ -135,6 +139,11 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
         server_variables=view.server_variables,
         oauth_app_registration_id=view.oauth_app_registration_id,
         oauth_app_registration_name=view.oauth_app_registration_name,
+        managed_by=(
+            ManagedByResponse(kind=view.managed_by.kind, ref=view.managed_by.ref)
+            if view.managed_by is not None
+            else None
+        ),
     )
 
 
@@ -489,6 +498,9 @@ async def _complete_oauth_callback(
         return _oauth_callback_error()
     except CredentialNotFoundError:
         _logger.warning("oauth_callback.credential_not_found")
+        return _oauth_callback_error()
+    except CredentialManagedError:
+        _logger.warning("oauth_callback.credential_managed")
         return _oauth_callback_error()
     except ProviderError as exc:
         _logger.warning("oauth_callback.provider_error", error=str(exc))
@@ -1074,7 +1086,13 @@ async def delete_rule_set(
 @router.patch(
     "/credentials/{credential_id}",
     summary="Update or rotate credential",
-    responses=not_found(),
+    responses=with_responses(
+        not_found(),
+        conflict(
+            "The credential is managed by an extension and is changed only through it "
+            "(`credential_managed`), or an immutable field changed (`immutable_field`)"
+        ),
+    ),
 )
 async def update_credential(
     credential_id: Annotated[
@@ -1085,7 +1103,11 @@ async def update_credential(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> CredentialRedactedResponse:
-    """Update or rotate a credential."""
+    """Update or rotate a credential.
+
+    A credential managed by an extension (`managed_by` set) returns 409
+    `credential_managed`: the extension that manages it changes it.
+    """
     payload = CredentialUpdate(
         type=CredentialType(body.type),
         name=body.name,
@@ -1115,7 +1137,13 @@ async def update_credential(
     "/credentials/{credential_id}",
     status_code=204,
     summary="Delete credential",
-    responses=not_found(),
+    responses=with_responses(
+        not_found(),
+        conflict(
+            "The credential is managed by an extension; only an `org:admin` may "
+            "delete it here (`credential_managed`)"
+        ),
+    ),
 )
 async def delete_credential(
     credential_id: Annotated[
@@ -1125,7 +1153,11 @@ async def delete_credential(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> Response:
-    """Delete a credential."""
+    """Delete a credential.
+
+    A credential managed by an extension (`managed_by` set) returns 409
+    `credential_managed` unless the caller holds `org:admin`.
+    """
     await svc.delete(credential_id, identity=identity)
     return Response(status_code=204)
 
@@ -1168,7 +1200,10 @@ async def get_connect_flow_status(
             422: problem("Request validation failed or scope widening requires review"),
         },
         not_found(),
-        conflict("Credential is not connectable"),
+        conflict(
+            "Credential is not connectable, or it is managed by an extension and is "
+            "changed only through it (`credential_managed`)"
+        ),
     ),
     response_model=ConnectChallengeResponse,
 )
@@ -1192,6 +1227,8 @@ async def connect_credential(
     Requested ``scopes`` may only narrow the credential's stored scopes;
     widening scopes requires a connect session (422
     ``scope_widening_requires_review``).
+    A credential managed by an extension (`managed_by` set) returns 409
+    ``credential_managed``, even for its owner or ``org:admin``.
 
     Discriminates on the provider's returned challenge: OAuth2
     authorization-code providers return an ``authorize_url`` for popup

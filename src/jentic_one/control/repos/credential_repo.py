@@ -93,6 +93,8 @@ class CredentialRepository:
         provider_account_ref: str | None = None,
         server_variables: dict[str, str] | None = None,
         state: str = "connected",
+        managed_by_kind: str | None = None,
+        managed_by_ref: str | None = None,
     ) -> Credential:
         credential = Credential(
             type=type,
@@ -107,6 +109,8 @@ class CredentialRepository:
             provider_account_ref=provider_account_ref,
             server_variables=server_variables,
             state=state,
+            managed_by_kind=managed_by_kind,
+            managed_by_ref=managed_by_ref,
         )
         session.add(credential)
         await session.flush()
@@ -138,6 +142,21 @@ class CredentialRepository:
             .order_by(Credential.id)
         )
         return list(result.scalars().all())
+
+    @staticmethod
+    async def get_header(session: AsyncSession, credential_id: str) -> Credential | None:
+        """Fetch one credential header by id, with no secret material and no scoping.
+
+        Every child relationship ``raise``s on access, as in
+        :meth:`list_by_vendor`; call :meth:`load_material` for the material.
+        Callers apply their own authorization.
+        """
+        result = await session.execute(
+            select(Credential)
+            .where(Credential.id == credential_id)
+            .options(*(raiseload(getattr(Credential, rel)) for rel in _CHILD_RELATIONSHIPS))
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def load_material(session: AsyncSession, credentials: Sequence[Credential]) -> None:
@@ -371,7 +390,7 @@ class CredentialRepository:
         filters: Sequence[ColumnElement[bool]] | None = None,
         limit: int = 50,
     ) -> list[Credential]:
-        """Connected, active credentials whose API scope covers the identity.
+        """Connected, active, unmanaged credentials whose API scope covers the identity.
 
         A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
         a ``None`` reference axis matches any value. ``created_by_in``
@@ -406,6 +425,8 @@ class CredentialRepository:
             Credential.api_vendor == vendor,
             Credential.state == "connected",
             Credential.active.is_(True),
+            # A credential an extension manages is never bindable to an agent.
+            Credential.managed_by_kind.is_(None),
             or_(
                 Credential.type.not_in(_INTERACTIVE_OAUTH_TYPES),
                 and_(

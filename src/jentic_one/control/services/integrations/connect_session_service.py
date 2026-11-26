@@ -71,6 +71,7 @@ from jentic_one.control.repos.prerequisite_repo import (
     PrerequisiteRepository,
 )
 from jentic_one.control.scoping.filters import bound_agent_visibility, build_access_filters
+from jentic_one.control.services.credentials.errors import CredentialManagedError
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.control.services.credentials.state import (
     BrowserBindingClaim,
@@ -5521,6 +5522,12 @@ class ConnectSessionService:
             credential = await CredentialRepository.get_by_id(read_session, credential_id)
         if credential is None:
             return
+        if credential.managed_by_kind is not None:
+            # Connect refuses a credential an extension manages, but a flow
+            # begun before that refusal existed must not store a grant on
+            # one either: end it without polling the vendor.
+            await self._end_managed_device_flow(credential.id)
+            return
 
         handler = DeviceAuthorizationHandler(self._ctx)
         report = await handler.advance(credential.id)
@@ -5544,6 +5551,19 @@ class ConnectSessionService:
             # A reconnect committed a newer challenge after this poll. Its
             # transient state and eventual outcome belong to that flow.
             return
+        except CredentialManagedError:
+            await self._end_managed_device_flow(credential.id)
+
+    async def _end_managed_device_flow(self, credential_id: str) -> None:
+        """Clear a device flow in flight on a managed credential; store nothing.
+
+        The credential keeps its state and its stored grant; only the
+        flow's transient challenge is cleared, so the scanner stops.
+        """
+        _logger.warning(
+            "credential.device_authorization.managed_refused", credential_id=credential_id
+        )
+        await self._mark_credential_terminal(credential_id, "credential_managed")
 
     async def _mark_credential_terminal(
         self,
@@ -6077,6 +6097,13 @@ class ConnectSessionService:
             # row with the shared-registration provenance. Nullable — legacy
             # embedded credentials just leave it NULL.
             credential_for_stamp = await CredentialRepository.get_by_id(session, credential_id)
+            # A credential an extension manages is changed only through it:
+            # never store a grant on one (the write rolls back).
+            if (
+                credential_for_stamp is not None
+                and credential_for_stamp.managed_by_kind is not None
+            ):
+                raise CredentialManagedError(credential_id)
             registration_id_stamp: str | None = None
             if credential_for_stamp is not None:
                 current_token_url = await OAuthClientCredentialRepository.current_token_url(

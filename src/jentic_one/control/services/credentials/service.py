@@ -43,6 +43,7 @@ from jentic_one.control.services.credentials.access import (
     _CredentialAccessMixin,
 )
 from jentic_one.control.services.credentials.errors import (
+    CredentialManagedError,
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
@@ -62,6 +63,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialPage,
     CredentialRedactedView,
     CredentialUpdate,
+    ManagedBy,
     NoAuthFull,
     NoAuthRedacted,
     OAuth2Full,
@@ -69,6 +71,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     ProviderDiscoveryEntry,
     Sigv4Full,
     Sigv4Redacted,
+    managed_by_of,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.token_endpoint import same_origin
@@ -264,8 +267,19 @@ class CredentialService(_CredentialAccessMixin):
             )
         return entries
 
-    async def create(self, payload: CredentialCreate, *, identity: Identity) -> CredentialFullView:
-        """Create a credential and echo the secret once."""
+    async def create(
+        self,
+        payload: CredentialCreate,
+        *,
+        identity: Identity,
+        managed_by: ManagedBy | None = None,
+    ) -> CredentialFullView:
+        """Create a credential and echo the secret once.
+
+        ``managed_by`` marks the credential as managed by an extension. Only
+        ``jentic_one.control.credentials_seam`` passes it; the HTTP router
+        never does, so no request body can set the marker.
+        """
         try:
             provider_obj = self._ctx.providers.get(payload.provider)
         except UnknownProviderError as exc:
@@ -319,6 +333,8 @@ class CredentialService(_CredentialAccessMixin):
                 provider=payload.provider,
                 created_by=identity.sub,
                 server_variables=payload.server_variables,
+                managed_by_kind=managed_by.kind if managed_by is not None else None,
+                managed_by_ref=managed_by.ref if managed_by is not None else None,
             )
 
             secret: (
@@ -457,6 +473,7 @@ class CredentialService(_CredentialAccessMixin):
                 created_by=credential.created_by,
                 created_at=credential.created_at,
                 server_variables=credential.server_variables,
+                managed_by=managed_by,
                 secret=secret,
             )
 
@@ -480,6 +497,7 @@ class CredentialService(_CredentialAccessMixin):
                 "type": str(payload.type),
                 "provider": payload.provider,
                 "active": view.active,
+                "managed_by": _managed_by_audit(managed_by),
             },
             origin=identity.origin.value,
         )
@@ -699,9 +717,20 @@ class CredentialService(_CredentialAccessMixin):
         return credential
 
     async def update(
-        self, credential_id: str, payload: CredentialUpdate, *, identity: Identity
+        self,
+        credential_id: str,
+        payload: CredentialUpdate,
+        *,
+        identity: Identity,
+        managed_by: ManagedBy | None = None,
     ) -> CredentialRedactedView:
         """Update/rotate a credential.
+
+        A credential an extension manages is changed only by that extension:
+        it passes the credential's own ``managed_by`` (through the credentials
+        seam). Any other update of a managed credential, and an update that
+        passes a marker the credential does not carry, raises
+        ``CredentialManagedError``.
 
         Payload-only checks run first. The DNS-resolving ``token_url``
         validation runs before the write transaction opens, so no resolver
@@ -715,7 +744,10 @@ class CredentialService(_CredentialAccessMixin):
         validated_token_url: str | None = None
         if payload.type == CredentialType.OAUTH2 and payload.token_url is not None:
             async with self._ctx.control_db.session() as session:
-                await self._get_updatable(session, credential_id, payload, access_filters)
+                existing = await self._get_updatable(
+                    session, credential_id, payload, access_filters
+                )
+                _check_managed_by(existing, managed_by)
             validated_token_url = await self._validate_update_token_url(payload)
         oauth_token_dropped = False
         async with self._ctx.control_db.transaction() as session:
@@ -736,6 +768,7 @@ class CredentialService(_CredentialAccessMixin):
                 # cannot see, so locking by id discloses nothing.
                 await OAuthTokenRepository.acquire_refresh_lock(session, credential_id)
             credential = await self._get_updatable(session, credential_id, payload, access_filters)
+            _check_managed_by(credential, managed_by)
 
             before_state = self._audit_snapshot(credential)
 
@@ -904,8 +937,22 @@ class CredentialService(_CredentialAccessMixin):
             )
         return view
 
-    async def delete(self, credential_id: str, *, identity: Identity) -> None:
-        """Delete a credential by ID (cascade removes siblings) and its agent bindings."""
+    async def delete(
+        self,
+        credential_id: str,
+        *,
+        identity: Identity,
+        managed_by: ManagedBy | None = None,
+    ) -> None:
+        """Delete a credential by ID (cascade removes siblings) and its agent bindings.
+
+        A managed credential is deleted by the extension that manages it,
+        passing its ``managed_by`` through the credentials seam. Without a
+        marker, only ``org:admin`` may delete one (the way out for a
+        credential whose managing object is gone); anyone else gets
+        ``CredentialManagedError``, as does a marker the credential does not
+        carry.
+        """
         access_filters = build_access_filters(identity, Credential, for_write=True)
         async with self._ctx.control_db.transaction() as session:
             existing = await CredentialRepository.get_by_id(
@@ -913,8 +960,20 @@ class CredentialService(_CredentialAccessMixin):
             )
             if existing is None:
                 raise CredentialNotFoundError(credential_id)
+            if not (
+                managed_by is None
+                and existing.managed_by_kind is not None
+                and ORG_ADMIN in identity.permissions
+            ):
+                _check_managed_by(existing, managed_by)
             credential_name = existing.name
-            before_state = {"name": existing.name, "active": existing.active}
+            before_state = {
+                "name": existing.name,
+                "active": existing.active,
+                "managed_by": _managed_by_audit(
+                    managed_by_of(existing.managed_by_kind, existing.managed_by_ref)
+                ),
+            }
             deleted = await CredentialRepository.delete(session, credential_id)
             if not deleted:
                 raise CredentialNotFoundError(credential_id)
@@ -1132,6 +1191,7 @@ class CredentialService(_CredentialAccessMixin):
             server_variables=credential.server_variables,
             oauth_app_registration_id=oar_id,
             oauth_app_registration_name=oar_name,
+            managed_by=managed_by_of(credential.managed_by_kind, credential.managed_by_ref),
         )
 
     async def _apply_oauth2_update(
@@ -1295,6 +1355,9 @@ class CredentialService(_CredentialAccessMixin):
         state: dict[str, Any] = {
             "name": credential.name,
             "active": credential.active,
+            "managed_by": _managed_by_audit(
+                managed_by_of(credential.managed_by_kind, credential.managed_by_ref)
+            ),
             "server_variables": (
                 dict(credential.server_variables) if credential.server_variables else None
             ),
@@ -1547,6 +1610,23 @@ class CredentialService(_CredentialAccessMixin):
             if isinstance(name, str) and slugify_api_field(name) == scope.name:
                 return True
         return False
+
+
+def _check_managed_by(credential: Credential, managed_by: ManagedBy | None) -> None:
+    """Refuse a change unless ``managed_by`` is exactly the credential's own marker.
+
+    An unmanaged credential takes no marker (``None``); a managed one takes
+    only its own. Anything else is ``CredentialManagedError``.
+    """
+    if managed_by_of(credential.managed_by_kind, credential.managed_by_ref) != managed_by:
+        raise CredentialManagedError(credential.id)
+
+
+def _managed_by_audit(managed_by: ManagedBy | None) -> dict[str, str] | None:
+    """The marker as an audit-snapshot value (``None`` when unmanaged)."""
+    if managed_by is None:
+        return None
+    return {"kind": managed_by.kind, "ref": managed_by.ref}
 
 
 def _registration_ids(credentials: Sequence[Credential]) -> list[str]:

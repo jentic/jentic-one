@@ -6,8 +6,11 @@
  * failure the dialog falls back to its generic warning rather than implying
  * nothing else is affected.
  */
-import { CascadeDeleteDialog, type CascadeDependentGroup } from '@/shared/ui';
+import { Button, CascadeDeleteDialog, Dialog, type CascadeDependentGroup } from '@/shared/ui';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import { useAllCredentialAgents } from '@/shared/credentials/api';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
+import { ManagedCredentialNote, type ManagedBy } from './managedBy';
 
 /** How many agent names the blast radius lists before summarising the rest. The
  * headline count stays exact; this caps only the chip list. */
@@ -24,6 +27,13 @@ export interface CredentialDeleteDialogProps {
 	error?: Error | string | null;
 	/** Set when the host is one agent's own surface, so that agent is marked. */
 	currentAgentId?: string;
+	/**
+	 * The credential's `managed_by`, when an extension manages it. Only an
+	 * `org:admin` may delete such a credential here (the server answers 409
+	 * `credential_managed` to anyone else), so everyone else gets a note
+	 * saying where it is managed instead of the confirm.
+	 */
+	managedBy?: ManagedBy | null;
 }
 
 export function CredentialDeleteDialog({
@@ -35,10 +45,13 @@ export function CredentialDeleteDialog({
 	loading,
 	error,
 	currentAgentId,
+	managedBy,
 }: CredentialDeleteDialogProps) {
+	const viewer = useOptionalCurrentUser();
+	const blocked = managedBy != null && !viewerIsOrgAdmin(viewer);
 	// Gated on `open` and keyed by credential. Every page is drained: the group
 	// below states a COUNT, and a delete this irreversible must not understate it.
-	const credentialAgents = useAllCredentialAgents(credentialId, { enabled: open });
+	const credentialAgents = useAllCredentialAgents(credentialId, { enabled: open && !blocked });
 	const rows = credentialAgents.items;
 
 	// An empty list is a real answer, but a "0 agents" headline reads worse than
@@ -68,6 +81,24 @@ export function CredentialDeleteDialog({
 					},
 				]
 			: undefined;
+
+	if (blocked && managedBy) {
+		return (
+			<Dialog
+				open={open}
+				onClose={onClose}
+				title="This credential can't be deleted here"
+				subtitle={credentialName}
+				footer={
+					<Button variant="ghost" onClick={onClose}>
+						Close
+					</Button>
+				}
+			>
+				<ManagedCredentialNote managedBy={managedBy} />
+			</Dialog>
+		);
+	}
 
 	return (
 		<CascadeDeleteDialog

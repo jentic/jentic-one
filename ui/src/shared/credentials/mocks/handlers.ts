@@ -76,6 +76,8 @@ function redact(body: CredentialCreateRequest, id: string, now: string): Credent
 		provider_account_ref: null,
 		created_at: now,
 		updated_at: null,
+		// No request body can set the marker; only an extension's seam call can.
+		managed_by: null,
 	};
 }
 
@@ -130,6 +132,7 @@ export function makeMockCredential(overrides: Partial<Credential> = {}): Credent
 		provider_account_ref: null,
 		created_at: '2026-01-01T00:00:00Z',
 		updated_at: null,
+		managed_by: null,
 		...overrides,
 	};
 }
@@ -147,6 +150,7 @@ function devCredentialsSeed(): Credential[] {
 		active: true,
 		provider_account_ref: null,
 		updated_at: null,
+		managed_by: null,
 	} as const;
 	return [
 		{
@@ -1163,6 +1167,10 @@ export const credentialsHandlers = [
 			password?: string;
 		};
 		const cur = store[idx];
+		// An extension-managed credential is changed only through the extension.
+		if (cur.managed_by != null) {
+			return HttpResponse.json({ type: 'credential_managed' }, { status: 409 });
+		}
 		const det = (cur.details ?? {}) as { field_name?: string; location?: string };
 		// field_name/location are immutable after create (#589): a *changed*
 		// value is rejected; a matching echo is tolerated as a no-op.
@@ -1192,6 +1200,8 @@ export const credentialsHandlers = [
 	}),
 
 	http.delete('/credentials/:id', ({ params }) => {
+		// A managed credential is deletable here by an `org:admin` only — which
+		// the mocked viewer is (`src/mocks/handlers.ts`), so the delete proceeds.
 		const before = store.length;
 		store = store.filter((c) => c.credential_id !== params.id);
 		if (store.length === before) return new HttpResponse(null, { status: 404 });

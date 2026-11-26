@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -33,6 +33,11 @@ class Credential(AuditableMixin, ControlBase):
         Index("ix_credentials_api_vendor", "api_vendor"),
         Index("ix_credentials_provider", "provider"),
         Index("ix_credentials_oauth_app_registration_id", "oauth_app_registration_id"),
+        Index("ix_credentials_managed_by", "managed_by_kind", "managed_by_ref"),
+        CheckConstraint(
+            "(managed_by_kind IS NULL) = (managed_by_ref IS NULL)",
+            name="ck_credentials_managed_by_pair",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -80,6 +85,16 @@ class Credential(AuditableMixin, ControlBase):
         ForeignKey("oauth_app_registrations.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    # Set when an in-process extension created the credential through
+    # ``jentic_one.control.credentials_seam.create_managed_credential``: the
+    # kind of object that manages it (e.g. ``my_ext_connection``) and that
+    # object's id. Written only at creation and never changed; no HTTP request
+    # model accepts it. A managed credential cannot be bound to an agent, is
+    # never resolved by the broker for agent calls, and is edited or deleted
+    # only through the seam (``org:admin`` may still delete it over HTTP).
+    # Both NULL for every ordinary credential (``ck_credentials_managed_by_pair``).
+    managed_by_kind: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    managed_by_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     customer_api_key: Mapped[CustomerAPIKey | None] = relationship(
         back_populates="credential",

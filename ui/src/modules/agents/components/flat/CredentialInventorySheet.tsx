@@ -484,6 +484,7 @@ export function CredentialInventorySheet({
 					open
 					credentialId={deleteTarget.credential_id}
 					credentialName={deleteTarget.name}
+					managedBy={deleteTarget.managed_by}
 					onClose={(): void => setDeleteTarget(null)}
 					onConfirm={confirmDelete}
 					loading={deleteMutation.isPending}

@@ -128,6 +128,9 @@ export class CredentialsService {
     /**
      * Delete credential
      * Delete a credential.
+     *
+     * A credential managed by an extension (`managed_by` set) returns 409
+     * `credential_managed` unless the caller holds `org:admin`.
      * @returns void
      * @throws ApiError
      */
@@ -150,6 +153,7 @@ export class CredentialsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
+                409: `The credential is managed by an extension; only an \`org:admin\` may delete it here (\`credential_managed\`)`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -190,6 +194,9 @@ export class CredentialsService {
     /**
      * Update or rotate credential
      * Update or rotate a credential.
+     *
+     * A credential managed by an extension (`managed_by` set) returns 409
+     * `credential_managed`: the extension that manages it changes it.
      * @returns CredentialRedactedResponse Successful Response
      * @throws ApiError
      */
@@ -219,6 +226,7 @@ export class CredentialsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
+                409: `The credential is managed by an extension and is changed only through it (\`credential_managed\`), or an immutable field changed (\`immutable_field\`)`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -555,6 +563,8 @@ export class CredentialsService {
      * Requested ``scopes`` may only narrow the credential's stored scopes;
      * widening scopes requires a connect session (422
      * ``scope_widening_requires_review``).
+     * A credential managed by an extension (`managed_by` set) returns 409
+     * ``credential_managed``, even for its owner or ``org:admin``.
      *
      * Discriminates on the provider's returned challenge: OAuth2
      * authorization-code providers return an ``authorize_url`` for popup
@@ -594,7 +604,7 @@ export class CredentialsService {
                 401: `Unauthorized`,
                 403: `Connecting this credential requires human review`,
                 404: `Not Found`,
-                409: `Credential is not connectable`,
+                409: `Credential is not connectable, or it is managed by an extension and is changed only through it (\`credential_managed\`)`,
                 422: `Request validation failed or scope widening requires review`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

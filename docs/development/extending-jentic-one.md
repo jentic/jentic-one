@@ -29,6 +29,8 @@ plug into (the surfaces, the `AppContainer` composition root, the broker's
 | `register_user_deleted_hook` | `jentic_one.admin.services.user_hooks` | Run an async `fn(ctx, user_id, identity)` after a user delete commits, e.g. to clean up the extension's own per-user rows. Hooks run inside the delete request, each bounded by `USER_DELETED_HOOK_TIMEOUT_S` (10 s). Best effort, not durable: a hook that raises or times out is logged, counted (`admin.user_deleted_hook.failures`) and skipped, and nothing retries it automatically. Hooks must be idempotent: deleting an already-deleted user runs them again. |
 | `jentic_one.composition` | `jentic_one.composition` | Public composition entrypoints (`build_app`, `build_context`, `expand_allowed_dbs`) that assemble a `Context` and `FastAPI` app through the same path `jentic-one serve` uses. `build_app(ctx, apps, container=...)` uses your `AppContainer` for the combined app (any `apps` list of two or more surfaces) and for a standalone `control`, `auth` or `broker` process, and still runs the composition root's post-build wiring (such as the broker's registry resolver). A standalone `registry` or `admin` process ignores `container` and builds its default wiring. |
 | Broker caller identity | `jentic_one.broker.web.deps.require_broker_identity` (validator: `app.state.broker_token_validator`) | Authenticate a request on an extra router mounted on the standalone broker exactly as the broker's own routes do: the same `jak_` keys, opaque `at_` tokens and trusted-issuer JWTs, with the same caches and revocation. Use the dependency, or call `await app.state.broker_token_validator.validate(credential)` (returns an `Identity`, raises `TokenValidationError`). |
+| `jentic_one.control.credentials_seam` | `jentic_one.control.credentials_seam` (drift guard: `tests/arch/test_credentials_seam_public_api.py`) | Read a stored credential's header (`get_credential_header`) and decrypted material (`resolve_credential_material`, **no authorization: check the caller first**), and create, update and delete credentials your extension manages (`create_managed_credential`, `update_managed_credential`, `delete_managed_credential`). Re-exports the payload types, `SigV4Material`/`sign_request` and the `Credential` ORM class, so an extension imports nothing internal. See [Managed credentials](#managed-credentials). |
+| `registerManagedByRenderer` | `ui/src/shared/credentials/components` (`managedBy.tsx`) | Render the badge for credentials managed by your extension's kind; unregistered kinds show "Managed by <kind>". See [Managed credentials](#managed-credentials). |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `jentic_one.testing.introspect` | `jentic_one.testing.introspect` | Read-only route and scoping introspection (`build_app`, `route_facts`, `scoped_tables`, `access_filter_providers`, `RouteFact`, `ScopedTable`, `INTROSPECTION_SCHEMA`) for downstream architecture and security gates. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
@@ -390,6 +392,111 @@ stays one-directional, so an alternate binary composes its own tree without an
 import cycle). Migration ordering is **not** modelled in Go — the CLI only
 invokes the Python runner, which owns `DB_TARGETS` and its upgrade/rollback
 order.
+
+## Managed credentials
+
+An extension that keeps credentials of its own (for example, one per object it
+manages) stores them as ordinary credentials **managed by** that object, through
+`jentic_one.control.credentials_seam`. Its routes and services never import
+`jentic_one.control.core`, `repos` or `services`.
+
+```python
+from jentic_one.control.credentials_seam import (
+    APIReference,
+    CredentialCreate,
+    CredentialType,
+    CredentialUpdate,
+    ManagedBy,
+    create_managed_credential,
+    delete_managed_credential,
+    resolve_credential_material,
+    update_managed_credential,
+)
+
+marker = ManagedBy(kind="my_ext_connection", ref=connection_id)
+
+header = await create_managed_credential(
+    ctx,
+    CredentialCreate(
+        type=CredentialType.API_KEY,
+        name="Upstream key",
+        api=APIReference(vendor="api.example.com", name="", version=""),
+        key=secret,
+        location="header",
+        field_name="X-Api-Key",
+    ),
+    identity=identity,  # becomes the credential's owner (created_by)
+    managed_by=marker,
+)
+
+# Rotate in place: same id, audited with `key_rotated`, broker caches invalidated.
+await update_managed_credential(
+    ctx,
+    header.id,
+    CredentialUpdate(type=CredentialType.API_KEY, key=new_secret),
+    identity=identity,
+    managed_by=marker,
+)
+
+# Use it — only after your own authorization decided the caller may.
+material = await resolve_credential_material(ctx, header.id, expected_type=CredentialType.API_KEY)
+
+await delete_managed_credential(ctx, header.id, identity=identity, managed_by=marker)
+```
+
+The marker (`ManagedBy(kind, ref)`, columns `credentials.managed_by_kind` and
+`managed_by_ref`) is **set only at creation, only through the seam, and never
+changes**. No HTTP request model accepts it; a `managed_by` field in a
+`POST /credentials` body is ignored. API responses show it read-only as
+`managed_by: {kind, ref} | null`. It is unrelated to the provider-level `managed`
+flag of `GET /credentials/providers` (Pipedream-style providers).
+
+A managed credential:
+
+- **cannot be bound to an agent**: `POST /agents/{id}/credentials` returns
+  `409 credential_managed`, it is never offered as an existing credential in a
+  connect session, and the UI binding pickers leave it out;
+- **is never resolved by the broker for an agent call**, even when named with
+  `Jentic-Credential-Id` (that resolves as not found); the extension reads the
+  material through the seam instead;
+- **is changed only by its extension**: `PATCH` and `DELETE /credentials/{id}`
+  return `409 credential_managed`, except that an `org:admin` may still `DELETE`
+  it (the way out when its managing object is gone). An OAuth reconnect,
+  `POST /credentials/{id}/connect`, returns `409 credential_managed` for everyone,
+  and a connect flow begun before the credential was managed stores no grant on
+  it: the callback (or the device-flow poll) re-checks the marker before it
+  writes. The seam's update and
+  delete refuse a marker the credential does not carry (`CredentialManagedError`).
+
+Create, update and delete run through the same `CredentialService` as the HTTP
+API: validation, owner scoping (a non-admin `identity` may change only the
+credentials it created), the audit records (the marker is in the snapshots; a
+secret rotation adds `*_rotated` markers, never the value) and broker cache
+invalidation are identical.
+
+**`resolve_credential_material` performs no authorization.** It returns the
+plaintext of any `active`, `connected` credential of the expected type
+(an API key credential gives `ApiKeyMaterial`, a SigV4 one `SigV4Material`; both elide secrets in
+`repr`), and raises `CredentialUnavailableError` for a missing, inactive, not
+connected, wrong-type or undecryptable credential. It is a Python API with no
+route. The seam never caches or logs the plaintext; do not cache it either.
+`CredentialHeader.revision` (the row's `updated_at`) moves on every persisted
+change, including a rotation, so it can key a cache of anything you derive from
+the secret.
+
+In the UI, register a badge for your kind once, at import time:
+
+```tsx
+import { registerManagedByRenderer } from '@/shared/credentials/components';
+
+registerManagedByRenderer('my_ext_connection', ({ managedBy }) => (
+    <MyConnectionLink connectionId={managedBy.ref} />
+));
+```
+
+The credential cards show it; an unregistered kind shows the fallback
+"Managed by my ext connection". The edit sheet and the delete confirm (for a
+non-admin) show where the credential is managed instead of a form.
 
 ## Unknown config keys fail loudly
 

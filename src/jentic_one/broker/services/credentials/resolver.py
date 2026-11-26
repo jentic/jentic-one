@@ -181,7 +181,11 @@ class CredentialResolver:
         # the fact that separates "scoped elsewhere" from "none at all".
         scope_mismatched: list[Credential] = []
         for c in candidates:
-            if not c.active:
+            # A credential an extension manages is that extension's to use (it
+            # reads the material through the credentials seam); it is never a
+            # candidate for an agent call, even when named by an explicit
+            # ``credential_id``, which then resolves as not found.
+            if not c.active or c.managed_by_kind is not None:
                 continue
             scope = canonical_credential_scope(
                 vendor=c.api_vendor, name=c.api_name, version=c.api_version

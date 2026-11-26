@@ -22,6 +22,7 @@ from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
     ConnectRequiresReviewError,
     ConnectScopeWideningError,
+    CredentialManagedError,
     CredentialNotFoundError,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
@@ -105,7 +106,10 @@ class ConnectService:
         credential through owner delegation receives
         :class:`ConnectRequiresReviewError` (403 ``connect_requires_review``)
         pointing at the reviewed connect-session flow; any other miss raises
-        :class:`CredentialNotFoundError` (404). Requested scopes may only
+        :class:`CredentialNotFoundError` (404). A credential an extension
+        manages raises :class:`CredentialManagedError` (409
+        ``credential_managed``), even for its owner or ``org:admin``: the
+        extension changes it. Requested scopes may only
         narrow the stored scope set; widening raises
         :class:`ConnectScopeWideningError` (422 ``scope_widening_requires_review``).
 
@@ -128,6 +132,10 @@ class ConnectService:
                     if visible is not None:
                         raise ConnectRequiresReviewError(credential_id)
                 raise CredentialNotFoundError(credential_id)
+            # A credential an extension manages is changed only through it;
+            # a reconnect would replace its stored grant.
+            if credential.managed_by_kind is not None:
+                raise CredentialManagedError(credential_id)
 
             registration: OAuthAppRegistration | None = None
             if (
@@ -235,6 +243,10 @@ class ConnectService:
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
+                # ``begin`` refuses a managed credential; re-checked here and
+                # again under the write lock, so no grant is ever stored on one.
+                if credential.managed_by_kind is not None:
+                    raise CredentialManagedError(state.credential_id)
                 if credential.provider != state.provider:
                     raise ConnectFlowError(
                         f"State provider {state.provider!r} does not match "
@@ -254,6 +266,10 @@ class ConnectService:
                 credential = await CredentialRepository.get_by_id(session, state.credential_id)
                 if credential is None:
                     raise CredentialNotFoundError(state.credential_id)
+                # ``begin`` refuses a managed credential; re-checked here and
+                # again under the write lock, so no grant is ever stored on one.
+                if credential.managed_by_kind is not None:
+                    raise CredentialManagedError(state.credential_id)
                 if credential.provider != state.provider:
                     raise ConnectFlowError(
                         f"State provider {state.provider!r} does not match "

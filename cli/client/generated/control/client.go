@@ -4042,6 +4042,11 @@ type CredentialRedactedResponse struct {
 	// Examples: {"client_id":"ca_example123","connected":true,"grant_type":"authorization_code","scopes":["read_write"],"token_url":"https://connect.stripe.com/oauth/token"}
 	Details *map[string]interface{} `json:"details,omitempty"`
 
+	// ManagedBy Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit, OAuth reconnect or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.
+	//
+	// Examples: {"kind":"example_connection","ref":"conn_2bYkT0x9Qp"}
+	ManagedBy *ManagedByResponse `json:"managed_by,omitempty"`
+
 	// Name Human-readable label.
 	//
 	// Examples: Stripe Connect
@@ -5812,6 +5817,21 @@ type LoginResponse struct {
 	//
 	// Examples: bearer
 	TokenType string `json:"token_type"`
+}
+
+// ManagedByResponse The object an extension uses to manage a credential.
+//
+// Examples: {"kind":"example_connection","ref":"conn_2bYkT0x9Qp"}
+type ManagedByResponse struct {
+	// Kind Kind of the managing object, chosen by the extension.
+	//
+	// Examples: example_connection
+	Kind string `json:"kind"`
+
+	// Ref Id of the managing object within its kind.
+	//
+	// Examples: conn_2bYkT0x9Qp
+	Ref string `json:"ref"`
 }
 
 // McpConfigRegistrationRequest Report that an MCP config entry was written for one agent runtime.
@@ -12645,7 +12665,8 @@ type ClientInterface interface {
 	// must be able to see the agent and must own the credential (or hold
 	// `org:admin`). A credential that does not exist or that the caller does
 	// not own returns 404; binding the same credential twice returns 409
-	// (`credential_binding_conflict`).
+	// (`credential_binding_conflict`), and a credential managed by an extension
+	// returns 409 (`credential_managed`).
 	// Returns the new binding.
 	//
 	// Takes any type of body and a specified content type.
@@ -12662,7 +12683,8 @@ type ClientInterface interface {
 	// must be able to see the agent and must own the credential (or hold
 	// `org:admin`). A credential that does not exist or that the caller does
 	// not own returns 404; binding the same credential twice returns 409
-	// (`credential_binding_conflict`).
+	// (`credential_binding_conflict`), and a credential managed by an extension
+	// returns 409 (`credential_managed`).
 	// Returns the new binding.
 	//
 	// Takes a body of the `application/json` content type.
@@ -13637,6 +13659,9 @@ type ClientInterface interface {
 	//
 	// Delete a credential.
 	//
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// `credential_managed` unless the caller holds `org:admin`.
+	//
 	// Corresponds with DELETE /credentials/{credential_id} (the `DeleteCredential` operationId).
 	DeleteCredential(ctx context.Context, credentialId PathCredentialId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -13651,6 +13676,9 @@ type ClientInterface interface {
 	//
 	// Update or rotate a credential.
 	//
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// `credential_managed`: the extension that manages it changes it.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /credentials/{credential_id} (the `UpdateCredential` operationId).
@@ -13659,6 +13687,9 @@ type ClientInterface interface {
 	// UpdateCredential Update or rotate credential
 	//
 	// Update or rotate a credential.
+	//
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// `credential_managed`: the extension that manages it changes it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13805,6 +13836,8 @@ type ClientInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -13831,6 +13864,8 @@ type ClientInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -15995,7 +16030,8 @@ func (c *Client) ListAgentCredentials(ctx context.Context, agentId string, reqEd
 // must be able to see the agent and must own the credential (or hold
 // `org:admin`). A credential that does not exist or that the caller does
 // not own returns 404; binding the same credential twice returns 409
-// (`credential_binding_conflict`).
+// (`credential_binding_conflict`), and a credential managed by an extension
+// returns 409 (`credential_managed`).
 // Returns the new binding.
 //
 // Takes any type of body and a specified content type.
@@ -16022,7 +16058,8 @@ func (c *Client) BindAgentCredentialWithBody(ctx context.Context, agentId string
 // must be able to see the agent and must own the credential (or hold
 // `org:admin`). A credential that does not exist or that the caller does
 // not own returns 404; binding the same credential twice returns 409
-// (`credential_binding_conflict`).
+// (`credential_binding_conflict`), and a credential managed by an extension
+// returns 409 (`credential_managed`).
 // Returns the new binding.
 //
 // Takes a body of the `application/json` content type.
@@ -17737,6 +17774,9 @@ func (c *Client) ListProviders(ctx context.Context, reqEditors ...RequestEditorF
 //
 // Delete a credential.
 //
+// A credential managed by an extension (`managed_by` set) returns 409
+// `credential_managed` unless the caller holds `org:admin`.
+//
 // Corresponds with DELETE /credentials/{credential_id} (the `DeleteCredential` operationId).
 func (c *Client) DeleteCredential(ctx context.Context, credentialId PathCredentialId, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteCredentialRequest(c.Server, credentialId)
@@ -17771,6 +17811,9 @@ func (c *Client) GetCredential(ctx context.Context, credentialId PathCredentialI
 //
 // Update or rotate a credential.
 //
+// A credential managed by an extension (`managed_by` set) returns 409
+// `credential_managed`: the extension that manages it changes it.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /credentials/{credential_id} (the `UpdateCredential` operationId).
@@ -17789,6 +17832,9 @@ func (c *Client) UpdateCredentialWithBody(ctx context.Context, credentialId Path
 // UpdateCredential Update or rotate credential
 //
 // Update or rotate a credential.
+//
+// A credential managed by an extension (`managed_by` set) returns 409
+// `credential_managed`: the extension that manages it changes it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -18055,6 +18101,8 @@ func (c *Client) AttachAgentCredentialRuleSet(ctx context.Context, credentialId 
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -18091,6 +18139,8 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId Pat
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -29990,7 +30040,8 @@ type ClientWithResponsesInterface interface {
 	// must be able to see the agent and must own the credential (or hold
 	// `org:admin`). A credential that does not exist or that the caller does
 	// not own returns 404; binding the same credential twice returns 409
-	// (`credential_binding_conflict`).
+	// (`credential_binding_conflict`), and a credential managed by an extension
+	// returns 409 (`credential_managed`).
 	// Returns the new binding.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -30007,7 +30058,8 @@ type ClientWithResponsesInterface interface {
 	// must be able to see the agent and must own the credential (or hold
 	// `org:admin`). A credential that does not exist or that the caller does
 	// not own returns 404; binding the same credential twice returns 409
-	// (`credential_binding_conflict`).
+	// (`credential_binding_conflict`), and a credential managed by an extension
+	// returns 409 (`credential_managed`).
 	// Returns the new binding.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -31072,6 +31124,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Delete a credential.
 	//
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// `credential_managed` unless the caller holds `org:admin`.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /credentials/{credential_id} (the `DeleteCredential` operationId).
@@ -31090,6 +31145,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Update or rotate a credential.
 	//
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// `credential_managed`: the extension that manages it changes it.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /credentials/{credential_id} (the `UpdateCredential` operationId).
@@ -31098,6 +31156,9 @@ type ClientWithResponsesInterface interface {
 	// UpdateCredentialWithResponse Update or rotate credential
 	//
 	// Update or rotate a credential.
+	//
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// `credential_managed`: the extension that manages it changes it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -31250,6 +31311,8 @@ type ClientWithResponsesInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -31276,6 +31339,8 @@ type ClientWithResponsesInterface interface {
 	// Requested ``scopes`` may only narrow the credential's stored scopes;
 	// widening scopes requires a connect session (422
 	// ``scope_widening_requires_review``).
+	// A credential managed by an extension (`managed_by` set) returns 409
+	// ``credential_managed``, even for its owner or ``org:admin``.
 	//
 	// Discriminates on the provider's returned challenge: OAuth2
 	// authorization-code providers return an ``authorize_url`` for popup
@@ -40603,6 +40668,8 @@ type DeleteCredentialHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -40631,6 +40698,11 @@ func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteCredentialHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -40792,6 +40864,8 @@ type UpdateCredentialHTTPResp struct {
 	ApplicationproblemJSON403 *Forbidden
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *UnprocessableEntity
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -40825,6 +40899,11 @@ func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON403() *Forbidden {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON404() *NotFound {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateCredentialHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -49316,7 +49395,8 @@ func (c *ClientWithResponses) ListAgentCredentialsWithResponse(ctx context.Conte
 // must be able to see the agent and must own the credential (or hold
 // `org:admin`). A credential that does not exist or that the caller does
 // not own returns 404; binding the same credential twice returns 409
-// (`credential_binding_conflict`).
+// (`credential_binding_conflict`), and a credential managed by an extension
+// returns 409 (`credential_managed`).
 // Returns the new binding.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -49339,7 +49419,8 @@ func (c *ClientWithResponses) BindAgentCredentialWithBodyWithResponse(ctx contex
 // must be able to see the agent and must own the credential (or hold
 // `org:admin`). A credential that does not exist or that the caller does
 // not own returns 404; binding the same credential twice returns 409
-// (`credential_binding_conflict`).
+// (`credential_binding_conflict`), and a credential managed by an extension
+// returns 409 (`credential_managed`).
 // Returns the new binding.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -50848,6 +50929,9 @@ func (c *ClientWithResponses) ListProvidersWithResponse(ctx context.Context, req
 //
 // Delete a credential.
 //
+// A credential managed by an extension (`managed_by` set) returns 409
+// `credential_managed` unless the caller holds `org:admin`.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /credentials/{credential_id} (the `DeleteCredential` operationId).
@@ -50878,6 +50962,9 @@ func (c *ClientWithResponses) GetCredentialWithResponse(ctx context.Context, cre
 //
 // Update or rotate a credential.
 //
+// A credential managed by an extension (`managed_by` set) returns 409
+// `credential_managed`: the extension that manages it changes it.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /credentials/{credential_id} (the `UpdateCredential` operationId).
@@ -50892,6 +50979,9 @@ func (c *ClientWithResponses) UpdateCredentialWithBodyWithResponse(ctx context.C
 // UpdateCredentialWithResponse Update or rotate credential
 //
 // Update or rotate a credential.
+//
+// A credential managed by an extension (`managed_by` set) returns 409
+// `credential_managed`: the extension that manages it changes it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -51116,6 +51206,8 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithResponse(ctx conte
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -51148,6 +51240,8 @@ func (c *ClientWithResponses) ConnectCredentialWithBodyWithResponse(ctx context.
 // Requested “scopes“ may only narrow the credential's stored scopes;
 // widening scopes requires a connect session (422
 // “scope_widening_requires_review“).
+// A credential managed by an extension (`managed_by` set) returns 409
+// “credential_managed“, even for its owner or “org:admin“.
 //
 // Discriminates on the provider's returned challenge: OAuth2
 // authorization-code providers return an “authorize_url“ for popup
@@ -59929,6 +60023,13 @@ func ParseDeleteCredentialHTTPResp(rsp *http.Response) (*DeleteCredentialHTTPRes
 		}
 		response.ApplicationproblemJSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -60092,6 +60193,13 @@ func ParseUpdateCredentialHTTPResp(rsp *http.Response) (*UpdateCredentialHTTPRes
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity

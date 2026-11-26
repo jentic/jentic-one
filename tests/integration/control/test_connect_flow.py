@@ -39,6 +39,7 @@ from jentic_one.control.services.credentials.connect_service import ConnectFlowE
 from jentic_one.control.services.credentials.errors import (
     ConnectRequiresReviewError,
     ConnectScopeWideningError,
+    CredentialManagedError,
     CredentialNotFoundError,
 )
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
@@ -1548,3 +1549,150 @@ async def test_binding_waits_while_the_bindings_lock_is_held(
         assert await _bound_agents(ctx, credential_id) == []
 
     assert await _bound_agents(ctx, credential_id) == [_LOCK_SECOND_AGENT]
+
+
+# --- Extension-managed credentials: no reconnect, no stored grant ---
+
+_SEEDED_ACCESS = "at_seeded_original"  # pragma: allowlist secret
+
+
+async def _manage(ctx: Context, credential_id: str) -> None:
+    """Mark the credential managed by an extension (as the seam's create would)."""
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.get_by_id(session, credential_id)
+        assert credential is not None
+        credential.managed_by_kind = "example_connection"
+        credential.managed_by_ref = "conn_1"
+
+
+async def _seed_grant(ctx: Context, credential_id: str) -> str:
+    """Store a grant on the credential and return its ciphertext."""
+    encrypted = ctx.encryption.encrypt(_SEEDED_ACCESS)
+    async with ctx.control_db.transaction() as session:
+        await OAuthTokenRepository.create(
+            session,
+            credential_id=credential_id,
+            encrypted_access_token=encrypted,
+            created_by=_OWNER.sub,
+        )
+    return encrypted
+
+
+async def _stored_access(ctx: Context, credential_id: str) -> str | None:
+    async with ctx.control_db.session() as session:
+        token = await OAuthTokenRepository.get_by_credential(session, credential_id)
+    return ctx.encryption.decrypt(token.encrypted_access_token) if token is not None else None
+
+
+@pytest.mark.parametrize("caller", [_OWNER, _ADMIN], ids=["owner", "org_admin"])
+async def test_connect_refuses_a_managed_credential(
+    integration_context: Context, clean_connect_tables: None, caller: Identity
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    await _seed_grant(ctx, credential_id)
+    await _manage(ctx, credential_id)
+
+    with pytest.raises(CredentialManagedError):
+        await ConnectService(ctx).begin(credential_id, ConnectRequest(), identity=caller)
+
+    with idp_transport() as idp_requests:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=_router_app(ctx, caller)),
+            base_url="https://testserver",
+        ) as tc:
+            resp = await tc.post(f"/credentials/{credential_id}/connect", json={})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["type"].endswith("credential_managed")
+    assert "set-cookie" not in resp.headers
+    assert idp_requests == []
+
+    async with ctx.control_db.session() as session:
+        assert (await session.execute(select(ConnectNonce))).scalars().all() == []
+    assert await _stored_access(ctx, credential_id) == _SEEDED_ACCESS
+
+
+async def test_callback_refuses_a_credential_managed_since_the_flow_began(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """A flow begun before the refusal stores nothing and exchanges no code."""
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    await _seed_grant(ctx, credential_id)
+    challenge = await ConnectService(ctx).begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+    await _manage(ctx, credential_id)
+
+    token_response = {"access_token": "at_replacement", "expires_in": 3600}
+    with (
+        idp_transport(post=httpx.Response(200, json=token_response)) as idp_requests,
+        pytest.raises(CredentialManagedError),
+    ):
+        await ConnectService(ctx).complete(
+            challenge.state, ConnectCallback(code="code-1"), browser_binding=_BINDING.value
+        )
+    assert idp_requests == []
+    assert await _stored_access(ctx, credential_id) == _SEEDED_ACCESS
+
+
+async def test_callback_rechecks_the_marker_before_storing_the_grant(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Marked managed while the code was being exchanged: the grant is discarded."""
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    await _seed_grant(ctx, credential_id)
+    challenge = await ConnectService(ctx).begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+
+    provider = ctx.providers.get("my_oauth")
+    original_complete = provider.complete_connect
+
+    async def complete_then_manage(*args: object, **kwargs: object) -> object:
+        result = await original_complete(*args, **kwargs)  # type: ignore[arg-type]
+        await _manage(ctx, credential_id)
+        return result
+
+    token_response = {"access_token": "at_replacement", "expires_in": 3600}
+    with (
+        patch.object(provider, "complete_connect", new=complete_then_manage),
+        idp_transport(post=httpx.Response(200, json=token_response)) as idp_requests,
+        pytest.raises(CredentialManagedError),
+    ):
+        await ConnectService(ctx).complete(
+            challenge.state, ConnectCallback(code="code-1"), browser_binding=_BINDING.value
+        )
+    assert len(idp_requests) == 1  # the exchange ran; its grant was not stored
+    assert await _stored_access(ctx, credential_id) == _SEEDED_ACCESS
+
+
+async def test_callback_route_answers_a_managed_credential_with_the_error_page(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    ctx = integration_context
+    credential_id = await _connectable_credential(ctx)
+    await _seed_grant(ctx, credential_id)
+    challenge = await ConnectService(ctx).begin(
+        credential_id, ConnectRequest(), identity=_OWNER, browser_binding=_BINDING.claim
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+    await _manage(ctx, credential_id)
+
+    with idp_transport() as idp_requests:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=_router_app(ctx, _OWNER)),
+            base_url="https://testserver",
+            cookies={_BINDING.cookie_name: _BINDING.value},
+        ) as tc:
+            resp = await tc.get(
+                "/credentials/oauth/callback",
+                params={"state": challenge.state, "code": "code-1"},
+            )
+    assert resp.status_code == 303, resp.text
+    assert "status=error" in resp.headers["location"]
+    assert idp_requests == []
+    assert await _stored_access(ctx, credential_id) == _SEEDED_ACCESS

@@ -25,8 +25,9 @@ export function viewerIsOrgAdmin(viewer: BindViewer | null | undefined): boolean
 }
 
 /**
- * The credentials this viewer may bind: every one for an `org:admin`, otherwise
- * only the ones they created. An unknown viewer gets the list unfiltered — the
+ * The credentials this viewer may bind: every unmanaged one for an `org:admin`,
+ * otherwise only the unmanaged ones they created (an extension-managed
+ * credential is never bindable). An unknown viewer gets the list unfiltered — the
  * server still enforces, and hiding everything while `/users/me` loads would
  * misclassify every pick as "needs a new credential". The same owner-or-admin
  * rule decides who may edit a credential ({@link credentialEditableBy}).
@@ -35,8 +36,11 @@ export function credentialsBindableBy(
 	credentials: Credential[],
 	viewer: BindViewer | null | undefined,
 ): Credential[] {
-	if (!viewer || viewerIsOrgAdmin(viewer)) return credentials;
-	return credentials.filter((c) => credentialEditableBy(c, viewer));
+	// A credential an extension manages is never bindable, whoever asks (the
+	// server answers 409 `credential_managed`).
+	const unmanaged = credentials.filter((c) => c.managed_by == null);
+	if (!viewer || viewerIsOrgAdmin(viewer)) return unmanaged;
+	return unmanaged.filter((c) => credentialEditableBy(c, viewer));
 }
 
 /**

@@ -34,6 +34,7 @@ import { assignVendorUrl, isHttpsVendorUrl } from '@/shared/credentials/lib/safe
 import { BoundAgentsSection } from '@/shared/credentials/components/BoundAgentsSection';
 import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
+import { ManagedCredentialNote } from '@/shared/credentials/components/managedBy';
 
 const EMPTY_SECRET_FIELDS: Partial<CredentialFormState> = {
 	token: '',
@@ -179,7 +180,7 @@ export function EditCredentialSheet({
 
 	const handleSubmit = (e: React.FormEvent): void => {
 		e.preventDefault();
-		if (!cred || !credentialId || !dirty) return;
+		if (!cred || !credentialId || !dirty || cred.managed_by != null) return;
 		const validation = validateUpdate(cred.type, state);
 		if (Object.keys(validation).length > 0) {
 			setErrors(validation);
@@ -240,6 +241,10 @@ export function EditCredentialSheet({
 	// against the seeded snapshot; `serverVars` isn't edited here so it stays
 	// equal. Keeps Save disabled (and submits no-op'd) until there's a change.
 	const dirty = useMemo(() => !formStatesEqual(state, initialState), [state, initialState]);
+	// An extension manages this credential: the server refuses any edit
+	// (409 `credential_managed`), so the sheet shows where it is managed instead
+	// of a form that cannot be saved.
+	const managedBy = cred?.managed_by ?? null;
 
 	return (
 		<SheetPrimitive
@@ -283,7 +288,19 @@ export function EditCredentialSheet({
 						/>
 					)}
 
-					{cred && (
+					{cred && managedBy && (
+						<>
+							<div className="bg-surface-inset flex items-center justify-between gap-3 rounded-lg px-3 py-2">
+								<p className="text-foreground-sub min-w-0 font-mono text-xs">
+									{apiLabel}
+								</p>
+								<CredentialTypeBadge credential={cred} />
+							</div>
+							<ManagedCredentialNote managedBy={managedBy} />
+						</>
+					)}
+
+					{cred && !managedBy && (
 						<>
 							<div className="bg-surface-inset flex items-center justify-between gap-3 rounded-lg px-3 py-2">
 								<div className="min-w-0">
@@ -377,8 +394,14 @@ export function EditCredentialSheet({
 						type="submit"
 						variant="primary"
 						loading={updateMutation.isPending}
-						disabled={!cred || !dirty}
-						title={!dirty ? 'No changes to save' : undefined}
+						disabled={!cred || !dirty || managedBy != null}
+						title={
+							managedBy != null
+								? 'Managed elsewhere — it cannot be edited here'
+								: !dirty
+									? 'No changes to save'
+									: undefined
+						}
 					>
 						Save changes
 					</Button>

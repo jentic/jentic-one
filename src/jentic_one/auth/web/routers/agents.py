@@ -473,7 +473,9 @@ async def list_credentials(
             "(`credential_not_found`)"
         ),
         conflict(
-            "The same credential is already bound to this agent (`credential_binding_conflict`)"
+            "The same credential is already bound to this agent "
+            "(`credential_binding_conflict`), or the credential is managed by an "
+            "extension and cannot be bound (`credential_managed`)"
         ),
     ),
 )
@@ -490,7 +492,8 @@ async def bind_credential(
     must be able to see the agent and must own the credential (or hold
     `org:admin`). A credential that does not exist or that the caller does
     not own returns 404; binding the same credential twice returns 409
-    (`credential_binding_conflict`).
+    (`credential_binding_conflict`), and a credential managed by an extension
+    returns 409 (`credential_managed`).
     Returns the new binding.
     """
     binding = await agent_svc.bind_credential(

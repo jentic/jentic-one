@@ -45,6 +45,21 @@ class CredentialBindingNotFoundError(AuthServiceError):
         self.credential_id = credential_id
 
 
+class CredentialNotBindableError(AuthServiceError):
+    """Raised when the bind target is a credential an extension manages.
+
+    A managed credential is used only by the extension that manages it, so
+    no agent may be bound to it.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"Credential '{credential_id}' is managed by an extension and cannot be "
+            "bound to an agent"
+        )
+        self.credential_id = credential_id
+
+
 class CredentialNotVisibleError(AuthServiceError):
     """Raised when the bind target credential does not exist or is not visible.
 

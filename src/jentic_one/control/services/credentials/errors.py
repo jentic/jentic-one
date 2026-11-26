@@ -23,6 +23,21 @@ class ImmutableFieldError(CredentialServiceError):
         self.field = field
 
 
+class CredentialManagedError(CredentialServiceError):
+    """Raised when a caller changes a credential that an extension manages.
+
+    A managed credential is edited and deleted only through the credentials
+    seam by the code that manages it (matching ``managed_by``); over HTTP only
+    ``org:admin`` may delete one.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(
+            f"Credential '{credential_id}' is managed by an extension and cannot be changed here"
+        )
+        self.credential_id = credential_id
+
+
 class UnsupportedProviderForTypeError(CredentialServiceError):
     """Raised when a provider does not support the requested credential type."""
 

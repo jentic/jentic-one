@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { APIReference } from './APIReference';
 import type { CredentialType } from './CredentialType';
+import type { ManagedByResponse } from './ManagedByResponse';
 /**
  * Redacted credential response (for read/list/patch).
  */
@@ -36,6 +37,10 @@ export type CredentialRedactedResponse = {
      * Redacted, type-specific projection (hints/last-N chars; never the secret). For oauth2: client_id, token_url, grant_type (authorization_code | client_credentials), scopes, and — for authorization_code only — `connected`, whether the interactive sign-in completed and is still usable (null for other grants).
      */
     details?: (Record<string, any> | null);
+    /**
+     * Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit, OAuth reconnect or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.
+     */
+    managed_by?: (ManagedByResponse | null);
     /**
      * Human-readable label.
      */

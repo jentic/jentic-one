@@ -41,6 +41,7 @@ def _make_credential(
     cred.provider = provider
     cred.created_by = created_by
     cred.server_variables = None
+    cred.managed_by_kind = None
     cred.created_at = None
     cred.token_value_credential = MagicMock(encrypted_token_value="enc:tok")
     cred.customer_api_key = None
