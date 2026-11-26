@@ -10,6 +10,7 @@ import pytest
 
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
+    CredentialIdNotFoundError,
     CredentialNotProvisionedError,
 )
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
@@ -31,6 +32,7 @@ def _make_credential(
     provider: str = "static",
     server_variables: dict[str, str] | None = None,
     created_by: str | None = "usr_cred_owner",
+    managed_by_kind: str | None = None,
 ) -> MagicMock:
     cred = MagicMock()
     cred.id = cred_id
@@ -51,6 +53,7 @@ def _make_credential(
     cred.oauth_token = None
     cred.sigv4_credential = None
     cred.provider_account_ref = None
+    cred.managed_by_kind = managed_by_kind
     return cred
 
 
@@ -566,3 +569,24 @@ async def test_resolve_failure_loads_no_material(
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
 
     load_material_spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_skips_a_managed_credential() -> None:
+    """A credential an extension manages is never a candidate for an agent call."""
+    managed = _make_credential(cred_id="cred_managed", managed_by_kind="example_connection")
+    plain = _make_credential(cred_id="cred_plain")
+    session = AsyncMock()
+    ctx = _make_ctx_with_control_session(session)
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[managed, plain],
+    ):
+        resolved = await CredentialResolver(ctx).resolve(api=api, caller="agent_x")
+        assert resolved.credential_id == "cred_plain"
+        with pytest.raises(CredentialIdNotFoundError):
+            await CredentialResolver(ctx).resolve(
+                api=api, caller="agent_x", credential_id="cred_managed"
+            )
