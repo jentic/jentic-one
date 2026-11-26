@@ -14,6 +14,19 @@ before moving on — see [0.41.0](#0410) for why.
 
 Changes on `main` since 0.44.0; they ship in the next release.
 
+- **Credentials can be managed by an extension.** A control migration adds two
+  nullable columns to `credentials`, `managed_by_kind` and `managed_by_ref`
+  (with a both-or-neither check constraint and an index). Existing credentials
+  stay unmanaged and behave as before; none is marked by the upgrade. A
+  credential an in-process extension created through
+  `jentic_one.control.credentials_seam` carries `managed_by: {kind, ref}` in
+  credential responses, and returns **`409 credential_managed`** when you try to
+  bind it to an agent (`POST /agents/{id}/credentials`), edit it
+  (`PATCH /credentials/{id}`) or delete it (`DELETE /credentials/{id}`); an
+  `org:admin` may still delete it. The broker never injects such a credential
+  into an agent call. See
+  [Managed credentials](../development/extending-jentic-one.md#managed-credentials).
+
 - **Logs and error details mask bare tokens and provider keys.** Central
   redaction now masks a platform token that appears on its own in free text
   (an agent API key `jak_…`, a client secret `jcs_…`, an access, refresh or
