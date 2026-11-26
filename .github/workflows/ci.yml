@@ -23,6 +23,7 @@ on:
         'feat/theme-5-*',
         'feat/credentials-and-approvals-overhaul',
         'feat/theme-8-*',
+        'feat/broker-extension-seams',
       ]
   # Merge queue: the queued run gates the merge on the true post-merge tree.
   # Inert until a merge queue is enabled in the main ruleset; behaves like a PR
