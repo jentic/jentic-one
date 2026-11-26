@@ -257,8 +257,9 @@ async def served(env: Context, restore_logging: None) -> AsyncGenerator[tuple[st
     lines = _Lines()
     access.addHandler(lines)
     task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.02)
+    async with asyncio.timeout(10):
+        while not server.started:
+            await asyncio.sleep(0.02)
     yield f"http://127.0.0.1:{port}", lines
     server.should_exit = True
     await task
