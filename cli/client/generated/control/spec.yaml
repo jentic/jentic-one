@@ -4341,6 +4341,14 @@ components:
           type:
           - object
           - 'null'
+        managed_by:
+          anyOf:
+          - $ref: '#/components/schemas/ManagedByResponse'
+          - type: 'null'
+          description: 'Set when an extension manages this credential: the kind and id of the managing object. Read-only; it is set when the extension creates the credential and never changes. A managed credential cannot be bound to an agent, is never injected into agent calls, and returns 409 `credential_managed` on edit or delete (an `org:admin` may still delete it). Null for every other credential. Unrelated to the provider-level `managed` flag of `GET /credentials/providers`.'
+          examples:
+          - kind: example_connection
+            ref: conn_2bYkT0x9Qp
         name:
           description: Human-readable label.
           examples:
@@ -7292,6 +7300,26 @@ components:
       - token_type
       - expires_in
       - must_change_password
+      type: object
+    ManagedByResponse:
+      description: The object an extension uses to manage a credential.
+      examples:
+      - kind: example_connection
+        ref: conn_2bYkT0x9Qp
+      properties:
+        kind:
+          description: Kind of the managing object, chosen by the extension.
+          examples:
+          - example_connection
+          type: string
+        ref:
+          description: Id of the managing object within its kind.
+          examples:
+          - conn_2bYkT0x9Qp
+          type: string
+      required:
+      - kind
+      - ref
       type: object
     McpConfigRegistrationRequest:
       description: Report that an MCP config entry was written for one agent runtime.
@@ -15628,7 +15656,8 @@ paths:
         must be able to see the agent and must own the credential (or hold
         `org:admin`). A credential that does not exist or that the caller does
         not own returns 404; binding the same credential twice returns 409
-        (`credential_binding_conflict`).
+        (`credential_binding_conflict`), and a credential managed by an extension
+        returns 409 (`credential_managed`).
         Returns the new binding.
       operationId: bindAgentCredential
       parameters:
@@ -15681,7 +15710,7 @@ paths:
               example: *id265
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: The same credential is already bound to this agent (`credential_binding_conflict`)
+          description: The same credential is already bound to this agent (`credential_binding_conflict`), or the credential is managed by an extension and cannot be bound (`credential_managed`)
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -19437,7 +19466,11 @@ paths:
     summary: List credential providers
   /credentials/{credential_id}:
     delete:
-      description: Delete a credential.
+      description: |-
+        Delete a credential.
+
+        A credential managed by an extension (`managed_by` set) returns 409
+        `credential_managed` unless the caller holds `org:admin`.
       operationId: deleteCredential
       parameters:
       - $ref: '#/components/parameters/PathCredentialId'
@@ -19452,6 +19485,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          content:
+            application/problem+json:
+              example: *id265
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The credential is managed by an extension; only an `org:admin` may delete it here (`credential_managed`)
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -19503,7 +19543,11 @@ paths:
       tags:
       - Credentials
     patch:
-      description: Update or rotate a credential.
+      description: |-
+        Update or rotate a credential.
+
+        A credential managed by an extension (`managed_by` set) returns 409
+        `credential_managed`: the extension that manages it changes it.
       operationId: updateCredential
       parameters:
       - $ref: '#/components/parameters/PathCredentialId'
@@ -19546,6 +19590,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          content:
+            application/problem+json:
+              example: *id265
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The credential is managed by an extension and is changed only through it (`credential_managed`), or an immutable field changed (`immutable_field`)
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':

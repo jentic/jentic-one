@@ -233,6 +233,7 @@ func (LoginRequest) RequiredFields() []string      { return []string{"email", "p
 func (LoginResponse) RequiredFields() []string {
 	return []string{"access_token", "expires_in", "must_change_password", "token_type"}
 }
+func (ManagedByResponse) RequiredFields() []string            { return []string{"kind", "ref"} }
 func (McpConfigRegistrationRequest) RequiredFields() []string { return []string{"runtime"} }
 func (McpConfigRegistrationResponse) RequiredFields() []string {
 	return []string{"recorded", "runtime"}
