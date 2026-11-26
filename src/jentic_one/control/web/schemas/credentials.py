@@ -679,6 +679,19 @@ CredentialUpdateRequest = Annotated[
 # --- Response models ---
 
 
+class ManagedByResponse(BaseModel):
+    """The object an extension uses to manage a credential."""
+
+    kind: str = Field(
+        description="Kind of the managing object, chosen by the extension.",
+        examples=["example_connection"],
+    )
+    ref: str = Field(
+        description="Id of the managing object within its kind.",
+        examples=["conn_2bYkT0x9Qp"],
+    )
+
+
 class CredentialRedactedResponse(BaseModel):
     """Redacted credential response (for read/list/patch)."""
 
@@ -787,6 +800,18 @@ class CredentialRedactedResponse(BaseModel):
             "Admin-facing name of the shared OAuth app registration this "
             "credential was minted through. Null when the credential is not "
             "backed by a shared registration."
+        ),
+    )
+    managed_by: ManagedByResponse | None = Field(
+        default=None,
+        description=(
+            "Set when an extension manages this credential: the kind and id of "
+            "the managing object. Read-only; it is set when the extension creates "
+            "the credential and never changes. A managed credential cannot be bound "
+            "to an agent, is never injected into agent calls, and returns 409 "
+            "`credential_managed` on edit or delete (an `org:admin` may still "
+            "delete it). Null for every other credential. Unrelated to the "
+            "provider-level `managed` flag of `GET /credentials/providers`."
         ),
     )
 

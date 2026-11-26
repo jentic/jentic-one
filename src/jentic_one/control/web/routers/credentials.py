@@ -71,6 +71,7 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialRedactedResponse,
     CredentialUpdateRequest,
     DeviceAuthorizationConnectChallengeResponse,
+    ManagedByResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
     RuleSetAttachRequest,
@@ -135,6 +136,11 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
         server_variables=view.server_variables,
         oauth_app_registration_id=view.oauth_app_registration_id,
         oauth_app_registration_name=view.oauth_app_registration_name,
+        managed_by=(
+            ManagedByResponse(kind=view.managed_by.kind, ref=view.managed_by.ref)
+            if view.managed_by is not None
+            else None
+        ),
     )
 
 
@@ -1074,7 +1080,13 @@ async def delete_rule_set(
 @router.patch(
     "/credentials/{credential_id}",
     summary="Update or rotate credential",
-    responses=not_found(),
+    responses=with_responses(
+        not_found(),
+        conflict(
+            "The credential is managed by an extension and is changed only through it "
+            "(`credential_managed`), or an immutable field changed (`immutable_field`)"
+        ),
+    ),
 )
 async def update_credential(
     credential_id: Annotated[
@@ -1085,7 +1097,11 @@ async def update_credential(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> CredentialRedactedResponse:
-    """Update or rotate a credential."""
+    """Update or rotate a credential.
+
+    A credential managed by an extension (`managed_by` set) returns 409
+    `credential_managed`: the extension that manages it changes it.
+    """
     payload = CredentialUpdate(
         type=CredentialType(body.type),
         name=body.name,
@@ -1115,7 +1131,13 @@ async def update_credential(
     "/credentials/{credential_id}",
     status_code=204,
     summary="Delete credential",
-    responses=not_found(),
+    responses=with_responses(
+        not_found(),
+        conflict(
+            "The credential is managed by an extension; only an `org:admin` may "
+            "delete it here (`credential_managed`)"
+        ),
+    ),
 )
 async def delete_credential(
     credential_id: Annotated[
@@ -1125,7 +1147,11 @@ async def delete_credential(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> Response:
-    """Delete a credential."""
+    """Delete a credential.
+
+    A credential managed by an extension (`managed_by` set) returns 409
+    `credential_managed` unless the caller holds `org:admin`.
+    """
     await svc.delete(credential_id, identity=identity)
     return Response(status_code=204)
 

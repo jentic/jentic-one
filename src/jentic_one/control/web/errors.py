@@ -12,6 +12,7 @@ from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
     ConnectRequiresReviewError,
     ConnectScopeWideningError,
+    CredentialManagedError,
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
@@ -100,6 +101,7 @@ from jentic_one.shared.web.errors import (
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     CredentialNotFoundError: (404, "credential_not_found"),
+    CredentialManagedError: (409, "credential_managed"),
     ImmutableFieldError: (409, "immutable_field"),
     UnsupportedProviderForTypeError: (422, "unsupported_provider_for_type"),
     InvalidCredentialInputError: (400, "invalid_credential_input"),

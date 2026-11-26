@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import BaseModel
 
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.shared.models.credentials import CredentialType
+
+# Column widths of ``credentials.managed_by_kind`` / ``managed_by_ref``.
+MANAGED_BY_KIND_MAX = 50
+MANAGED_BY_REF_MAX = 255
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedBy:
+    """The object that manages a credential: its kind and its id.
+
+    Set only by in-process extension code at creation, through
+    ``jentic_one.control.credentials_seam``; never accepted from an HTTP body.
+    """
+
+    kind: str
+    ref: str
+
+    def __post_init__(self) -> None:
+        if not self.kind or len(self.kind) > MANAGED_BY_KIND_MAX:
+            raise ValueError(f"managed_by kind must be 1-{MANAGED_BY_KIND_MAX} characters")
+        if not self.ref or len(self.ref) > MANAGED_BY_REF_MAX:
+            raise ValueError(f"managed_by ref must be 1-{MANAGED_BY_REF_MAX} characters")
+
+
+def managed_by_of(kind: str | None, ref: str | None) -> ManagedBy | None:
+    """The marker stored in a credential row's two columns, or ``None`` when unmanaged."""
+    if kind is None or ref is None:
+        return None
+    return ManagedBy(kind=kind, ref=ref)
 
 
 class ProviderDiscoveryEntry(BaseModel):
@@ -209,6 +239,7 @@ class CredentialFullView(BaseModel):
     created_by: str | None = None
     created_at: datetime
     server_variables: dict[str, str] | None = None
+    managed_by: ManagedBy | None = None
     secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
     # Advisory only — e.g. the API scope covers no imported registry API
     # identity (#1020). The credential is created regardless; None when there
@@ -245,6 +276,8 @@ class CredentialRedactedView(BaseModel):
     # OAuth credentials and every non-OAuth type.
     oauth_app_registration_id: str | None = None
     oauth_app_registration_name: str | None = None
+    # Set when an extension manages the credential (see ``ManagedBy``).
+    managed_by: ManagedBy | None = None
 
     model_config = {"from_attributes": True}
 
