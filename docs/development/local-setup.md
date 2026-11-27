@@ -115,5 +115,6 @@ and check targets.
 | `/app` returns 404 from source | `ui/dist` was never built because Node is missing: install Node, then `make ui-build`. |
 | `make check` fails at `score` | The scorecard runs only with `JENTIC_SCORE_API_KEY` set and then needs `npx` and network; unset the key to skip it. |
 | Migrations fail on a throwaway local DB | `make destroy-fixtures && make start-fixtures` (deletes all local data). |
+| `make start-fixtures` stops with "this fixture volume was created by another Postgres image" | The volume was created by an image with another glibc (for example a `postgres:16` from a different Debian release), so its recorded collation version does not match the server's. Back up what you need (`pg_dump`), then `make destroy-fixtures && make start-fixtures`. |
 | UI tests fail to launch a browser | `cd ui && npx playwright install chromium` (see [`ui/README.md`](../../ui/README.md)). |
 | Commit rejected by the `commit-msg` hook | The message needs `type(scope): subject` — see [`CONTRIBUTING.md`](../../CONTRIBUTING.md#commits). |
