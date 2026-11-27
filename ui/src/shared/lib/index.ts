@@ -35,6 +35,8 @@ export {
 
 // The shell scrolls `<main>`, not the window: read and drive page scroll here.
 export { shellScroller, shellScrollRoot, shellScrollTop } from '@/shared/lib/shellScroll';
+// The API's ISO 8601 idle limits, as whole seconds and back.
+export { isoDuration, isoDurationOrNull, isoDurationSeconds } from '@/shared/lib/isoDuration';
 export {
 	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
 	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,

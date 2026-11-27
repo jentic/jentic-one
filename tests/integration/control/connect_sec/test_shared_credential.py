@@ -10,12 +10,14 @@ bound, and the agents already bound keep exactly what they had.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 from jentic_one.control.repos.agent_permission_rule_repo import AgentPermissionRuleRepository
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
@@ -144,6 +146,58 @@ async def test_a_narrow_credential_is_used_in_one_step_and_lands_with_the_grant(
         created.session_id, poll_token=created.poll_token, identity=AGENT
     )
     assert (status.status, status.credential_id) == ("connected", narrow)
+
+
+@pytest.mark.parametrize(
+    ("suspended", "error_code"),
+    [(False, "binding_expired"), (True, "binding_suspended")],
+    ids=["expired", "suspended"],
+)
+async def test_a_binding_cut_off_while_the_consent_is_out_stops_the_held_bind(
+    env: Context, suspended: bool, error_code: str
+) -> None:
+    """The bind was checked at confirm, but the consent can take minutes.
+
+    Another binding of the agent covering the same API expires (or is
+    suspended) while the vendor consent is out. Binding the chosen credential
+    when the grant lands would route around that cut-off, so nothing lands:
+    no bind, and the credential keeps its narrower grant.
+    """
+    await import_spec(env, OAUTH_SCHEME)
+    created = await connect(env, requested_scopes=["read", "write"])
+    narrow = await existing_credential(env, oauth_scope="read")
+    result = await _use_existing(env, created.session_id, narrow)
+    assert isinstance(result, AuthCodeConfirmResult)
+
+    cut_off = await existing_credential(env, name="Cut off", oauth_scope="read")
+    await bind(env, AGENT_ID, cut_off)
+    async with env.admin_db.transaction() as session:
+        await session.execute(
+            text(
+                "UPDATE agent_credential_bindings SET expires_at = :e, suspended = :s"
+                " WHERE agent_id = :a AND credential_id = :c"
+            ),
+            {
+                "e": datetime.now(UTC) - timedelta(minutes=1),
+                "s": suspended,
+                "a": AGENT_ID,
+                "c": cut_off,
+            },
+        )
+
+    with patch(
+        "jentic_one.shared.http.idp_client.build_always_pinned_transport",
+        return_value=httpx.MockTransport(_token_endpoint),
+    ):
+        landed = await svc(env).complete_from_callback(
+            raw_state=_state_of(result.authorize_url),
+            code="vendor-code",
+            browser_binding=_BINDING.value,
+        )
+
+    assert (landed.status, landed.error_code) == ("failed", error_code)
+    assert not await is_bound(env, AGENT_ID, narrow)
+    assert await _granted(env, narrow) == "read"
 
 
 async def test_the_session_reads_as_an_edit_while_it_awaits_the_vendor(env: Context) -> None:

@@ -56,6 +56,8 @@ import {
 	heldCallRoute,
 	isAlreadySettled,
 	isDeleteCall,
+	needsOwnReview,
+	ownReviewWords,
 	useDecideApproval,
 	useHeldCallHeadlines,
 	useRefreshApprovalSurfaces,
@@ -140,9 +142,14 @@ export function HeldCallsCard({
 	// Ticks on calls that have since gone (decided elsewhere, expired) count
 	// for nothing.
 	const ticked = calls.filter((call) => tickedIds.has(call.id));
-	const approvable = ticked.filter((call) => !isDeleteCall(call));
-	const deletesTicked = ticked.filter(isDeleteCall);
-	const hasDeletes = calls.some(isDeleteCall);
+	// Deletes and re-grants of ended access are approved one at a time: the
+	// confirmation sets them aside, so they never count toward "Approve N".
+	const approvable = ticked.filter((call) => !needsOwnReview(call));
+	const deletesTicked = ticked.filter(needsOwnReview);
+	const hasDeletes = calls.some(needsOwnReview);
+	const ownWords = ownReviewWords(
+		deletesTicked.length > 0 ? deletesTicked : calls.filter(needsOwnReview),
+	);
 	const allTicked = ticked.length === calls.length;
 	const n = calls.length;
 	const names = [
@@ -385,24 +392,24 @@ export function HeldCallsCard({
 										}
 									>
 										{deletesTicked.length === 1
-											? 'Review the delete'
-											: `Review ${deletesTicked.length} deletes`}
+											? `Review the ${ownWords.one}`
+											: `Review ${deletesTicked.length} ${ownWords.many}`}
 									</Button>
 								)}
 								{deletesTicked.length > 0 && (
 									<span className="text-foreground-faint text-[11.5px]">
 										{approvable.length === 0
-											? 'Deletes are approved one at a time'
+											? `${ownWords.lead} are approved one at a time`
 											: deletesTicked.length === 1
-												? 'The delete comes next, on its own'
-												: `The ${deletesTicked.length} deletes come next, one at a time`}
+												? `The ${ownWords.one} comes next, on its own`
+												: `The ${deletesTicked.length} ${ownWords.many} come next, one at a time`}
 									</span>
 								)}
 							</>
 						) : (
 							<span className="text-foreground-faint text-[11.5px]">
 								Tick calls to deny or approve several at once
-								{hasDeletes && '. Deletes are approved one at a time'}
+								{hasDeletes && `. ${ownWords.lead} are approved one at a time`}
 							</span>
 						)}
 					</div>

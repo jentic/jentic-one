@@ -12,6 +12,7 @@ from jentic_one.auth.services.errors import ActorNotFoundError, InvalidTransitio
 from jentic_one.auth.services.schemas.agents import AgentCreatePayload
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS
+from jentic_one.shared.config import GrantExpiryConfig
 
 pytestmark = pytest.mark.usefixtures("no_api_key")
 
@@ -23,6 +24,8 @@ def _make_ctx() -> MagicMock:
     ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
     ctx.admin_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.admin_db.session.return_value.__aexit__ = AsyncMock(return_value=False)
+    # No org limits: an agent without an expiry gets none.
+    ctx.config.grant_expiry = GrantExpiryConfig()
     return ctx
 
 

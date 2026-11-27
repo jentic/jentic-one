@@ -37,6 +37,14 @@ export type IntegrationsConnectRequest = {
      */
     reason?: (string | null);
     /**
+     * How long the requested access should last, as an ISO 8601 duration counted from approval (e.g. P7D or PT8H; at most P999D). Shown preselected on the review page; the approver decides the binding's actual end date. Omit to ask for nothing in particular.
+     */
+    requested_expires_in?: (string | null);
+    /**
+     * The idle limit to ask for, as an ISO 8601 duration (P1D to P999D, e.g. P14D): the access would end once it goes this long without a call. Shown on the review page; the approver decides.
+     */
+    requested_max_idle_period?: (string | null);
+    /**
      * Permission rules proposed for the agent, shown pre-filled on the review page; nothing is bound until confirm.
      */
     requested_permission_rules?: Array<PermissionRuleSchema>;

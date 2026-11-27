@@ -24,6 +24,7 @@ from jentic_one.control.services.integrations.errors import (
     AmendFieldsMismatchError,
     AuthTypeNotDeclaredError,
     AuthTypeRequiredError,
+    BindingExpiredError,
     BindingSuspendedError,
     ConnectOpenError,
     EditBindingNotFoundError,
@@ -56,6 +57,9 @@ from jentic_one.control.services.vendors.service import (
 from jentic_one.control.web.errors import check_access_directive
 from jentic_one.control.web.routers.credentials import binding_access_response
 from jentic_one.control.web.schemas.integrations import (
+    MAX_IDLE_PERIOD_S,
+    MAX_REQUESTED_EXPIRES_IN_S,
+    MIN_IDLE_PERIOD_S,
     SCOPE_COMMENT_MAX,
     ConnectOptionsResponse,
 )
@@ -75,6 +79,7 @@ from jentic_one.mcp.envelopes import (
     ToolError,
     tool_result,
 )
+from jentic_one.shared.auth.durations import parse_duration_seconds
 from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger()
@@ -89,6 +94,8 @@ _REQUEST_CONNECTION_PARAMS = [
     ParamSpec("reason", "string"),
     ParamSpec("oauth_app_registration_id", "string", ("registration_id",)),
     ParamSpec("requested_permission_rules", "json", ("permission_rules",)),
+    ParamSpec("requested_expires_in", "string"),
+    ParamSpec("requested_max_idle_period", "string"),
 ]
 
 #: Guidance when the agent already has an open request for the target (Go:
@@ -368,6 +375,14 @@ def _api_target_tool_error(exc: Exception, target: str) -> ToolError | None:
             "ask your operator to resume it.",
             extra={"retryable": False},
         )
+    if isinstance(exc, BindingExpiredError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"this agent's access to {target} has expired: {exc}",
+            actionable="Your access to this API has expired. Do not ask again; "
+            "ask your operator to renew it.",
+            extra={"retryable": False},
+        )
     return None
 
 
@@ -435,6 +450,39 @@ def _vendor_not_configured_tool_error(exc: VendorNotConfiguredError, *, vendor: 
     )
 
 
+def _requested_expires_in(raw: object) -> int | None:
+    """``requested_expires_in`` as seconds: ``"7d"``, ``"8h"``, ``"30m"`` (Go: same rule)."""
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        raise invalid_params("requested_expires_in must be a duration such as 7d, 8h, 30m or P7D")
+    try:
+        seconds = parse_duration_seconds(raw)
+    except ValueError as exc:
+        raise invalid_params(f"requested_expires_in: {exc}") from None
+    if seconds > MAX_REQUESTED_EXPIRES_IN_S:
+        raise invalid_params("requested_expires_in must be at most 999 days")
+    return seconds
+
+
+def _requested_max_idle_period(raw: object) -> int | None:
+    """``requested_max_idle_period`` as seconds, 1 to 999 days (Go: same rule).
+
+    Takes ``14d`` style or an ISO 8601 duration (``P14D``).
+    """
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        raise invalid_params("requested_max_idle_period must be a duration such as 14d or P14D")
+    try:
+        seconds = parse_duration_seconds(raw)
+    except ValueError as exc:
+        raise invalid_params(f"requested_max_idle_period: {exc}") from None
+    if not MIN_IDLE_PERIOD_S <= seconds <= MAX_IDLE_PERIOD_S:
+        raise invalid_params("requested_max_idle_period must be between 1 day and 999 days")
+    return seconds
+
+
 async def handle_request_connection(
     env: CallEnv, arguments: dict[str, Any]
 ) -> mcp_types.CallToolResult:
@@ -496,6 +544,8 @@ async def handle_request_connection(
             f"{_REQUEST_CONNECTION_REGISTRATION_MAX} characters, got {len(registration_id)}"
         )
     requested_rules = _requested_permission_rules(args.get("requested_permission_rules"))
+    requested_expires_in = _requested_expires_in(args.get("requested_expires_in"))
+    requested_max_idle_period = _requested_max_idle_period(args.get("requested_max_idle_period"))
     try:
         # The route's any-of gate (credentials:connect | credentials:write);
         # agents hold credentials:connect by default.
@@ -534,6 +584,8 @@ async def handle_request_connection(
             preferred_flow=None,
             reason=reason or None,
             oauth_app_registration_id=registration_id,
+            requested_expires_in=requested_expires_in,
+            requested_max_idle_period=requested_max_idle_period,
         )
     except (
         ManualFlowsDisabledError,
@@ -547,6 +599,7 @@ async def handle_request_connection(
         TooManyOpenSessionsError,
         RecentlyRejectedError,
         BindingSuspendedError,
+        BindingExpiredError,
     ) as exc:
         mapped = _api_target_tool_error(exc, target)
         assert mapped is not None
@@ -605,9 +658,9 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
     """GET /credentials/{cid}/agents/{me}/permissions in-process (Go: ``handleShowAccess``).
 
     The calling agent's own binding to ``credential_id``, in the route's wire
-    shape. A credential it is not bound to, or whose binding is suspended
-    (which hides the credential from the agent), is RESOLVE_FAILED pointing
-    at whoami.
+    shape, with its ``suspended`` and ``expired`` flags. A credential it is
+    not bound to, or cannot read (a suspended or expired binding no longer
+    widens its reads), is RESOLVE_FAILED pointing at whoami.
     """
     args = normalize_tool_args(arguments, _SHOW_ACCESS_PARAMS)
     credential_id = args.get("credential_id", "")
@@ -625,7 +678,8 @@ async def handle_show_access(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
             CODE_RESOLVE_FAILED,
             f"no active credential binding for {credential_id!r}",
             actionable="check whoami (`jentic whoami`) for your credential bindings and their "
-            "credential ids; a suspended binding is hidden until your operator resumes it",
+            "credential ids; a suspended or expired binding may be hidden: only your "
+            "operator can resume or renew it",
             next_tool="whoami",
         ) from None
     addable = await ConnectSessionService(env.ctx).scope_options(credential_id)
@@ -873,6 +927,18 @@ def _edit_scopes(raw: Any) -> dict[str, Any]:
     }
 
 
+#: The recovery for :class:`EditBindingNotFoundError` (Go twin:
+#: ``editBindingNotFoundHint``): no binding, or (for an agent) a suspended or
+#: expired one. "Fix the request" would loop the agent between show_access
+#: and request_access_change; only the operator can act.
+_EDIT_BINDING_NOT_FOUND_HINT = (
+    "No binding of yours to this credential can be changed: you are not bound to it, or "
+    "the binding is suspended or expired. No change to your access brings those back; only "
+    "your operator can resume or renew them. Check whoami, and ask your operator; do not "
+    "request a new connection to get around it."
+)
+
+
 def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
     """A refused edit or amend as a coded error (Go: ``editErrorResult``)."""
     extra: dict[str, Any] | None = None
@@ -892,7 +958,7 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
             next_tool="show_access",
             extra={"unknown_scopes": exc.unknown},
         )
-    # The three refusals the generic arm's "fix the request, then retry" is
+    # The refusals the generic arm's "fix the request, then retry" is
     # wrong for: the request as sent is fine, and what has to happen next is
     # not another call of this tool.
     if isinstance(exc, RevisionChangedError):
@@ -920,6 +986,14 @@ def _edit_refusal(env: CallEnv, exc: Exception, what: str) -> ToolError:
             # directive naming this binding, and a pointer at show_access with
             # nothing to go with it is half an answer.
             extra={**(extra or {}), "retryable": False, "session_id": exc.session_id},
+        )
+    if isinstance(exc, EditBindingNotFoundError):
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"{what} was refused: {exc}",
+            actionable=_EDIT_BINDING_NOT_FOUND_HINT,
+            next_tool="whoami",
+            extra={"retryable": False},
         )
     if isinstance(exc, TooManyRevisionsError):
         return ToolError(

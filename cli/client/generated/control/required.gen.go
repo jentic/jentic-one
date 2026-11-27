@@ -47,6 +47,7 @@ func (ApiKeyHistoryResponse) RequiredFields() []string { return []string{"data"}
 func (ApiKeyInfoResponse) RequiredFields() []string    { return []string{"created_at", "id", "status"} }
 func (ApiKeyResponse) RequiredFields() []string        { return []string{"key"} }
 func (ApiKeyUpdateRequest) RequiredFields() []string   { return []string{"type"} }
+func (ApiLastUseResponse) RequiredFields() []string    { return []string{"api_vendor", "last_used_at"} }
 func (ApiLinksResponse) RequiredFields() []string      { return []string{"revisions", "self"} }
 func (ApiListResponse) RequiredFields() []string       { return []string{"data", "has_more"} }
 func (ApiReferenceResponse) RequiredFields() []string {
@@ -174,13 +175,17 @@ func (EditCurrentAccess) RequiredFields() []string { return []string{"rules", "s
 func (EditResultAccess) RequiredFields() []string {
 	return []string{"rules", "scopes", "suspended", "target"}
 }
-func (EditRuleAdd) RequiredFields() []string         { return []string{"rule"} }
-func (EditRuleSetView) RequiredFields() []string     { return []string{"curated", "id", "name", "rules"} }
-func (EditRuleView) RequiredFields() []string        { return []string{"effect", "id"} }
-func (EffectivePermission) RequiredFields() []string { return []string{"name"} }
-func (ErrorItem) RequiredFields() []string           { return []string{"detail"} }
-func (EventLinks) RequiredFields() []string          { return []string{"self"} }
-func (EventListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
+func (EditRuleAdd) RequiredFields() []string                   { return []string{"rule"} }
+func (EditRuleSetView) RequiredFields() []string               { return []string{"curated", "id", "name", "rules"} }
+func (EditRuleView) RequiredFields() []string                  { return []string{"effect", "id"} }
+func (EffectivePermission) RequiredFields() []string           { return []string{"name"} }
+func (EndingSoonBindingListResponse) RequiredFields() []string { return []string{"data"} }
+func (EndingSoonBindingResponse) RequiredFields() []string {
+	return []string{"agent_id", "agent_name", "bound_at", "credential_id", "ending", "ends_at", "id", "suspended"}
+}
+func (ErrorItem) RequiredFields() []string         { return []string{"detail"} }
+func (EventLinks) RequiredFields() []string        { return []string{"self"} }
+func (EventListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (EventResponse) RequiredFields() []string {
 	return []string{"_links", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
 }
@@ -200,6 +205,9 @@ func (ExistingCredentialResponse) RequiredFields() []string {
 }
 func (ExplainHeldExecutionRequest) RequiredFields() []string { return []string{"reason"} }
 func (GovernedHostsResponse) RequiredFields() []string       { return []string{"data", "digest"} }
+func (GrantPolicyLimitsResponse) RequiredFields() []string {
+	return []string{"expires_in", "idle_period", "single_use_by_default"}
+}
 func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }
@@ -377,13 +385,14 @@ func (RuleSetSummaryResponse) RequiredFields() []string {
 func (ScopeOptionSchema) RequiredFields() []string {
 	return []string{"classification", "description", "name"}
 }
-func (SearchLinksResponse) RequiredFields() []string        { return []string{"inspect"} }
-func (SearchRequest) RequiredFields() []string              { return []string{"query"} }
-func (SearchResponse) RequiredFields() []string             { return []string{"data", "has_more"} }
-func (SecuritySchemeFlowResponse) RequiredFields() []string { return []string{"flow_type"} }
-func (SecuritySchemeListResponse) RequiredFields() []string { return []string{"data"} }
-func (SecuritySchemeResponse) RequiredFields() []string     { return []string{"name", "type"} }
-func (ServedApiRef) RequiredFields() []string               { return []string{"api_vendor"} }
+func (SearchLinksResponse) RequiredFields() []string         { return []string{"inspect"} }
+func (SearchRequest) RequiredFields() []string               { return []string{"query"} }
+func (SearchResponse) RequiredFields() []string              { return []string{"data", "has_more"} }
+func (SecuritySchemeFlowResponse) RequiredFields() []string  { return []string{"flow_type"} }
+func (SecuritySchemeListResponse) RequiredFields() []string  { return []string{"data"} }
+func (SecuritySchemeResponse) RequiredFields() []string      { return []string{"name", "type"} }
+func (ServedApiRef) RequiredFields() []string                { return []string{"api_vendor"} }
+func (SessionAgentBindingResponse) RequiredFields() []string { return []string{"expired", "suspended"} }
 func (SessionApiReferenceResponse) RequiredFields() []string {
 	return []string{"name", "vendor", "version"}
 }

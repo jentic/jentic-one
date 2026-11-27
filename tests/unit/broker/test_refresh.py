@@ -11,13 +11,15 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 import structlog
+from sqlalchemy import Table
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.broker.core.errors import (
     CredentialNeedsReconnectError,
     CredentialUndecryptableError,
@@ -64,6 +66,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig, DatabaseConfig, EncryptionConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import EncryptionService
+from jentic_one.shared.db.base import AdminBase
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.http.idp_client import idp_request
 from jentic_one.shared.models import ActorType
@@ -159,6 +162,13 @@ async def sqlite_ctx(tmp_path: Path) -> AsyncGenerator[MagicMock, None]:
     await admin_db.connect()
     async with control_db.engine.begin() as conn:
         await conn.run_sync(ControlBase.metadata.create_all)
+    # Injection spends a use of the agent's binding before it refreshes.
+    async with admin_db.engine.begin() as conn:
+        await conn.run_sync(
+            lambda c: AdminBase.metadata.create_all(
+                c, tables=[cast(Table, AgentCredentialBinding.__table__)]
+            )
+        )
 
     ctx = MagicMock(spec=Context)
     ctx.control_db = control_db

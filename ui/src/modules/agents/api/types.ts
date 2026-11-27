@@ -138,7 +138,42 @@ export interface CredentialBindingEntity {
 	 * rules are dormant (the broker and `permissions:test` evaluate the set). */
 	ruleSetId: string | null;
 	boundAt: string;
+	/** When the binding stops authorizing calls; null when it never expires
+	 * (absent reads the same). Independent of `suspended`: renewing restores an
+	 * expired binding, and never resumes a suspended one. */
+	expiresAt?: string | null;
+	/** `expiresAt` had passed when the server answered. */
+	expired?: boolean;
+	/** Which limit ended it (`end_date`, `idle`), per the server; null while it holds. */
+	expiredReason?: string | null;
+	/** Idle limit in seconds; null without one. */
+	maxIdlePeriod?: number | null;
+	/** When the idle limit ends it if unused; null without one. */
+	idleExpiresAt?: string | null;
+	/** Whether the owner is warned before it ends (its end date or idle limit). */
+	idleWarning?: boolean;
+	/** What a call through it gets once it has ended: `hold` or `refuse`. */
+	afterExpiry?: string | null;
+	/** How many calls it allows (1 is single use), and how many are left; null without a count. */
+	maxQuota?: number | null;
+	quotaRemaining?: number | null;
+	/** When it was granted or last renewed (restarts the idle clock). */
+	renewedAt?: string | null;
+	/** When the agent last made a call through this credential, whatever its
+	 * outcome; null when it never has. Absent when the server doesn't report it,
+	 * so the UI claims nothing either way. */
+	lastUsedAt?: string | null;
+	/** The same, per API called through the credential, most recent first. */
+	lastUsedByApi?: ApiLastUseEntity[];
 	serves: ServedApiEntity[];
+}
+
+/** When the agent last called one API through a bound credential. */
+export interface ApiLastUseEntity {
+	vendor: string;
+	name: string | null;
+	version?: string | null;
+	lastUsedAt: string;
 }
 
 /** A stored permission rule on a direct binding (includes system fields). */

@@ -661,6 +661,10 @@ func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
 			http.StatusConflict, `{"type":"connect_session_binding_suspended","detail":"suspended"}`,
 			ux.CodeBrokerDenied, "", "ask your operator to resume it",
 		},
+		{
+			http.StatusConflict, `{"type":"connect_session_binding_expired","detail":"expired"}`,
+			ux.CodeBrokerDenied, "", "ask your operator to renew it",
+		},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			cp := &connectControlPlane{status: tc.status, body: tc.body, headers: map[string]string{"Retry-After": "3600"}}

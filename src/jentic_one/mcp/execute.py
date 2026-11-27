@@ -639,8 +639,8 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
 #: Everything else — ``action_denied`` (a permission rule forbids the op;
 #: connecting a fresh credential must NOT be taught as a way around it),
 #: ``credential_identity_mismatch`` (an operator fixes the credential),
-#: ``credential_binding_suspended`` (only the operator resumes the binding;
-#: a new connect is refused),
+#: ``credential_binding_suspended`` and ``credential_binding_expired`` (only
+#: the operator resumes or renews the binding; a new connect is refused),
 #: ``credential_undecryptable`` (operator re-adds it), and any unknown type —
 #: keeps ``whoami``.
 _PROVISIONING_PROBLEM_TYPES = frozenset(
@@ -770,6 +770,18 @@ def _synthesized_denial_hint(status: int, problem_type: str) -> str:
             "operator approves the approval_url); if a credential already serves it, ask "
             "your operator to bind you to it (dashboard) — binding is always a human "
             "action."
+        )
+    # A suspended or expired binding is the operator's to lift: a new connect
+    # is refused, and a rule change would not bring the binding back.
+    if problem_type == "credential_binding_suspended":
+        return (
+            "Your operator suspended your access to this API. Do not connect a new credential; "
+            "ask your operator to resume it."
+        )
+    if problem_type == "credential_binding_expired":
+        return (
+            "Your access to this API has expired. Do not connect a new credential; "
+            "ask your operator to renew it."
         )
     if status == 403:
         return (

@@ -83,7 +83,7 @@ export function AccessHeader({
 							</>
 						)}{' '}
 						— access for <UserText>{agentName}</UserText>
-						{tile.suspended ? ' · not serving calls' : ''}
+						{tile.suspended || tile.expired ? ' · not serving calls' : ''}
 						{tile.suspended && tile.suspendedReason === 'api_deleted'
 							? ' because its API was deleted — review the rules before resuming'
 							: ''}

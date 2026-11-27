@@ -234,3 +234,30 @@ func TestRenderDirectiveAndHeldNeutralizeEscapes(t *testing.T) {
 		t.Errorf("RenderHeld* left control characters in output:\n%q", heldBuf.String())
 	}
 }
+
+// TestRenderSynthesizedDenialRecovery_BindingCutOffs pins the directive-less
+// hint for a suspended or expired binding: ask the operator to resume or renew
+// it, never connect a credential (a new connect is refused while the binding
+// stands). Other 403s keep the status-keyed hint.
+func TestRenderSynthesizedDenialRecovery_BindingCutOffs(t *testing.T) {
+	ctx := theme.WithContext(t.Context(), theme.Themes["no-color"])
+	for _, tc := range []struct {
+		problemType string
+		want        string
+		notWant     string
+	}{
+		{"credential_binding_suspended", "ask your operator to resume it", "connect a credential"},
+		{"credential_binding_expired", "ask your operator to renew it", "connect a credential"},
+		{"no_credential_binding", "connect a credential for this API", "renew"},
+		{"", "connect a credential for this API", "renew"},
+	} {
+		var buf bytes.Buffer
+		RenderSynthesizedDenialRecovery(ctx, &buf, 403, tc.problemType)
+		if !strings.Contains(buf.String(), tc.want) {
+			t.Errorf("%q: hint %q, want it to contain %q", tc.problemType, buf.String(), tc.want)
+		}
+		if strings.Contains(buf.String(), tc.notWant) {
+			t.Errorf("%q: hint %q must not contain %q", tc.problemType, buf.String(), tc.notWant)
+		}
+	}
+}

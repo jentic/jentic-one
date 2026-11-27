@@ -81,3 +81,8 @@ async def lock_credential_bindings(session: AsyncSession, credential_id: str) ->
         session,
         key=advisory_lock_key(f"credentials.bindings.{credential_id}"),
     )
+
+
+async def lock_agent_bindings(session: AsyncSession, agent_id: str) -> None:
+    """Serialize inserts for one agent, including bindings to different credentials."""
+    await advisory_xact_lock(session, key=advisory_lock_key(f"agents.bindings.{agent_id}"))

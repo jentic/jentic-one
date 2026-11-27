@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { HeldExecutionKind } from './HeldExecutionKind';
 import type { HeldExecutionLinksResponse } from './HeldExecutionLinksResponse';
 import type { HeldExecutionState } from './HeldExecutionState';
+import type { HeldRenewalContextResponse } from './HeldRenewalContextResponse';
 import type { HeldRequestResponse } from './HeldRequestResponse';
 /**
  * A held execution with the agent context and the held request a reviewer decides on.
@@ -75,6 +77,10 @@ export type HeldExecutionDetailResponse = {
      */
     id: string;
     /**
+     * Why the call is held: `execution` (a require-approval rule matched) or `grant_renewal` (the agent's binding to the credential has ended; approving re-grants its access first).
+     */
+    kind?: HeldExecutionKind;
+    /**
      * The require-approval permission rule that held the call.
      */
     matched_rule_id?: (string | null);
@@ -90,6 +96,10 @@ export type HeldExecutionDetailResponse = {
      * Upstream path of the held call.
      */
     path: string;
+    /**
+     * For a `grant_renewal` hold: the binding it would renew.
+     */
+    renewal?: (HeldRenewalContextResponse | null);
     /**
      * The held call.
      */

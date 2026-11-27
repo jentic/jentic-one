@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EditAgentRef } from './EditAgentRef';
+import type { SessionAgentBindingResponse } from './SessionAgentBindingResponse';
 /**
  * A credential the viewer already holds for the target.
  *
@@ -13,6 +14,10 @@ import type { EditAgentRef } from './EditAgentRef';
  * agent in ``other_bound_agents`` too.
  */
 export type ExistingCredentialResponse = {
+    /**
+     * The session agent's own binding to this credential, when it already has one: confirming with it binds nothing new, so the binding keeps these limits.
+     */
+    agent_binding?: (SessionAgentBindingResponse | null);
     /**
      * Whether this viewer may use it: its grant covers the request, or the missing scopes can be consented and the viewer may widen it.
      */

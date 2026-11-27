@@ -150,6 +150,12 @@ export function describeConfirmError(error: unknown): ConfirmErrorCopy {
 				message:
 					"This agent's access to this API is suspended. Resume or remove that binding before approving a new connection.",
 			};
+		case 'connect_session_binding_expired':
+			return {
+				action: 'ended',
+				message:
+					"This agent's access to this API has expired. Renew or remove that binding before approving a new connection.",
+			};
 		case 'connect_session_invalid_state':
 			return {
 				action: 'ended',

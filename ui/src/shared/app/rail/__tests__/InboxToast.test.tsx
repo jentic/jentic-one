@@ -256,6 +256,27 @@ describe('InboxToast', () => {
 		unmount();
 	});
 
+	it('reads an arrival held because access ended as that, not as a call to run', async () => {
+		const { queryClient, unmount } = renderShell();
+		await screen.findByTestId('inbox-toast');
+		await arrive(
+			queryClient,
+			heldCall({
+				id: 'held_ended',
+				kind: 'grant_renewal' as HeldExecutionResponse['kind'],
+				created_at: new Date().toISOString(),
+			}),
+		);
+
+		const arrival = await screen.findByTestId('inbox-toast');
+		expect(arrival).toHaveAttribute('data-form', 'arrival');
+		expect(
+			await within(arrival).findByText("billing-ops's access to stripe-api ended"),
+		).toBeInTheDocument();
+		expect(within(arrival).queryByText(/wants to run/)).toBeNull();
+		unmount();
+	});
+
 	it('keeps a dismissal across a remount in the same session', async () => {
 		const user = userEvent.setup();
 		const first = renderShell();

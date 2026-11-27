@@ -24,6 +24,7 @@ from jentic_one.admin.services.oauth_grant_admin_service import OAuthGrantAdminS
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.provider_config_service import ProviderConfigService
 from jentic_one.admin.services.user_service import UserService
+from jentic_one.shared.auth.grant_renewal import GrantRenewerProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.credentials import CredentialCreatorLookupProtocol
 from jentic_one.shared.web import get_ctx
@@ -76,9 +77,12 @@ def get_execution_service(ctx: Context = Depends(get_ctx)) -> ExecutionService:
 
 
 def get_held_execution_service(
+    request: Request,
     ctx: Context = Depends(get_ctx),
 ) -> HeldExecutionService:
-    return HeldExecutionService(ctx)
+    """Threads the process's ``grant_renewer`` (``wiring.install_grant_renewer``), if any."""
+    renewer: GrantRenewerProtocol | None = getattr(request.app.state, "grant_renewer", None)
+    return HeldExecutionService(ctx, grant_renewer=renewer)
 
 
 def get_job_service(ctx: Context = Depends(get_ctx)) -> JobService:

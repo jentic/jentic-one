@@ -32,6 +32,8 @@ import { useNow } from '@/shared/app/rail/useNow';
 import { useReviewLinks } from '@/shared/approvals';
 import { useApproveAgent } from '@/shared/attention/actions';
 import { ATTENTION_TILE_CLASS } from '@/shared/approvals/attentionTone';
+import { AccessEndedChip } from '@/shared/approvals/AccessEndedChip';
+import { isRenewalCall } from '@/shared/approvals/heldCall';
 import { expiresIn, waitingSince } from '@/shared/approvals/heldCallCopy';
 import { AGENTS_WRITE, CREDENTIALS_WRITE, useCanAccess } from '@/shared/auth/useCanAccess';
 import type { AttentionItem, AttentionKind } from '@/shared/attention/useAttentionItems';
@@ -214,7 +216,11 @@ function AttentionRow({
 					</p>
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">
 						{item.heldCall ? (
-							<HeldCallMeta since={item.since} expiresAt={item.heldCall.expires_at} />
+							<HeldCallMeta
+								since={item.since}
+								expiresAt={item.heldCall.expires_at}
+								renewal={isRenewalCall(item.heldCall)}
+							/>
 						) : (
 							<>
 								<span title={item.since}>{timeAgo(item.since)}</span>
@@ -244,7 +250,11 @@ function AttentionRow({
 				</p>
 				{item.heldCall ? (
 					<p className="text-muted-foreground truncate text-xs">
-						<HeldCallMeta since={item.since} expiresAt={item.heldCall.expires_at} />
+						<HeldCallMeta
+							since={item.since}
+							expiresAt={item.heldCall.expires_at}
+							renewal={isRenewalCall(item.heldCall)}
+						/>
 					</p>
 				) : (
 					item.detail && (
@@ -297,10 +307,24 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 }
 
 /** "5m ago · expires in 23 h" — how long a held call has waited, and how long it has left. */
-function HeldCallMeta({ since, expiresAt }: { since: string; expiresAt: string }) {
+function HeldCallMeta({
+	since,
+	expiresAt,
+	renewal = false,
+}: {
+	since: string;
+	expiresAt: string;
+	/** A re-grant of ended access: marked, so it isn't read as a call to approve. */
+	renewal?: boolean;
+}) {
 	const now = useNow();
 	return (
 		<>
+			{renewal && (
+				<>
+					<AccessEndedChip />{' '}
+				</>
+			)}
 			<span title={since}>{waitingSince(since, now)}</span>
 			{' · '}
 			<span title={expiresAt}>{expiresIn(expiresAt, now)}</span>

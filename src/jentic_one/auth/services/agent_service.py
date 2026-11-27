@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from datetime import UTC, datetime
+from contextlib import nullcontext
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
     AccessTokenRepository,
@@ -17,7 +20,9 @@ from jentic_one.admin.repos import (
     AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
+    ApiLastUseRow,
     AuthorizationCodeRepository,
+    ExecutionRecordRepository,
     JobRepository,
     OAuthClientGrantRepository,
     RefreshTokenRepository,
@@ -44,6 +49,8 @@ from jentic_one.auth.services.errors import (
     InvalidOwnerError,
     InvalidTransitionError,
     OwnerTransferForbiddenError,
+    SelfBindOverExpiredBindingError,
+    SelfBindOverSuspendedBindingError,
 )
 from jentic_one.auth.services.oauth_grant_service import (
     AGENT_ARCHIVE_REVOCATION_REASON,
@@ -54,12 +61,30 @@ from jentic_one.auth.services.registration_service import validate_jwks
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
+    ApiLastUseView,
     CredentialBindingView,
+    EndingSoonBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.agent_permission_ceiling import (
     ADMIN_ONLY_AGENT_PERMISSIONS,
     cap_agent_permissions,
+)
+from jentic_one.shared.auth.binding_write import guard_binding_write
+from jentic_one.shared.auth.grant_limits import (
+    check_grant_limits,
+    new_grant_policy,
+    renewal_expiry,
+    renewal_idle_period,
+)
+from jentic_one.shared.auth.grant_policy import (
+    GRANT_POLICY_FIELDS,
+    UNSET,
+    AfterExpiry,
+    GrantEndReason,
+    Unset,
+    expiry_warning_due,
+    idle_warning_due,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
@@ -98,6 +123,16 @@ _ROW_LOCKED_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVer
 
 #: The ``reason`` on the audit entries an agent purge writes.
 _PURGE_AUDIT_REASON = "agent purged"
+
+
+def _audit_value(value: Any) -> Any:
+    """A field value as the audit log stores it (datetimes as RFC 3339 strings)."""
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _audit_policy(binding: Any) -> dict[str, Any]:
+    """A binding's policy as the audit log records a renewal's before and after."""
+    return {field: _audit_value(getattr(binding, field)) for field in GRANT_POLICY_FIELDS}
 
 
 class AgentService:
@@ -839,7 +874,12 @@ class AgentService:
         await self.get_readable_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentCredentialBindingRepository.list_for_agent(session, agent_id)
+            last_uses = await ExecutionRecordRepository.last_used_by_api(
+                session, actor_id=agent_id, credential_ids=[b.credential_id for b in bindings]
+            )
         views = [CredentialBindingView.model_validate(b) for b in bindings]
+        for view in views:
+            _apply_last_use(view, last_uses)
         # Enrich from the control DB with the credential's human-readable name,
         # lifecycle state and the API it serves (issue #686). The bindings above
         # are already scoped to this agent. Failure to reach the control DB is
@@ -863,6 +903,74 @@ class AgentService:
                 ]
         return views
 
+    async def list_bindings_ending_soon(
+        self, *, identity: Identity, now: datetime | None = None
+    ) -> list[EndingSoonBindingView]:
+        """Bindings of the caller's visible agents that will soon end.
+
+        The live state behind the owner's warning (and the console's "Ending
+        soon" row): the warning is on, and either the idle deadline (for an
+        idle limit long enough to warn about) or the end date (for a binding
+        granted at least that long) falls within the warning window. Each
+        carries the nearer of the two (``ends_at``, ``ending``), soonest
+        first. Visibility is the agents list's: ``org:admin`` sees every
+        agent's, anyone else their own agents'.
+        """
+        now = now or datetime.now(UTC)
+        warn = self._ctx.config.grant_expiry
+        window = timedelta(seconds=warn.idle_warning_window)
+        min_idle = warn.idle_warning_min_length
+        async with self._ctx.admin_db.session() as session:
+            rows = await AgentCredentialBindingRepository.list_idle_warned(
+                session,
+                min_idle_period=min_idle,
+                agent_filters=build_access_filters(identity, Agent),
+            )
+        views: list[tuple[datetime, EndingSoonBindingView]] = []
+        for binding, agent_name in rows:
+            current = CredentialBindingView.model_validate(binding)
+            due = [
+                (deadline, reason)
+                for deadline, reason in (
+                    (
+                        idle_warning_due(
+                            current.policy, now=now, window=window, min_idle_period=min_idle
+                        ),
+                        GrantEndReason.IDLE,
+                    ),
+                    (
+                        expiry_warning_due(
+                            current.policy, now=now, window=window, min_length=min_idle
+                        ),
+                        GrantEndReason.END_DATE,
+                    ),
+                )
+                if deadline is not None
+            ]
+            if not due:
+                continue
+            deadline, reason = min(due, key=lambda pair: pair[0])
+            view = EndingSoonBindingView.model_validate(
+                {
+                    **current.model_dump(),
+                    "agent_name": agent_name,
+                    "ends_at": deadline,
+                    "ending": reason.value,
+                }
+            )
+            views.append((deadline, view))
+        ending = [view for _, view in sorted(views, key=lambda pair: pair[0])]
+        credential_ids = sorted({v.credential_id for v in ending})
+        if credential_ids and self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                refs = await CredentialRefRepository.get_refs_for_ids(session, credential_ids)
+            for view in ending:
+                ref = refs.get(view.credential_id)
+                if ref is not None:
+                    view.name = ref.name
+                    view.state = ref.state
+        return ending
+
     async def _load_binding_agent(self, agent_id: str, *, identity: Identity) -> AgentView:
         """Load the agent whose credential bindings the caller is changing.
 
@@ -880,13 +988,33 @@ class AgentService:
             return await self._view(session, agent)
 
     async def bind_credential(
-        self, agent_id: str, *, credential_id: str, identity: Identity
+        self,
+        agent_id: str,
+        *,
+        credential_id: str,
+        identity: Identity,
+        expires_at: datetime | Unset | None = UNSET,
+        max_idle_period: int | Unset | None = UNSET,
+        idle_warning: bool = False,
+        max_quota: int | Unset | None = UNSET,
+        after_expiry: AfterExpiry = AfterExpiry.HOLD,
     ) -> CredentialBindingView:
         """Create a direct agent↔credential binding.
 
         Verifies the caller can see the target credential before writing the
-        binding (control-DB lookup).
+        binding (control-DB lookup). ``expires_at`` (already validated as a
+        future time by the web layer) ends the binding then; ``None`` never
+        expires. A request that sets none of the limits (all ``UNSET``) gets
+        the org's default policy; whatever it sets must be within the org's
+        maximums (``GrantPolicyLimitError`` otherwise).
         """
+        policy = new_grant_policy(
+            self._ctx.config.grant_expiry,
+            now=datetime.now(UTC),
+            expires_at=expires_at,
+            max_idle_period=max_idle_period,
+            max_quota=max_quota,
+        )
         agent = await self._load_binding_agent(agent_id, identity=identity)
         ref = None
         if self._ctx.is_db_allowed("control"):
@@ -894,10 +1022,30 @@ class AgentService:
                 ref = await CredentialRefRepository.get_by_id(session, credential_id)
         if ref is None or not self._can_bind_credential(identity, ref.created_by):
             raise CredentialNotVisibleError(credential_id)
-        async with self._ctx.admin_db.transaction() as session:
+        async with (
+            self._ctx.admin_db.transaction() as session,
+            guard_binding_write(
+                session,
+                self._ctx.control_db,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                suspended_error=SelfBindOverSuspendedBindingError,
+                expired_error=SelfBindOverExpiredBindingError,
+            )
+            if identity.actor_type == ActorType.AGENT
+            else nullcontext(),
+        ):
             try:
                 binding = await AgentCredentialBindingRepository.bind(
-                    session, agent_id=agent_id, credential_id=credential_id, created_by=identity.sub
+                    session,
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                    created_by=identity.sub,
+                    expires_at=policy.expires_at,
+                    max_idle_period=policy.max_idle_period,
+                    idle_warning=idle_warning,
+                    max_quota=policy.max_quota,
+                    after_expiry=after_expiry.value,
                 )
             except IntegrityError:
                 raise CredentialBindingConflictError(agent_id, credential_id) from None
@@ -909,6 +1057,9 @@ class AgentService:
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
                 target_parent_id=agent_id,
+                # What was granted, so the access originally given can be told
+                # apart from any later renewal's before and after.
+                after=_audit_policy(binding),
                 reason="bind_credential",
                 origin=identity.origin.value,
             )
@@ -1090,7 +1241,210 @@ class AgentService:
                 actor_type=identity.actor_type.value,
             )
         self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
-        return CredentialBindingView.model_validate(binding)
+        view = CredentialBindingView.model_validate(binding)
+        async with self._ctx.admin_db.session() as session:
+            last_uses = await ExecutionRecordRepository.last_used_by_api(
+                session, actor_id=agent_id, credential_ids=[credential_id]
+            )
+        _apply_last_use(view, last_uses)
+        return view
+
+    async def require_renewable(
+        self, agent_id: str, *, credential_id: str, identity: Identity
+    ) -> None:
+        """Raise unless ``identity`` may renew the binding (see :meth:`_require_renewable`)."""
+        await self._require_renewable(agent_id, credential_id=credential_id, identity=identity)
+
+    async def _require_renewable(
+        self, agent_id: str, *, credential_id: str, identity: Identity
+    ) -> tuple[AgentView, CredentialRef]:
+        """Check ``identity`` may renew the binding; return its agent and credential.
+
+        Renewing re-grants the credential, so it takes the checks of resuming
+        a binding: a human (never an agent), the agent's owner or an
+        ``org:admin`` (else ``ActorNotFoundError``), and the credential's owner
+        or an ``org:admin`` (else ``CredentialNotVisibleError``). The renew
+        endpoint and a ``grant_renewal`` decision both go through here.
+        """
+        if identity.actor_type != ActorType.USER:
+            raise CredentialNotVisibleError(credential_id)
+        agent = await self._load_binding_agent(agent_id, identity=identity)
+        ref = None
+        if self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                ref = await CredentialRefRepository.get_by_id(session, credential_id)
+        if ref is None or not self._can_bind_credential(identity, ref.created_by):
+            raise CredentialNotVisibleError(credential_id)
+        return agent, ref
+
+    async def _write_renewal(
+        self,
+        session: AsyncSession,
+        *,
+        agent: AgentView,
+        ref: Any,
+        credential_id: str,
+        policy: dict[str, Any],
+        identity: Identity,
+        expires_at: datetime | Unset | None,
+        max_idle_period: int | Unset | None,
+    ) -> AgentCredentialBinding:
+        """Renew the binding in ``session``: defaults, the write, audit and event."""
+        agent_id = agent.id
+        before = await AgentCredentialBindingRepository.get(
+            session, agent_id=agent_id, credential_id=credential_id
+        )
+        if before is None:
+            raise CredentialBindingNotFoundError(agent_id, credential_id)
+        before_policy = _audit_policy(before)
+        now = datetime.now(UTC)
+        if isinstance(expires_at, Unset):
+            default_end = renewal_expiry(
+                self._ctx.config.grant_expiry,
+                now=now,
+                expires_at=before.expires_at,
+                granted_at=before.renewed_at or before.bound_at,
+            )
+            if not isinstance(default_end, Unset):
+                policy["expires_at"] = default_end
+        if isinstance(max_idle_period, Unset):
+            # Like the end date: under an org maximum, the binding's own idle
+            # limit is capped, and one with none takes the org's.
+            default_idle = renewal_idle_period(
+                self._ctx.config.grant_expiry, current=before.max_idle_period
+            )
+            if not isinstance(default_idle, Unset):
+                policy["max_idle_period"] = default_idle
+        await AgentCredentialBindingRepository.renew(
+            session,
+            agent_id=agent_id,
+            credential_id=credential_id,
+            policy=policy,
+            now=now,
+        )
+        await session.refresh(before)
+        binding = before
+        await record_audit(
+            session,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.CREDENTIAL_BINDING,
+            target_id=credential_id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            target_parent_id=agent_id,
+            before=before_policy,
+            after=_audit_policy(binding),
+            reason="renew_credential_binding",
+            origin=identity.origin.value,
+        )
+        await emit_event_best_effort(
+            session,
+            type=EventType.CREDENTIAL_BOUND_TO_AGENT,
+            severity=EventSeverity.INFO,
+            summary=(
+                f"Credential {summary_label(ref.name, credential_id)} binding renewed for "
+                f"agent {summary_label(agent.name, agent_id)}"
+            ),
+            data={"agent_id": agent_id, "credential_id": credential_id},
+            created_by=agent_id,
+            actor_id=identity.sub,
+            actor_type=identity.actor_type.value,
+        )
+        return binding
+
+    async def renew_credential(
+        self,
+        agent_id: str,
+        *,
+        credential_id: str,
+        identity: Identity,
+        expires_at: datetime | Unset | None = UNSET,
+        max_idle_period: int | Unset | None = UNSET,
+        idle_warning: bool | Unset = UNSET,
+        max_quota: int | Unset | None = UNSET,
+        after_expiry: AfterExpiry | Unset = UNSET,
+        session: AsyncSession | None = None,
+    ) -> CredentialBindingView:
+        """Re-certify a binding: set, move or clear its limits, and restart its idle clock.
+
+        Each limit passed is set (``None`` clears it). An end date left out
+        runs the binding again for as long as it was granted for, capped at
+        the org's maximum (a binding with no end date takes the maximum, or
+        keeps none without one). An idle limit left out stays as it is, capped
+        at the org's maximum (a binding with none takes the org's default, or
+        the maximum); any other limit left out stays as it is.
+        Every renewal restarts the idle clock (``renewed_at``) and restores
+        the use count, so renewing with no change re-certifies the binding.
+
+        Renewing re-grants the credential, so it takes exactly the checks of
+        :meth:`resume_credential`: the agent check, the credential-ownership
+        check, and an agent can never renew its own binding. It never touches
+        ``suspended``. Audited with before/after, and broker caches are
+        invalidated so the new policy applies on the next call.
+
+        With ``session``, the renewal is written in the caller's admin
+        transaction (a held call's decision, so the renewal and the decision
+        commit or roll back together), and invalidating the broker caches
+        after it commits is the caller's job.
+        """
+        policy: dict[str, Any] = {}
+        if not isinstance(expires_at, Unset):
+            policy["expires_at"] = expires_at
+        if not isinstance(max_idle_period, Unset):
+            policy["max_idle_period"] = max_idle_period
+        if not isinstance(idle_warning, Unset):
+            policy["idle_warning"] = idle_warning
+        if not isinstance(max_quota, Unset):
+            policy["max_quota"] = max_quota
+        if not isinstance(after_expiry, Unset):
+            policy["after_expiry"] = after_expiry.value
+        # The org's maximums apply to the limits this renewal sets.
+        check_grant_limits(
+            self._ctx.config.grant_expiry,
+            now=datetime.now(UTC),
+            expires_at=expires_at,
+            max_idle_period=max_idle_period,
+        )
+        agent, ref = await self._require_renewable(
+            agent_id, credential_id=credential_id, identity=identity
+        )
+        if session is None:
+            async with self._ctx.admin_db.transaction() as own:
+                binding = await self._write_renewal(
+                    own,
+                    agent=agent,
+                    ref=ref,
+                    credential_id=credential_id,
+                    policy=policy,
+                    identity=identity,
+                    expires_at=expires_at,
+                    max_idle_period=max_idle_period,
+                )
+            self._ctx.invalidate_broker_caches(agent_id=agent_id, credential_id=credential_id)
+        else:
+            binding = await self._write_renewal(
+                session,
+                agent=agent,
+                ref=ref,
+                credential_id=credential_id,
+                policy=policy,
+                identity=identity,
+                expires_at=expires_at,
+                max_idle_period=max_idle_period,
+            )
+        view = CredentialBindingView.model_validate(binding)
+        view.name = ref.name
+        view.serves = [
+            ServedApiRef(
+                api_vendor=ref.api_vendor, api_name=ref.api_name, api_version=ref.api_version
+            )
+        ]
+        async with self._ctx.admin_db.session() as read:
+            last_uses = await ExecutionRecordRepository.last_used_by_api(
+                read, actor_id=agent_id, credential_ids=[credential_id]
+            )
+        _apply_last_use(view, last_uses)
+        return view
 
     async def get_permissions(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)
@@ -1161,7 +1515,7 @@ class AgentService:
         self,
         agent_id: str,
         *,
-        update_data: dict[str, str | None],
+        update_data: dict[str, Any],
         identity: Identity,
     ) -> AgentView:
         """Partially update an agent; an ``owner_id`` change is a transfer.
@@ -1195,14 +1549,14 @@ class AgentService:
                 )
                 if agent.status == ActorStatus.ARCHIVED:
                     raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "update")
-                before = {k: getattr(agent, k) for k in update_data}
+                before = {k: _audit_value(getattr(agent, k)) for k in update_data}
                 owner_transferred = (
                     "owner_id" in update_data and update_data["owner_id"] != agent.owner_id
                 )
                 if owner_transferred and ORG_ADMIN not in identity.permissions:
                     raise OwnerTransferForbiddenError(agent_id)
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
-                after = {k: getattr(agent, k) for k in update_data}
+                after = {k: _audit_value(getattr(agent, k)) for k in update_data}
                 if owner_transferred:
                     await revoke_active_grants_for_agent(
                         session, agent_id, identity=identity, agent_name=agent.name
@@ -1456,3 +1810,28 @@ class AgentService:
         if agent.status not in allowed_from:
             raise InvalidTransitionError(agent_id, agent.status, verb)
         return agent
+
+
+def _apply_last_use(view: CredentialBindingView, last_uses: list[ApiLastUseRow]) -> None:
+    """Set the binding's overall and per-API "last used" from execution records.
+
+    The overall value is the later of the recorded executions and the
+    binding's own ``last_used_at`` (the idle clock, stamped about hourly), so
+    "last used" stays current while the idle limit reads only the column.
+    """
+    own = [r for r in last_uses if r.credential_id == view.credential_id]
+    view.last_used_at = max(
+        [r.last_used_at for r in own]
+        + ([view.idle_clock_used_at] if view.idle_clock_used_at is not None else []),
+        default=None,
+    )
+    view.last_used_by_api = [
+        ApiLastUseView(
+            api_vendor=r.api_vendor,
+            api_name=r.api_name,
+            api_version=r.api_version,
+            last_used_at=r.last_used_at,
+        )
+        for r in sorted(own, key=lambda r: r.last_used_at, reverse=True)
+        if r.api_vendor is not None
+    ]

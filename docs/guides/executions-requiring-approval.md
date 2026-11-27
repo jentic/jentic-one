@@ -175,6 +175,59 @@ is audit-logged and emits an event (`execution.approval_requested` when filed,
 `execution.approval_decided`, `execution.approval_withdrawn`,
 `execution.approval_reason_added`, `execution.approval_expired`).
 
+## Calls held because access ended
+
+When an agent calls through a credential binding that has ended (its end
+date passed, it went unused for its idle limit, or its uses ran out), the
+call is held the same way, with `kind: grant_renewal`, instead of being
+refused. This is the binding's default (`after_expiry: hold`, **Hold first
+denied request** in the console). A binding set to `after_expiry: refuse`
+(**Let the agent ask**) is never held: every call gets
+`403 credential_binding_expired`, telling the agent to ask its owner to
+renew, and the owner renews it from the console. The agent gets the same `202` held envelope, telling it that its
+access ended and its owner has been asked to renew it.
+
+- **One pending renewal per binding.** The same call again joins it; any
+  other call through the binding gets `403 credential_binding_expired` with
+  the pending review's `review_url` and `held_execution_id`. Renewal holds do
+  not count against `held_executions.max_pending_per_agent`.
+- **A renewal is its own hold.** If the same call is also waiting under a
+  require-approval rule, the renewal does not join that hold: it is filed
+  beside it, and the agent gets the renewal's own review. An identical retry
+  of the renewal still joins the renewal.
+- **Which calls are held.** The first call after the binding ends; the call
+  that loses the race for a binding's last use to a concurrent call
+  (synchronous calls only: a queued call that loses it fails its job instead);
+  and a call that names an ended binding with `Jentic-Credential-Id` while
+  another of the agent's bindings is still live.
+- **Deciding.** Approve with the binding's new policy:
+  `{"decision": "approve", "renewal": {"expires_at": "…", "max_idle_period": "P14D",
+  "idle_warning": false, "max_quota": 1}}` (each limit left out sets none,
+  except the end date: left out, the binding runs again for as long as it was
+  granted for, capped at the org's maximum; `null` sets no end date).
+  `after_expiry` left out keeps the binding's own.
+  The binding's policy is replaced in place (its rules stay), its idle clock
+  restarts and its uses are restored, then the call runs. Add `"run": false`
+  to renew without running a stale call (it fails with
+  `approval_renewed_without_run`). **Deny** leaves the binding ended.
+- **Who may approve:** someone who could renew the binding directly — a person
+  with `agents:write` who owns the agent and the credential, or an org admin
+  (`403 held_execution_renewal_forbidden` otherwise; the review read says so
+  in `renewal.can_renew`). Anyone who may review may deny.
+- **Split deployments.** Where the admin surface runs apart from the control
+  database, it cannot renew from a hold: the review read reports
+  `renewal.renew_on_decide: false`, and approving with `renewal` is a
+  `503 held_execution_renewal_unavailable`. Renew the binding through
+  `PATCH /agents/{agent_id}/credentials/{credential_id}` (the console's review
+  page does this for you), then approve without `renewal`; that is accepted
+  once the binding holds again. If that approval then fails, the page says the
+  binding was already renewed and retrying approves the call alone, so uses
+  and the idle clock are not reset a second time.
+- **After a denial**, later calls get the `403` saying when it was denied,
+  and no new renewal is filed until the binding is renewed from the console.
+- A call whose agent no longer holds the binding at run time, or whose
+  renewal did not land, is refused when it runs: the run re-checks access.
+
 ## Lifecycle
 
 | `state` | `execution_status` | How |

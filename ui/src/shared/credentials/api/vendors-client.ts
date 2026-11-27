@@ -7,9 +7,11 @@
  * `@/shared/api`. Swap to generated services when `make openapi` runs.
  */
 
+import { isoDuration, isoDurationOrNull } from '@/shared/lib';
 import {
 	AgentsService,
 	CredentialsService,
+	type AfterExpiry,
 	IntegrationsService,
 	PermissionRuleSetsService,
 	getToken,
@@ -17,6 +19,8 @@ import {
 	type AgentListResponse,
 	type BindingAccessResponse,
 	type ConnectSessionSummaryResponse,
+	type EndingSoonBindingResponse,
+	type GrantPolicyLimitsResponse,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
 	type RuleSetResponse,
@@ -147,28 +151,144 @@ export function startEditConnection(body: EditConnectionBody): Promise<EditConne
  * domain feature but touches an agent-owned endpoint — can compose it
  * without crossing the module-vs-module boundary. Uses the generated
  * ``AgentsService`` (allowed at this repository tier) so a schema
- * change lands automatically.
+ * change lands automatically. ``expiresAt`` (RFC 3339, in the future) ends
+ * the binding then. ``null`` is the operator's confirmed "No expiry" and is
+ * sent as such, so it stays distinct from a request that names no end date
+ * (``undefined``, left out), which an org default will fill once there is one.
  */
 export async function bindCredentialToAgentBlocked(
 	agentId: string,
 	credentialId: string,
+	policy: BindingPolicy = {},
 ): Promise<void> {
+	const { expiresAt, maxIdlePeriod, idleWarning, maxQuota, afterExpiry } = policy;
 	try {
 		await AgentsService.bindAgentCredential({
 			agentId,
-			requestBody: { credential_id: credentialId },
+			requestBody: {
+				credential_id: credentialId,
+				...(expiresAt !== undefined ? { expires_at: expiresAt } : {}),
+				...(maxIdlePeriod != null ? { max_idle_period: isoDuration(maxIdlePeriod) } : {}),
+				...(idleWarning ? { idle_warning: true } : {}),
+				...(maxQuota != null ? { max_quota: maxQuota } : {}),
+				// Left out, the binding holds the first call after it ends.
+				...(afterExpiry === 'refuse' ? { after_expiry: afterExpiry as AfterExpiry } : {}),
+			},
 		});
 	} catch (err) {
-		const status =
-			typeof (err as { status?: number })?.status === 'number'
-				? (err as { status: number }).status
-				: null;
-		throw new IntegrationsApiError(
-			(err as Error)?.message ?? 'Failed to bind the credential.',
-			status,
-			err,
-		);
+		// The server's own words (an org limit such as "at most 30 days", say) read
+		// better than a status line; a lapsed end date gets its own explanation.
+		const detail =
+			problemDetailText((err as { body?: unknown })?.body) ??
+			(expiryRejected(err) ? LAPSED_EXPIRY_MESSAGE : null);
+		throw generatedCallError(err, detail ?? 'Failed to bind the credential.', detail != null);
 	}
+}
+
+/** A new binding's policy; a field left out sets no such limit. */
+export interface BindingPolicy {
+	/** RFC 3339, in the future; `null` is a confirmed "No expiry". */
+	expiresAt?: string | null;
+	/** The idle limit in seconds. */
+	maxIdlePeriod?: number | null;
+	/** Warn the owner before the access ends (its end date or idle limit). */
+	idleWarning?: boolean;
+	/** How many calls it allows (1 is single use). */
+	maxQuota?: number | null;
+	/** What a call gets once the access has ended (left out: hold). */
+	afterExpiry?: 'hold' | 'refuse';
+}
+
+/** What a renewal changes: a field left out stays as it is; `null` clears that limit. */
+export interface BindingRenewal {
+	expiresAt?: string | null;
+	/** The idle limit in seconds. */
+	maxIdlePeriod?: number | null;
+	/** Whether the owner is warned before the access ends (its end date or idle limit). */
+	idleWarning?: boolean;
+	/** The use count (1 is single use); `null` removes it. Every renewal restores the uses left. */
+	maxQuota?: number | null;
+	/** What a call gets once the access has ended. */
+	afterExpiry?: 'hold' | 'refuse';
+}
+
+/**
+ * Renew a binding (`PATCH /agents/{id}/credentials/{cid}`): re-certify it,
+ * restarting its idle clock, and set, move or clear its limits (an empty
+ * renewal re-certifies it). A renewal that sends no end date runs the
+ * binding again for as long as it was granted for, capped at the org's
+ * maximum, so it resolves to the binding's new end date (null: none).
+ * Renewing restores an expired binding; it never resumes a suspended one.
+ * The caller must own the credential (or hold ``org:admin``), as for
+ * ``:resume``.
+ */
+export async function renewCredentialBinding(
+	agentId: string,
+	credentialId: string,
+	renewal: BindingRenewal,
+): Promise<string | null> {
+	try {
+		const binding = await AgentsService.renewAgentCredentialBinding({
+			agentId,
+			credentialId,
+			requestBody: {
+				...(renewal.expiresAt !== undefined ? { expires_at: renewal.expiresAt } : {}),
+				...(renewal.maxIdlePeriod !== undefined
+					? { max_idle_period: isoDurationOrNull(renewal.maxIdlePeriod) }
+					: {}),
+				...(renewal.idleWarning !== undefined ? { idle_warning: renewal.idleWarning } : {}),
+				...(renewal.maxQuota !== undefined ? { max_quota: renewal.maxQuota } : {}),
+				...(renewal.afterExpiry !== undefined
+					? { after_expiry: renewal.afterExpiry as AfterExpiry }
+					: {}),
+			},
+		});
+		return binding.expires_at ?? null;
+	} catch (err) {
+		// The server's own words (a credential the viewer may not renew, say), or
+		// what an end date it refused means: either reads better than a status line.
+		const detail =
+			problemDetailText((err as { body?: unknown })?.body) ??
+			(expiryRejected(err) ? LAPSED_EXPIRY_MESSAGE : null);
+		throw generatedCallError(err, detail ?? 'Failed to renew the binding.', detail != null);
+	}
+}
+
+/**
+ * Why the server refused an `expires_at`: it is only ever refused for not being
+ * in the future. The end date is worked out on this device as the operator
+ * confirms, so it lapses in transit only for a very short custom duration, or
+ * when this device's clock runs behind the server's.
+ */
+const LAPSED_EXPIRY_MESSAGE =
+	'That end date had already passed when it reached the server. Choose the duration again; if this keeps happening, check this device’s clock.';
+
+/** A 422 whose field errors include `expires_at` (FastAPI's `detail` list). */
+function expiryRejected(err: unknown): boolean {
+	if ((err as { status?: unknown })?.status !== 422) return false;
+	const detail = (err as { body?: { detail?: unknown } })?.body?.detail;
+	return (
+		Array.isArray(detail) &&
+		detail.some((d) => {
+			const loc = (d as { loc?: unknown })?.loc;
+			return Array.isArray(loc) && loc[loc.length - 1] === 'expires_at';
+		})
+	);
+}
+
+/** A generated-client failure as an {@link IntegrationsApiError}: the error's
+ * own message, or `fallback` (always `fallback` when `preferFallback`). */
+function generatedCallError(
+	err: unknown,
+	fallback: string,
+	preferFallback = false,
+): IntegrationsApiError {
+	const status =
+		typeof (err as { status?: number })?.status === 'number'
+			? (err as { status: number }).status
+			: null;
+	const message = preferFallback ? fallback : ((err as Error)?.message ?? fallback);
+	return new IntegrationsApiError(message, status, err);
 }
 
 /**
@@ -208,9 +328,14 @@ export function confirmConnectSession(
 	pollToken: string | undefined,
 	body: ConfirmSessionBody,
 ): Promise<ConfirmSessionResponse> {
+	// The console holds the idle limit in seconds; the wire carries ISO 8601.
+	const wire =
+		'max_idle_period' in body
+			? { ...body, max_idle_period: isoDurationOrNull(body.max_idle_period) }
+			: body;
 	return request(sessionUrl(sessionId, ':confirm', pollToken), {
 		method: 'POST',
-		body: JSON.stringify(body),
+		body: JSON.stringify(wire),
 	});
 }
 
@@ -345,6 +470,23 @@ export async function listOpenConnectRequests(): Promise<ConnectSessionSummaryRe
 		.flatMap((page) => page.data)
 		.filter((s) => s.agent_id != null && s.requested_by_actor_id === s.agent_id)
 		.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+}
+
+/**
+ * Bindings of the viewer's agents (every agent's, for an `org:admin`) whose
+ * owner asked to be warned and that will reach their end date, or their idle
+ * limit unless used, within the warning window, soonest first (`ends_at`,
+ * `ending`). The live state behind "Ending
+ * soon" in "Waiting for you".
+ */
+export async function listBindingsEndingSoon(): Promise<EndingSoonBindingResponse[]> {
+	const page = await AgentsService.listCredentialBindingsEndingSoon();
+	return page.data;
+}
+
+/** The org's defaults and maximums for new grants and agents (`GET /agents/credentials:policy`). */
+export function getGrantPolicyLimits(): Promise<GrantPolicyLimitsResponse> {
+	return AgentsService.getGrantPolicyLimits();
 }
 
 export function listVendors(): Promise<VendorListResponse> {

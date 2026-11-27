@@ -123,6 +123,20 @@ resume it. They can do that from the agent's page in the dashboard, or with
 (`agents:write`). The binding works again on the next call; nothing needs to
 restart.
 
+## `credential_binding_expired` (403) on execute
+
+The agent is bound to a credential that covers this API, but the binding's
+expiry (`expires_at`) has passed, so it no longer authorizes calls. Only the
+operator can renew it. Don't try a new connect: while the expired binding
+stands, `jentic connect` / `request_connection` for the same agent and API
+returns 409 `connect_session_binding_expired`, and the expired binding no
+longer lets the agent read the credential. Ask the operator whether they'll
+renew it. They can set a new end date (or clear it) with
+`PATCH /agents/{agent_id}/credentials/{credential_id}` (`agents:write`), or
+remove the binding. A binding that is both suspended and expired is reported
+as suspended. The binding works again on the next call after renewal;
+nothing needs to restart.
+
 ## Import fails: server URL can't be made absolute
 
 The import job error starts with `relative server URL has no base`,

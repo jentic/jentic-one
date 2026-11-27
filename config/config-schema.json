@@ -1031,6 +1031,96 @@
       "title": "EntitlementConfig",
       "type": "object"
     },
+    "GrantExpiryConfig": {
+      "description": "Settings for credential grant (agent binding) expiry.",
+      "properties": {
+        "default_expires_in": {
+          "anyOf": [
+            {
+              "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default lifetime of a new credential grant whose creation sets no policy (ISO 8601, e.g. P30D): it ends this long after it is granted. Unset (the open-source default): such a grant has no end date.",
+          "title": "Default Expires In"
+        },
+        "default_idle_period": {
+          "anyOf": [
+            {
+              "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default idle limit of a new credential grant whose creation sets no policy (ISO 8601, P1D to P999D, e.g. P14D). Unset: no idle limit.",
+          "title": "Default Idle Period"
+        },
+        "idle_warning_interval": {
+          "default": "P1D",
+          "description": "How often the job runs that warns an agent's owner before a binding with the warning on ends (ISO 8601, e.g. P1D). Defaults to once a day. Keep the warning window at least twice this: a binding is only warned when a run finds its deadline inside the window, so with a longer interval a deadline can fall between two runs and pass without a warning.",
+          "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+          "title": "Idle Warning Interval",
+          "type": "string"
+        },
+        "idle_warning_min_length": {
+          "default": "P4D",
+          "description": "Shortest idle limit, or grant length before an end date, that is ever warned about (ISO 8601, e.g. P4D). Below this a warning would cover half the window or more and arrive for bindings doing exactly what they were set up to do. Defaults to 4 days.",
+          "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+          "title": "Idle Warning Min Length",
+          "type": "string"
+        },
+        "idle_warning_window": {
+          "default": "PT48H",
+          "description": "How long before a binding's end date or idle deadline its owner is warned (ISO 8601, e.g. PT48H), once per deadline. Defaults to 48 hours. Keep it at least twice idle_warning_interval, or a deadline can pass between two runs of the warning job unwarned.",
+          "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+          "title": "Idle Warning Window",
+          "type": "string"
+        },
+        "max_expires_in": {
+          "anyOf": [
+            {
+              "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest a credential grant may last from when it is granted or renewed (ISO 8601, e.g. P90D). When set, every grant must end: a grant with no end date, or one further out, is refused (422), and a creation that sets no policy gets the default (or this maximum when no default is set).",
+          "title": "Max Expires In"
+        },
+        "max_idle_period": {
+          "anyOf": [
+            {
+              "pattern": "^P(\\d+W)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Longest idle limit a credential grant may carry (ISO 8601, P1D to P999D). When set, every grant must carry one: none, or a longer one, is refused (422).",
+          "title": "Max Idle Period"
+        },
+        "single_use_by_default": {
+          "default": false,
+          "description": "Whether a new credential grant whose creation sets no policy allows a single call (a use count of 1).",
+          "title": "Single Use By Default",
+          "type": "boolean"
+        }
+      },
+      "title": "GrantExpiryConfig",
+      "type": "object"
+    },
     "HeldExecutionsConfig": {
       "description": "Require-approval holds: held execution jobs awaiting a human reviewer.\n\nAn execute call matching a permission rule with ``effect=\"require-approval\"``\nis enqueued as a ``held`` job with a ``pending`` approval; a reviewer (the\nagent's owner or an ``org:admin``) approves or denies it, or it expires.",
       "properties": {
@@ -2531,6 +2621,9 @@
     },
     "entitlement": {
       "$ref": "#/$defs/EntitlementConfig"
+    },
+    "grant_expiry": {
+      "$ref": "#/$defs/GrantExpiryConfig"
     },
     "held_executions": {
       "$ref": "#/$defs/HeldExecutionsConfig"

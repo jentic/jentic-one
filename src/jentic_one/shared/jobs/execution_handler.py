@@ -446,6 +446,7 @@ class ExecutionHandler:
                 trace_id=trace_id,
                 request_server_variables=server_variables,
                 server_variables_unresolved=server_variables_unresolved,
+                use_key=job_id,
             )
             injected_defaults = server_variable_defaults
         # The sync route partitions upstream cookies by (actor, credential);

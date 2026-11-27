@@ -97,6 +97,13 @@ function renderDialog() {
 	);
 }
 
+/** Choose how long the access lasts (unless the test already has), then Bind. */
+async function bind(user: ReturnType<typeof userEvent.setup>, duration = '7d'): Promise<void> {
+	const preset = screen.getByTestId('bind-agent-duration-preset') as HTMLSelectElement;
+	if (preset.value === '') await user.selectOptions(preset, duration);
+	await user.click(screen.getByTestId('bind-agent-confirm'));
+}
+
 function optionFor(name: string): HTMLElement {
 	const row = screen
 		.getAllByTestId('bind-agent-option')
@@ -124,7 +131,7 @@ describe('BindAgentDialog — already-bound agents across pages', () => {
 		const user = userEvent.setup();
 		await user.click(within(optionFor('agent_3')).getByRole('checkbox'));
 		await user.click(screen.getByRole('radio', { name: /Full access/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		await waitFor(() => expect(posted).toEqual(['agent_3']));
 	});
 
@@ -210,7 +217,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
 
 		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		await waitFor(() => expect(ruleCalls).toHaveLength(2));
 		expect(posted).toEqual(['agent_1', 'agent_2']);
 		for (const call of ruleCalls)
@@ -223,7 +230,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		renderDialog();
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
 		await user.click(screen.getByRole('radio', { name: /ask before anything else/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		await waitFor(() => expect(ruleCalls).toHaveLength(1));
 		expect(ruleCalls[0].body).toEqual([
 			{ effect: 'allow', methods: ['GET'] },
@@ -254,7 +261,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		expect(screen.queryByLabelText('Request path')).not.toBeInTheDocument();
 
 		await user.click(within(group).getByRole('radio', { name: /Full access/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		await waitFor(() => expect(ruleCalls).toHaveLength(1));
 		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', path: '.*' }]);
 	});
@@ -347,7 +354,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 			).getByRole('button', { name: 'Allow' }),
 		);
 		// The choice is staged: binding asks to apply it first.
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
 		expect(guard).toHaveTextContent('apply them before binding');
 		expect(ruleCalls).toHaveLength(0);
@@ -403,7 +410,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 			within(ops).getByRole('group', { name: 'Access for GET /v1/charges' }),
 		).getByRole('button', { name: 'Allow' });
 		await user.click(allow);
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		const guard = await screen.findByRole('dialog', { name: 'Apply 1 change by action?' });
 		// Escape makes the browser fire `cancel` at the topmost open modal — the
 		// prompt; a synthetic key press never reaches its close watcher, so fire it
@@ -430,8 +437,11 @@ describe('BindAgentDialog — what the agent may call', () => {
 		await waitFor(() => expect(screen.getByRole('button', { name: 'DELETE' })).toBeVisible());
 		await user.click(screen.getByRole('button', { name: 'DELETE' }));
 		await user.click(screen.getByRole('button', { name: 'Add' }));
+		// The rules are complete; Bind waits only for how long the access lasts.
+		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), '7d');
 		expect(screen.getByTestId('bind-agent-confirm')).toBeEnabled();
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		await waitFor(() => expect(ruleCalls).toHaveLength(1));
 		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', methods: ['DELETE'] }]);
 	});
@@ -453,7 +463,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
 		await user.click(screen.getByRole('checkbox', { name: 'agent_2' }));
 		await user.click(screen.getByRole('radio', { name: /Full access/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 
 		const failed = await screen.findByTestId('bind-agent-rules-failed');
 		expect(failed).toHaveTextContent("Bound, but the access rules weren't saved");
@@ -511,7 +521,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 		const { rerender } = renderWithProviders(ui(true));
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
 		await user.click(screen.getByRole('radio', { name: /Full access/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		expect(await screen.findByTestId('bind-agent-rules-failed')).toBeInTheDocument();
 		rerender(ui(false));
 		rerender(ui(true));
@@ -520,7 +530,7 @@ describe('BindAgentDialog — what the agent may call', () => {
 	});
 });
 
-describe('BindAgentDialog — what Allow all reaches, and naming the credential', () => {
+describe('BindAgentDialog — what Full access reaches, and naming the credential', () => {
 	beforeEach(() => {
 		setToken('test-token');
 		posted = [];
@@ -618,9 +628,399 @@ describe('BindAgentDialog — what Allow all reaches, and naming the credential'
 		expect(picked).toMatch(/^Shared key · /);
 		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
 		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
-		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await bind(user);
 		expect(
-			await screen.findByText(`Bound “${picked}” to agent_1, with access rules.`),
+			await screen.findByText(`Bound “${picked}” to agent_1, with access rules`, {
+				exact: false,
+			}),
 		).toBeInTheDocument();
+	});
+});
+
+describe('BindAgentDialog — how long the access lasts', () => {
+	const DAY = 86_400_000;
+	let bodies: { agent: string; body: Record<string, unknown> }[] = [];
+	beforeEach(() => {
+		setToken('test-token');
+		bodies = [];
+		clearAllToasts();
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json({
+					data: [pickerAgent('agent_1')],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			http.get('/credentials/:cid/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+			http.post('/agents/:id/credentials', async ({ params, request }) => {
+				bodies.push({
+					agent: String(params.id),
+					body: (await request.json()) as Record<string, unknown>,
+				});
+				return HttpResponse.json({}, { status: 201 });
+			}),
+			http.put('/credentials/:cid/agents/:aid/permissions', () =>
+				HttpResponse.json({ data: [] }),
+			),
+		);
+	});
+
+	async function ready(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /^Read only$/ }));
+	}
+
+	/** Bound rows with an end date (and, optionally, paused). */
+	function serveBound(
+		pickable: string[],
+		bound: { id: string; expiresAt: string | null; suspended?: boolean }[],
+	): void {
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json({
+					data: pickable.map(pickerAgent),
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			http.get('/credentials/:cid/agents', () =>
+				HttpResponse.json({
+					data: bound.map((b) => ({
+						...boundAgent(b.id),
+						suspended: b.suspended ?? false,
+						expires_at: b.expiresAt,
+						expired: b.expiresAt != null && Date.parse(b.expiresAt) <= Date.now(),
+					})),
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+	}
+
+	it("says what each bound agent's binding is: expired, suspended, ending or open", async () => {
+		const past = new Date(Date.now() - DAY).toISOString();
+		serveBound(
+			['agent_1', 'agent_expired', 'agent_paused', 'agent_soon', 'agent_open'],
+			[
+				{ id: 'agent_expired', expiresAt: past },
+				// Paused and lapsed: the pause is what to fix first, as the broker says.
+				{ id: 'agent_paused', expiresAt: past, suspended: true },
+				{
+					id: 'agent_soon',
+					expiresAt: new Date(Date.now() + 3 * DAY + 60_000).toISOString(),
+				},
+				{ id: 'agent_open', expiresAt: null },
+			],
+		);
+		renderDialog();
+
+		await screen.findByRole('checkbox', { name: 'agent_expired' });
+		const note = (name: string): string | null =>
+			within(optionFor(name)).getByTestId('bind-agent-bound-note').textContent;
+		await waitFor(() => expect(note('agent_expired')).toBe('Bound · expired'));
+		expect(note('agent_paused')).toBe('Bound · suspended');
+		expect(note('agent_soon')).toBe('Already bound · ends in 3d');
+		expect(note('agent_open')).toBe('Already bound');
+		expect(
+			within(optionFor('agent_1')).queryByTestId('bind-agent-bound-note'),
+		).not.toBeInTheDocument();
+		// Still not bindable again (a 409): renewing is the way back.
+		expect(screen.getByRole('checkbox', { name: 'agent_expired' })).toBeDisabled();
+		expect(screen.getByTestId('bind-agent-expired-note')).toHaveTextContent(
+			"One agent's access through this credential has expired. Binding again won't restore it: renew it from the agent's page or from the credential.",
+		);
+	});
+
+	it('every agent bound, one of them expired: says to renew, not bind', async () => {
+		serveBound(
+			['agent_expired'],
+			[{ id: 'agent_expired', expiresAt: new Date(Date.now() - DAY).toISOString() }],
+		);
+		renderDialog();
+
+		expect(await screen.findByTestId('bind-agent-all-bound')).toBeInTheDocument();
+		expect(screen.getByTestId('bind-agent-expired-note')).toHaveTextContent(
+			/One agent's access through this credential has expired\./,
+		);
+	});
+
+	it('preselects no duration, and a chosen one becomes the end date at Bind', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<>
+				<BindAgentDialog open onClose={() => {}} credentials={[CRED]} apiLabel="Stripe" />
+				<Toaster />
+			</>,
+		);
+		await ready(user);
+		const preset = screen.getByTestId('bind-agent-duration-preset') as HTMLSelectElement;
+		expect(preset.value).toBe('');
+		expect(screen.getByTestId('bind-agent-access-summary')).toHaveTextContent(
+			/pick Custom… and then No expiry/,
+		);
+		// Rules and agents are set, but Bind waits for a duration.
+		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
+
+		await user.selectOptions(preset, '30d');
+		const before = Date.now();
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		const at = Date.parse(String(bodies[0].body.expires_at));
+		expect(at).toBeGreaterThanOrEqual(before + 30 * DAY);
+		expect(at).toBeLessThanOrEqual(Date.now() + 30 * DAY);
+		expect(screen.queryByTestId('no-expiry-warning')).not.toBeInTheDocument();
+		expect(await screen.findByText(/with access rules, until /)).toBeInTheDocument();
+	});
+
+	it('an invalid custom amount blocks Bind', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), 'custom');
+		await user.clear(screen.getByTestId('bind-agent-duration-amount'));
+		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
+		await user.type(screen.getByTestId('bind-agent-duration-amount'), '12');
+		expect(screen.getByTestId('bind-agent-confirm')).toBeEnabled();
+	});
+
+	it('an end date the server refused says why, not "Unprocessable Entity"', async () => {
+		worker.use(
+			http.post('/agents/:id/credentials', () =>
+				HttpResponse.json(
+					{
+						detail: [
+							{
+								type: 'value_error',
+								loc: ['body', 'expires_at'],
+								msg: 'Value error, expires_at must be in the future',
+							},
+						],
+					},
+					{ status: 422 },
+				),
+			),
+		);
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await bind(user, '1h');
+		expect(
+			await screen.findByText(/That end date had already passed when it reached the server/),
+		).toBeVisible();
+		expect(screen.queryByText(/Unprocessable/)).not.toBeInTheDocument();
+	});
+
+	it('sends an idle limit, and an idle limit alone ends access without a warning', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), 'custom');
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-unit'), 'never');
+		await user.click(screen.getByText('Also end if unused for'));
+		await user.selectOptions(screen.getByTestId('bind-agent-idle-preset'), '30d');
+		expect(screen.getByTestId('bind-agent-access-summary')).toHaveTextContent(
+			'Access ends if unused for 30 days. An agent that keeps using it keeps access.',
+		);
+
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		expect(screen.queryByTestId('no-expiry-warning')).not.toBeInTheDocument();
+		expect(bodies[0].body).toEqual({
+			credential_id: 'cred_big',
+			expires_at: null,
+			max_idle_period: 'P30D',
+		});
+	});
+
+	it('warns before an end date or idle limit, below the limits, and only when ticked', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		const warning = (): HTMLElement =>
+			within(screen.getByTestId('bind-agent-idle-warning')).getByRole('checkbox');
+
+		// No end date and a three-day idle limit: no warning on offer.
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), 'custom');
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-unit'), 'never');
+		await user.click(screen.getByText('Also end if unused for'));
+		await user.selectOptions(screen.getByTestId('bind-agent-idle-preset'), 'custom');
+		await user.clear(screen.getByTestId('bind-agent-idle-amount'));
+		await user.type(screen.getByTestId('bind-agent-idle-amount'), '3');
+		expect(screen.queryByTestId('bind-agent-idle-warning')).not.toBeInTheDocument();
+
+		// A 14-day idle limit offers it, below the idle row.
+		await user.clear(screen.getByTestId('bind-agent-idle-amount'));
+		await user.type(screen.getByTestId('bind-agent-idle-amount'), '14');
+		expect(warning()).not.toBeChecked();
+		expect(
+			screen.getByTestId('bind-agent-idle').compareDocumentPosition(warning()) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+
+		// An end date under 4 days rules it out, whatever the idle limit.
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), '1d');
+		expect(screen.queryByTestId('bind-agent-idle-warning')).not.toBeInTheDocument();
+
+		// An end date alone is enough to warn about.
+		await user.click(screen.getByText('Also end if unused for'));
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), '7d');
+		expect(warning()).toBeEnabled();
+		await user.click(screen.getByText('Warn me before this access ends'));
+		expect(warning()).toBeChecked();
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		expect(bodies[0].body).toMatchObject({ idle_warning: true });
+		expect(bodies[0].body).not.toHaveProperty('max_idle_period');
+	});
+
+	it('describes when access ends in one line, below End after one use', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), '7d');
+		await user.click(screen.getByText('Also end if unused for'));
+		await user.click(screen.getByText('End after one use'));
+
+		expect(screen.queryByTestId('bind-agent-duration-hint')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('bind-agent-idle-summary')).not.toBeInTheDocument();
+		const summary = screen.getByTestId('bind-agent-access-summary');
+		expect(summary).toHaveTextContent(
+			/^Access ends after one use, around .+, or sooner if unused for 14 days\.$/,
+		);
+		expect(
+			screen.getByTestId('bind-agent-single-use').compareDocumentPosition(summary) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		// The controls point at it.
+		expect(screen.getByTestId('bind-agent-duration-preset')).toHaveAttribute(
+			'aria-describedby',
+			summary.id,
+		);
+	});
+
+	it('holds the first denied request by default, and sends "Let the agent ask"', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), '7d');
+		const after = screen.getByTestId('bind-agent-after-expiry') as HTMLSelectElement;
+		expect(after.value).toBe('hold');
+		expect(screen.getByTestId('bind-agent-after-expiry-hint')).toHaveTextContent(
+			'waits for you to renew it',
+		);
+		await user.selectOptions(after, 'refuse');
+		expect(screen.getByTestId('bind-agent-after-expiry-hint')).toHaveTextContent(
+			'the agent asks you to renew',
+		);
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		expect(bodies[0].body).toMatchObject({ after_expiry: 'refuse' });
+		expect(bodies[0].body).not.toHaveProperty('idle_warning');
+	});
+
+	it('sends single use, and single use alone ends access without a warning', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), 'custom');
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-unit'), 'never');
+		await user.click(screen.getByText('End after one use'));
+		expect(screen.getByTestId('bind-agent-access-summary')).toHaveTextContent(
+			'Access ends after one use.',
+		);
+
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		expect(screen.queryByTestId('no-expiry-warning')).not.toBeInTheDocument();
+		expect(bodies[0].body).toEqual({
+			credential_id: 'cred_big',
+			expires_at: null,
+			max_quota: 1,
+		});
+	});
+
+	it('starts on the org default and offers nothing above its maximum', async () => {
+		worker.use(
+			http.get('/agents/credentials\\:policy', () =>
+				HttpResponse.json({
+					expires_in: { default: 'P7D', max: 'P30D' },
+					idle_period: { default: 'P14D', max: 'P30D' },
+					single_use_by_default: false,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		const preset = screen.getByTestId('bind-agent-duration-preset') as HTMLSelectElement;
+		await waitFor(() => expect(preset.value).toBe('7d'));
+		expect(within(preset).getByRole('option', { name: '90 days' })).toBeDisabled();
+		// The idle limit is on, on its default, and can't be turned off.
+		const idleBox = within(screen.getByTestId('bind-agent-idle-toggle')).getByRole('checkbox');
+		expect(idleBox).toBeChecked();
+		expect(idleBox).toBeDisabled();
+		expect((screen.getByTestId('bind-agent-idle-preset') as HTMLSelectElement).value).toBe(
+			'14d',
+		);
+
+		// No "No expiry" under a maximum, and a longer custom amount says so.
+		await user.selectOptions(preset, 'custom');
+		const unit = screen.getByTestId('bind-agent-duration-unit');
+		expect(within(unit).queryByRole('option', { name: 'No expiry' })).toBeNull();
+		const amount = screen.getByTestId('bind-agent-duration-amount');
+		await user.clear(amount);
+		await user.type(amount, '45');
+		expect(screen.getByTestId('bind-agent-duration-error')).toHaveTextContent(
+			'This org allows at most 30 days.',
+		);
+		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
+	});
+
+	it('refuses an idle limit under a day', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), '7d');
+		await user.click(screen.getByText('Also end if unused for'));
+		await user.selectOptions(screen.getByTestId('bind-agent-idle-preset'), 'custom');
+		await user.clear(screen.getByTestId('bind-agent-idle-amount'));
+		await user.type(screen.getByTestId('bind-agent-idle-amount'), '12');
+		await user.selectOptions(screen.getByTestId('bind-agent-idle-unit'), 'hours');
+		expect(screen.getByTestId('bind-agent-idle-error')).toHaveTextContent(
+			'Choose between 1 day and 999 days.',
+		);
+		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
+	});
+
+	it('binding with No expiry warns first, and binds nothing until confirmed', async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await ready(user);
+		// No default: nothing chosen is not "no expiry", it is no choice yet.
+		expect(screen.getByTestId('bind-agent-confirm')).toBeDisabled();
+
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-preset'), 'custom');
+		await user.selectOptions(screen.getByTestId('bind-agent-duration-unit'), 'never');
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		const warning = await screen.findByTestId('no-expiry-warning');
+		expect(warning).toHaveTextContent(
+			'agent_1 will keep this access until someone removes it.',
+		);
+		// "Set an expiry" is the default action, and takes the operator back to the choice.
+		const setExpiry = screen.getByTestId('no-expiry-set-expiry');
+		await waitFor(() => expect(setExpiry).toHaveFocus());
+		await user.click(setExpiry);
+		await waitFor(() => expect(screen.getByTestId('bind-agent-duration-preset')).toHaveFocus());
+		expect(bodies).toHaveLength(0);
+
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await user.click(await screen.findByRole('button', { name: 'Bind without expiry' }));
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		// A confirmed "No expiry" is said, not left out (an org default would fill a gap).
+		expect(bodies[0].body).toEqual({ credential_id: 'cred_big', expires_at: null });
 	});
 });

@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **177**._
+_Total endpoints: **180**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -111,7 +111,7 @@ _Total endpoints: **177**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's OAuth flows and scopes |
 
-## Operator-facing (typically a human operator / admin) (45)
+## Operator-facing (typically a human operator / admin) (47)
 
 
 ### `actors`
@@ -126,12 +126,14 @@ _Total endpoints: **177**._
 |---|---|---|---|---|
 | GET | `/agents` | `agents:read` | operator | List visible agents |
 | POST | `/agents` | `agents:write` | operator | Create an agent |
+| GET | `/agents/credentials:ending-soon` | `agents:read` | operator | List credential bindings ending soon |
 | DELETE | `/agents/{agent_id}` | `agents:write` | operator | Archive an agent |
 | PATCH | `/agents/{agent_id}` | `agents:write` | operator | Update an agent |
 | GET | `/agents/{agent_id}/api-key` | `agents:read` | operator | Get an agent's API key metadata |
 | GET | `/agents/{agent_id}/api-key/history` | `agents:read` | operator | Get an agent's API key history |
 | POST | `/agents/{agent_id}/credentials` | `agents:write` | operator | Bind a credential to an agent |
 | DELETE | `/agents/{agent_id}/credentials/{credential_id}` | `agents:write` | operator | Suspend or remove a credential binding |
+| PATCH | `/agents/{agent_id}/credentials/{credential_id}` | `agents:write` | operator | Renew a credential binding |
 | POST | `/agents/{agent_id}/credentials/{credential_id}:resume` | `agents:write` | operator | Resume a suspended credential binding |
 | PUT | `/agents/{agent_id}/jwks` | `agents:write` | operator | Replace an agent's JWKS |
 | GET | `/agents/{agent_id}/permissions` | `agents:read` | operator | List an agent's permissions |
@@ -209,7 +211,7 @@ _Total endpoints: **177**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable a user |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue a user's invite |
 
-## Any authenticated actor (85)
+## Any authenticated actor (86)
 
 
 ### `actors`
@@ -240,6 +242,7 @@ _Total endpoints: **177**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
+| GET | `/agents/credentials:policy` | _any authenticated_ | any | Get the org's grant defaults and maximums |
 | GET | `/agents/{agent_id}` | _any authenticated_ | any | Get an agent |
 | GET | `/agents/{agent_id}/credentials` | _any authenticated_ | any | List an agent's credential bindings |
 | GET | `/agents/{agent_id}/oauth-grants` | _any authenticated_ | any | List an agent's connected OAuth clients |

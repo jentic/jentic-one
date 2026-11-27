@@ -36,7 +36,7 @@ import {
 	type PermissionTestResponse,
 	type RuleSetResponse,
 } from '@/shared/api';
-import { hasTrace } from '@/shared/lib';
+import { hasTrace, isoDurationSeconds } from '@/shared/lib';
 import {
 	agentToEntity,
 	type AgentEntity,
@@ -192,6 +192,23 @@ function bindingToEntity(r: CredentialBindingResponse): CredentialBindingEntity 
 		suspendedReason: r.suspended_reason ?? null,
 		ruleSetId: r.rule_set_id ?? null,
 		boundAt: r.bound_at,
+		expiresAt: r.expires_at ?? null,
+		expired: r.expired ?? false,
+		expiredReason: r.expired_reason ?? null,
+		maxIdlePeriod: isoDurationSeconds(r.max_idle_period),
+		idleExpiresAt: r.idle_expires_at ?? null,
+		idleWarning: r.idle_warning ?? false,
+		afterExpiry: r.after_expiry ?? 'hold',
+		maxQuota: r.max_quota ?? null,
+		quotaRemaining: r.quota_remaining ?? null,
+		renewedAt: r.renewed_at ?? null,
+		lastUsedAt: r.last_used_at,
+		lastUsedByApi: r.last_used_by_api?.map((u) => ({
+			vendor: u.api_vendor,
+			name: u.api_name ?? null,
+			version: u.api_version,
+			lastUsedAt: u.last_used_at,
+		})),
 		serves: (r.serves ?? []).map((s) => ({
 			vendor: s.api_vendor,
 			name: s.api_name ?? null,
@@ -211,52 +228,6 @@ export async function listAgentCredentialBindings(
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load bound credentials.');
 	}
-}
-
-/**
- * Bind a credential directly to an agent, with the operator's chosen initial
- * grant.
- *
- * The phase-1 bind body carries ONLY `credential_id` — there is no inline
- * `allow_all`/`permissions` field — so the "decide
- * the grant at bind time" wizard composes two calls: the bind, then a rules
- * PUT on the fresh binding. The seam between them is fail-CLOSED: a binding
- * with zero rules default-denies everything, so if the PUT fails the agent
- * has gained no access — we surface an honest "bound but blocked" error and
- * the Access card's zero-rules warning points at the repair (edit rules).
- * `rules === null` is the deliberate "start blocked" mode (bind only).
- */
-export async function bindCredentialToAgent(
-	agentId: string,
-	credentialId: string,
-	rules: PermissionRuleSchema[] | null,
-): Promise<CredentialBindingEntity> {
-	let binding: CredentialBindingEntity;
-	try {
-		binding = bindingToEntity(
-			await AgentsService.bindAgentCredential({
-				agentId,
-				requestBody: { credential_id: credentialId },
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to bind the credential.');
-	}
-	if (rules != null && rules.length > 0) {
-		try {
-			await CredentialsService.replaceAgentCredentialPermissions({
-				credentialId,
-				agentId,
-				requestBody: rules,
-			});
-		} catch (error) {
-			throw toAgentsError(
-				error,
-				'The credential was bound, but saving its rules failed — the binding starts blocked (default deny). Edit its rules to grant access.',
-			);
-		}
-	}
-	return binding;
 }
 
 /**
@@ -429,6 +400,8 @@ export interface AgentPatch {
 	name?: string;
 	description?: string | null;
 	ownerId?: string | null;
+	/** RFC 3339 instant in the future; `null` clears the expiry. */
+	expiresAt?: string | null;
 }
 
 /**
@@ -444,6 +417,7 @@ export async function updateAgent(agentId: string, patch: AgentPatch): Promise<A
 				...(patch.name !== undefined ? { name: patch.name } : {}),
 				...(patch.description !== undefined ? { description: patch.description } : {}),
 				...(patch.ownerId !== undefined ? { owner_id: patch.ownerId } : {}),
+				...(patch.expiresAt !== undefined ? { expires_at: patch.expiresAt } : {}),
 			},
 		});
 		return agentToEntity(res);

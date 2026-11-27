@@ -91,6 +91,7 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionTestResponse,
     ScopeOptionSchema,
 )
+from jentic_one.shared.auth.grant_policy import AfterExpiry, grant_end_reason, idle_deadline
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
@@ -548,6 +549,9 @@ async def list_credential_agents(
     the caller may see.
     Suspended bindings are included with their flag set and, when known, the
     reason (`api_deleted` when the credential's API was deleted).
+    Expired bindings are included too, with `expires_at` and `expired` set.
+    Each row carries `last_used_at`: when that agent last made a call through
+    this credential (null if never).
     """
     data, has_more, next_cursor = await svc.list_agents(
         credential_id, cursor=cursor, limit=limit, identity=identity
@@ -557,11 +561,22 @@ async def list_credential_agents(
             CredentialAgentResponse(
                 agent_id=row.agent_id,
                 agent_name=row.agent_name,
+                owner_id=row.agent_owner_id,
                 status=row.agent_status,
                 bound_at=row.bound_at,
                 suspended=row.suspended,
                 suspended_reason=row.suspended_reason,
                 rule_set_id=row.rule_set_id,
+                expires_at=row.expires_at,
+                expired=(reason := grant_end_reason(row.policy())) is not None,
+                expired_reason=reason,
+                max_idle_period=row.max_idle_period,
+                idle_expires_at=idle_deadline(row.policy()),
+                idle_warning=row.idle_warning,
+                after_expiry=AfterExpiry(row.after_expiry),
+                max_quota=row.max_quota,
+                quota_remaining=row.quota_remaining,
+                last_used_at=row.last_used_at,
             )
             for row in data
         ],
@@ -607,6 +622,9 @@ def binding_access_response(
         rule_set=rule_set,
         granted_scopes=access.granted_scopes,
         suspended=access.suspended,
+        expires_at=access.expires_at,
+        expired=(access_reason := grant_end_reason(access.policy)) is not None,
+        expired_reason=access_reason,
         scopes_editable=scopes.supported if scopes is not None else False,
         scope_catalog=(
             [

@@ -9,6 +9,13 @@
  * single toast. A decision that lost the race (409) moves on the same way,
  * saying someone else decided first.
  *
+ * A call held because the agent's access ended (`kind: grant_renewal`) says
+ * why it ended, and its decision is re-granted access (`RenewalDecision`):
+ * only a reviewer who may renew the binding gets the choices; anyone else may
+ * only deny. Where the admin surface can't renew from a hold (a split
+ * deployment, `renewal.renew_on_decide` false), the binding is renewed
+ * through its own endpoint first, then the call is approved.
+ *
  * A call that can no longer be decided (expired, withdrawn, already decided)
  * shows its outcome without verbs; a refused decision (403) is explained in
  * place of them; a call the viewer can't see (404) says who can.
@@ -21,10 +28,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useSearchParams } from 'react-router';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Button, Dialog, toast } from '@/shared/ui';
+import { Button, Dialog, ErrorAlert, toast } from '@/shared/ui';
 import { cn, isolateText } from '@/shared/lib/utils';
 import { ROUTES } from '@/shared/app/routes';
-import { useCredential } from '@/shared/credentials/api';
+import { useCredential, useRenewCredentialBinding } from '@/shared/credentials/api';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import { useNow } from '@/shared/app/rail/useNow';
 import { usePendingApprovals } from '@/shared/approvals/api';
@@ -48,6 +55,12 @@ import {
 	ReviewFooter,
 } from '@/shared/approvals/review/HeldCallSections';
 import { useDecidersLine } from '@/shared/approvals/review/people';
+import {
+	AccessEndedSection,
+	RenewalDecision,
+	isRenewalCall,
+	type RenewalPolicyBody,
+} from '@/shared/approvals/review/RenewalDecision';
 import {
 	LoadFailedState,
 	NotVisibleState,
@@ -85,6 +98,7 @@ export function HeldCallReview({
 	const canDecide = useCanDecideApprovals();
 	const pendingQuery = usePendingApprovals({ enabled: canDecide });
 	const decide = useDecideApproval({ quiet: true });
+	const renewBinding = useRenewCredentialBinding();
 	const ensureApproval = useEnsureApproval();
 	const now = useNow();
 	const [receipt, setReceipt] = useState<ReviewReceipt | null>(null);
@@ -95,6 +109,10 @@ export function HeldCallReview({
 	const [settledIds, setSettledIds] = useState<ReadonlySet<string>>(() => new Set());
 	const [refusedId, setRefusedId] = useState<string | null>(null);
 	const [failure, setFailure] = useState<{ heldId: string; message: string } | null>(null);
+	// Calls whose binding was renewed through its own endpoint (a split
+	// deployment) but whose approval has not landed. Approving again must not
+	// renew a second time: a renewal restores the uses and restarts the idle clock.
+	const [renewedIds, setRenewedIds] = useState<ReadonlySet<string>>(() => new Set());
 
 	const listed = (pendingQuery.data?.approvals ?? []).filter((c) => !settledIds.has(c.id));
 	// Scoped to the calls it was opened for, when it was.
@@ -175,8 +193,20 @@ export function HeldCallReview({
 		toast(receiptToast(done));
 	}
 
-	function handleDecide(target: HeldCallDetail, decision: Decision, reason: string | null) {
-		const done = { heldId: target.id, headline: headlineOf(target) };
+	function handleDecide(
+		target: HeldCallDetail,
+		decision: Decision,
+		reason: string | null,
+		renewal?: { policy: RenewalPolicyBody | null; run: boolean },
+	) {
+		const done = {
+			heldId: target.id,
+			headline: headlineOf(target),
+			regranted: !!renewal && decision === 'approve',
+		};
+		// The approval after a renewal made through the binding's own endpoint:
+		// when it fails, say that access is already live, not just that it failed.
+		const renewedAlready = !!renewal && renewal.policy === null && decision === 'approve';
 		setFailure(null);
 		decide.mutate(
 			{
@@ -185,7 +215,14 @@ export function HeldCallReview({
 				body:
 					decision === 'deny'
 						? { decision: ApprovalDecision.DENY, reason }
-						: { decision: ApprovalDecision.APPROVE },
+						: renewal
+							? {
+									decision: ApprovalDecision.APPROVE,
+									run: renewal.run,
+									// Renewed through the binding already: approve only.
+									...(renewal.policy ? { renewal: renewal.policy } : {}),
+								}
+							: { decision: ApprovalDecision.APPROVE },
 			},
 			{
 				onSuccess: (row) =>
@@ -203,6 +240,8 @@ export function HeldCallReview({
 							{ ...done, kind: expired ? 'expired' : 'conflict' },
 							decision,
 						);
+					} else if (renewedAlready) {
+						setFailure({ heldId: target.id, message: renewedThenFailed(err.message) });
 					} else if (isDecideForbidden(err)) setRefusedId(target.id);
 					else setFailure({ heldId: target.id, message: err.message });
 				},
@@ -210,9 +249,45 @@ export function HeldCallReview({
 		);
 	}
 
+	/**
+	 * Re-grant the ended access and approve the call. Where the hold can't renew
+	 * the binding itself (`renew_on_decide` false), it is renewed through its own
+	 * endpoint first, then the call is approved without a policy (the server
+	 * checks the binding holds again).
+	 */
+	function handleRenewal(target: HeldCallDetail, policy: RenewalPolicyBody, run: boolean) {
+		setFailure(null);
+		if (target.renewal?.renew_on_decide === false) {
+			if (renewedIds.has(target.id)) {
+				// Already renewed: retry the approval alone.
+				handleDecide(target, 'approve', null, { policy: null, run });
+				return;
+			}
+			renewBinding.mutate(
+				{
+					agentId: target.agent_id,
+					credentialId: target.credential_id,
+					expiresAt: policy.expires_at,
+					maxIdlePeriod: policy.max_idle_period,
+					idleWarning: policy.idle_warning,
+					maxQuota: policy.max_quota,
+					afterExpiry: policy.after_expiry,
+				},
+				{
+					onSuccess: () => {
+						setRenewedIds((prev) => new Set(prev).add(target.id));
+						handleDecide(target, 'approve', null, { policy: null, run });
+					},
+				},
+			);
+			return;
+		}
+		handleDecide(target, 'approve', null, { policy, run });
+	}
+
 	/** Escape, the X and the backdrop: not while a decision is on its way. */
 	function close() {
-		if (decide.isPending || advancing) return;
+		if (decide.isPending || renewBinding.isPending || advancing) return;
 		onClose();
 	}
 
@@ -269,13 +344,31 @@ export function HeldCallReview({
 					credentialName={credential.data?.name ?? null}
 					deciders={deciders}
 				/>
+				<AccessEndedSection call={call} />
 				<AgentReason call={call} />
 				<RequestDetails call={call} />
 				<ReviewFooter call={call} />
+				{isRenewalCall(call) && refusedId !== call.id && (
+					<section aria-label="Your decision" className="space-y-2">
+						<RenewalDecision
+							agentName={agentName}
+							canRenew={call.renewal?.can_renew ?? false}
+							renewElsewhere={call.renewal?.renew_on_decide === false}
+							afterExpiry={call.renewal?.after_expiry ?? null}
+							pending={
+								inFlight !== null || advancing !== null || renewBinding.isPending
+							}
+							onDeny={(why) => handleDecide(call, 'deny', why || null)}
+							onRenew={(policy, run) => handleRenewal(call, policy, run)}
+						/>
+						{renewBinding.error && <ErrorAlert message={renewBinding.error} />}
+						{failure?.heldId === call.id && <ErrorAlert message={failure.message} />}
+					</section>
+				)}
 			</div>
 		);
 		footer =
-			refusedId === call.id ? (
+			isRenewalCall(call) && refusedId !== call.id ? undefined : refusedId === call.id ? (
 				<div className="flex w-full flex-wrap items-center justify-between gap-3">
 					<p role="alert" className="text-foreground-sub text-[13px]">
 						You can see this call but can&apos;t decide it. Only the agent&apos;s owner
@@ -304,7 +397,7 @@ export function HeldCallReview({
 					<ReviewStepper
 						queue={queue}
 						position={position}
-						disabled={decide.isPending || advancing !== null}
+						disabled={decide.isPending || renewBinding.isPending || advancing !== null}
 						labelOf={headlineOf}
 						onStep={step}
 					/>
@@ -320,6 +413,11 @@ export function HeldCallReview({
 			{body}
 		</Dialog>
 	);
+}
+
+/** What a failed approval says after the binding was already renewed: both outcomes. */
+function renewedThenFailed(message: string): string {
+	return `Access was renewed, but the call wasn't approved: ${message} Approve again to run it; access won't be renewed a second time.`;
 }
 
 function receiptToast(done: ReviewReceipt) {
@@ -339,7 +437,7 @@ function receiptToast(done: ReviewReceipt) {
 		};
 	}
 	return {
-		title: `${done.kind === 'approved' ? 'Approved' : 'Denied'} · ${headline}`,
+		title: `${done.kind === 'approved' ? (done.regranted ? 'Re-granted access' : 'Approved') : 'Denied'} · ${headline}`,
 		variant: done.kind === 'approved' ? ('success' as const) : ('default' as const),
 	};
 }

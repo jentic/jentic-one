@@ -13,6 +13,7 @@ import {
 	isOrphanBinding,
 	multiAccountApis,
 	partitionBindings,
+	tileLastUsedAt,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -278,6 +279,43 @@ describe('tileStats / agentSetupGapCount', () => {
 		const [tile] = composeApiTiles([binding], [makeCredential()], apis);
 		expect(tile.suspended).toBe(true);
 		expect(tile.suspendedReason).toBe('api_deleted');
+	});
+
+	it('carries the end date onto the tile, and an expired one reads expired', () => {
+		const apis = [makeApi({ vendor: 'slack.com', display_name: 'Slack' })];
+		const future = new Date(Date.now() + 86_400_000).toISOString();
+		const past = new Date(Date.now() - 60_000).toISOString();
+		const [open] = composeApiTiles([makeBinding()], [makeCredential()], apis);
+		expect(open.expiresAt).toBeNull();
+		expect(open.expired).toBe(false);
+		const [ending] = composeApiTiles(
+			[makeBinding({ expiresAt: future, expired: false })],
+			[makeCredential()],
+			apis,
+		);
+		expect(ending.expiresAt).toBe(future);
+		expect(ending.expired).toBe(false);
+		// Lapsed since the server answered: expired all the same.
+		const [lapsed] = composeApiTiles(
+			[makeBinding({ expiresAt: past, expired: false })],
+			[makeCredential()],
+			apis,
+		);
+		expect(lapsed.expired).toBe(true);
+	});
+
+	it('keeps an expired binding configured, without its operations', () => {
+		const apis = [
+			makeApi({ vendor: 'slack.com', display_name: 'Slack', operation_count: 100 }),
+		];
+		const expired = makeBinding({
+			expiresAt: new Date(Date.now() - 60_000).toISOString(),
+			expired: true,
+		});
+		const stats = tileStats(composeApiTiles([expired], [makeCredential()], apis));
+		expect(stats.configured).toBe(1);
+		expect(stats.operations).toBe(0);
+		expect(stats.blockedBindings).toBe(0);
 	});
 
 	it('withholds the operations figure when no usable tile proves a count', () => {
@@ -745,5 +783,53 @@ describe('multiAccountApis / accountLabels', () => {
 		const tiles = composeApiTiles([makeBinding()], [makeCredential()], apis);
 		expect(multiAccountApis(tiles).size).toBe(0);
 		expect(accountLabels(tiles).size).toBe(0);
+	});
+});
+
+describe('last used on tiles', () => {
+	const apis = [
+		makeApi({ vendor: 'slack.com', display_name: 'Slack' }),
+		makeApi({ vendor: 'slack.com', name: 'admin', display_name: 'Slack Admin' }),
+	];
+
+	it("gives each tile of a vendor-wide binding its own API's last use", () => {
+		const binding = makeBinding({
+			lastUsedAt: '2026-03-05T00:00:00Z',
+			lastUsedByApi: [
+				{
+					vendor: 'slack.com',
+					name: 'default',
+					version: '1.0.0',
+					lastUsedAt: '2026-03-05T00:00:00Z',
+				},
+			],
+		});
+		const tiles = composeApiTiles(
+			[binding],
+			[makeCredential()],
+			[...apis, makeApi({ vendor: 'slack.com', version: '2.0', display_name: 'Slack v2' })],
+		);
+		expect(tiles.map((t) => [t.title, t.lastUsedAt])).toEqual([
+			['Slack', '2026-03-05T00:00:00Z'],
+			// Called through the credential, but never this API.
+			['Slack Admin', null],
+			['Slack v2', null],
+		]);
+	});
+
+	it('reads "never used" when the binding has no recorded call', () => {
+		const binding = makeBinding({ lastUsedAt: null, lastUsedByApi: [] });
+		const tiles = composeApiTiles([binding], [makeCredential()], apis);
+		expect(tiles.every((t) => t.lastUsedAt === null)).toBe(true);
+	});
+
+	it('claims nothing when the server does not report last use', () => {
+		const tiles = composeApiTiles([makeBinding()], [makeCredential()], apis);
+		expect(tiles.every((t) => !('lastUsedAt' in t))).toBe(true);
+	});
+
+	it("uses the whole binding's last use for a tile with no API name", () => {
+		const binding = { lastUsedAt: '2026-03-05T00:00:00Z', lastUsedByApi: [] };
+		expect(tileLastUsedAt(binding, 'slack.com', null)).toBe('2026-03-05T00:00:00Z');
 	});
 });

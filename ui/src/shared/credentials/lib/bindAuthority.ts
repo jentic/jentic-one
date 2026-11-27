@@ -25,6 +25,23 @@ export function viewerIsOrgAdmin(viewer: BindViewer | null | undefined): boolean
 }
 
 /**
+ * Whether the viewer may change an existing binding of an agent owned by
+ * `agentOwnerId` — renew, suspend or resume it. The server takes the agent's
+ * owner or an `org:admin` for that, on top of the credential check
+ * ({@link credentialEditableBy}): a credential's creator sees every agent bound
+ * to it, but cannot change another user's agent's binding (a 404). An unknown
+ * viewer may, as for the other UX-only gates here; an owner that is null (an
+ * unclaimed agent) or wasn't reported is not the viewer.
+ */
+export function agentBindingChangeableBy(
+	agentOwnerId: string | null | undefined,
+	viewer: BindViewer | null | undefined,
+): boolean {
+	if (!viewer || viewerIsOrgAdmin(viewer)) return true;
+	return agentOwnerId != null && agentOwnerId === viewer.id;
+}
+
+/**
  * The credentials this viewer may bind: every one for an `org:admin`, otherwise
  * only the ones they created. An unknown viewer gets the list unfiltered — the
  * server still enforces, and hiding everything while `/users/me` loads would

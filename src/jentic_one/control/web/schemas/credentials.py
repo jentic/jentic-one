@@ -12,6 +12,8 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionRuleReadSchema,
     PermissionRuleSchema,
 )
+from jentic_one.shared.auth.grant_policy import AfterExpiry, GrantEndReason
+from jentic_one.shared.iso_duration import IdlePeriodResponse
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
@@ -999,6 +1001,16 @@ class CredentialAgentResponse(BaseModel):
 
     agent_id: str = Field(description="ID of the bound agent.", examples=[ex.AGENT_ID])
     agent_name: str = Field(description="Name of the bound agent.", examples=["billing-assistant"])
+    owner_id: str | None = Field(
+        default=None,
+        examples=[ex.USER_ID],
+        description=(
+            "ID of the user who owns the bound agent; null for an unclaimed "
+            "self-registration. Changing the binding (suspending, resuming or "
+            "renewing it) takes the agent's owner or an `org:admin`, on top of "
+            "the credential's own checks."
+        ),
+    )
     status: str = Field(description="Status of the bound agent.", examples=["active"])
     bound_at: datetime = Field(
         description="When the agent was bound to the credential (RFC 3339).",
@@ -1028,6 +1040,79 @@ class CredentialAgentResponse(BaseModel):
             "Shared permission rule set this binding points at, if any. While "
             "attached, the set's ordered list is the binding's effective "
             "policy; null means the binding's inline rules apply."
+        ),
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        examples=["2026-12-31T23:59:00Z"],
+        description=(
+            "When the binding stops authorizing calls (RFC 3339); null if it never "
+            "expires. Independent of `suspended`."
+        ),
+    )
+    expired: bool = Field(
+        default=False,
+        examples=[False],
+        description=(
+            "Whether `expires_at` has passed: the agent cannot execute through this "
+            "credential until the binding is renewed."
+        ),
+    )
+    expired_reason: GrantEndReason | None = Field(
+        default=None,
+        examples=[None],
+        description=(
+            "Which limit ended the binding while `expired` is true: `end_date`"
+            " (`expires_at` passed), `idle` (unused for `max_idle_period`) or `uses`"
+            " (no uses left). Null while the binding holds."
+        ),
+    )
+    max_idle_period: IdlePeriodResponse | None = Field(
+        default=None,
+        examples=["P14D"],
+        description=(
+            "Idle limit (an ISO 8601 duration, e.g. P14D): the binding ends once it goes"
+            " this long without a call."
+            " Null when it has none."
+        ),
+    )
+    idle_expires_at: datetime | None = Field(
+        default=None,
+        examples=["2026-12-31T23:59:00Z"],
+        description=(
+            "When the idle limit ends the binding if it is not used before then (RFC 3339);"
+            " null without an idle limit."
+        ),
+    )
+    idle_warning: bool = Field(
+        default=False,
+        examples=[False],
+        description="Whether the agent's owner is warned before the binding ends (its end"
+        " date or idle limit).",
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        examples=["hold"],
+        description="What a call through the binding gets once it has ended: `hold` holds"
+        " the first call for the owner to renew; `refuse` answers"
+        " `403 credential_binding_expired`.",
+    )
+    max_quota: int | None = Field(
+        default=None,
+        examples=[1],
+        description="How many calls the binding allows before it ends; null for unlimited.",
+    )
+    quota_remaining: int | None = Field(
+        default=None,
+        examples=[1],
+        description="How many calls it still allows; null without a use count.",
+    )
+    last_used_at: datetime | None = Field(
+        default=None,
+        examples=["2026-02-03T14:05:00Z"],
+        description=(
+            "When the agent last made a call through this credential, whatever "
+            "its outcome (RFC 3339); null if it never has."
         ),
     )
 

@@ -104,7 +104,11 @@ export function ApiRowReveal({
 					API_ROW_COLUMNS_LG,
 				)}
 			>
-				<ActivitySection activity={activity} className="lg:col-start-2" />
+				<ActivitySection
+					activity={activity}
+					lastUsedAt={tile.lastUsedAt}
+					className="lg:col-start-2"
+				/>
 				<AccessSection
 					agentId={agentId}
 					tile={tile}
@@ -202,19 +206,23 @@ function Section({
 
 function ActivitySection({
 	activity,
+	lastUsedAt,
 	className,
 }: {
 	activity: ApiRowActivity;
+	/** The binding's all-time last use from the server (null = never used);
+	 * absent, the newest call in the 7-day sample stands in. */
+	lastUsedAt?: string | null;
 	className?: string;
 }) {
 	const { usage, percentiles } = activity;
-	const lastAt = activity.calls?.[0]?.startedAt ?? null;
+	const lastAt = lastUsedAt !== undefined ? lastUsedAt : (activity.calls?.[0]?.startedAt ?? null);
 	const trend = usage?.trend.length ? usage.trend : [0, 0];
 	return (
 		<Section
 			aria-label="Activity, last 7 days"
 			label="Activity · 7d"
-			aside={lastAt ? `last ${ago(lastAt)}` : null}
+			aside={lastAt ? `last ${ago(lastAt)}` : lastUsedAt === null ? 'never used' : null}
 			className={className}
 		>
 			{usage === undefined ? (
@@ -323,6 +331,8 @@ function RecentCallsSection({
 		'No calls — default-deny refuses every call until a rule allows it.'
 	) : tile.suspended ? (
 		'No calls while paused.'
+	) : status === 'expired' ? (
+		'No calls — its access has expired. Renew it to restore access.'
 	) : (
 		'No calls yet.'
 	);

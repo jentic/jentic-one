@@ -1524,6 +1524,14 @@ describe('AccessRulesStep', () => {
 		);
 		// Announced politely for screen-reader users as it changes.
 		expect(within(tester).getByRole('status')).toHaveTextContent('POST /items: denied');
+		await user.click(
+			screen.getByRole('radio', { name: /Read only, ask before anything else/ }),
+		);
+		await waitFor(() =>
+			expect(within(tester).getByTestId('rule-verdict')).toHaveTextContent(
+				'POST /items — held for approval by “Read only, ask before anything else”',
+			),
+		);
 	});
 
 	it('passes an accessibility audit with the editor and tester open', async () => {

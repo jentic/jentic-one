@@ -523,14 +523,19 @@ export {
 } from './apis-hooks';
 
 export {
+	bindingsEndingSoonKey,
+	invalidateBindingSurfaces,
 	connectRequestsKey,
 	useAgentsForPicker,
 	useBindingAccess,
+	useBindingsEndingSoon,
+	useGrantPolicyLimits,
 	useConfirmConnectSession,
 	useConnectSession,
 	useOpenConnectRequests,
 	usePollConnectSessionStatus,
 	useRejectConnectSession,
+	useRenewCredentialBinding,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendors,
@@ -580,6 +585,7 @@ export type {
 	ApiListResponse,
 	ConnectSessionSummaryResponse,
 	CatalogEntryResponse,
+	EndingSoonBindingResponse,
 	CatalogListResponse,
 	ProviderDiscoveryResponse,
 	ProviderDiscoveryEntryResponse,

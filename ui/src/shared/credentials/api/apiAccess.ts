@@ -121,6 +121,17 @@ export interface AgentCredentialBinding {
 	agentId: string;
 	credentialId: string;
 	suspended: boolean;
+	/** When the binding stops authorizing calls; null when it never expires. */
+	expiresAt: string | null;
+	/** Its end date had passed when the roster was read. */
+	expired: boolean;
+	/** When its idle limit ends it if unused; null without one. */
+	idleExpiresAt?: string | null;
+	/** Which limit ended it (`end_date`, `idle`, `uses`). */
+	expiredReason?: string | null;
+	/** Its use count (1 is single use) and the uses left; null without one. */
+	maxQuota?: number | null;
+	quotaRemaining?: number | null;
 	/**
 	 * The shared permission rule set governing this binding, or `null` when its
 	 * inline `agent_permission_rules` apply. Carried through because the broker
@@ -212,6 +223,12 @@ export function useAgentAccess(
 						agentId: agent.agent_id,
 						credentialId: cred.credential_id,
 						suspended: agent.suspended,
+						expiresAt: agent.expires_at ?? null,
+						expired: agent.expired ?? false,
+						idleExpiresAt: agent.idle_expires_at ?? null,
+						expiredReason: agent.expired_reason ?? null,
+						maxQuota: agent.max_quota ?? null,
+						quotaRemaining: agent.quota_remaining ?? null,
 						// The row's own field, not derived: an absent `rule_set_id`
 						// (a surface whose backend predates rule sets) reads as
 						// `null` = inline rules, the same as an explicit null.

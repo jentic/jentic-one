@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { HeldExecutionKind } from './HeldExecutionKind';
 import type { HeldExecutionLinksResponse } from './HeldExecutionLinksResponse';
 import type { HeldExecutionState } from './HeldExecutionState';
 /**
@@ -65,6 +66,10 @@ export type HeldExecutionResponse = {
      * Held execution id (`held_…`).
      */
     id: string;
+    /**
+     * Why the call is held: `execution` (a require-approval rule matched) or `grant_renewal` (the agent's binding to the credential has ended; approving re-grants its access first).
+     */
+    kind?: HeldExecutionKind;
     /**
      * The require-approval permission rule that held the call.
      */

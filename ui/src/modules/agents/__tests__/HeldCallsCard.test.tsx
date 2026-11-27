@@ -274,6 +274,62 @@ describe('HeldCallsCard', () => {
 		expect(search().has('review_batch')).toBe(false);
 	});
 
+	it('a ticked re-grant is set aside like a delete: not counted in Approve N, and named for what it is', async () => {
+		const now = Date.now();
+		const rows = [
+			seedMockApproval({
+				id: 'held_payout',
+				operation_id: 'createPayout',
+				path: '/v1/payouts',
+				created_at: new Date(now - 2 * HOUR).toISOString(),
+				expires_at: new Date(now + 21 * HOUR).toISOString(),
+			}),
+			seedMockApproval({
+				id: 'held_regrant',
+				kind: 'grant_renewal',
+				operation_id: 'createRefund',
+				path: '/v1/refunds',
+				created_at: new Date(now - 19 * MINUTE).toISOString(),
+				expires_at: new Date(now + 23 * HOUR).toISOString(),
+			}),
+		];
+		const calls = rows.map(
+			(row) => ({ ...row, review_url: '', _links: {} }) as unknown as HeldCall,
+		);
+		const user = userEvent.setup();
+		renderCard(calls);
+		await expand(user);
+		const toolbar = screen.getByTestId('held-calls-toolbar');
+		await user.click(within(toolbar).getByRole('checkbox', { name: 'Select all' }));
+
+		// Only the payout is approved together; the re-grant comes next, on its own.
+		expect(within(toolbar).getByRole('button', { name: 'Approve 1…' })).toBeVisible();
+		expect(toolbar).toHaveTextContent('The re-grant comes next, on its own');
+		expect(toolbar).not.toHaveTextContent('delete');
+	});
+
+	it('only a re-grant ticked: the verb is Review, on that re-grant', async () => {
+		const now = Date.now();
+		const row = seedMockApproval({
+			id: 'held_regrant',
+			kind: 'grant_renewal',
+			operation_id: 'createRefund',
+			path: '/v1/refunds',
+			created_at: new Date(now - 19 * MINUTE).toISOString(),
+			expires_at: new Date(now + 23 * HOUR).toISOString(),
+		});
+		const user = userEvent.setup();
+		renderCard([{ ...row, review_url: '', _links: {} } as unknown as HeldCall]);
+		const list = await expand(user);
+		await user.click(await within(list).findByRole('checkbox'));
+		const toolbar = screen.getByTestId('held-calls-toolbar');
+
+		expect(within(toolbar).queryByRole('button', { name: /^Approve/ })).toBeNull();
+		expect(toolbar).toHaveTextContent('Re-grants are approved one at a time');
+		await user.click(within(toolbar).getByRole('button', { name: 'Review the re-grant' }));
+		expect(search().get('review')).toBe('held_regrant');
+	});
+
 	it('Deny N decides each ticked call, sums up in one toast and clears the ticks', async () => {
 		const decided: { id: string; body: unknown }[] = [];
 		worker.use(

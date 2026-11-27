@@ -9,7 +9,7 @@
  * use, through the same `deriveTileStatus`, `vendorIconPropsFor` avatar and
  * `multiCredentialExplanation` as `ApiRow` — the two views can never disagree.
  */
-import { KeyRound } from 'lucide-react';
+import { Hourglass, KeyRound } from 'lucide-react';
 import { Tag, Tooltip, TruncateWithTooltip, UserText, VendorIcon } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
@@ -25,6 +25,12 @@ import {
 import { TileCardStatus } from '@/modules/agents/components/flat/TileStatusMarker';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 import { API_CARD_HEIGHT } from '@/modules/agents/components/flat/apiCardGrid';
+import { lastUsedLabel, lastUsedShortLabel } from '@/modules/agents/lib/ago';
+import {
+	bindingExpiresSoon,
+	bindingExpiryLabel,
+	bindingExpiryShortLabel,
+} from '@/shared/credentials/lib/bindingExpiry';
 import { useActionRulesHealth } from '@/modules/agents/lib/useActionRulesHealth';
 import type { SiblingApiReference } from '@/shared/credentials/components';
 
@@ -64,6 +70,7 @@ export function ApiCard({
 	const health = useActionRulesHealth(agentId, tile, siblings);
 	const status = deriveTileStatus({
 		suspended: tile.suspended,
+		expired: tile.expired,
 		agentServing,
 		awaitingConsent: tile.awaitingConsent,
 		rules,
@@ -77,8 +84,19 @@ export function ApiCard({
 	// with the row's rules summary where it adds one ("no rules" already says
 	// the rest).
 	const statusLabel = TILE_STATUS_LABEL[status];
-	const summary = status === 'blocked-no-rules' ? null : rulesSummaryText(rules);
+	const summary =
+		status === 'blocked-no-rules'
+			? null
+			: status === 'expired'
+				? bindingExpiryLabel(tile)
+				: rulesSummaryText(rules);
 	const statusTooltip = summary ? `${statusLabel} · ${summary}` : statusLabel;
+	// The end date of a binding still in force, on the credential's line: short
+	// on the card, the whole phrase in its name and tooltip. An expired one says
+	// so in its status instead.
+	const expiryFull = status === 'expired' ? null : bindingExpiryLabel(tile);
+	const expiryShort = status === 'expired' ? null : bindingExpiryShortLabel(tile);
+	const expiringSoon = bindingExpiresSoon(tile);
 
 	const accountsPhrase =
 		accountCount > 1 ? `, one of ${accountCount} credentials for this API` : '';
@@ -86,10 +104,14 @@ export function ApiCard({
 	// count badge · credential · status word) so a voice user can say what they
 	// see (WCAG 2.5.3); the full status phrase follows when it adds to the word.
 	const cardWord = TILE_STATUS_CARD_LABEL[status];
+	const lastUsed = lastUsedLabel(tile.lastUsedAt);
+	const lastUsedShort = lastUsedShortLabel(tile.lastUsedAt);
 	const visibleText = [
 		accountCount > 1 ? `${tile.title} ${accountCount}` : tile.title,
 		credentialLabel,
+		...(expiryShort ? [expiryShort] : []),
 		cardWord,
+		...(lastUsed ? [lastUsed] : []),
 	].join(', ');
 	const statusTail = statusLabel === cardWord ? '' : ` — ${statusLabel}`;
 
@@ -102,19 +124,19 @@ export function ApiCard({
 			aria-haspopup="dialog"
 			aria-expanded={expanded}
 			aria-controls={expanded ? sidebarId : undefined}
-			aria-label={`${visibleText}${statusTail}${accountsPhrase}. Open access details.`}
+			aria-label={`${visibleText}${statusTail}${accountsPhrase}${expiryFull ? `. ${expiryFull}` : ''}. Open access details.`}
 			onClick={onOpen}
 			className={cn(
 				// ONE fixed height for every card (`API_CARD_HEIGHT`),
 				// with three fixed-height rows spread by `justify-between`, so each
 				// row — and so every status dot — sits at the same y across the grid.
 				API_CARD_HEIGHT,
-				'bg-surface-1 group flex w-full min-w-0 cursor-pointer flex-col justify-between overflow-hidden rounded-[14px] px-3 py-2.5 text-left outline-none',
+				'bg-surface-1 group @container flex w-full min-w-0 cursor-pointer flex-col justify-between overflow-hidden rounded-[14px] px-3 py-2.5 text-left outline-none',
 				'transition-[background-color,box-shadow,transform] duration-150 motion-reduce:transition-none',
 				'hover:bg-surface-1-hover hover:-translate-y-0.5 hover:shadow-[var(--elevation-card-hover)] motion-reduce:hover:translate-y-0',
 				'focus-visible:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.65),var(--elevation-card-hover)]',
 				expanded && 'bg-surface-1-hover shadow-[var(--elevation-card-hover)]',
-				tile.suspended && 'bg-surface-1/55',
+				(tile.suspended || status === 'expired') && 'bg-surface-1/55',
 			)}
 		>
 			{/* Row 1 (28px): avatar · name (one line, ellipsis) · key+count. */}
@@ -125,7 +147,10 @@ export function ApiCard({
 				<VendorIcon
 					{...vendorIconPropsFor(tile)}
 					size="sm"
-					className={cn('shrink-0', tile.suspended && 'saturate-[.3]')}
+					className={cn(
+						'shrink-0',
+						(tile.suspended || status === 'expired') && 'saturate-[.3]',
+					)}
 				/>
 				<TruncateWithTooltip
 					focusable={false}
@@ -160,17 +185,42 @@ export function ApiCard({
 				<TruncateWithTooltip focusable={false} className="min-w-0 flex-1">
 					<UserText>{credentialLabel}</UserText>
 				</TruncateWithTooltip>
+				{expiryShort && ' '}
+				{expiryShort && (
+					<span
+						data-testid="card-expiry"
+						className={cn(
+							'inline-flex shrink-0 items-center gap-1 text-[11px] leading-4 tabular-nums',
+							expiringSoon ? 'text-caution' : 'text-foreground-faint',
+						)}
+					>
+						<Hourglass aria-hidden="true" className="h-3 w-3" />
+						{expiryShort}
+					</span>
+				)}
 			</p>{' '}
-			{/* Row 3 (18px): status dot + word. */}
+			{/* Row 3 (18px): status dot + word · last used, right-aligned. A narrow
+			    card swaps "Used 3d ago" for "Used 3d" so the age never truncates;
+			    the card's accessible name always carries the full phrase. */}
 			<div
 				data-testid="card-row-status"
-				className="flex h-[18px] min-w-0 shrink-0 items-center whitespace-nowrap"
+				className="flex h-[18px] min-w-0 shrink-0 items-center justify-between gap-2 whitespace-nowrap"
 			>
 				<Tooltip content={statusTooltip} interactiveChild placement="bottom">
 					<span className="inline-flex" data-blocked={blocked || undefined}>
 						<TileCardStatus status={status} />
 					</span>
 				</Tooltip>
+				{lastUsed && ' '}
+				{lastUsed && (
+					<span
+						data-testid="card-last-used"
+						className="text-foreground-faint min-w-0 truncate text-[11px] leading-4 tabular-nums"
+					>
+						<span className="hidden @[11.5rem]:inline">{lastUsed}</span>
+						<span className="@[11.5rem]:hidden">{lastUsedShort}</span>
+					</span>
+				)}
 			</div>
 		</button>
 	);

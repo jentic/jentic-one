@@ -322,6 +322,22 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
             },
             "whoami",
         ),
+        (
+            # So is an expired one: only a renewal brings it back.
+            403,
+            {
+                "type": "credential_binding_expired",
+                "agent_directive": {
+                    "strategy": "prompt_human",
+                    "parameters": {"api": {"vendor": "acme", "name": "pets", "version": "v1"}},
+                    "human_readable_instruction": "Ask your operator to renew it.",
+                },
+            },
+            "whoami",
+        ),
+        # With no directive, the synthesized hint still never offers a connect.
+        (403, {"type": "credential_binding_expired", "detail": "denied"}, "whoami"),
+        (403, {"type": "credential_binding_suspended", "detail": "denied"}, "whoami"),
         (424, {"type": "credential_undecryptable", "detail": "denied"}, "whoami"),
         (403, {"detail": "denied"}, "whoami"),
     ],
@@ -360,6 +376,10 @@ async def test_denial_next_tool_keys_on_problem_type(
         "credential_not_provisioned",
     }:
         assert "request_connection" not in step
+    if body.get("type") == "credential_binding_expired" and "agent_directive" not in body:
+        assert "ask your operator to renew" in step
+    if body.get("type") == "credential_binding_suspended" and "agent_directive" not in body:
+        assert "ask your operator to resume" in step
 
 
 @pytest.mark.parametrize(

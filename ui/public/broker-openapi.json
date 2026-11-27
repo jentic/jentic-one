@@ -710,6 +710,28 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "credential_binding_expired": {
+                "summary": "The caller's binding for this API has passed its end date.",
+                "value": {
+                  "agent_directive": {
+                    "human_readable_instruction": "Your access to 'api.example.com/main' has expired. Ask your operator to renew it — only they can. Do not request a new connection for this API. Once they renew it, retry this call.",
+                    "parameters": {
+                      "api": {
+                        "name": "main",
+                        "vendor": "api.example.com",
+                        "version": "1.0.0"
+                      }
+                    },
+                    "strategy": "prompt_human"
+                  },
+                  "detail": "The credential binding for this API has expired",
+                  "error_origin": "broker",
+                  "instance": "/api.example.com/v1/users",
+                  "status": 403,
+                  "title": "The credential binding for this API has expired",
+                  "type": "credential_binding_expired"
+                }
+              },
               "credential_binding_suspended": {
                 "summary": "The caller's binding for this API is suspended by its operator.",
                 "value": {
@@ -771,7 +793,7 @@
             }
           }
         },
-        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`), or being denied by a binding's\npermission rules. Body is RFC 9457 `application/problem+json`.\n",
+        "description": "Caller authenticated but not entitled to execute — most often a\ntoken lacking the required `capabilities:execute` permission\n(`type: insufficient_scope`, the RFC 6750 code), attempting to pin a `draft`\nrevision they don't own, using a credential they aren't bound to\n(`no_credential_binding`), holding only a suspended binding for the\nAPI (`credential_binding_suspended`) or only an expired one\n(`credential_binding_expired`; suspension is reported first), or being\ndenied by a binding's permission rules. Body is RFC 9457 `application/problem+json`.\n",
         "headers": {
           "Jentic-Error-Origin": {
             "$ref": "#/components/headers/JenticErrorOrigin"

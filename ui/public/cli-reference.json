@@ -1707,6 +1707,16 @@
               "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
+              "name": "expires-in",
+              "type": "string",
+              "usage": "how long you need the access, e.g. 7d, 8h, 30m or P7D (the approver decides the actual end date)"
+            },
+            {
+              "name": "max-idle",
+              "type": "string",
+              "usage": "ask for the access to end once unused this long, e.g. 14d or P14D (1d to 999d; the approver decides)"
+            },
+            {
               "name": "mode",
               "type": "string",
               "usage": "Interaction mode: human|agent ($JENTIC_MODE)"

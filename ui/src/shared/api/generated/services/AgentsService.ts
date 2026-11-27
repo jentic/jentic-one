@@ -13,9 +13,12 @@ import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
 import type { ClaimRequest } from '../models/ClaimRequest';
 import type { CredentialBindingListResponse } from '../models/CredentialBindingListResponse';
+import type { CredentialBindingPatchRequest } from '../models/CredentialBindingPatchRequest';
 import type { CredentialBindingResponse } from '../models/CredentialBindingResponse';
 import type { CredentialBindRequest } from '../models/CredentialBindRequest';
 import type { DenyRequest } from '../models/DenyRequest';
+import type { EndingSoonBindingListResponse } from '../models/EndingSoonBindingListResponse';
+import type { GrantPolicyLimitsResponse } from '../models/GrantPolicyLimitsResponse';
 import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
 import type { OAuthGrantListResponse } from '../models/OAuthGrantListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -101,6 +104,61 @@ export class AgentsService {
             url: '/agents',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List credential bindings ending soon
+     * List bindings that will reach their end date or idle limit soon.
+     *
+     * Only bindings whose owner turned on the warning (`idle_warning`) and which
+     * have not been suspended or ended, where either the end date is within the
+     * next 48 hours (for a binding granted for 4 days or more) or the idle
+     * deadline (`idle_expires_at`) is (for an idle limit of 4 days or more).
+     * `ends_at` and `ending` give the nearer of the two. The same bindings get a
+     * `credential_grant.expiring` or `credential_grant.idle_expiring` event, once
+     * per end date or idle period. Soonest first. Scoped like the agents list: `org:admin` sees
+     * every agent's bindings, anyone else their own agents'.
+     * @returns EndingSoonBindingListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listCredentialBindingsEndingSoon(): CancelablePromise<EndingSoonBindingListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/agents/credentials:ending-soon',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Get the org's grant defaults and maximums
+     * The org's defaults and maximums for new credential grants.
+     *
+     * A default applies when a request creating a grant sets no
+     * policy; a maximum refuses (422 `grant_policy_limit_exceeded`) anything
+     * longer, or no limit at all, on every path that creates or renews one. The
+     * console preselects the defaults and disables choices above a maximum.
+     * Readable by any signed-in caller.
+     * @returns GrantPolicyLimitsResponse Successful Response
+     * @throws ApiError
+     */
+    public static getGrantPolicyLimits(): CancelablePromise<GrantPolicyLimitsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/agents/credentials:policy',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
@@ -324,8 +382,9 @@ export class AgentsService {
      * List the credentials bound directly to an agent.
      *
      * Each binding names the credential, the API it serves, when it was bound,
-     * whether it is `suspended` (and why), and any attached permission
-     * `rule_set_id`. Credential secrets are never returned. Readable like
+     * whether it is `suspended` (and why), any attached permission
+     * `rule_set_id`, and `last_used_at`: when the agent last made a call through
+     * the credential (null if never). Credential secrets are never returned. Readable like
      * `GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a
      * caller holding `agents:read` (implied by `agents:write`); 404 otherwise.
      * The list is not paginated.
@@ -366,8 +425,13 @@ export class AgentsService {
      * must be able to see the agent and must own the credential (or hold
      * `org:admin`). A credential that does not exist or that the caller does
      * not own returns 404; binding the same credential twice returns 409
-     * (`credential_binding_conflict`).
-     * Returns the new binding.
+     * (`credential_binding_conflict`). An agent binding itself is refused with
+     * 409 while it holds a suspended (`credential_binding_suspended`) or expired
+     * (`credential_binding_expired`) binding for an API the credential also
+     * serves: only the operator lifts that cut-off, and a second binding would
+     * route around it (suspension is reported first). An optional `expires_at`
+     * (future only, otherwise 422) ends the binding at that time; omit it for a
+     * binding that never expires. Returns the new binding.
      * @returns CredentialBindingResponse Successful Response
      * @throws ApiError
      */
@@ -397,7 +461,7 @@ export class AgentsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `The agent is not visible to the caller (\`actor_not_found\`), or a credential that does not exist or that the caller does not own (\`credential_not_found\`)`,
-                409: `The same credential is already bound to this agent (\`credential_binding_conflict\`)`,
+                409: `The same credential is already bound to this agent (\`credential_binding_conflict\`), or an agent binding itself already holds a suspended (\`credential_binding_suspended\`) or expired (\`credential_binding_expired\`) binding for an API the credential serves`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -451,6 +515,73 @@ export class AgentsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `The agent is not visible to the caller (\`actor_not_found\`), or a missing binding (\`credential_binding_not_found\`) — also returned when an agent tries to purge its own binding, which it may only suspend`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Renew a credential binding
+     * Re-certify a binding: restart its idle clock, and set, extend or clear its limits.
+     *
+     * `expires_at` (future only, otherwise 422) sets or moves the end date; null
+     * clears it. Left out, the binding runs again for as long as it was granted
+     * for, capped at the org's maximum (one with no end date takes the maximum,
+     * or keeps none without one). `max_idle_period` (an ISO 8601 duration, P1D to P999D)
+     * sets the idle limit; null removes it. Left out, the binding keeps its own,
+     * capped at the org's maximum idle limit (one with none takes the org's
+     * default, or the maximum). Any other field left out stays as it is, and
+     * every renewal restarts the idle clock, so an empty body re-certifies a
+     * binding that is still needed. This is how an expired binding is
+     * renewed, and it never changes `suspended`: renewing does not resume a
+     * suspension, and resuming does not extend an expiry. Renewing re-grants the
+     * credential, so it takes the same checks as `:resume`: the caller must own
+     * the credential (or hold `org:admin`) as well as see the agent, and an agent
+     * cannot renew its own binding. Audited; broker caches are invalidated, so
+     * a shortened deadline is checked on every broker. A separate broker may cache a denial
+     * until its binding-cache TTL elapses. Returns the binding.
+     * @returns CredentialBindingResponse Successful Response
+     * @throws ApiError
+     */
+    public static renewAgentCredentialBinding({
+        agentId,
+        credentialId,
+        requestBody,
+    }: {
+        /**
+         * ID of the agent.
+         */
+        agentId: string,
+        /**
+         * ID of the credential bound to the agent.
+         */
+        credentialId: string,
+        /**
+         * Request body for renewing a credential binding: re-certify it, and change its limits.
+         *
+         * Every renewal restarts the binding's idle clock. Each limit sent is set, and
+         * null clears it; an absent field is never read as clearing. An end date left
+         * out runs the binding again for as long as it was granted for, capped at the
+         * org's maximum; any other limit left out stays as it is. An empty body
+         * re-certifies ("still needed").
+         */
+        requestBody: CredentialBindingPatchRequest,
+    }): CancelablePromise<CredentialBindingResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/agents/{agent_id}/credentials/{credential_id}',
+            path: {
+                'agent_id': agentId,
+                'credential_id': credentialId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `No binding exists (\`credential_binding_not_found\`), the agent is not visible to the caller (\`actor_not_found\`), or the credential is not owned by the caller — including an agent renewing its own binding (\`credential_not_found\`)`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

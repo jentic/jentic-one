@@ -69,6 +69,7 @@ class CredentialInjector(Protocol):
         trace_id: str | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
+        use_key: str | None = None,
     ) -> InjectedAuth:
         """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
 
@@ -78,7 +79,8 @@ class CredentialInjector(Protocol):
         credential selected at the web edge so the async worker replays the
         same selection. ``request_server_variables`` are the concrete
         server-variable values of the request URL; a credential scoped to other
-        values is not a match.
+        values is not a match. ``use_key`` names the queued job, so the binding's
+        use is charged once however many times the job is attempted.
         """
         ...
 

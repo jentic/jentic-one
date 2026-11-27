@@ -16,6 +16,7 @@
  * draft and every confirm; the sections are presentational.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Hourglass } from 'lucide-react';
 import {
 	Button,
 	ConfirmDialog,
@@ -28,7 +29,7 @@ import {
 	toast,
 	type DangerZoneAction,
 } from '@/shared/ui';
-import { isolateText } from '@/shared/lib/utils';
+import { cn, formatTimestamp, isolateText } from '@/shared/lib/utils';
 import {
 	AGENTS_WRITE,
 	CREDENTIALS_WRITE,
@@ -49,7 +50,14 @@ import {
 	useAllowedOperationCount,
 	useUnappliedChoices,
 	CreateCredentialFlow,
+	RenewBindingControl,
 } from '@/shared/credentials/components';
+import {
+	bindingExpiredReason,
+	bindingExpiresSoon,
+	bindingExpiryLabel,
+} from '@/shared/credentials/lib/bindingExpiry';
+import { idleLabel } from '@/shared/credentials/lib/idleLimit';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 import { splitCustomRules } from '@/shared/credentials/lib/accessPresets';
@@ -305,6 +313,7 @@ export function ApiAccessSidebar({
 	const status = shown
 		? deriveTileStatus({
 				suspended: shown.suspended,
+				expired: shown.expired,
 				agentServing,
 				awaitingConsent: shown.awaitingConsent,
 				rules: effective.isError ? 'error' : (perApiRules ?? 'loading'),
@@ -633,6 +642,51 @@ export function ApiAccessSidebar({
 								accountCount={accountCount}
 								otherApisPhrase={othersPhrase}
 							/>
+
+							{/* When this access ends, and — for whoever may re-grant the
+							    credential — renewing it. Renewing re-grants, so it takes the
+							    same rights as resuming: agents:write and the credential's
+							    owner (or an org admin). */}
+							<section
+								aria-label="Access expiry"
+								className="space-y-3"
+								data-testid="sidebar-expiry"
+							>
+								<h3 className="text-foreground text-sm font-semibold">
+									Access ends
+								</h3>
+								<p
+									className={cn(
+										'flex items-start gap-2 text-sm',
+										shown.expired || bindingExpiresSoon(shown)
+											? 'text-caution'
+											: 'text-muted-foreground',
+									)}
+									data-testid="sidebar-expiry-status"
+								>
+									<Hourglass
+										className="mt-0.5 h-4 w-4 shrink-0"
+										aria-hidden="true"
+									/>
+									<span>{expiryStatusText(shown)}</span>
+								</p>
+								{canManageBinding && !credentialReadOnly && credentialId && (
+									<RenewBindingControl
+										key={`${agent.id}:${credentialId}`}
+										agentId={agent.id}
+										agentName={agent.name}
+										credentialId={credentialId}
+										expiresAt={shown.expiresAt}
+										expired={shown.expired ?? false}
+										maxIdlePeriod={shown.maxIdlePeriod ?? null}
+										idleWarning={shown.idleWarning ?? false}
+										afterExpiry={shown.afterExpiry ?? null}
+										maxQuota={shown.maxQuota ?? null}
+										testIdPrefix="sidebar-renew"
+									/>
+								)}
+							</section>
+
 							<section aria-label="Access" className="space-y-4">
 								{openEdit && (
 									<div
@@ -823,4 +877,29 @@ export function ApiAccessSidebar({
 			{deviceDialog}
 		</>
 	);
+}
+
+/** The sheet's line about when this access ends. */
+function expiryStatusText(tile: ApiTileModel): string {
+	const label = bindingExpiryLabel(tile);
+	const idle = tile.maxIdlePeriod ? idleLabel(tile.maxIdlePeriod) : null;
+	if (!label) {
+		return 'No expiry — this access lasts until someone removes it. Setting an end date is recommended.';
+	}
+	const resume = tile.suspended ? ' and resumed' : '';
+	if (bindingExpiredReason(tile) === 'idle') {
+		return `${label}. Calls through this credential are refused until it is renewed${resume}.`;
+	}
+	const end = tile.expiresAt ? ` (${formatTimestamp(tile.expiresAt)})` : '';
+	if (tile.expired) {
+		return `${label}${end}. Calls through this credential are refused until it is renewed${resume}.`;
+	}
+	if (label.endsWith('unless used')) {
+		// The idle limit comes first: each call moves it later.
+		return tile.expiresAt
+			? `${label}; its end date is ${formatTimestamp(tile.expiresAt)}.`
+			: `${label}. It has no end date: an agent that keeps using it keeps access.`;
+	}
+	const idleNote = idle ? ` It also ends if unused for ${idle}.` : '';
+	return `${label}${end}. After that, calls through this credential are refused until it is renewed.${idleNote}`;
 }

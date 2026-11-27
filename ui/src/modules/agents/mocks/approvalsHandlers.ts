@@ -20,6 +20,7 @@
  * Registered additively in src/mocks/handlers.ts.
  */
 import { http, HttpResponse } from 'msw';
+import { regrantCredentialBinding } from '@/modules/agents/mocks/handlers';
 
 interface ApprovalRow {
 	id: string;
@@ -46,6 +47,24 @@ interface ApprovalRow {
 	created_at: string;
 	updated_at: string | null;
 	request: { method: string; url: string; body: string | null; body_truncated: boolean } | null;
+	/** `execution` (an Ask rule) or `grant_renewal` (the agent's access ended). */
+	kind?: 'execution' | 'grant_renewal';
+	/** For a renewal hold: the binding it would renew. */
+	renewal?: {
+		expired_reason: string | null;
+		last_used_at: string | null;
+		expires_at: string | null;
+		/** ISO 8601 duration (`"P14D"`). */
+		max_idle_period: string | null;
+		idle_warning: boolean;
+		/** What a call through it gets once it has ended; absent reads as `hold`. */
+		after_expiry?: 'hold' | 'refuse';
+		max_quota: number | null;
+		quota_remaining: number | null;
+		can_renew: boolean;
+		/** False in a split deployment: renew via the binding, then approve bare. */
+		renew_on_decide?: boolean;
+	} | null;
 	agent_reason: string | null;
 }
 
@@ -191,13 +210,21 @@ function detailView(row: ApprovalRow) {
 	const { job_id: _j, ...rest } = row;
 	return {
 		...rest,
+		kind: row.kind ?? 'execution',
+		renewal: row.kind === 'grant_renewal' ? (row.renewal ?? null) : null,
 		review_url: `${window.location.origin}/app/agents/approvals/${row.id}`,
 		_links: links(row),
 	};
 }
 
 function listView(row: ApprovalRow) {
-	const { agent_name: _n, agent_owner_id: _o, request: _r, ...rest } = detailView(row);
+	const {
+		agent_name: _n,
+		agent_owner_id: _o,
+		request: _r,
+		renewal: _rn,
+		...rest
+	} = detailView(row);
 	return rest;
 }
 
@@ -285,15 +312,53 @@ export const approvalsHandlers = [
 	http.post('/executions/holds/:id\\:decide', async ({ params, request }) => {
 		const row = store.find((r) => r.id === params.id);
 		if (!row) return HttpResponse.json({ status: 404 }, { status: 404 });
-		const body = (await request.json()) as { decision?: string; reason?: string | null };
+		const body = (await request.json()) as {
+			decision?: string;
+			reason?: string | null;
+			renewal?: unknown;
+			run?: boolean;
+		};
 		if (body.decision !== 'approve' && body.decision !== 'deny') {
 			return HttpResponse.json({ status: 422, detail: 'invalid decision' }, { status: 422 });
 		}
 		if (row.state !== 'pending') {
 			return alreadySettled(row);
 		}
+		const renewal = row.kind === 'grant_renewal';
+		// Where the deployment renews through the binding's endpoint first, a
+		// renewal hold is approved without `renewal` (the mock trusts it renewed).
+		const renewedElsewhere = renewal && row.renewal?.renew_on_decide === false;
+		if (renewedElsewhere && body.decision === 'approve' && body.renewal == null) {
+			// fall through to the decision
+		} else if ((body.renewal != null) !== (renewal && body.decision === 'approve')) {
+			return HttpResponse.json(
+				{ type: 'held_execution_renewal_invalid', status: 422, detail: 'renewal' },
+				{ status: 422 },
+			);
+		}
+		if (
+			renewal &&
+			body.decision === 'approve' &&
+			!renewedElsewhere &&
+			!row.renewal?.can_renew
+		) {
+			return HttpResponse.json(
+				{ type: 'held_execution_renewal_forbidden', status: 403, detail: 'renewal' },
+				{ status: 403 },
+			);
+		}
+		// Approving a renewal re-grants the binding, so the console stops showing it
+		// as ended (a deployment that renewed it through its endpoint already did).
+		if (renewal && body.decision === 'approve' && body.renewal != null) {
+			regrantCredentialBinding(
+				row.agent_id,
+				row.credential_id,
+				body.renewal as Parameters<typeof regrantCredentialBinding>[2],
+			);
+		}
+		const runs = body.decision === 'approve' && (!renewal || body.run !== false);
 		row.state = body.decision === 'approve' ? 'approved' : 'denied';
-		row.execution_status = body.decision === 'approve' ? 'queued' : 'failed';
+		row.execution_status = runs ? 'queued' : 'failed';
 		row.decided_at = new Date().toISOString();
 		// The mock signed-in admin (`/users/me`), so the receipt reads "by you".
 		row.decided_by = '00000000-0000-0000-0000-000000000001';

@@ -13,7 +13,6 @@ export {
 	useAgentBindingRuleSummaries,
 	useRetryBindingRules,
 	summarizeBindingRules,
-	useBindAgentCredential,
 	useUnbindAgentCredential,
 	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,

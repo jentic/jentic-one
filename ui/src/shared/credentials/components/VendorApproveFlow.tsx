@@ -1,7 +1,8 @@
+import { isoDurationSeconds } from '@/shared/lib';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Button, ConfirmDialog, ErrorAlert, Skeleton, toast } from '@/shared/ui';
+import { Button, ConfirmDialog, ErrorAlert, Skeleton, UserText, toast } from '@/shared/ui';
 import {
 	connectRequestsKey,
 	useAgentsForPicker,
@@ -9,9 +10,11 @@ import {
 	useCancelConnectSession,
 	useConfirmConnectSession,
 	useConnectSession,
+	useGrantPolicyLimits,
 	usePollConnectSessionStatus,
 	useRejectConnectSession,
 } from '@/shared/credentials/api/vendors-hooks';
+import { usePreselectGrantDefaults } from '@/shared/credentials/lib/grantDefaults';
 import {
 	cancelConnectSession,
 	cancelConnectSessionOnUnload,
@@ -39,6 +42,39 @@ import {
 } from '@/shared/credentials/lib/connectReview';
 import { sameRules } from '@/shared/credentials/lib/connectEdit';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
+import {
+	durationFromSeconds,
+	durationLabel,
+	durationSeconds,
+	expiresAtFromDuration,
+	expiresAtIso,
+	type BindingDuration,
+} from '@/shared/credentials/lib/bindingDuration';
+import {
+	NO_DURATION_HINT,
+	bindingExpiryLabel,
+	choosesNoExpiry,
+	durationChosen,
+} from '@/shared/credentials/lib/bindingExpiry';
+import { BindingDurationField } from './BindingDurationField';
+import { AccessEndFields } from './AccessEndFields';
+import { IdleLimitField } from './IdleLimitField';
+import { SingleUseField } from './SingleUseField';
+import {
+	DEFAULT_AFTER_EXPIRY,
+	expiryWarnable,
+	expiryWarning,
+	type AfterExpiry,
+} from '@/shared/credentials/lib/accessEnd';
+import {
+	idleLabel,
+	idleLimitError,
+	idleLimitFromSeconds,
+	idleSeconds,
+	type IdleLimit,
+} from '@/shared/credentials/lib/idleLimit';
+import { limitLabel } from '@/shared/credentials/lib/grantLimits';
+import { NoExpiryConfirmDialog, useNoExpiryConfirm } from './NoExpiryConfirmDialog';
 import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
 	ConfirmResponse,
@@ -48,6 +84,7 @@ import type {
 	ReviewEdit,
 	ReviewScope,
 	ReviewSession,
+	SessionAgentBinding,
 	VendorScopeCatalog,
 } from '@/shared/credentials/api/vendors-types';
 import { EditApproveFlow } from './EditApproveFlow';
@@ -106,6 +143,7 @@ export function VendorApproveFlow({
 	// missing session, a token mismatch and a caller who is neither all come
 	// back 403 (no enumeration oracle), so the error branch below treats any
 	// 403 as "this request isn't open to you".
+	const accessSummaryId = useId();
 	const sessionQuery = useConnectSession(sessionId, pollToken);
 	const agents = useAgentsForPicker();
 	const providers = useProviders();
@@ -120,6 +158,27 @@ export function VendorApproveFlow({
 	const [stepError, setStepError] = useState<StepError | null>(null);
 	const [outcome, setOutcome] = useState<LocalOutcome | null>(null);
 	const [rejectOpen, setRejectOpen] = useState(false);
+	// How long the new binding lasts. Seeded once from what the request asked
+	// for; the approver may change it. The end date is worked out on confirm.
+	const [duration, setDuration] = useState<BindingDuration | null>(null);
+	// The optional idle limit, seeded from the request too (null = off).
+	const [idle, setIdle] = useState<IdleLimit | null>(null);
+	// The optional use count (1 = "End after one use"); null = off.
+	const [uses, setUses] = useState<number | null>(null);
+	// Warn before the access ends (off to start), and what happens after it.
+	const [warn, setWarn] = useState(false);
+	const [afterExpiry, setAfterExpiry] = useState<AfterExpiry>(DEFAULT_AFTER_EXPIRY);
+	// What the request asked for comes first (below); the org's defaults fill
+	// what it left out, and its maximums bound the controls.
+	const limits = useGrantPolicyLimits();
+	usePreselectGrantDefaults(limits, (d) => {
+		setDuration((cur) => cur ?? d.duration);
+		setIdle((cur) => cur ?? d.idle);
+		setUses((cur) => cur ?? d.uses);
+	});
+	const durationSeeded = useRef(false);
+	const durationRef = useRef<HTMLSelectElement>(null);
+	const noExpiry = useNoExpiryConfirm();
 
 	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
 	const amendMutation = useAmendConnectSession(sessionId);
@@ -128,6 +187,54 @@ export function VendorApproveFlow({
 	const phaseRef = useRef<ApprovePhase>('configure');
 
 	const session: ReviewSession | undefined = sessionQuery.data;
+	// What the request asked for, as the duration control holds it.
+	const requestedDuration = useMemo(() => {
+		const seconds = isoDurationSeconds(session?.requested_expires_in);
+		return seconds ? durationFromSeconds(seconds) : null;
+	}, [session?.requested_expires_in]);
+	const requestedIdleSeconds = isoDurationSeconds(session?.requested_max_idle_period);
+	// An ask above the org's maximum is preselected as the maximum instead, and
+	// the note says so: the approver never starts on a choice the org refuses.
+	const clamped = clampedRequest(
+		isoDurationSeconds(session?.requested_expires_in),
+		limits.expires.maxSeconds,
+	);
+	const clampedIdle = clampedRequest(requestedIdleSeconds, limits.idle.maxSeconds);
+	// Preselect it once, when the review first loads; later reloads (after a
+	// revision) keep whatever the approver chose since.
+	useEffect(() => {
+		if (durationSeeded.current || !session) return;
+		durationSeeded.current = true;
+		const seconds = clamped.seconds;
+		const seededDuration = seconds ? durationFromSeconds(seconds) : requestedDuration;
+		if (seededDuration) setDuration(seededDuration);
+		const requestedIdle = idleLimitFromSeconds(clampedIdle.seconds);
+		if (requestedIdle) setIdle(requestedIdle);
+	}, [session, requestedDuration, clamped.seconds, clampedIdle.seconds]);
+	// The limits can arrive after the review does: an ask seeded as it was
+	// made is brought down to the maximum, unless the approver already changed it.
+	useEffect(() => {
+		if (!limits.loaded) return;
+		const askedDuration = isoDurationSeconds(session?.requested_expires_in);
+		const maxExpires = limits.expires.maxSeconds;
+		if (askedDuration && maxExpires !== null && askedDuration > maxExpires) {
+			setDuration((cur) =>
+				durationSeconds(cur) === askedDuration ? durationFromSeconds(maxExpires) : cur,
+			);
+		}
+		const maxIdle = limits.idle.maxSeconds;
+		if (requestedIdleSeconds && maxIdle !== null && requestedIdleSeconds > maxIdle) {
+			setIdle((cur) =>
+				idleSeconds(cur) === requestedIdleSeconds ? idleLimitFromSeconds(maxIdle) : cur,
+			);
+		}
+	}, [
+		limits.loaded,
+		limits.expires.maxSeconds,
+		limits.idle.maxSeconds,
+		session?.requested_expires_in,
+		requestedIdleSeconds,
+	]);
 	const scopes: ReviewScope[] = useMemo(() => session?.scopes ?? [], [session]);
 	const secretKind = session ? secretKindOf(session.resolved_flow) : null;
 	const awaitingApp = session ? isAwaitingApp(session) : false;
@@ -136,6 +243,15 @@ export function VendorApproveFlow({
 	// The shared-app option needs the host's surface and an app-less OAuth API.
 	const offerSharedApp = awaitingApp && sharedAppSurface != null;
 	const method = parseMethodKey(methodValue);
+	// An existing credential the agent already holds: confirming with it binds
+	// nothing new, so that binding keeps its own limits and the ones chosen here
+	// would apply to nothing.
+	const ownBinding =
+		method.kind === 'existing'
+			? (candidates.find((c) => c.credential_id === method.credentialId)?.agent_binding ??
+				null)
+			: null;
+	const limitsApply = ownBinding === null;
 
 	const goToPhase = (next: ApprovePhase): void => {
 		phaseRef.current = next;
@@ -310,7 +426,10 @@ export function VendorApproveFlow({
 		goToPhase('rules');
 	};
 
-	/** The review the approver saw, echoed so the server can refuse a stale one. */
+	/**
+	 * The review the approver saw, echoed so the server can refuse a stale one,
+	 * and the new binding's end date, worked out now, as the approver confirms.
+	 */
 	const reviewed = (
 		finalRules: PermissionRule[],
 		review: ReviewSession | undefined = session,
@@ -319,6 +438,17 @@ export function VendorApproveFlow({
 		expected_agent_id: review?.agent?.agent_id ?? null,
 		digest: review?.digest ?? '',
 		revision_id: review?.revision?.id ?? null,
+		...(review?.agent && limitsApply
+			? {
+					expires_at: expiresAtIso(duration) ?? null,
+					max_idle_period: idleSeconds(idle),
+					...(expiryWarning(warn, expiresAtFromDuration(duration), idleSeconds(idle))
+						? { idle_warning: true }
+						: {}),
+					...(uses !== null ? { max_quota: uses } : {}),
+					...(afterExpiry !== DEFAULT_AFTER_EXPIRY ? { after_expiry: afterExpiry } : {}),
+				}
+			: {}),
 	});
 
 	/**
@@ -651,8 +781,14 @@ export function VendorApproveFlow({
 	// approver's OAuth client rather than a plain sign-in.
 	const showChooser = canConfirm && (methodOptions.length > 1 || awaitingApp);
 	const showScopes = method.kind === 'primary' && !secretKind;
+	// A request that binds an agent waits for how long the access lasts.
+	const bindsAgent = Boolean(session?.agent);
 	const continueDisabled =
 		!canConfirm ||
+		(bindsAgent &&
+			limitsApply &&
+			(!durationChosen(duration, limits.expires.maxSeconds) ||
+				idleLimitError(idle, limits.idle.maxSeconds) !== null)) ||
 		method.kind === 'shared_app' ||
 		(method.kind === 'primary' &&
 			!secretKind &&
@@ -734,6 +870,79 @@ export function VendorApproveFlow({
 				</p>
 			)}
 
+			{canConfirm && bindsAgent && (
+				<div className="space-y-1" data-testid="approve-duration">
+					{ownBinding && (
+						<p
+							className="bg-surface-inset text-foreground-sub rounded-lg px-3 py-2 text-[13px]"
+							data-testid="approve-existing-binding"
+						>
+							<UserText>{agent?.name ?? 'This agent'}</UserText> is already bound to
+							this credential, so its current limits stay as they are
+							{existingBindingLabel(ownBinding)}. The limits here don&apos;t apply to
+							it.
+						</p>
+					)}
+					<BindingDurationField
+						maxSeconds={limits.expires.maxSeconds}
+						value={duration}
+						onChange={(next): void => {
+							setStepError(null);
+							setDuration(next);
+						}}
+						label="Access expires after"
+						disabled={ownBinding !== null}
+						selectRef={durationRef}
+						testIdPrefix="approve"
+						describedBy={accessSummaryId}
+					/>
+					<IdleLimitField
+						maxSeconds={limits.idle.maxSeconds}
+						value={idle}
+						onChange={(next): void => {
+							setStepError(null);
+							setIdle(next);
+						}}
+						disabled={ownBinding !== null}
+						testIdPrefix="approve"
+						describedBy={accessSummaryId}
+					/>
+					<SingleUseField
+						value={uses}
+						onChange={(next): void => {
+							setStepError(null);
+							setUses(next);
+						}}
+						end={expiresAtFromDuration(duration)}
+						idleSeconds={idleSeconds(idle)}
+						disabled={ownBinding !== null}
+						testIdPrefix="approve"
+						summaryId={accessSummaryId}
+						emptyHint={NO_DURATION_HINT}
+						note={requestedText(
+							requestedDuration,
+							isoDurationSeconds(session.requested_max_idle_period),
+							{
+								expires: clamped.over ? limits.expires.maxSeconds : null,
+								idle: clampedIdle.over ? limits.idle.maxSeconds : null,
+							},
+						)}
+					/>
+					<AccessEndFields
+						warn={warn}
+						onWarnChange={setWarn}
+						warnable={expiryWarnable(
+							expiresAtFromDuration(duration),
+							idleSeconds(idle),
+						)}
+						afterExpiry={afterExpiry}
+						onAfterExpiryChange={setAfterExpiry}
+						disabled={ownBinding !== null}
+						testIdPrefix="approve"
+					/>
+				</div>
+			)}
+
 			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
 				<div className="flex items-center gap-1">
 					<Button type="button" variant="ghost" size="sm" onClick={handleNotNow}>
@@ -758,7 +967,16 @@ export function VendorApproveFlow({
 					<Button
 						type="button"
 						variant="primary"
-						onClick={goToRules}
+						onClick={(): void =>
+							noExpiry.request(
+								bindsAgent &&
+									limitsApply &&
+									choosesNoExpiry(duration) &&
+									idleSeconds(idle) === null &&
+									uses === null,
+								goToRules,
+							)
+						}
 						// Scope-less vendors proceed with the vendor's defaults —
 						// only gate on an empty selection when there are scopes
 						// to choose from.
@@ -768,6 +986,13 @@ export function VendorApproveFlow({
 					</Button>
 				)}
 			</div>
+
+			<NoExpiryConfirmDialog
+				{...noExpiry.dialogProps}
+				subject={session.agent?.name ?? 'The agent'}
+				confirmLabel="Continue without expiry"
+				fieldRef={durationRef}
+			/>
 
 			<ConfirmDialog
 				open={rejectOpen}
@@ -807,4 +1032,54 @@ function reviewScopesToCatalog(scopes: ReviewScope[]): VendorScopeCatalog[] {
 		default: s.default,
 		description: s.description,
 	}));
+}
+
+/** ": expires in 9 days · 2 of 3 uses left", or "" when the binding carries no limit. */
+function existingBindingLabel(binding: SessionAgentBinding): string {
+	const label = bindingExpiryLabel({
+		expiresAt: binding.expires_at,
+		expired: binding.expired,
+		maxIdlePeriod: isoDurationSeconds(binding.max_idle_period),
+		maxQuota: binding.max_quota,
+		quotaRemaining: binding.quota_remaining,
+	});
+	const idle = isoDurationSeconds(binding.max_idle_period);
+	const parts = [label, idle ? `ends if unused for ${idleLabel(idle)}` : null].filter(Boolean);
+	return parts.length > 0 ? `: ${parts.join(' · ').toLowerCase()}` : ' (it has none)';
+}
+
+/** What was asked, and what is preselected: the ask itself, or the org's maximum when it asked for more. */
+function clampedRequest(
+	asked: number | null,
+	maxSeconds: number | null,
+): { seconds: number | null; over: boolean } {
+	if (asked === null) return { seconds: null, over: false };
+	const over = maxSeconds !== null && asked > maxSeconds;
+	return { seconds: over ? maxSeconds : asked, over };
+}
+
+/**
+ * "The request asked for 7 days, ending if unused for 14 days." — or null with no
+ * ask. Where it asked for more than the org allows, says what is preselected
+ * instead: "This org allows at most 30 days, so that is preselected."
+ */
+function requestedText(
+	duration: BindingDuration | null,
+	idleSecondsAsked: number | null | undefined,
+	maximums: { expires: number | null; idle: number | null } = { expires: null, idle: null },
+): string | null {
+	const idle = idleSecondsAsked ? `ending if unused for ${idleLabel(idleSecondsAsked)}` : null;
+	const asked = duration
+		? `The request asked for ${durationLabel(duration)}${idle ? `, ${idle}` : ''}.`
+		: idle
+			? `The request asked for access ${idle}.`
+			: null;
+	if (asked === null) return null;
+	const capped = [
+		maximums.expires !== null && `a lifetime of at most ${limitLabel(maximums.expires)}`,
+		maximums.idle !== null && `an idle limit of at most ${limitLabel(maximums.idle)}`,
+	].filter((part): part is string => part !== false);
+	return capped.length > 0
+		? `${asked} This org allows ${capped.join(' and ')}, so that is preselected.`
+		: asked;
 }

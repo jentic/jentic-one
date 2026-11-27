@@ -40,6 +40,8 @@ var requestConnectionParams = []paramSpec{
 	{name: "reason", kind: paramString},
 	{name: "oauth_app_registration_id", aliases: []string{"registration_id"}, kind: paramString},
 	{name: "requested_permission_rules", aliases: []string{"permission_rules"}, kind: paramJSON},
+	{name: "requested_expires_in", kind: paramString},
+	{name: "requested_max_idle_period", kind: paramString},
 }
 
 var requestConnectionSchema = map[string]any{
@@ -90,6 +92,14 @@ var requestConnectionSchema = map[string]any{
 				"required": []string{"effect"},
 			},
 			"description": "Permission rules you are asking for on the new binding (optional, max 100; \"permission_rules\" is an accepted alias), e.g. [{\"effect\": \"allow\", \"methods\": [\"GET\"], \"path\": \"/repos/.*\"}]. The approver reviews and edits them before anything is granted; an allow rule must constrain methods, path, or operations.",
+		},
+		"requested_max_idle_period": map[string]any{
+			"type":        "string",
+			"description": "Ask for the access to end once you leave it unused this long (optional), e.g. \"14d\" or \"P14D\" (1d to 999d). The approver decides; it never cuts you off while you keep using it.",
+		},
+		"requested_expires_in": map[string]any{
+			"type":        "string",
+			"description": "How long you need the access (optional), e.g. \"7d\", \"8h\", \"30m\" or \"P7D\" (at most 999d). Shown to the approver, who decides the actual end date; ask for only as long as the task needs.",
 		},
 	},
 }
@@ -231,6 +241,18 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 			return nil, invalidParams(err)
 		}
 	}
+	var expiresIn int
+	if raw, _ := args["requested_expires_in"].(string); raw != "" {
+		if expiresIn, err = parseAccessDuration(raw); err != nil {
+			return nil, invalidParams(fmt.Errorf("requested_expires_in: %w", err))
+		}
+	}
+	var maxIdle int
+	if raw, _ := args["requested_max_idle_period"].(string); raw != "" {
+		if maxIdle, err = parseIdleLimit(raw); err != nil {
+			return nil, invalidParams(fmt.Errorf("requested_max_idle_period: %w", err))
+		}
+	}
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
 		s.logger.Warn("request_connection failed", "target", target, "error", redactedErr(err))
@@ -254,6 +276,12 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	}
 	if len(rules) > 0 {
 		body.RequestedPermissionRules = &rules
+	}
+	if expiresIn > 0 {
+		body.RequestedExpiresIn = isoDuration(expiresIn)
+	}
+	if maxIdle > 0 {
+		body.RequestedMaxIdlePeriod = isoDuration(maxIdle)
 	}
 	// Never set body.AgentId: the caller IS the agent — the control plane
 	// injects the caller's identity, and a supplied agent_id is refused (403).
@@ -305,7 +333,8 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 //     auth_type_required/auth_type_not_declared (retry with auth_type),
 //     manual_flows_disabled / no_declared_scheme / host_variable_not_pinned
 //     (report to the user), too_many_open_sessions (do not open more),
-//     recently_rejected / connect_session_binding_suspended (do not ask again).
+//     recently_rejected / connect_session_binding_suspended /
+//     connect_session_binding_expired (do not ask again).
 //   - 404 (unknown vendor) / 400 (unsupported flow) — a correctable ask:
 //     RESOLVE_FAILED with the rediscovery/operator step.
 //   - 400 ambiguous_vendor — several shared OAuth apps serve the vendor and

@@ -32,6 +32,8 @@ from jentic_one.auth.services.errors import (
     PermissionNotGrantableError,
     RateLimitExceededError,
     RegistrationAccessDeniedError,
+    SelfBindOverExpiredBindingError,
+    SelfBindOverSuspendedBindingError,
     UnknownPermissionError,
 )
 from jentic_one.shared.db.errors import DatabaseUnavailableError
@@ -61,6 +63,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     OAuthGrantAccessDeniedError: (403, "oauth_grant_access_denied"),
     OAuthGrantNotFoundError: (404, "oauth_grant_not_found"),
     CredentialBindingConflictError: (409, "credential_binding_conflict"),
+    # An agent binding itself beside its own suspended or expired binding for
+    # the same API: only the operator lifts the cut-off.
+    SelfBindOverSuspendedBindingError: (409, "credential_binding_suspended"),
+    SelfBindOverExpiredBindingError: (409, "credential_binding_expired"),
     CredentialBindingNotFoundError: (404, "credential_binding_not_found"),
     CredentialNotVisibleError: (404, "credential_not_found"),
     RateLimitExceededError: (429, "rate_limit_exceeded"),

@@ -22,6 +22,7 @@ from jentic_one.broker.core.directives import (
     AgentDirective,
     AgentStrategy,
     ambiguous_credential_binding_directive,
+    credential_binding_expired_directive,
     credential_binding_suspended_directive,
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
@@ -34,6 +35,7 @@ from jentic_one.broker.core.directives import (
 from jentic_one.broker.core.errors import (
     AmbiguousCredentialMatchError,
     BrokerError,
+    CredentialBindingExpiredError,
     CredentialNeedsReconnectError,
     CredentialNotProvisionedError,
     CredentialRefreshTransientError,
@@ -133,6 +135,7 @@ def test_directive_factories_emit_known_strategies() -> None:
         ),
         direct_action_denied_directive(),
         credential_binding_suspended_directive(vendor="acme", name="widgets", version="1.0.0"),
+        credential_binding_expired_directive(vendor="acme", name="widgets", version="1.0.0"),
     ]
     for d in directives:
         assert d.strategy in _ALLOWED_STRATEGIES, d.strategy
@@ -148,6 +151,23 @@ def test_credential_binding_suspended_directive_asks_the_operator_only() -> None
     assert "suspended" in instruction
     assert "jentic connect" not in instruction
     assert "request_connection" not in instruction
+
+
+def test_credential_binding_expired_directive_asks_the_operator_to_renew() -> None:
+    """An expired binding is the operator's to renew: no connect leg of any kind."""
+    d = credential_binding_expired_directive(vendor="acme", name="widgets", version="1.0.0")
+    assert d.strategy == "prompt_human"
+    assert d.parameters == {"api": {"vendor": "acme", "name": "widgets", "version": "1.0.0"}}
+    instruction = d.human_readable_instruction
+    assert "operator" in instruction
+    assert "renew" in instruction
+    assert "jentic connect" not in instruction
+    assert "request_connection" not in instruction
+
+
+def test_credential_binding_expired_error_is_a_403() -> None:
+    assert CredentialBindingExpiredError.default_type == "credential_binding_expired"
+    assert STATUS_BY_ERROR[CredentialBindingExpiredError] == 403
 
 
 def test_no_credential_binding_directive_names_surviving_commands() -> None:

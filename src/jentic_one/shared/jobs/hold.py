@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.held_executions import HeldExecution
 from jentic_one.admin.core.schema.job_results import JobResult
@@ -32,7 +33,7 @@ from jentic_one.shared.events import emit_event_best_effort, summary_label, summ
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 from jentic_one.shared.models.events import EventSeverity, EventType
-from jentic_one.shared.models.held_executions import HeldExecutionState
+from jentic_one.shared.models.held_executions import HeldExecutionKind, HeldExecutionState
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ APPROVAL_DENIED_TYPE = "approval_denied"
 APPROVAL_EXPIRED_TYPE = "approval_expired"
 APPROVAL_REQUIRED_TYPE = "approval_required"
 APPROVAL_RESUME_FAILED_TYPE = "approval_resume_failed"
+APPROVAL_RENEWED_WITHOUT_RUN_TYPE = "approval_renewed_without_run"
 
 PROBLEM_CONTENT_TYPE = "application/problem+json"
 
@@ -79,6 +81,16 @@ _HELD_THEN_POLL = (
     "re-send the call."
 )
 
+#: What the agent is told with the 202 for a call held because its access ended.
+GRANT_RENEWAL_AGENT_DIRECTIVE = (
+    "Your access to this API has ended, so this call is held and your owner has been "
+    "asked to renew it. Most important: show the user the review_url, since they "
+    "cannot renew it without that link, and end your turn so they see it. Do not call "
+    "get_execution_result until the user replies; then call it once with "
+    "held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is "
+    "still held, show the user the review_url again and end your turn again. Do not "
+    "re-send the call."
+)
 #: What the agent is told to do with a held 202. It is asked, once, to explain
 #: the call for the reviewer; the review link stays the first instruction.
 HELD_AGENT_DIRECTIVE = _HELD_SHOW_LINK + _HELD_ASK_REASON + _HELD_THEN_POLL
@@ -385,16 +397,83 @@ async def _pending_by_fingerprint(session: AsyncSession, fingerprint: str) -> He
 
 
 async def count_pending_by_agent(session: AsyncSession, agent_id: str) -> int:
-    """Number of pending approvals the agent holds."""
+    """Number of pending approvals the agent holds for its calls.
+
+    Renewal holds don't count: there is at most one per binding, and an agent
+    at its cap must still be able to tell its owner that its access ended.
+    """
     result = await session.execute(
         select(func.count())
         .select_from(HeldExecution)
         .where(
             HeldExecution.agent_id == agent_id,
             HeldExecution.state == APPROVAL_PENDING,
+            HeldExecution.kind == HeldExecutionKind.EXECUTION.value,
         )
     )
     return int(result.scalar_one() or 0)
+
+
+async def pending_renewal(
+    session: AsyncSession, *, agent_id: str, credential_id: str
+) -> HeldExecution | None:
+    """The binding's pending renewal hold, if one is waiting for review."""
+    result = await session.execute(
+        select(HeldExecution).where(
+            HeldExecution.agent_id == agent_id,
+            HeldExecution.credential_id == credential_id,
+            HeldExecution.kind == HeldExecutionKind.GRANT_RENEWAL.value,
+            HeldExecution.state == APPROVAL_PENDING,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def renewal_denied_at(
+    session: AsyncSession, *, agent_id: str, credential_id: str
+) -> datetime | None:
+    """When a reviewer last denied renewing the binding, if not renewed since.
+
+    A denial stands until the owner renews the binding from the console:
+    until then, no new renewal is filed for it.
+    """
+    binding = (
+        await session.execute(
+            select(AgentCredentialBinding.renewed_at, AgentCredentialBinding.bound_at).where(
+                AgentCredentialBinding.agent_id == agent_id,
+                AgentCredentialBinding.credential_id == credential_id,
+            )
+        )
+    ).first()
+    if binding is None:
+        return None
+    since = binding.renewed_at or binding.bound_at
+    stmt = select(func.max(HeldExecution.decided_at)).where(
+        HeldExecution.agent_id == agent_id,
+        HeldExecution.credential_id == credential_id,
+        HeldExecution.kind == HeldExecutionKind.GRANT_RENEWAL.value,
+        HeldExecution.state == APPROVAL_DENIED,
+    )
+    if since is not None:
+        stmt = stmt.where(HeldExecution.decided_at > since)
+    denied: datetime | None = (await session.execute(stmt)).scalar_one_or_none()
+    return denied
+
+
+class RenewalPendingError(Exception):
+    """The binding already has a renewal waiting for review."""
+
+    def __init__(self, approval_id: str) -> None:
+        super().__init__(f"Renewal {approval_id} is already pending")
+        self.approval_id = approval_id
+
+
+class RenewalDeniedError(Exception):
+    """A reviewer denied renewing the binding, and it has not been renewed since."""
+
+    def __init__(self, denied_at: datetime) -> None:
+        super().__init__(f"Renewal denied at {denied_at.isoformat()}")
+        self.denied_at = denied_at
 
 
 #: Namespace of the per-agent advisory lock that serialises hold filing.
@@ -449,6 +528,7 @@ async def file_hold(
     payload: dict[str, Any],
     ttl_seconds: int,
     max_pending: int,
+    kind: HeldExecutionKind = HeldExecutionKind.EXECUTION,
 ) -> HoldOutcome:
     """File (or join) a hold inside the caller's admin-DB transaction.
 
@@ -461,6 +541,11 @@ async def file_hold(
     well, so two racing retries never produce two holds. The join and the cap
     run under a per-agent lock held to the end of the transaction, so
     concurrent filings cannot together exceed the cap.
+
+    A ``grant_renewal`` hold skips the cap. After the join, a binding that
+    already has a pending renewal raises :class:`RenewalPendingError`, and one
+    whose renewal a reviewer denied (and nobody renewed since) raises
+    :class:`RenewalDeniedError`: neither files a second hold.
     """
     fingerprint = compute_execution_fingerprint(
         agent_id=agent_id,
@@ -473,14 +558,29 @@ async def file_hold(
         headers=headers,
         cookie=cookie,
     )
+    if kind == HeldExecutionKind.GRANT_RENEWAL:
+        # A renewal is a different hold from an Ask hold on the same request: it
+        # must not join one (the agent would get the renewal directive with no
+        # renewal to review), and the pending-fingerprint index would refuse it
+        # beside one. Salting the fingerprint keeps the two apart, while an
+        # identical retry of the renewal still joins the renewal.
+        fingerprint = hashlib.sha256(f"{fingerprint}\x00{kind.value}".encode()).hexdigest()
     await _lock_agent_holds(session, agent_id)
     existing = await _pending_by_fingerprint(session, fingerprint)
     if existing is not None:
         return await _joined(session, existing)
 
-    pending = await count_pending_by_agent(session, agent_id)
-    if pending >= max_pending:
-        raise PendingApprovalLimitError(pending, max_pending)
+    if kind == HeldExecutionKind.GRANT_RENEWAL:
+        waiting = await pending_renewal(session, agent_id=agent_id, credential_id=credential_id)
+        if waiting is not None:
+            raise RenewalPendingError(str(waiting.id))
+        denied = await renewal_denied_at(session, agent_id=agent_id, credential_id=credential_id)
+        if denied is not None:
+            raise RenewalDeniedError(denied)
+    else:
+        pending = await count_pending_by_agent(session, agent_id)
+        if pending >= max_pending:
+            raise PendingApprovalLimitError(pending, max_pending)
 
     # The database clock: the decide path and the expiry sweep compare
     # against it too, wherever they run.
@@ -510,6 +610,7 @@ async def file_hold(
                 request_fingerprint=fingerprint,
                 matched_rule_id=matched_rule_id,
                 state=APPROVAL_PENDING,
+                kind=kind.value,
                 expires_at=expires_at,
                 trace_id=trace_id,
                 created_by=agent_id,
@@ -518,9 +619,13 @@ async def file_hold(
             await session.flush()
     except IntegrityError:
         raced = await _pending_by_fingerprint(session, fingerprint)
-        if raced is None:
-            raise
-        return await _joined(session, raced)
+        if raced is not None:
+            return await _joined(session, raced)
+        if kind == HeldExecutionKind.GRANT_RENEWAL:
+            waiting = await pending_renewal(session, agent_id=agent_id, credential_id=credential_id)
+            if waiting is not None:
+                raise RenewalPendingError(str(waiting.id)) from None
+        raise
     return HoldOutcome(
         job_id=str(job.id),
         approval_id=str(approval.id),
@@ -567,6 +672,20 @@ def approval_denied_problem(approval_id: str, reason: str | None) -> dict[str, A
         detail=detail,
         approval_id=approval_id,
         state=APPROVAL_DENIED,
+    )
+
+
+def renewed_without_run_problem(approval_id: str) -> dict[str, Any]:
+    """Result body for a renewal hold whose reviewer re-granted access but dropped the call."""
+    return _approval_problem(
+        type=APPROVAL_RENEWED_WITHOUT_RUN_TYPE,
+        title="Access renewed; held call not run",
+        detail=(
+            "A reviewer re-granted this agent access but did not run the held call; "
+            "send it again if it is still needed"
+        ),
+        approval_id=approval_id,
+        state=APPROVAL_APPROVED,
     )
 
 

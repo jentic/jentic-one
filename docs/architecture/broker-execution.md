@@ -193,7 +193,8 @@ intersecting the agent's credential bindings (admin DB) with the active
 credentials covering the API (control DB); none → `403
 no_credential_binding` (or `403 credential_identity_mismatch` when a bound
 credential is a near-miss, `403 credential_binding_suspended` when the
-agent's binding covering the API is suspended), several → resolution disambiguates (or asks for
+agent's binding covering the API is suspended, `403 credential_binding_expired`
+when it has expired), several → resolution disambiguates (or asks for
 `Jentic-Credential-Id` with a `409`) — and the winning binding's permission
 rules are evaluated **default-deny**: no matching rule, no call
 ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).
@@ -253,6 +254,11 @@ propagation is bounded by the configured TTLs above (default `3` s; set the
 respective TTL to `0` to disable caching). Queued async executions bypass these
 caches and re-authorize against live database state when the worker claims the
 job (`build_queued_execution_authorizer`).
+
+For an execution with cached credential candidates, the broker checks their earliest
+current expiry in the admin database before reuse. Shortening a deadline on another
+replica therefore takes effect at that deadline even when the original binding had
+no expiry. A cached denial can take up to the binding-cache TTL to reflect a renewal.
 
 ## What gets recorded
 

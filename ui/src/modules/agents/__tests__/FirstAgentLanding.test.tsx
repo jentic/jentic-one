@@ -1513,6 +1513,8 @@ describe('Agents page — zero agents', () => {
 		const step = within(queue).getByTestId('queue-access-step');
 		await waitFor(() => expect(step).toHaveAttribute('data-ready', 'true'));
 		expect(within(step).getByRole('radio', { name: /^Read only$/ })).toBeChecked();
+		// How long the access lasts (with none, adding asks first).
+		await user.selectOptions(within(step).getByTestId('queue-access-duration-preset'), '7d');
 		await user.click(within(queue).getByTestId('queue-add'));
 		const row = await within(queue).findByTestId('queue-progress-row');
 		await waitFor(() => expect(row).toHaveAttribute('data-status', 'added'));

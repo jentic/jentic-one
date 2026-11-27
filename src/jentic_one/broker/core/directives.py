@@ -354,6 +354,26 @@ def credential_binding_suspended_directive(
     )
 
 
+def credential_binding_expired_directive(*, vendor: str, name: str, version: str) -> AgentDirective:
+    """Directive for a ``credential_binding_expired`` 403 — only the operator can renew it.
+
+    The agent's binding to a credential covering this API has passed its end
+    date. Deliberately carries no ``suggested_command``, ``connect`` or
+    ``provisioning_url``: a new connect for the same API is refused while the
+    expired binding stands, so there is no connect to offer.
+    """
+    api = "/".join(part for part in (vendor, name) if part)
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"api": {"vendor": vendor, "name": name, "version": version}},
+        human_readable_instruction=(
+            f"Your access to '{api}' has expired. Ask your operator to renew it — "
+            "only they can. Do not request a new connection for this API. Once they "
+            "renew it, retry this call."
+        ),
+    )
+
+
 def credential_pending_directive(
     *, vendor: str, name: str, version: str, provisioning_url: str | None = None
 ) -> AgentDirective:

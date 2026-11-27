@@ -44,6 +44,7 @@ _EXPECTED_PUBLIC: frozenset[str] = frozenset(
         "EncryptionKey",
         "EntitlementConfig",
         "GUARDED_FIELD_SURFACES",
+        "GrantExpiryConfig",
         "HeldExecutionsConfig",
         "IdempotencyConfig",
         "IdpConfig",

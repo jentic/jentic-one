@@ -25,6 +25,7 @@ import structlog
 from jentic_one.broker.core.denial import DenialReason
 from jentic_one.broker.core.directives import (
     AgentDirective,
+    credential_binding_expired_directive,
     credential_binding_suspended_directive,
     credential_pending_directive,
     direct_action_denied_directive,
@@ -35,6 +36,7 @@ from jentic_one.broker.core.directives import (
 from jentic_one.broker.core.errors import (
     ActionDeniedError,
     BrokerError,
+    CredentialBindingExpiredError,
     CredentialBindingSuspendedError,
     CredentialIdentityMismatchError,
     CredentialPendingError,
@@ -54,6 +56,7 @@ from jentic_one.shared.broker.protocols import (
     ConnectableRegistrationSourceProtocol,
     CredentialDerivation,
     CredentialDeriverProtocol,
+    EndedBinding,
     RuleEvaluation,
     RuleVerdict,
 )
@@ -182,6 +185,88 @@ def _suspended_binding_denial(api: APIReference, *, instance: str) -> BrokerErro
     )
 
 
+#: The denial's detail for each limit that can end a binding.
+_EXPIRED_DETAIL = {
+    "end_date": "The credential binding for this API has expired: its end date passed",
+    "idle": "The credential binding for this API has expired: it went unused for its idle limit",
+    "uses": "The credential binding for this API has expired: its uses have run out",
+}
+
+
+def _ended_binding_for(
+    ended: tuple[EndedBinding, ...],
+    *,
+    credential_id: str | None,
+    credential_name: str | None,
+) -> EndedBinding | None:
+    """The ended binding this call is for, or ``None`` when that is not certain.
+
+    The caller's selector decides, as it would among live bindings:
+    ``Jentic-Credential-Id``, then ``Jentic-Credential-Name`` (unique names
+    only). With no selector, only a lone eligible binding is it. A binding
+    whose credential is inactive is never chosen: it could not run once
+    renewed. ``None`` means no hold: a renewal must never be reviewed, or run,
+    against an account the call did not name.
+    """
+    eligible = [e for e in ended if e.active]
+    if credential_id:
+        return next((e for e in eligible if e.credential_id == credential_id), None)
+    if credential_name:
+        named = [e for e in eligible if e.name == credential_name]
+        return named[0] if len(named) == 1 else None
+    return eligible[0] if len(eligible) == 1 else None
+
+
+def _expired_binding_denial(
+    api: APIReference,
+    *,
+    instance: str,
+    reason: str | None = None,
+    credential_id: str | None = None,
+    holds: bool = True,
+    candidates: tuple[EndedBinding, ...] = (),
+) -> CredentialBindingExpiredError:
+    """The denial for an agent whose binding covering the API has ended.
+
+    Like the suspended case, its recovery is the operator's alone (a renewal),
+    so the directive carries no connect suggestion. ``expired_reason`` names
+    the limit that ended it, so the operator knows what renewing must change.
+    ``credential_id`` is the binding a renewal hold may be filed for; without
+    one (several ended bindings and no selector naming one), ``candidates``
+    are listed so the agent can name the account it means.
+    """
+    _authz_denied.add(
+        1,
+        {
+            "reason": DenialReason.CREDENTIAL_BINDING_EXPIRED.value,
+            "mode": "direct",
+            "vendor": api.vendor,
+        },
+    )
+    detail = _EXPIRED_DETAIL.get(reason or "", "The credential binding for this API has expired")
+    extra: dict[str, object] = {"expired_reason": reason} if reason else {}
+    if credential_id is None and len(candidates) > 1:
+        detail = (
+            "Several of your credential bindings for this API have expired; name the one "
+            "you mean with Jentic-Credential-Id"
+        )
+        extra["expired_credentials"] = [
+            {"credential_id": c.credential_id, "name": c.name, "expired_reason": c.reason}
+            for c in candidates
+        ]
+    error = CredentialBindingExpiredError(
+        detail,
+        extra=extra or None,
+        instance=instance,
+        directive=credential_binding_expired_directive(
+            vendor=api.vendor, name=api.name, version=api.version
+        ),
+    )
+    error.ended_credential_id = credential_id
+    error.holds_for_renewal = holds
+    return error
+
+
 def _pending_credential_denial(
     api: APIReference, *, instance: str, provisioning_url: str | None
 ) -> BrokerError:
@@ -259,6 +344,8 @@ async def derive_credential_bindings(
     operation_id: str | None = None,
     operation_path: str | None = None,
     connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
 
@@ -291,6 +378,20 @@ async def derive_credential_bindings(
     if not derivation.credentials:
         if derivation.binding_suspended:
             raise _suspended_binding_denial(api, instance=instance)
+        if derivation.binding_expired:
+            chosen = _ended_binding_for(
+                derivation.ended_bindings,
+                credential_id=credential_id,
+                credential_name=credential_name,
+            )
+            raise _expired_binding_denial(
+                api,
+                instance=instance,
+                reason=chosen.reason if chosen else derivation.expired_reason,
+                credential_id=chosen.credential_id if chosen else None,
+                holds=chosen.holds if chosen else False,
+                candidates=tuple(e for e in derivation.ended_bindings if e.active),
+            )
         if derivation.binding_pending:
             raise _pending_credential_denial(
                 api,
@@ -328,6 +429,21 @@ async def derive_credential_bindings(
                 operation_path=operation_path,
             )
         raise denial
+    if credential_id and not any(c.credential_id == credential_id for c in derivation.credentials):
+        # Another binding is live, but the call names one that has ended: say so
+        # (and hold it for renewal) rather than reporting it as an unknown id.
+        named = next(
+            (e for e in derivation.ended_bindings if e.active and e.credential_id == credential_id),
+            None,
+        )
+        if named is not None:
+            raise _expired_binding_denial(
+                api,
+                instance=instance,
+                reason=named.reason,
+                credential_id=named.credential_id,
+                holds=named.holds,
+            )
     return derivation
 
 
@@ -568,6 +684,8 @@ async def authorize_execution(
         trace_id=trace_id,
         operation_id=operation_id,
         operation_path=operation_path,
+        credential_id=credential_id,
+        credential_name=credential_name,
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
@@ -709,6 +827,12 @@ async def authorize_execution(
         )
 
     if not evaluation.allowed:
+        # A refused call is still a call through the binding: it spends a use
+        # and restarts the idle clock like any other. With none left, the
+        # binding has ended and says so instead.
+        await CredentialService(ctx).spend_binding_use(
+            identity=identity, credential_id=selected_credential.credential_id, api=api
+        )
         # Two-variant deny split (#578): an empty rule list (nothing
         # configured for this binding) vs loaded rules where none allowed the
         # request.

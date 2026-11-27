@@ -3,7 +3,7 @@
  * Inbox and the attention toast — so a call reads the same on each:
  * "billing-ops wants to run “Create a charge”", "5m ago", "expires in 23 h".
  */
-import { isRouteHeadline } from '@/shared/approvals/heldCall';
+import { isRenewalCall, isRouteHeadline } from '@/shared/approvals/heldCall';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -30,6 +30,25 @@ export function stripBidiControls(text: string): string {
 /** `billing-ops wants to run “Create a charge”`. */
 export function heldCallAsk(agentName: string, headline: string): string {
 	return `${stripBidiControls(agentName)} wants to run ${askPhrase(stripBidiControls(headline))}`;
+}
+
+/** `billing-ops's access to stripe ended`: a call held because its binding ended. */
+export function accessEndedAsk(agentName: string, apiName: string): string {
+	return `${stripBidiControls(agentName)}'s access to ${stripBidiControls(apiName)} ended`;
+}
+
+/**
+ * What a waiting call is, in a sentence: a re-grant of ended access reads as
+ * that, any other call as what the agent wants to run.
+ */
+export function waitingCallAsk(
+	call: { kind?: string | null; api_name: string },
+	agentName: string,
+	headline: string,
+): string {
+	return isRenewalCall(call)
+		? accessEndedAsk(agentName, call.api_name)
+		: heldCallAsk(agentName, headline);
 }
 
 /**

@@ -34,6 +34,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Session
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.job_results import JobResult
@@ -41,6 +42,7 @@ from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import event_repo
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
+from jentic_one.broker.core.errors import CredentialBindingExpiredError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.execution.executor import PipelineExecutor
@@ -406,7 +408,10 @@ async def test_slow_upstream_holds_no_admin_connection(
     assert len(upstream.seen) == 1
     _assert_no_admin_hold(upstream.seen, seeded_credential)
     assert upstream.seen[0].committed_access_events == 1
-    assert transactions.count - upstream.probe_transactions == 2, transactions
+    # The access audit, the binding's use stamp (the first call through it this
+    # hour restarts its idle clock), and the execution record — none of them
+    # held across the upstream call.
+    assert transactions.count - upstream.probe_transactions == 3, transactions
 
     record = await _execution(admin_db, trace_id)
     assert record is not None and record.status == ExecutionStatus.COMPLETED
@@ -547,6 +552,68 @@ async def test_failed_access_audit_fails_the_injection(
     assert upstream.seen == [], "the credential was used without a committed audit event"
     assert await _access_events(admin_db, trace_id) == []
     assert await _execution(admin_db, trace_id) is None
+
+
+async def test_single_use_binding_is_sent_once_then_refused(
+    integration_context: Context,
+    upstream: _Upstream,
+    seeded_credential: str,
+    trace_id: str,
+) -> None:
+    """The use is taken in the access-audit transaction, atomically: once the
+    last one is gone, a call that got past authorization is refused before
+    the credential leaves the broker, and its access is not audited."""
+    admin_db = integration_context.admin_db
+
+    async def _drop_binding() -> None:
+        async with admin_db.transaction() as session:
+            await session.execute(
+                delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == _AGENT)
+            )
+
+    await _drop_binding()
+    async with admin_db.transaction() as session:
+        session.add(
+            AgentCredentialBinding(
+                id="acb_single_use_hold",
+                agent_id=_AGENT,
+                credential_id=_CREDENTIAL_ID,
+                max_quota=1,
+                quota_remaining=1,
+            )
+        )
+    try:
+        async with httpx.AsyncClient() as upstream_client:
+            app = _app(
+                integration_context,
+                HttpRunner(upstream_client),
+                f"http://127.0.0.1:{upstream.port}/thing",
+                trace_id,
+            )
+            first = await _call(app, "/buffered")
+            # A second call that got past authorization (racing the first, say).
+            with pytest.raises(CredentialBindingExpiredError) as refused:
+                await CredentialService(integration_context).inject(
+                    api_vendor=_VENDOR,
+                    api_name=_API_NAME,
+                    api_version=_API_VERSION,
+                    identity=_IDENTITY,
+                    trace_id=trace_id,
+                )
+        async with admin_db.session() as session:
+            left = await session.scalar(
+                select(AgentCredentialBinding.quota_remaining).where(
+                    AgentCredentialBinding.agent_id == _AGENT
+                )
+            )
+    finally:
+        await _drop_binding()
+
+    assert first.status_code == 200, first.text
+    assert refused.value.extra == {"expired_reason": "uses"}
+    assert len(upstream.seen) == 1, "the credential was sent after its last use"
+    assert len(await _access_events(admin_db, trace_id)) == 1
+    assert left == 0
 
 
 class _AllowBoundCredential:

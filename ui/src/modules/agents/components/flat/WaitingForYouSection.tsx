@@ -10,14 +10,25 @@
  * first), with a Review link per request. Nothing waiting renders NOTHING; a
  * caller who cannot approve (see `useCanApproveConnectRequests`) makes no
  * request.
+ *
+ * It also lists access ending soon: a binding whose owner asked to be warned
+ * will reach its end date, or its idle limit unless the agent uses it, within
+ * two days. Review opens the agent, whose API tile renews it.
  */
+import { isoDurationSeconds } from '@/shared/lib';
 import { useMemo, type ReactNode } from 'react';
+import { AGENTS_READ, useCanAccess } from '@/shared/auth';
 import { AppLink, Tooltip, UserText } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
 import { useActorDirectory } from '@/shared/hooks';
 import { cn, formatTimestamp } from '@/shared/lib/utils';
 import { ATTENTION_ROW_CLASS } from '@/shared/approvals';
-import { useOpenConnectRequests } from '@/shared/credentials/api';
+import { bindingExpiryLabel } from '@/shared/credentials/lib/bindingExpiry';
+import {
+	useBindingsEndingSoon,
+	useOpenConnectRequests,
+	type EndingSoonBindingResponse,
+} from '@/shared/credentials/api';
 import {
 	groupConnectRequestsByAgent,
 	describeConnectAsks,
@@ -33,13 +44,17 @@ export function WaitingForYouSection() {
 		() => groupConnectRequestsByAgent(requests.data ?? []),
 		[requests.data],
 	);
+	const canReadAgents = useCanAccess(AGENTS_READ);
+	const endingSoon = useBindingsEndingSoon({ enabled: canReadAgents });
+	const endingGroups = useMemo(() => groupByAgent(endingSoon.data ?? []), [endingSoon.data]);
 	const directory = useActorDirectory(connectGroups.map((g) => g.agentId));
 
 	// The inbox reads the connect-request query for every credentials reader,
 	// so the cache can hold requests this viewer may not approve: gate the
 	// render too.
 	const shownConnect = canApprove ? connectGroups : [];
-	if (shownConnect.length === 0) return null;
+	const shownEnding = canReadAgents ? endingGroups : [];
+	if (shownConnect.length === 0 && shownEnding.length === 0) return null;
 
 	return (
 		<section role="region" aria-labelledby="waiting-for-you-heading" className="space-y-1.5">
@@ -57,6 +72,9 @@ export function WaitingForYouSection() {
 						name={directory.resolve(group.agentId) ?? group.agentId}
 					/>
 				))}
+				{shownEnding.map((group) => (
+					<EndingSoonRow key={`ending:${group.agentId}`} group={group} />
+				))}
 			</ul>
 		</section>
 	);
@@ -67,11 +85,14 @@ function WaitingRow({
 	what,
 	since,
 	children,
+	testId,
 }: {
 	name: string;
 	what: string;
-	since: string;
+	/** When the wait started; left out, the row shows no "waiting" age. */
+	since?: string;
 	children: ReactNode;
+	testId?: string;
 }) {
 	return (
 		<li
@@ -79,16 +100,21 @@ function WaitingRow({
 				ATTENTION_ROW_CLASS,
 				'flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3.5 py-2.5',
 			)}
+			data-testid={testId}
 		>
 			<span className="bg-warning h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden="true" />
 			<p className="min-w-0 flex-1 basis-52 text-sm">
 				<UserText className="font-heading font-semibold">{name}</UserText>{' '}
 				<span className="text-muted-foreground">
 					{what}
-					{' · '}
-					<Tooltip content={`Asked ${formatTimestamp(since)}`}>
-						{waitingLabel(since)}
-					</Tooltip>
+					{since !== undefined && (
+						<>
+							{' · '}
+							<Tooltip content={`Asked ${formatTimestamp(since)}`}>
+								{waitingLabel(since)}
+							</Tooltip>
+						</>
+					)}
 				</span>
 			</p>
 			<span className="flex flex-wrap items-center gap-2">{children}</span>
@@ -131,6 +157,84 @@ function ConnectRequestsRow({ group, name }: { group: AgentConnectRequests; name
 					)}
 				</AppLink>
 			))}
+		</WaitingRow>
+	);
+}
+
+interface AgentEndingSoon {
+	agentId: string;
+	agentName: string;
+	/** Soonest first, as the server orders them. */
+	bindings: EndingSoonBindingResponse[];
+}
+
+/** One group per agent, in the order its soonest binding ends. */
+function groupByAgent(rows: readonly EndingSoonBindingResponse[]): AgentEndingSoon[] {
+	const groups = new Map<string, AgentEndingSoon>();
+	for (const row of rows) {
+		const group = groups.get(row.agent_id);
+		if (group) group.bindings.push(row);
+		else
+			groups.set(row.agent_id, {
+				agentId: row.agent_id,
+				agentName: row.agent_name,
+				bindings: [row],
+			});
+	}
+	return [...groups.values()];
+}
+
+/**
+ * When one binding ends, by the limit due a warning: "Expires in 1 day" for
+ * its end date, "Ends in 1 day unless used" for its idle limit.
+ */
+function endsLabel(binding: EndingSoonBindingResponse): string {
+	const label =
+		binding.ending === 'idle'
+			? bindingExpiryLabel({
+					expiresAt: null,
+					expired: false,
+					maxIdlePeriod: isoDurationSeconds(binding.max_idle_period),
+					idleExpiresAt: binding.ends_at,
+				})
+			: bindingExpiryLabel({ expiresAt: binding.ends_at, expired: false });
+	return label ?? 'Ends soon';
+}
+
+/** "access to Stripe that expires in 1 day", or a count for several. */
+function describeEndingSoon(bindings: readonly EndingSoonBindingResponse[]): string {
+	if (bindings.length > 1) {
+		const unlessUsed = bindings.every((b) => b.ending === 'idle') ? ' unless used' : '';
+		return `has access to ${bindings.length} credentials ending soon${unlessUsed}`;
+	}
+	const [binding] = bindings;
+	const label = endsLabel(binding);
+	return `has access to ${binding.name ?? 'a credential'} that ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+}
+
+function EndingSoonRow({ group }: { group: AgentEndingSoon }) {
+	const soonest = group.bindings[0];
+	return (
+		<WaitingRow
+			name={group.agentName}
+			what={describeEndingSoon(group.bindings)}
+			testId="waiting-ending-soon"
+		>
+			<AppLink
+				href={ROUTE_PATHS.agentTab(group.agentId)}
+				variant="tonal"
+				size="sm"
+				title={
+					soonest
+						? soonest.ending === 'idle'
+							? `Ends if unused by ${formatTimestamp(soonest.ends_at)}`
+							: `Ends ${formatTimestamp(soonest.ends_at)}`
+						: undefined
+				}
+			>
+				Review
+				<span className="sr-only"> {group.agentName}&apos;s access that ends soon</span>
+			</AppLink>
 		</WaitingRow>
 	);
 }

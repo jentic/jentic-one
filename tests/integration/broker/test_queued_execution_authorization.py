@@ -278,6 +278,30 @@ async def test_binding_suspended_after_enqueue_is_denied(
     assert verdict.allowed_credential_ids == ()
 
 
+async def test_binding_expired_after_enqueue_is_denied(
+    integration_context: Context, clean_tables: None
+) -> None:
+    """A binding whose expiry passes between enqueue and run is refused at worker time."""
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    async with integration_context.admin_db.session() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.agent_id == agent_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
+
+    verdict = await build_queued_execution_authorizer(integration_context).authorize(
+        _request(agent_id, credential_id)
+    )
+
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["status"] == 403
+    assert verdict.problem["type"].endswith("credential_binding_expired")
+    assert verdict.allowed_credential_ids == ()
+
+
 async def test_binding_removed_after_enqueue_is_denied(
     integration_context: Context, clean_tables: None
 ) -> None:
@@ -1276,3 +1300,45 @@ async def test_approved_hold_of_an_owned_agent_runs_while_the_owner_is_active(
     assert len(executor.requests) == 1
     assert injector.calls == 1
     assert (await _job_result(ctx, job_id))["http_status"] == 200
+
+
+async def _binding_usage(ctx: Context, agent_id: str) -> tuple[int | None, datetime | None]:
+    async with ctx.admin_db.session() as session:
+        binding = (
+            await session.execute(
+                select(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == agent_id)
+            )
+        ).scalar_one()
+        return binding.quota_remaining, binding.last_used_at
+
+
+async def test_a_call_its_rules_refuse_still_spends_a_use_and_restarts_the_idle_clock(
+    integration_context: Context, clean_tables: None
+) -> None:
+    """Every call through a binding counts, failed or not."""
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(AgentCredentialBinding)
+            .where(AgentCredentialBinding.agent_id == agent_id)
+            .values(max_quota=2, quota_remaining=2, max_idle_period=7 * 86_400)
+        )
+        await session.commit()
+    await _deny_by_rule(ctx, agent_id)
+    authorizer = build_queued_execution_authorizer(ctx)
+
+    verdict = await authorizer.authorize(_request(agent_id, credential_id))
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "action_denied"
+    left, used_at = await _binding_usage(ctx, agent_id)
+    assert left == 1
+    assert used_at is not None
+
+    # The second refusal takes the last use; after that the binding has ended.
+    await authorizer.authorize(_request(agent_id, credential_id))
+    assert (await _binding_usage(ctx, agent_id))[0] == 0
+    ended = await authorizer.authorize(_request(agent_id, credential_id))
+    assert ended.problem is not None
+    assert ended.problem["type"] == "credential_binding_expired"

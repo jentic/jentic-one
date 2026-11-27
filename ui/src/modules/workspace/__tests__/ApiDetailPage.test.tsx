@@ -807,6 +807,11 @@ describe('ApiDetailPage', () => {
 				// Nothing preselected: Bind waits for a rules choice.
 				expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
 				await user.click(within(dialog).getByRole('radio', { name: /Full access/ }));
+				// How long the access lasts (a binding with none asks first).
+				await user.selectOptions(
+					within(dialog).getByTestId('bind-agent-duration-preset'),
+					'7d',
+				);
 				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
 
 				await waitFor(() => expect(bodies).toHaveLength(1));
@@ -854,6 +859,11 @@ describe('ApiDetailPage', () => {
 					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
 				);
 				await user.click(within(dialog).getByRole('radio', { name: /Full access/ }));
+				// How long the access lasts (a binding with none asks first).
+				await user.selectOptions(
+					within(dialog).getByTestId('bind-agent-duration-preset'),
+					'7d',
+				);
 				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
 
 				await waitFor(() => expect(dialog).not.toBeVisible());
@@ -949,6 +959,11 @@ describe('ApiDetailPage', () => {
 					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
 				);
 				await user.click(within(dialog).getByRole('radio', { name: /^Read only$/ }));
+				// How long the access lasts (a binding with none asks first).
+				await user.selectOptions(
+					within(dialog).getByTestId('bind-agent-duration-preset'),
+					'7d',
+				);
 				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
 				expect(await within(dialog).findByRole('alert')).toHaveTextContent(
 					"Couldn't create the no-auth credential",
@@ -1053,6 +1068,11 @@ describe('ApiDetailPage', () => {
 			// Still disabled: nothing is preselected for the rules.
 			expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
 			await user.click(within(dialog).getByRole('radio', { name: /^Read only$/ }));
+			// How long the access lasts (a binding with none asks first).
+			await user.selectOptions(
+				within(dialog).getByTestId('bind-agent-duration-preset'),
+				'7d',
+			);
 			await user.click(within(dialog).getByRole('button', { name: 'Bind to agent' }));
 
 			// Same pattern as credential create/edit: close + a success toast.
@@ -1060,7 +1080,7 @@ describe('ApiDetailPage', () => {
 			const toast = await screen.findByTestId('toast');
 			expect(toast).toHaveTextContent('Credential bound');
 			expect(toast).toHaveTextContent(
-				'Bound “Stripe live” to support-agent, with access rules.',
+				'Bound “Stripe live” to support-agent, with access rules, until ',
 			);
 			expect(within(toast).queryByRole('link')).toBeNull();
 
@@ -1146,7 +1166,7 @@ describe('ApiDetailPage', () => {
 			const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
 			expect(within(dialog).getByRole('group', { name: 'Agents' })).toBeVisible();
 			expect(
-				within(dialog)
+				within(within(dialog).getByTestId('bind-agent-credential'))
 					.getAllByRole('option')
 					.map((o) => o.textContent),
 			).toEqual(['Stripe key · ••••4242', 'Stripe key · ••••9999']);

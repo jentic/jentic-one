@@ -3,8 +3,11 @@
  * precedence so two lines on the same card can never contradict each other
  * (a green "Ready" beside "No rules — all calls blocked", say).
  *
- *   Suspended → Not serving → Sign-in needed → Checking / Unavailable → Blocked
+ *   Suspended → Expired → Not serving → Sign-in needed → Checking / Unavailable → Blocked
  *     → Rules out of date → Rules ambiguous → Ready
+ *
+ * Suspended comes before Expired, as the broker reports them: renewing alone
+ * would not restore a suspended binding, so the pause is the thing to fix.
  *
  * A binding is default-deny: with no operator rules every call is refused, and
  * with only deny rules nothing is allowed either — both read as Blocked. Ready
@@ -21,6 +24,7 @@ import type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api
 
 export type TileStatus =
 	| 'suspended'
+	| 'expired'
 	| 'not-serving'
 	| 'sign-in-needed'
 	| 'blocked-no-rules'
@@ -34,6 +38,8 @@ export type TileStatus =
 export interface TileStatusInput {
 	/** The binding is paused. */
 	suspended: boolean;
+	/** The binding's end date has passed. */
+	expired?: boolean;
 	/** The AGENT serves traffic (only `active` agents do). */
 	agentServing: boolean;
 	/** The credential's vendor sign-in hasn't completed. */
@@ -59,6 +65,7 @@ export interface TileStatusInput {
 
 export function deriveTileStatus({
 	suspended,
+	expired = false,
 	agentServing,
 	awaitingConsent,
 	rules,
@@ -66,6 +73,7 @@ export function deriveTileStatus({
 	ambiguousActionRules = false,
 }: TileStatusInput): TileStatus {
 	if (suspended) return 'suspended';
+	if (expired) return 'expired';
 	if (!agentServing) return 'not-serving';
 	if (awaitingConsent) return 'sign-in-needed';
 	if (rules === 'error') return 'unavailable';
@@ -106,6 +114,7 @@ export function isBlockedStatus(status: TileStatus): status is BlockedStatus {
 /** The word(s) each status prints. */
 export const TILE_STATUS_LABEL: Record<TileStatus, string> = {
 	suspended: 'Suspended · not serving',
+	expired: 'Expired · renew to restore',
 	'not-serving': 'Not serving',
 	'sign-in-needed': 'Sign-in needed',
 	'blocked-no-rules': 'Blocked · no rules',
@@ -121,12 +130,14 @@ export const TILE_STATUS_LABEL: Record<TileStatus, string> = {
 export const TILE_STATUS_CHIP_LABEL: Record<TileStatus, string> = {
 	...TILE_STATUS_LABEL,
 	suspended: 'Suspended',
+	expired: 'Expired',
 };
 
 /** The one-word form for a dense card's status line, where the long "· why"
  * tail rides on the card's tooltip instead. */
 export const TILE_STATUS_CARD_LABEL: Record<TileStatus, string> = {
 	suspended: 'Paused',
+	expired: 'Expired',
 	'not-serving': 'Not serving',
 	'sign-in-needed': 'Sign-in needed',
 	'blocked-no-rules': 'Blocked',

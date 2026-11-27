@@ -801,6 +801,14 @@
         ],
         "type": "string"
       },
+      "AfterExpiry": {
+        "description": "What a call through a binding gets once the binding has ended.",
+        "enum": [
+          "hold",
+          "refuse"
+        ],
+        "type": "string"
+      },
       "AgentCreateRequest": {
         "additionalProperties": false,
         "description": "Request body for creating an agent manually.",
@@ -1793,11 +1801,16 @@
         "description": "Confirm a ``manual_api_key`` session with the API key to store.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
             "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
             "key": "example-secret",
             "kind": "api_key",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -1816,6 +1829,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Applies to the new binding.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -1853,6 +1874,29 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ]
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the new binding stops authorizing calls (RFC 3339, in the future), as the approver chose it; worked out when the approver confirms. Null binds with no expiry (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy. Ignored when the agent is already bound to the credential: that binding keeps its own end date.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Applies to the new binding.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
           "key": {
             "description": "API key to store; write-only.",
             "examples": [
@@ -1872,6 +1916,37 @@
               "api_key"
             ],
             "type": "string"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as the approver chose it: the binding ends once it goes this long without a call. Null or absent sets none. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the new binding allows before it ends (1 is single use). Null or absent sets no count. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              1
+            ]
           },
           "permission_rules": {
             "description": "Permission rules to bind for the agent (at most 100).",
@@ -2397,6 +2472,63 @@
         },
         "required": [
           "type"
+        ],
+        "type": "object"
+      },
+      "ApiLastUseResponse": {
+        "description": "When an agent last called one API through a bound credential.",
+        "examples": [
+          {
+            "api_name": "github",
+            "api_vendor": "github.com",
+            "last_used_at": "2026-02-03T14:05:00Z"
+          }
+        ],
+        "properties": {
+          "api_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the API called; null when the recorded calls carry none.",
+            "examples": [
+              "github"
+            ]
+          },
+          "api_vendor": {
+            "description": "Vendor of the API called.",
+            "examples": [
+              "github.com"
+            ],
+            "type": "string"
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recorded API version, when known."
+          },
+          "last_used_at": {
+            "description": "When the agent last called this API through the credential (RFC 3339).",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ],
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_vendor",
+          "last_used_at"
         ],
         "type": "object"
       },
@@ -4639,10 +4771,15 @@
         "description": "Confirm a ``manual_basic`` session with the username and password to store.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
             "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
             "kind": "basic",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "password": "example-secret",
             "permission_rules": [
               {
@@ -4663,6 +4800,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Applies to the new binding.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -4700,6 +4845,29 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ]
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the new binding stops authorizing calls (RFC 3339, in the future), as the approver chose it; worked out when the approver confirms. Null binds with no expiry (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy. Ignored when the agent is already bound to the credential: that binding keeps its own end date.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Applies to the new binding.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
           "kind": {
             "const": "basic",
             "description": "Confirm variant; always `basic`.",
@@ -4707,6 +4875,37 @@
               "basic"
             ],
             "type": "string"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as the approver chose it: the binding ends once it goes this long without a call. Null or absent sets none. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the new binding allows before it ends (1 is single use). Null or absent sets no count. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              1
+            ]
           },
           "password": {
             "description": "Password to store; write-only.",
@@ -4783,10 +4982,15 @@
         "description": "Confirm a ``manual_bearer`` session with the bearer token to store.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
             "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
             "kind": "bearer",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -4806,6 +5010,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Applies to the new binding.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -4843,6 +5055,29 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ]
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the new binding stops authorizing calls (RFC 3339, in the future), as the approver chose it; worked out when the approver confirms. Null binds with no expiry (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy. Ignored when the agent is already bound to the credential: that binding keeps its own end date.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Applies to the new binding.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
           "kind": {
             "const": "bearer",
             "description": "Confirm variant; always `bearer`.",
@@ -4850,6 +5085,37 @@
               "bearer"
             ],
             "type": "string"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as the approver chose it: the binding ends once it goes this long without a call. Null or absent sets none. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the new binding allows before it ends (1 is single use). Null or absent sets no count. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              1
+            ]
           },
           "permission_rules": {
             "description": "Permission rules to bind for the agent (at most 100).",
@@ -5171,6 +5437,9 @@
                 "path": "/v1/charges"
               }
             ],
+            "expired": false,
+            "expired_reason": null,
+            "expires_at": "2026-12-31T23:59:00Z",
             "granted_scopes": [
               "repo",
               "read:user"
@@ -5232,6 +5501,43 @@
               "$ref": "#/components/schemas/PermissionRuleReadSchema"
             },
             "type": "array"
+          },
+          "expired": {
+            "default": false,
+            "description": "True when `expires_at` has passed: the agent cannot use the binding, and no rule change brings it back. Only the operator can renew it.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "expired_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantEndReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which limit ended the binding while `expired` is true: `end_date` (`expires_at` passed), `idle` (unused for its idle limit) or `uses` (no uses left). Null while the binding holds.",
+            "examples": [
+              null
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339); null if it never expires. Independent of `suspended`.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
           },
           "granted_scopes": {
             "anyOf": [
@@ -6527,9 +6833,20 @@
           {
             "data": [
               {
+                "after_expiry": "hold",
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                 "agent_name": "billing-assistant",
                 "bound_at": "2026-01-15T09:30:00Z",
+                "expired": false,
+                "expired_reason": null,
+                "expires_at": "2026-12-31T23:59:00Z",
+                "idle_expires_at": "2026-12-31T23:59:00Z",
+                "idle_warning": false,
+                "last_used_at": "2026-02-03T14:05:00Z",
+                "max_idle_period": "P14D",
+                "max_quota": 1,
+                "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+                "quota_remaining": 1,
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "status": "active",
                 "suspended": false,
@@ -6546,9 +6863,20 @@
             "examples": [
               [
                 {
+                  "after_expiry": "hold",
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "agent_name": "billing-assistant",
                   "bound_at": "2026-01-15T09:30:00Z",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
+                  "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+                  "quota_remaining": 1,
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "status": "active",
                   "suspended": false,
@@ -6593,9 +6921,20 @@
         "description": "Agent directly bound to a credential.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "agent_name": "billing-assistant",
             "bound_at": "2026-01-15T09:30:00Z",
+            "expired": false,
+            "expired_reason": null,
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
+            "last_used_at": "2026-02-03T14:05:00Z",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
+            "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+            "quota_remaining": 1,
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "status": "active",
             "suspended": false,
@@ -6603,6 +6942,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended: `hold` holds the first call for the owner to renew; `refuse` answers `403 credential_binding_expired`.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "description": "ID of the bound agent.",
             "examples": [
@@ -6624,6 +6971,138 @@
             ],
             "format": "date-time",
             "type": "string"
+          },
+          "expired": {
+            "default": false,
+            "description": "Whether `expires_at` has passed: the agent cannot execute through this credential until the binding is renewed.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "expired_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantEndReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which limit ended the binding while `expired` is true: `end_date` (`expires_at` passed), `idle` (unused for `max_idle_period`) or `uses` (no uses left). Null while the binding holds.",
+            "examples": [
+              null
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339); null if it never expires. Independent of `suspended`.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the idle limit ends the binding if it is not used before then (RFC 3339); null without an idle limit.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Whether the agent's owner is warned before the binding ends (its end date or idle limit).",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ]
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle limit (an ISO 8601 duration, e.g. P14D): the binding ends once it goes this long without a call. Null when it has none.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding allows before it ends; null for unlimited.",
+            "examples": [
+              1
+            ]
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the user who owns the bound agent; null for an unclaimed self-registration. Changing the binding (suspending, resuming or renewing it) takes the agent's owner or an `org:admin`, on top of the credential's own checks.",
+            "examples": [
+              "usr_6968b3987ee4c3ec0b4ee3b9"
+            ]
+          },
+          "quota_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls it still allows; null without a use count.",
+            "examples": [
+              1
+            ]
           },
           "rule_set_id": {
             "anyOf": [
@@ -6681,10 +7160,23 @@
         "description": "Request body for directly binding a credential to an agent.",
         "examples": [
           {
-            "credential_id": "cred_6968b39855d91a3561684b32"
+            "after_expiry": "hold",
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
+            "max_idle_period": "P14D",
+            "max_quota": 1
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew.",
+            "examples": [
+              "hold"
+            ]
+          },
           "credential_id": {
             "description": "ID of the credential to bind to the agent.",
             "examples": [
@@ -6693,6 +7185,60 @@
             "maxLength": 255,
             "minLength": 1,
             "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339, in the future). After this moment the broker refuses the agent's calls through it with 403 `credential_binding_expired`, whatever its token. The binding keeps its permission rules; an owner renews it by setting a later time or null. Null for a binding that never expires (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy (`GET /agents/credentials:policy`; none unless the org sets one).",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle limit, as an ISO 8601 duration of weeks, days, hours, minutes or seconds (P1D to P999D, e.g. P14D; no years or months): the binding ends once it has gone this long without a call, and the broker then refuses calls through it with 403 `credential_binding_expired`. Each call restarts the clock (counted at most about hourly), and so does every renewal; a binding that is never used ends one idle period after it was granted. Omit for no idle limit.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding allows before it ends (1 is single use); each authorized call takes one, whatever the upstream answers, and renewing restores the count. Omit for unlimited calls.",
+            "examples": [
+              1
+            ]
           }
         },
         "required": [
@@ -6704,9 +7250,19 @@
         "description": "Direct agent↔credential binding summary for the /me response (theme 5 phase 1).",
         "examples": [
           {
+            "after_expiry": "hold",
             "bound_at": "2026-01-15T09:30:00Z",
             "credential_id": "cred_6968b39855d91a3561684b32",
+            "expired": false,
+            "expired_reason": null,
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
+            "last_used_at": "2026-11-20T10:00:00Z",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "name": "Stripe production key",
+            "quota_remaining": 1,
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "serves": [
               {
@@ -6721,6 +7277,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended: `hold` holds the first call for the owner to renew; `refuse` answers `403 credential_binding_expired` (ask your owner to renew).",
+            "examples": [
+              "hold"
+            ]
+          },
           "bound_at": {
             "description": "When the credential was bound (RFC 3339).",
             "examples": [
@@ -6736,6 +7300,110 @@
             ],
             "type": "string"
           },
+          "expired": {
+            "default": false,
+            "description": "Whether `expires_at` has passed; the agent cannot execute through an expired binding until its operator renews it.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "expired_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantEndReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which limit ended the binding while `expired` is true: `end_date` (`expires_at` passed), `idle` (unused for its idle limit) or `uses` (no uses left). Null while the binding holds.",
+            "examples": [
+              null
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339); null if it never expires.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the idle limit ends the binding if it is not used before then (RFC 3339); null without an idle limit. Each call moves it later.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Whether the owner is warned before the binding ends (its end date or idle limit).",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When this agent last made a call through the binding; null if never.",
+            "examples": [
+              "2026-11-20T10:00:00Z"
+            ]
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle limit (an ISO 8601 duration, e.g. P14D): the binding ends once it goes this long without a call; null when it has none.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding allows before it ends; null for unlimited.",
+            "examples": [
+              1
+            ]
+          },
           "name": {
             "anyOf": [
               {
@@ -6748,6 +7416,20 @@
             "description": "Name of the bound credential; null if it no longer exists or cannot be resolved.",
             "examples": [
               "Stripe production key"
+            ]
+          },
+          "quota_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls it still allows; null without a use count.",
+            "examples": [
+              1
             ]
           },
           "rule_set_id": {
@@ -6830,11 +7512,29 @@
           {
             "data": [
               {
+                "after_expiry": "hold",
                 "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                 "bound_at": "2026-01-15T09:30:00Z",
                 "credential_id": "cred_6968b39855d91a3561684b32",
+                "expired": false,
+                "expired_reason": null,
+                "expires_at": "2026-12-31T23:59:00Z",
                 "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                "idle_expires_at": "2026-12-31T23:59:00Z",
+                "idle_warning": false,
+                "last_used_at": "2026-02-03T14:05:00Z",
+                "last_used_by_api": [
+                  {
+                    "api_name": "github",
+                    "api_vendor": "github.com",
+                    "last_used_at": "2026-02-03T14:05:00Z"
+                  }
+                ],
+                "max_idle_period": "P14D",
+                "max_quota": 1,
                 "name": "Stripe production key",
+                "quota_remaining": 1,
+                "renewed_at": "2026-12-31T23:59:00Z",
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "serves": [
                   {
@@ -6855,11 +7555,29 @@
             "examples": [
               [
                 {
+                  "after_expiry": "hold",
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
                   "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
                   "name": "Stripe production key",
+                  "quota_remaining": 1,
+                  "renewed_at": "2026-12-31T23:59:00Z",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
                     {
@@ -6884,15 +7602,123 @@
         ],
         "type": "object"
       },
+      "CredentialBindingPatchRequest": {
+        "additionalProperties": false,
+        "description": "Request body for renewing a credential binding: re-certify it, and change its limits.\n\nEvery renewal restarts the binding's idle clock. Each limit sent is set, and\nnull clears it; an absent field is never read as clearing. An end date left\nout runs the binding again for as long as it was granted for, capped at the\norg's maximum; any other limit left out stays as it is. An empty body\nre-certifies (\"still needed\").",
+        "examples": [
+          {
+            "after_expiry": "refuse",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": true,
+            "max_idle_period": "P14D",
+            "max_quota": 1
+          }
+        ],
+        "properties": {
+          "after_expiry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AfterExpiry"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Leave it out to keep it as it is.",
+            "examples": [
+              "refuse"
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339, in the future). After this moment the broker refuses the agent's calls through it with 403 `credential_binding_expired`, whatever its token. The binding keeps its permission rules; an owner renews it by setting a later time or null. Send null to clear the end date. Left out, the binding runs again for as long as it was granted for (its end date less when it was granted or last renewed), capped at the org's maximum; one with no end date takes the maximum, or keeps none without one.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Leave it out to keep it as it is.",
+            "examples": [
+              true
+            ]
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle limit, as an ISO 8601 duration of weeks, days, hours, minutes or seconds (P1D to P999D, e.g. P14D; no years or months): the binding ends once it has gone this long without a call, and the broker then refuses calls through it with 403 `credential_binding_expired`. Each call restarts the clock (counted at most about hourly), and so does every renewal; a binding that is never used ends one idle period after it was granted. Send null to remove the idle limit; leave it out to keep it.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding allows before it ends (1 is single use); each authorized call takes one, whatever the upstream answers, and renewing restores the count. Send null to remove the count; leave it out to keep it (every renewal restores the uses left).",
+            "examples": [
+              1
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CredentialBindingResponse": {
         "description": "Direct agent↔credential binding representation in API responses.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "bound_at": "2026-01-15T09:30:00Z",
             "credential_id": "cred_6968b39855d91a3561684b32",
+            "expired": false,
+            "expired_reason": null,
+            "expires_at": "2026-12-31T23:59:00Z",
             "id": "acb_6968b3989a4f1c2e7d3b5a60",
+            "idle_expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
+            "last_used_at": "2026-02-03T14:05:00Z",
+            "last_used_by_api": [
+              {
+                "api_name": "github",
+                "api_vendor": "github.com",
+                "last_used_at": "2026-02-03T14:05:00Z"
+              }
+            ],
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "name": "Stripe production key",
+            "quota_remaining": 1,
+            "renewed_at": "2026-12-31T23:59:00Z",
             "rule_set_id": "prs_6968b3987c22b63e87e79f05",
             "serves": [
               {
@@ -6906,6 +7732,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "description": "ID of the agent the credential is bound to.",
             "examples": [
@@ -6928,12 +7762,133 @@
             ],
             "type": "string"
           },
+          "expired": {
+            "default": false,
+            "description": "Whether `expires_at` has passed.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "expired_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantEndReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which limit ended the binding while `expired` is true: `end_date` (`expires_at` passed), `idle` (unused for `max_idle_period`) or `uses` (no uses left). Null while the binding holds.",
+            "examples": [
+              null
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339); null if it never expires.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
           "id": {
             "description": "Unique ID of the binding.",
             "examples": [
               "acb_6968b3989a4f1c2e7d3b5a60"
             ],
             "type": "string"
+          },
+          "idle_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the idle limit ends the binding if it is not used before then (RFC 3339); null without an idle limit. Each use moves it later.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ]
+          },
+          "last_used_by_api": {
+            "default": [],
+            "description": "`last_used_at` per API the agent called through this credential, most recent first; a vendor-wide credential has one entry per API used.",
+            "examples": [
+              [
+                {
+                  "api_name": "github",
+                  "api_vendor": "github.com",
+                  "last_used_at": "2026-02-03T14:05:00Z"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ApiLastUseResponse"
+            },
+            "type": "array"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle limit, as an ISO 8601 duration of weeks, days, hours, minutes or seconds (P1D to P999D, e.g. P14D; no years or months): the binding ends once it has gone this long without a call, and the broker then refuses calls through it with 403 `credential_binding_expired`. Each call restarts the clock (counted at most about hourly), and so does every renewal; a binding that is never used ends one idle period after it was granted. Null when it has no idle limit.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding allows before it ends (1 is single use); each authorized call takes one, whatever the upstream answers, and renewing restores the count. Null for unlimited calls.",
+            "examples": [
+              1
+            ]
           },
           "name": {
             "anyOf": [
@@ -6947,6 +7902,35 @@
             "description": "Name of the bound credential; null if it cannot be resolved.",
             "examples": [
               "Stripe production key"
+            ]
+          },
+          "quota_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding still allows; null without a use count.",
+            "examples": [
+              1
+            ]
+          },
+          "renewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding was granted or last renewed (RFC 3339); the idle clock restarts at the later of this and its last use.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
             ]
           },
           "rule_set_id": {
@@ -7623,6 +8607,34 @@
               }
             ],
             "description": "Optional reason, recorded with the decision."
+          },
+          "renewal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantRenewalRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Approving a `grant_renewal` hold: the binding's fresh policy, which replaces its old one (renewing also restarts its idle clock and restores its uses). Required to approve one; refused on any other hold.",
+            "examples": [
+              {
+                "after_expiry": "hold",
+                "expires_at": "2026-02-15T09:30:00Z",
+                "idle_warning": false,
+                "max_idle_period": "P14D",
+                "max_quota": 1
+              }
+            ]
+          },
+          "run": {
+            "default": true,
+            "description": "With `renewal`: whether the held call runs once access is renewed. `false` renews and fails the call (for a stale one).",
+            "examples": [
+              true
+            ],
+            "type": "boolean"
           }
         },
         "required": [
@@ -7916,6 +8928,48 @@
           "authorization_endpoint",
           "token_endpoint"
         ],
+        "type": "object"
+      },
+      "DurationLimitResponse": {
+        "description": "A default and a maximum for one duration, as ISO 8601 durations; null when unset.",
+        "examples": [
+          {
+            "default": "P30D",
+            "max": "P90D"
+          }
+        ],
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Applied when a creation sets no policy; null for none.",
+            "examples": [
+              "P30D"
+            ]
+          },
+          "max": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The longest allowed; when set, every grant (or agent) must have one.",
+            "examples": [
+              "P90D"
+            ]
+          }
+        },
         "type": "object"
       },
       "EditAgentRef": {
@@ -9199,6 +10253,443 @@
         ],
         "type": "object"
       },
+      "EndingSoonBindingListResponse": {
+        "description": "Bindings that will soon reach their idle limit.",
+        "examples": [
+          {
+            "data": [
+              {
+                "after_expiry": "hold",
+                "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                "agent_name": "invoice-reconciler",
+                "bound_at": "2026-01-15T09:30:00Z",
+                "credential_id": "cred_6968b39855d91a3561684b32",
+                "ending": "end_date",
+                "ends_at": "2026-12-31T23:59:00Z",
+                "expired": false,
+                "expired_reason": null,
+                "expires_at": "2026-12-31T23:59:00Z",
+                "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                "idle_expires_at": "2026-12-31T23:59:00Z",
+                "idle_warning": false,
+                "last_used_at": "2026-02-03T14:05:00Z",
+                "last_used_by_api": [
+                  {
+                    "api_name": "github",
+                    "api_vendor": "github.com",
+                    "last_used_at": "2026-02-03T14:05:00Z"
+                  }
+                ],
+                "max_idle_period": "P14D",
+                "max_quota": 1,
+                "name": "Stripe production key",
+                "quota_remaining": 1,
+                "renewed_at": "2026-12-31T23:59:00Z",
+                "rule_set_id": "prs_6968b3987c22b63e87e79f05",
+                "serves": [
+                  {
+                    "api_name": "stripe",
+                    "api_vendor": "stripe.com",
+                    "api_version": "2024-04-10"
+                  }
+                ],
+                "suspended": false,
+                "suspended_reason": "api_deleted"
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "data": {
+            "description": "Bindings with the warning on that end soon, soonest first.",
+            "examples": [
+              [
+                {
+                  "after_expiry": "hold",
+                  "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "agent_name": "invoice-reconciler",
+                  "bound_at": "2026-01-15T09:30:00Z",
+                  "credential_id": "cred_6968b39855d91a3561684b32",
+                  "ending": "end_date",
+                  "ends_at": "2026-12-31T23:59:00Z",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
+                  "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
+                  "name": "Stripe production key",
+                  "quota_remaining": 1,
+                  "renewed_at": "2026-12-31T23:59:00Z",
+                  "rule_set_id": "prs_6968b3987c22b63e87e79f05",
+                  "serves": [
+                    {
+                      "api_name": "stripe",
+                      "api_vendor": "stripe.com",
+                      "api_version": "2024-04-10"
+                    }
+                  ],
+                  "suspended": false,
+                  "suspended_reason": "api_deleted"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/EndingSoonBindingResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "EndingSoonBindingResponse": {
+        "description": "A binding whose end date or idle limit will end it soon.",
+        "examples": [
+          {
+            "after_expiry": "hold",
+            "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "agent_name": "invoice-reconciler",
+            "bound_at": "2026-01-15T09:30:00Z",
+            "credential_id": "cred_6968b39855d91a3561684b32",
+            "ending": "end_date",
+            "ends_at": "2026-12-31T23:59:00Z",
+            "expired": false,
+            "expired_reason": null,
+            "expires_at": "2026-12-31T23:59:00Z",
+            "id": "acb_6968b3989a4f1c2e7d3b5a60",
+            "idle_expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
+            "last_used_at": "2026-02-03T14:05:00Z",
+            "last_used_by_api": [
+              {
+                "api_name": "github",
+                "api_vendor": "github.com",
+                "last_used_at": "2026-02-03T14:05:00Z"
+              }
+            ],
+            "max_idle_period": "P14D",
+            "max_quota": 1,
+            "name": "Stripe production key",
+            "quota_remaining": 1,
+            "renewed_at": "2026-12-31T23:59:00Z",
+            "rule_set_id": "prs_6968b3987c22b63e87e79f05",
+            "serves": [
+              {
+                "api_name": "stripe",
+                "api_vendor": "stripe.com",
+                "api_version": "2024-04-10"
+              }
+            ],
+            "suspended": false,
+            "suspended_reason": "api_deleted"
+          }
+        ],
+        "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew.",
+            "examples": [
+              "hold"
+            ]
+          },
+          "agent_id": {
+            "description": "ID of the agent the credential is bound to.",
+            "examples": [
+              "agnt_6968b3984d1c238dbe7e2e29"
+            ],
+            "type": "string"
+          },
+          "agent_name": {
+            "description": "Name of the agent the credential is bound to.",
+            "examples": [
+              "invoice-reconciler"
+            ],
+            "type": "string"
+          },
+          "bound_at": {
+            "description": "When the credential was bound (RFC 3339).",
+            "examples": [
+              "2026-01-15T09:30:00Z"
+            ],
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "ID of the bound credential.",
+            "examples": [
+              "cred_6968b39855d91a3561684b32"
+            ],
+            "type": "string"
+          },
+          "ending": {
+            "description": "Which limit ends it at `ends_at`: its end date (`end_date`) or its idle limit unless the agent uses it first (`idle`).",
+            "enum": [
+              "end_date",
+              "idle"
+            ],
+            "examples": [
+              "end_date"
+            ],
+            "type": "string"
+          },
+          "ends_at": {
+            "description": "When the binding ends (RFC 3339): the nearer of its end date and its idle deadline, of those due a warning.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ],
+            "format": "date-time",
+            "type": "string"
+          },
+          "expired": {
+            "default": false,
+            "description": "Whether `expires_at` has passed.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "expired_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantEndReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which limit ended the binding while `expired` is true: `end_date` (`expires_at` passed), `idle` (unused for `max_idle_period`) or `uses` (no uses left). Null while the binding holds.",
+            "examples": [
+              null
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339); null if it never expires.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "id": {
+            "description": "Unique ID of the binding.",
+            "examples": [
+              "acb_6968b3989a4f1c2e7d3b5a60"
+            ],
+            "type": "string"
+          },
+          "idle_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the idle limit ends the binding if it is not used before then (RFC 3339); null without an idle limit. Each use moves it later.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the agent last made a call through this credential, whatever its outcome (RFC 3339); null if it never has.",
+            "examples": [
+              "2026-02-03T14:05:00Z"
+            ]
+          },
+          "last_used_by_api": {
+            "default": [],
+            "description": "`last_used_at` per API the agent called through this credential, most recent first; a vendor-wide credential has one entry per API used.",
+            "examples": [
+              [
+                {
+                  "api_name": "github",
+                  "api_vendor": "github.com",
+                  "last_used_at": "2026-02-03T14:05:00Z"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ApiLastUseResponse"
+            },
+            "type": "array"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle limit, as an ISO 8601 duration of weeks, days, hours, minutes or seconds (P1D to P999D, e.g. P14D; no years or months): the binding ends once it has gone this long without a call, and the broker then refuses calls through it with 403 `credential_binding_expired`. Each call restarts the clock (counted at most about hourly), and so does every renewal; a binding that is never used ends one idle period after it was granted. Null when it has no idle limit.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding allows before it ends (1 is single use); each authorized call takes one, whatever the upstream answers, and renewing restores the count. Null for unlimited calls.",
+            "examples": [
+              1
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Name of the bound credential; null if it cannot be resolved.",
+            "examples": [
+              "Stripe production key"
+            ]
+          },
+          "quota_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the binding still allows; null without a use count.",
+            "examples": [
+              1
+            ]
+          },
+          "renewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding was granted or last renewed (RFC 3339); the idle clock restarts at the later of this and its last use.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "rule_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the shared permission rule set attached; null when inline rules apply.",
+            "examples": [
+              "prs_6968b3987c22b63e87e79f05"
+            ]
+          },
+          "serves": {
+            "default": [],
+            "description": "The APIs the bound credential serves; empty if unresolvable.",
+            "examples": [
+              [
+                {
+                  "api_name": "stripe",
+                  "api_vendor": "stripe.com",
+                  "api_version": "2024-04-10"
+                }
+              ]
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ServedApiRef"
+            },
+            "type": "array"
+          },
+          "suspended": {
+            "description": "Whether the binding is suspended, cutting off the agent's access to it.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "suspended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the binding is suspended: null for a manual suspension, `api_deleted` when the API the credential serves was deleted; cleared on resume.",
+            "examples": [
+              "api_deleted"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "credential_id",
+          "bound_at",
+          "suspended",
+          "agent_name",
+          "ends_at",
+          "ending"
+        ],
+        "type": "object"
+      },
       "ErrorItem": {
         "description": "A granular error detail entry within the errors[] array of a ProblemDetails response.\n\nAt least one of pointer, parameter, or header SHOULD be present to identify the error source.",
         "examples": [
@@ -10145,11 +11636,16 @@
         "description": "Bind a credential the approver already holds.\n\nWhen its OAuth grant lacks scopes the session asks for, the response is\nthe vendor challenge for them and the bind lands with the grant.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "credential_id": "cred_6968b39855d91a3561684b32",
             "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
             "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
             "kind": "existing_credential",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -10168,6 +11664,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Applies to the new binding.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -10214,6 +11718,29 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ]
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the new binding stops authorizing calls (RFC 3339, in the future), as the approver chose it; worked out when the approver confirms. Null binds with no expiry (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy. Ignored when the agent is already bound to the credential: that binding keeps its own end date.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Applies to the new binding.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
           "kind": {
             "const": "existing_credential",
             "description": "Confirm variant; always `existing_credential`.",
@@ -10221,6 +11748,37 @@
               "existing_credential"
             ],
             "type": "string"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as the approver chose it: the binding ends once it goes this long without a call. Null or absent sets none. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the new binding allows before it ends (1 is single use). Null or absent sets no count. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              1
+            ]
           },
           "permission_rules": {
             "description": "Permission rules to bind for the agent (at most 100).",
@@ -10274,6 +11832,14 @@
         "description": "A credential the viewer already holds for the target.\n\n``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials\nonly; a static credential's upstream permissions are not visible to the\nplatform. Binding one with ``missing_scopes`` runs a vendor consent for\nthem first (``needs_vendor_consent``), which widens the access of every\nagent in ``other_bound_agents`` too.",
         "examples": [
           {
+            "agent_binding": {
+              "expired": false,
+              "expires_at": "2026-12-31T23:59:00Z",
+              "max_idle_period": "P14D",
+              "max_quota": 1,
+              "quota_remaining": 1,
+              "suspended": false
+            },
             "can_bind": true,
             "credential_id": "cred_6968b39855d91a3561684b32",
             "granted_scopes": [
@@ -10294,6 +11860,27 @@
           }
         ],
         "properties": {
+          "agent_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionAgentBindingResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The session agent's own binding to this credential, when it already has one: confirming with it binds nothing new, so the binding keeps these limits.",
+            "examples": [
+              {
+                "expired": false,
+                "expires_at": "2026-12-31T23:59:00Z",
+                "max_idle_period": "P14D",
+                "max_quota": 1,
+                "quota_remaining": 1,
+                "suspended": false
+              }
+            ]
+          },
           "can_bind": {
             "description": "Whether this viewer may use it: its grant covers the request, or the missing scopes can be consented and the viewer may widen it.",
             "examples": [
@@ -10456,6 +12043,150 @@
         ],
         "type": "object"
       },
+      "GrantEndReason": {
+        "description": "Which limit ended a grant, as binding responses and denials report it.",
+        "enum": [
+          "end_date",
+          "idle",
+          "uses"
+        ],
+        "type": "string"
+      },
+      "GrantPolicyLimitsResponse": {
+        "description": "The org's defaults and maximums for new grants.",
+        "examples": [
+          {
+            "expires_in": {
+              "default": "P30D",
+              "max": "P90D"
+            },
+            "idle_period": {
+              "default": "P30D",
+              "max": "P90D"
+            },
+            "single_use_by_default": false
+          }
+        ],
+        "properties": {
+          "expires_in": {
+            "$ref": "#/components/schemas/DurationLimitResponse",
+            "description": "A grant's end date, as a lifetime from when it is granted or renewed.",
+            "examples": [
+              {
+                "default": "P30D",
+                "max": "P90D"
+              }
+            ]
+          },
+          "idle_period": {
+            "$ref": "#/components/schemas/DurationLimitResponse",
+            "description": "A grant's idle limit.",
+            "examples": [
+              {
+                "default": "P30D",
+                "max": "P90D"
+              }
+            ]
+          },
+          "single_use_by_default": {
+            "description": "Whether a grant created with no policy allows a single call.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "expires_in",
+          "idle_period",
+          "single_use_by_default"
+        ],
+        "type": "object"
+      },
+      "GrantRenewalRequest": {
+        "additionalProperties": false,
+        "description": "Re-grant access for an ended binding.\n\nEvery field left out sets no such limit, except the end date: left out, the\nbinding runs again for as long as it was granted for, capped at the org's\nmaximum (``null`` sets no end date).",
+        "examples": [
+          {
+            "after_expiry": "hold",
+            "expires_at": "2026-02-15T09:30:00Z",
+            "idle_warning": false,
+            "max_idle_period": "P14D",
+            "max_quota": 1
+          }
+        ],
+        "properties": {
+          "after_expiry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AfterExpiry"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Left out, the binding keeps its own.",
+            "examples": [
+              "hold"
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New end date (RFC 3339, in the future); null for no end date. Left out, the binding runs again for as long as it was granted for, capped at the org's maximum.",
+            "examples": [
+              "2026-02-15T09:30:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends (its end date or idle limit).",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D); null for none.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New use count (1 is single use); null for unlimited calls.",
+            "examples": [
+              1
+            ]
+          }
+        },
+        "type": "object"
+      },
       "GroupBy": {
         "description": "Grouping dimension for usage statistics.\n\n``CREDENTIAL`` groups by the credential an execution ran with\n(``execution_records.credential_id``).",
         "enum": [
@@ -10546,10 +12277,23 @@
             "execution_status": "held",
             "expires_at": "2026-01-15T10:30:00Z",
             "id": "held_6968b398a1c4e2d07b5f93c6",
+            "kind": "execution",
             "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
             "method": "POST",
             "operation_id": "listCharges",
             "path": "/v1/refunds",
+            "renewal": {
+              "after_expiry": "hold",
+              "can_renew": true,
+              "expired_reason": "idle",
+              "expires_at": "2026-01-10T00:00:00Z",
+              "idle_warning": false,
+              "last_used_at": "2026-01-01T09:30:00Z",
+              "max_idle_period": "P14D",
+              "max_quota": 1,
+              "quota_remaining": 0,
+              "renew_on_decide": true
+            },
             "request": {
               "body": "charge=ch_3MmlLrLkdIwHu7ix0snN0B15",
               "body_truncated": false,
@@ -10754,6 +12498,14 @@
             ],
             "type": "string"
           },
+          "kind": {
+            "$ref": "#/components/schemas/HeldExecutionKind",
+            "default": "execution",
+            "description": "Why the call is held: `execution` (a require-approval rule matched) or `grant_renewal` (the agent's binding to the credential has ended; approving re-grants its access first).",
+            "examples": [
+              "execution"
+            ]
+          },
           "matched_rule_id": {
             "anyOf": [
               {
@@ -10795,6 +12547,31 @@
               "/v1/refunds"
             ],
             "type": "string"
+          },
+          "renewal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HeldRenewalContextResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a `grant_renewal` hold: the binding it would renew.",
+            "examples": [
+              {
+                "after_expiry": "hold",
+                "can_renew": true,
+                "expired_reason": "idle",
+                "expires_at": "2026-01-10T00:00:00Z",
+                "idle_warning": false,
+                "last_used_at": "2026-01-01T09:30:00Z",
+                "max_idle_period": "P14D",
+                "max_quota": 1,
+                "quota_remaining": 0,
+                "renew_on_decide": true
+              }
+            ]
           },
           "request": {
             "anyOf": [
@@ -10875,6 +12652,14 @@
           "_links"
         ],
         "type": "object"
+      },
+      "HeldExecutionKind": {
+        "description": "Why a call is held.\n\n``execution``: a ``require-approval`` rule matched; approving runs it.\n``grant_renewal``: the agent's binding to the credential has ended (its end\ndate, idle limit or uses); approving re-grants the binding first,\nand may then run the call.",
+        "enum": [
+          "execution",
+          "grant_renewal"
+        ],
+        "type": "string"
       },
       "HeldExecutionLinksResponse": {
         "description": "HAL-style links for a held execution.",
@@ -10984,6 +12769,7 @@
                 "execution_status": "held",
                 "expires_at": "2026-01-15T10:30:00Z",
                 "id": "held_6968b398a1c4e2d07b5f93c6",
+                "kind": "execution",
                 "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                 "method": "POST",
                 "operation_id": "listCharges",
@@ -11025,6 +12811,7 @@
                   "execution_status": "held",
                   "expires_at": "2026-01-15T10:30:00Z",
                   "id": "held_6968b398a1c4e2d07b5f93c6",
+                  "kind": "execution",
                   "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                   "method": "POST",
                   "operation_id": "listCharges",
@@ -11094,6 +12881,7 @@
             "execution_status": "held",
             "expires_at": "2026-01-15T10:30:00Z",
             "id": "held_6968b398a1c4e2d07b5f93c6",
+            "kind": "execution",
             "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
             "method": "POST",
             "operation_id": "listCharges",
@@ -11267,6 +13055,14 @@
               "held_6968b398a1c4e2d07b5f93c6"
             ],
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HeldExecutionKind",
+            "default": "execution",
+            "description": "Why the call is held: `execution` (a require-approval rule matched) or `grant_renewal` (the agent's binding to the credential has ended; approving re-grants its access first).",
+            "examples": [
+              "execution"
+            ]
           },
           "matched_rule_id": {
             "anyOf": [
@@ -11463,6 +13259,145 @@
         ],
         "type": "string"
       },
+      "HeldRenewalContextResponse": {
+        "description": "The binding a `grant_renewal` hold would renew, as it stands now.",
+        "examples": [
+          {
+            "after_expiry": "hold",
+            "can_renew": true,
+            "expired_reason": "idle",
+            "expires_at": "2026-01-10T00:00:00Z",
+            "idle_warning": false,
+            "last_used_at": "2026-01-01T09:30:00Z",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
+            "quota_remaining": 0,
+            "renew_on_decide": true
+          }
+        ],
+        "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through it gets once it has ended: `hold` or `refuse`.",
+            "examples": [
+              "hold"
+            ]
+          },
+          "can_renew": {
+            "default": false,
+            "description": "Whether the caller may re-grant access (else it can only deny): a person who owns the agent and the credential, or an `org:admin`.",
+            "examples": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "expired_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantEndReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which limit ended it: `end_date`, `idle` or `uses`; null if it holds again (renewed since).",
+            "examples": [
+              "idle"
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its current end date.",
+            "examples": [
+              "2026-01-10T00:00:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Whether its owner is warned before it ends (end date or idle limit).",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its last recorded use; null if never used.",
+            "examples": [
+              "2026-01-01T09:30:00Z"
+            ]
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its current idle limit, as an ISO 8601 duration.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its use count (1 is single use).",
+            "examples": [
+              1
+            ]
+          },
+          "quota_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Uses left under its count.",
+            "examples": [
+              0
+            ]
+          },
+          "renew_on_decide": {
+            "default": true,
+            "description": "Whether approving with `renewal` renews the binding here. False where this deployment's admin surface cannot renew (it runs apart from the control database), and `can_renew` is then unknown: renew the binding through `PATCH /agents/{agent_id}/credentials/{credential_id}`, then approve without `renewal`.",
+            "examples": [
+              true
+            ],
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "HeldRequestResponse": {
         "description": "The held call exactly as it runs if approved (credentials are injected at run time).",
         "examples": [
@@ -11636,6 +13571,8 @@
             "oauth_app_registration_id": "oar_6968b39821e5f89a6975f501",
             "preferred_flow": "authorization_code",
             "reason": "Needs read access to triage issues in the platform repo.",
+            "requested_expires_in": "P7D",
+            "requested_max_idle_period": "P14D",
             "requested_permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -11762,6 +13699,36 @@
             "description": "Free-text reason for the request, shown to the approver.",
             "examples": [
               "Needs read access to triage issues in the platform repo."
+            ]
+          },
+          "requested_expires_in": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How long the requested access should last, as an ISO 8601 duration counted from approval (e.g. P7D or PT8H; at most P999D). Shown preselected on the review page; the approver decides the binding's actual end date. Omit to ask for nothing in particular.",
+            "examples": [
+              "P7D"
+            ]
+          },
+          "requested_max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The idle limit to ask for, as an ISO 8601 duration (P1D to P999D, e.g. P14D): the access would end once it goes this long without a call. Shown on the review page; the approver decides.",
+            "examples": [
+              "P14D"
             ]
           },
           "requested_permission_rules": {
@@ -12463,9 +14430,19 @@
             "approved_by": "usr_6968b3987ee4c3ec0b4ee3b9",
             "credential_bindings": [
               {
+                "after_expiry": "hold",
                 "bound_at": "2026-01-15T09:30:00Z",
                 "credential_id": "cred_6968b39855d91a3561684b32",
+                "expired": false,
+                "expired_reason": null,
+                "expires_at": "2026-12-31T23:59:00Z",
+                "idle_expires_at": "2026-12-31T23:59:00Z",
+                "idle_warning": false,
+                "last_used_at": "2026-11-20T10:00:00Z",
+                "max_idle_period": "P14D",
+                "max_quota": 1,
                 "name": "Stripe production key",
+                "quota_remaining": 1,
                 "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                 "serves": [
                   {
@@ -12515,9 +14492,19 @@
             "examples": [
               [
                 {
+                  "after_expiry": "hold",
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-11-20T10:00:00Z",
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
                   "name": "Stripe production key",
+                  "quota_remaining": 1,
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
                     {
@@ -15623,6 +17610,7 @@
         "description": "Confirm an OAuth session: the scopes to request and the agent's rules.\n\nThe default variant — a body without ``kind`` is this one.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "confirmed_scopes": [
               "repo",
@@ -15630,7 +17618,11 @@
             ],
             "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
             "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
             "kind": "oauth",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -15649,6 +17641,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Applies to the new binding.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -15706,6 +17706,29 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ]
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the new binding stops authorizing calls (RFC 3339, in the future), as the approver chose it; worked out when the approver confirms. Null binds with no expiry (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy. Ignored when the agent is already bound to the credential: that binding keeps its own end date.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Applies to the new binding.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
           "kind": {
             "const": "oauth",
             "default": "oauth",
@@ -15714,6 +17737,37 @@
               "oauth"
             ],
             "type": "string"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as the approver chose it: the binding ends once it goes this long without a call. Null or absent sets none. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the new binding allows before it ends (1 is single use). Null or absent sets no count. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              1
+            ]
           },
           "permission_rules": {
             "description": "Permission rules to bind for the agent (at most 100).",
@@ -17867,6 +19921,7 @@
         "description": "Resolve an ``awaiting_app`` session with the approver's own OAuth client.\n\nThe client is stored on the session's credential (the same shape as a\n``direct_oauth2`` credential) and the session continues as an\nauthorization-code connect. Both endpoints are required: the API's\ndeclared OAuth endpoints are never used for the approver's client, since\nthe spec may be agent-submitted and the token endpoint receives the\nclient secret.",
         "examples": [
           {
+            "after_expiry": "hold",
             "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
             "authorize_url": "https://github.com/login/oauth/authorize",
             "client_id": "Iv1.a1b2c3d4",
@@ -17877,7 +19932,11 @@
             ],
             "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
             "expected_agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "expires_at": "2026-12-31T23:59:00Z",
+            "idle_warning": false,
             "kind": "own_oauth_client",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
             "permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -17897,6 +19956,14 @@
           }
         ],
         "properties": {
+          "after_expiry": {
+            "$ref": "#/components/schemas/AfterExpiry",
+            "default": "hold",
+            "description": "What a call through the binding gets once it has ended. `hold` (the default): the first such call is held as a `grant_renewal` for the agent's owner to renew the binding and run it; later calls get `403 credential_binding_expired` while that review is pending. `refuse`: every call gets `403 credential_binding_expired`, whose directive tells the agent to ask its owner to renew. Applies to the new binding.",
+            "examples": [
+              "hold"
+            ]
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -17978,6 +20045,29 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ]
           },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the new binding stops authorizing calls (RFC 3339, in the future), as the approver chose it; worked out when the approver confirms. Null binds with no expiry (refused under an org maximum). A body that sets none of `expires_at`, `max_idle_period` and `max_quota` gets the org's default policy. Ignored when the agent is already bound to the credential: that binding keeps its own end date.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "idle_warning": {
+            "default": false,
+            "description": "Warn the agent's owner before the binding ends: once a day a job raises a `credential_grant.expiring` event when its end date is within 48 hours (for a binding granted for 4 days or more), and a `credential_grant.idle_expiring` event when it will go idle within 48 hours (for idle limits of 4 days or more); each once per end date or idle period. Off unless set. Applies to the new binding.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
           "kind": {
             "const": "own_oauth_client",
             "description": "Confirm variant; always `own_oauth_client`.",
@@ -17985,6 +20075,37 @@
               "own_oauth_client"
             ],
             "type": "string"
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new binding's idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D), as the approver chose it: the binding ends once it goes this long without a call. Null or absent sets none. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many calls the new binding allows before it ends (1 is single use). Null or absent sets no count. Ignored when the agent is already bound to the credential.",
+            "examples": [
+              1
+            ]
           },
           "permission_rules": {
             "description": "Permission rules to bind for the agent (at most 100).",
@@ -20295,6 +22416,14 @@
             },
             "existing_credentials": [
               {
+                "agent_binding": {
+                  "expired": false,
+                  "expires_at": "2026-12-31T23:59:00Z",
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
+                  "quota_remaining": 1,
+                  "suspended": false
+                },
                 "can_bind": true,
                 "credential_id": "cred_6968b39855d91a3561684b32",
                 "granted_scopes": [
@@ -20327,6 +22456,8 @@
             },
             "reason": "Needs read access to triage issues in the platform repo.",
             "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
+            "requested_expires_in": "P7D",
+            "requested_max_idle_period": "P14D",
             "requested_permission_rules": [
               {
                 "comment": "Lets the agent draft replies, never send them.",
@@ -20511,6 +22642,14 @@
             "examples": [
               [
                 {
+                  "agent_binding": {
+                    "expired": false,
+                    "expires_at": "2026-12-31T23:59:00Z",
+                    "max_idle_period": "P14D",
+                    "max_quota": 1,
+                    "quota_remaining": 1,
+                    "suspended": false
+                  },
                   "can_bind": true,
                   "credential_id": "cred_6968b39855d91a3561684b32",
                   "granted_scopes": [
@@ -20606,6 +22745,36 @@
               "agnt_6968b3984d1c238dbe7e2e29"
             ],
             "type": "string"
+          },
+          "requested_expires_in": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How long the requester asked the access to last, as an ISO 8601 duration from approval; null when nothing was asked. The approver chooses the actual end date on confirm.",
+            "examples": [
+              "P7D"
+            ]
+          },
+          "requested_max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The idle limit the requester asked for, as an ISO 8601 duration; null when none.",
+            "examples": [
+              "P14D"
+            ]
           },
           "requested_permission_rules": {
             "examples": [
@@ -21967,6 +24136,98 @@
         },
         "required": [
           "api_vendor"
+        ],
+        "type": "object"
+      },
+      "SessionAgentBindingResponse": {
+        "description": "The session agent's own binding to a credential it already holds.\n\nBinding that credential again creates nothing: the binding keeps these\nlimits, and the limits chosen on the review do not apply to it.",
+        "examples": [
+          {
+            "expired": false,
+            "expires_at": "2026-12-31T23:59:00Z",
+            "max_idle_period": "P14D",
+            "max_quota": 1,
+            "quota_remaining": 1,
+            "suspended": false
+          }
+        ],
+        "properties": {
+          "expired": {
+            "description": "Whether one of its limits has been reached.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the binding stops authorizing calls (RFC 3339); null never expires.",
+            "examples": [
+              "2026-12-31T23:59:00Z"
+            ]
+          },
+          "max_idle_period": {
+            "anyOf": [
+              {
+                "format": "duration",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its idle limit as an ISO 8601 duration; null without one.",
+            "examples": [
+              "P14D"
+            ]
+          },
+          "max_quota": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its use count (1 is single use); null without one.",
+            "examples": [
+              1
+            ]
+          },
+          "quota_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The uses it has left; null without a use count.",
+            "examples": [
+              1
+            ]
+          },
+          "suspended": {
+            "description": "Whether the binding is suspended.",
+            "examples": [
+              false
+            ],
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "suspended",
+          "expired"
         ],
         "type": "object"
       },
@@ -25957,6 +28218,159 @@
       },
       "summary": "Create an agent; List visible agents"
     },
+    "/agents/credentials:ending-soon": {
+      "description": "`GET`: List credential bindings ending soon.",
+      "get": {
+        "description": "List bindings that will reach their end date or idle limit soon.\n\nOnly bindings whose owner turned on the warning (`idle_warning`) and which\nhave not been suspended or ended, where either the end date is within the\nnext 48 hours (for a binding granted for 4 days or more) or the idle\ndeadline (`idle_expires_at`) is (for an idle limit of 4 days or more).\n`ends_at` and `ending` give the nearer of the two. The same bindings get a\n`credential_grant.expiring` or `credential_grant.idle_expiring` event, once\nper end date or idle period. Soonest first. Scoped like the agents list: `org:admin` sees\nevery agent's bindings, anyone else their own agents'.",
+        "operationId": "listCredentialBindingsEndingSoon",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [
+                    {
+                      "after_expiry": "hold",
+                      "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                      "agent_name": "invoice-reconciler",
+                      "bound_at": "2026-01-15T09:30:00Z",
+                      "credential_id": "cred_6968b39855d91a3561684b32",
+                      "ending": "end_date",
+                      "ends_at": "2026-12-31T23:59:00Z",
+                      "expired": false,
+                      "expired_reason": null,
+                      "expires_at": "2026-12-31T23:59:00Z",
+                      "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                      "idle_expires_at": "2026-12-31T23:59:00Z",
+                      "idle_warning": false,
+                      "last_used_at": "2026-02-03T14:05:00Z",
+                      "last_used_by_api": [
+                        {
+                          "api_name": "github",
+                          "api_vendor": "github.com",
+                          "last_used_at": "2026-02-03T14:05:00Z"
+                        }
+                      ],
+                      "max_idle_period": "P14D",
+                      "max_quota": 1,
+                      "name": "Stripe production key",
+                      "quota_remaining": 1,
+                      "renewed_at": "2026-12-31T23:59:00Z",
+                      "rule_set_id": "prs_6968b3987c22b63e87e79f05",
+                      "serves": [
+                        {
+                          "api_name": "stripe",
+                          "api_vendor": "stripe.com",
+                          "api_version": "2024-04-10"
+                        }
+                      ],
+                      "suspended": false,
+                      "suspended_reason": "api_deleted"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/EndingSoonBindingListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "List credential bindings ending soon",
+        "tags": [
+          "Agents"
+        ]
+      },
+      "summary": "List credential bindings ending soon"
+    },
+    "/agents/credentials:policy": {
+      "description": "`GET`: Get the org's grant defaults and maximums.",
+      "get": {
+        "description": "The org's defaults and maximums for new credential grants.\n\nA default applies when a request creating a grant sets no\npolicy; a maximum refuses (422 `grant_policy_limit_exceeded`) anything\nlonger, or no limit at all, on every path that creates or renews one. The\nconsole preselects the defaults and disables choices above a maximum.\nReadable by any signed-in caller.",
+        "operationId": "getGrantPolicyLimits",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "expires_in": {
+                    "default": "P30D",
+                    "max": "P90D"
+                  },
+                  "idle_period": {
+                    "default": "P30D",
+                    "max": "P90D"
+                  },
+                  "single_use_by_default": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/GrantPolicyLimitsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Get the org's grant defaults and maximums",
+        "tags": [
+          "Agents"
+        ]
+      },
+      "summary": "Get the org's grant defaults and maximums"
+    },
     "/agents/{agent_id}": {
       "delete": {
         "description": "Archive an agent — or, with ``purge=true``, hard-delete it.\n\nArchive keeps the row for history, but the action is not reversible and\nthe agent's authority is swept: permission grants, credential bindings, and\nOAuth consent grants are revoked. For the reversible kill switch use\n``:disable`` / ``:enable`` instead.\n\nPurge removes the agent and its authority and session rows; it archives\nfirst if needed, so the agent's authority is gone before any cleanup runs,\nand a failed purge leaves the agent archived and can be retried. Archive\nreturns 409 for an already-archived agent; purge accepts any status.",
@@ -26415,7 +28829,7 @@
     "/agents/{agent_id}/credentials": {
       "description": "`GET`: List an agent's credential bindings. `POST`: Bind a credential to an agent.",
       "get": {
-        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), and any attached permission\n`rule_set_id`. Credential secrets are never returned. Readable like\n`GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a\ncaller holding `agents:read` (implied by `agents:write`); 404 otherwise.\nThe list is not paginated.",
+        "description": "List the credentials bound directly to an agent.\n\nEach binding names the credential, the API it serves, when it was bound,\nwhether it is `suspended` (and why), any attached permission\n`rule_set_id`, and `last_used_at`: when the agent last made a call through\nthe credential (null if never). Credential secrets are never returned. Readable like\n`GET /agents/{agent_id}`: by the agent itself, its owner, `org:admin`, and a\ncaller holding `agents:read` (implied by `agents:write`); 404 otherwise.\nThe list is not paginated.",
         "operationId": "listAgentCredentials",
         "parameters": [
           {
@@ -26446,11 +28860,29 @@
                 "example": {
                   "data": [
                     {
+                      "after_expiry": "hold",
                       "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                       "bound_at": "2026-01-15T09:30:00Z",
                       "credential_id": "cred_6968b39855d91a3561684b32",
+                      "expired": false,
+                      "expired_reason": null,
+                      "expires_at": "2026-12-31T23:59:00Z",
                       "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                      "idle_expires_at": "2026-12-31T23:59:00Z",
+                      "idle_warning": false,
+                      "last_used_at": "2026-02-03T14:05:00Z",
+                      "last_used_by_api": [
+                        {
+                          "api_name": "github",
+                          "api_vendor": "github.com",
+                          "last_used_at": "2026-02-03T14:05:00Z"
+                        }
+                      ],
+                      "max_idle_period": "P14D",
+                      "max_quota": 1,
                       "name": "Stripe production key",
+                      "quota_remaining": 1,
+                      "renewed_at": "2026-12-31T23:59:00Z",
                       "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                       "serves": [
                         {
@@ -26521,7 +28953,7 @@
         ]
       },
       "post": {
-        "description": "Let an agent use a credential by binding it directly.\n\nA new binding starts with no permission rules, so the agent can make no\ncalls with it until rules are set or a rule set is attached. The caller\nmust be able to see the agent and must own the credential (or hold\n`org:admin`). A credential that does not exist or that the caller does\nnot own returns 404; binding the same credential twice returns 409\n(`credential_binding_conflict`).\nReturns the new binding.",
+        "description": "Let an agent use a credential by binding it directly.\n\nA new binding starts with no permission rules, so the agent can make no\ncalls with it until rules are set or a rule set is attached. The caller\nmust be able to see the agent and must own the credential (or hold\n`org:admin`). A credential that does not exist or that the caller does\nnot own returns 404; binding the same credential twice returns 409\n(`credential_binding_conflict`). An agent binding itself is refused with\n409 while it holds a suspended (`credential_binding_suspended`) or expired\n(`credential_binding_expired`) binding for an API the credential also\nserves: only the operator lifts that cut-off, and a second binding would\nroute around it (suspension is reported first). An optional `expires_at`\n(future only, otherwise 422) ends the binding at that time; omit it for a\nbinding that never expires. Returns the new binding.",
         "operationId": "bindAgentCredential",
         "parameters": [
           {
@@ -26549,7 +28981,12 @@
           "content": {
             "application/json": {
               "example": {
-                "credential_id": "cred_6968b39855d91a3561684b32"
+                "after_expiry": "hold",
+                "credential_id": "cred_6968b39855d91a3561684b32",
+                "expires_at": "2026-12-31T23:59:00Z",
+                "idle_warning": false,
+                "max_idle_period": "P14D",
+                "max_quota": 1
               },
               "schema": {
                 "$ref": "#/components/schemas/CredentialBindRequest"
@@ -26564,11 +29001,29 @@
             "content": {
               "application/json": {
                 "example": {
+                  "after_expiry": "hold",
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
                   "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
                   "name": "Stripe production key",
+                  "quota_remaining": 1,
+                  "renewed_at": "2026-12-31T23:59:00Z",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
                     {
@@ -26628,7 +29083,7 @@
                 }
               }
             },
-            "description": "The same credential is already bound to this agent (`credential_binding_conflict`)"
+            "description": "The same credential is already bound to this agent (`credential_binding_conflict`), or an agent binding itself already holds a suspended (`credential_binding_suspended`) or expired (`credential_binding_expired`) binding for an API the credential serves"
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
@@ -26775,8 +29230,166 @@
           "Agents"
         ]
       },
-      "description": "`DELETE`: Suspend or remove a credential binding.",
-      "summary": "Suspend or remove a credential binding"
+      "description": "`PATCH`: Renew a credential binding. `DELETE`: Suspend or remove a credential binding.",
+      "patch": {
+        "description": "Re-certify a binding: restart its idle clock, and set, extend or clear its limits.\n\n`expires_at` (future only, otherwise 422) sets or moves the end date; null\nclears it. Left out, the binding runs again for as long as it was granted\nfor, capped at the org's maximum (one with no end date takes the maximum,\nor keeps none without one). `max_idle_period` (an ISO 8601 duration, P1D to P999D)\nsets the idle limit; null removes it. Left out, the binding keeps its own,\ncapped at the org's maximum idle limit (one with none takes the org's\ndefault, or the maximum). Any other field left out stays as it is, and\nevery renewal restarts the idle clock, so an empty body re-certifies a\nbinding that is still needed. This is how an expired binding is\nrenewed, and it never changes `suspended`: renewing does not resume a\nsuspension, and resuming does not extend an expiry. Renewing re-grants the\ncredential, so it takes the same checks as `:resume`: the caller must own\nthe credential (or hold `org:admin`) as well as see the agent, and an agent\ncannot renew its own binding. Audited; broker caches are invalidated, so\na shortened deadline is checked on every broker. A separate broker may cache a denial\nuntil its binding-cache TTL elapses. Returns the binding.",
+        "operationId": "renewAgentCredentialBinding",
+        "parameters": [
+          {
+            "description": "ID of the agent.",
+            "examples": {
+              "example": {
+                "summary": "Agent ID",
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the agent.",
+              "examples": [
+                "agnt_6968b3984d1c238dbe7e2e29"
+              ],
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "ID of the credential bound to the agent.",
+            "examples": {
+              "example": {
+                "summary": "Credential ID",
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "description": "ID of the credential bound to the agent.",
+              "examples": [
+                "cred_6968b39855d91a3561684b32"
+              ],
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "after_expiry": "refuse",
+                "expires_at": "2026-12-31T23:59:00Z",
+                "idle_warning": true,
+                "max_idle_period": "P14D",
+                "max_quota": 1
+              },
+              "schema": {
+                "$ref": "#/components/schemas/CredentialBindingPatchRequest"
+              }
+            }
+          },
+          "description": "Request body for renewing a credential binding: re-certify it, and change its limits.\n\nEvery renewal restarts the binding's idle clock. Each limit sent is set, and\nnull clears it; an absent field is never read as clearing. An end date left\nout runs the binding again for as long as it was granted for, capped at the\norg's maximum; any other limit left out stays as it is. An empty body\nre-certifies (\"still needed\").",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "after_expiry": "hold",
+                  "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "bound_at": "2026-01-15T09:30:00Z",
+                  "credential_id": "cred_6968b39855d91a3561684b32",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
+                  "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
+                  "name": "Stripe production key",
+                  "quota_remaining": 1,
+                  "renewed_at": "2026-12-31T23:59:00Z",
+                  "rule_set_id": "prs_6968b3987c22b63e87e79f05",
+                  "serves": [
+                    {
+                      "api_name": "stripe",
+                      "api_vendor": "stripe.com",
+                      "api_version": "2024-04-10"
+                    }
+                  ],
+                  "suspended": false,
+                  "suspended_reason": "api_deleted"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialBindingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "No binding exists (`credential_binding_not_found`), the agent is not visible to the caller (`actor_not_found`), or the credential is not owned by the caller — including an agent renewing its own binding (`credential_not_found`)"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "OAuth2": []
+          }
+        ],
+        "summary": "Renew a credential binding",
+        "tags": [
+          "Agents"
+        ]
+      },
+      "summary": "Renew a credential binding; Suspend or remove a credential binding"
     },
     "/agents/{agent_id}/credentials/{credential_id}:resume": {
       "description": "`POST`: Resume a suspended credential binding.",
@@ -26830,11 +29443,29 @@
             "content": {
               "application/json": {
                 "example": {
+                  "after_expiry": "hold",
                   "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                   "bound_at": "2026-01-15T09:30:00Z",
                   "credential_id": "cred_6968b39855d91a3561684b32",
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
                   "id": "acb_6968b3989a4f1c2e7d3b5a60",
+                  "idle_expires_at": "2026-12-31T23:59:00Z",
+                  "idle_warning": false,
+                  "last_used_at": "2026-02-03T14:05:00Z",
+                  "last_used_by_api": [
+                    {
+                      "api_name": "github",
+                      "api_vendor": "github.com",
+                      "last_used_at": "2026-02-03T14:05:00Z"
+                    }
+                  ],
+                  "max_idle_period": "P14D",
+                  "max_quota": 1,
                   "name": "Stripe production key",
+                  "quota_remaining": 1,
+                  "renewed_at": "2026-12-31T23:59:00Z",
                   "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                   "serves": [
                     {
@@ -32063,6 +34694,14 @@
                   },
                   "existing_credentials": [
                     {
+                      "agent_binding": {
+                        "expired": false,
+                        "expires_at": "2026-12-31T23:59:00Z",
+                        "max_idle_period": "P14D",
+                        "max_quota": 1,
+                        "quota_remaining": 1,
+                        "suspended": false
+                      },
                       "can_bind": true,
                       "credential_id": "cred_6968b39855d91a3561684b32",
                       "granted_scopes": [
@@ -32095,6 +34734,8 @@
                   },
                   "reason": "Needs read access to triage issues in the platform repo.",
                   "requested_by_actor_id": "agnt_6968b3984d1c238dbe7e2e29",
+                  "requested_expires_in": "P7D",
+                  "requested_max_idle_period": "P14D",
                   "requested_permission_rules": [
                     {
                       "comment": "Lets the agent draft replies, never send them.",
@@ -32641,7 +35282,7 @@
     "/connect-sessions/{session_id}:confirm": {
       "description": "`POST`: Confirm a connect session.",
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``), or an edit session's\nfinal rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent\nwhose binding to a credential covering the session's API is suspended\n(including one picked at confirm) is refused with 409\n``connect_session_binding_suspended``.\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``), or an edit session's\nfinal rules (``edit``, naming the reviewed ``revision_id``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent\nwhose binding to a credential covering the session's API is suspended\nor expired (including one picked at confirm) is refused with 409\n``connect_session_binding_suspended`` or\n``connect_session_binding_expired``.\n\nA response carrying an ``authorize_url`` also sets a short-lived\n``HttpOnly`` cookie scoped to the OAuth callback path: the vendor\nsign-in completes only in the approver's browser that called this\nendpoint, whoever opened the session.",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -33517,7 +36158,7 @@
     "/credentials/{credential_id}/agents": {
       "description": "`GET`: List agents bound to credential.",
       "get": {
-        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view: every agent\nwhose direct binding points at this credential, filtered to the agents\nthe caller may see.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).",
+        "description": "List agents directly bound to a credential with cursor-based pagination.\n\nThe reverse lookup for the credential-detail \"Agents\" view: every agent\nwhose direct binding points at this credential, filtered to the agents\nthe caller may see.\nSuspended bindings are included with their flag set and, when known, the\nreason (`api_deleted` when the credential's API was deleted).\nExpired bindings are included too, with `expires_at` and `expired` set.\nEach row carries `last_used_at`: when that agent last made a call through\nthis credential (null if never).",
         "operationId": "listCredentialAgents",
         "parameters": [
           {
@@ -33584,9 +36225,20 @@
                 "example": {
                   "data": [
                     {
+                      "after_expiry": "hold",
                       "agent_id": "agnt_6968b3984d1c238dbe7e2e29",
                       "agent_name": "billing-assistant",
                       "bound_at": "2026-01-15T09:30:00Z",
+                      "expired": false,
+                      "expired_reason": null,
+                      "expires_at": "2026-12-31T23:59:00Z",
+                      "idle_expires_at": "2026-12-31T23:59:00Z",
+                      "idle_warning": false,
+                      "last_used_at": "2026-02-03T14:05:00Z",
+                      "max_idle_period": "P14D",
+                      "max_quota": 1,
+                      "owner_id": "usr_6968b3987ee4c3ec0b4ee3b9",
+                      "quota_remaining": 1,
                       "rule_set_id": "prs_6968b3987c22b63e87e79f05",
                       "status": "active",
                       "suspended": false,
@@ -33691,6 +36343,9 @@
                       "path": "/v1/charges"
                     }
                   ],
+                  "expired": false,
+                  "expired_reason": null,
+                  "expires_at": "2026-12-31T23:59:00Z",
                   "granted_scopes": [
                     "repo",
                     "read:user"
@@ -35893,6 +38548,7 @@
                       "execution_status": "held",
                       "expires_at": "2026-01-15T10:30:00Z",
                       "id": "held_6968b398a1c4e2d07b5f93c6",
+                      "kind": "execution",
                       "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                       "method": "POST",
                       "operation_id": "listCharges",
@@ -35985,10 +38641,23 @@
                   "execution_status": "held",
                   "expires_at": "2026-01-15T10:30:00Z",
                   "id": "held_6968b398a1c4e2d07b5f93c6",
+                  "kind": "execution",
                   "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                   "method": "POST",
                   "operation_id": "listCharges",
                   "path": "/v1/refunds",
+                  "renewal": {
+                    "after_expiry": "hold",
+                    "can_renew": true,
+                    "expired_reason": "idle",
+                    "expires_at": "2026-01-10T00:00:00Z",
+                    "idle_warning": false,
+                    "last_used_at": "2026-01-01T09:30:00Z",
+                    "max_idle_period": "P14D",
+                    "max_quota": 1,
+                    "quota_remaining": 0,
+                    "renew_on_decide": true
+                  },
                   "request": {
                     "body": "charge=ch_3MmlLrLkdIwHu7ix0snN0B15",
                     "body_truncated": false,
@@ -36197,7 +38866,7 @@
     "/executions/holds/{held_execution_id}:decide": {
       "description": "`POST`: Approve or deny a held execution.",
       "post": {
-        "description": "Decide a pending held execution — the agent's owner or an ``org:admin`` only.\n\n``approve`` releases the call, which is re-authorized and run once; ``deny``\nfails it with a permission-denied result. The first decision wins: deciding\none that is no longer pending (or has expired) answers ``409``. An agent\ncaller is always refused (``403``), whatever its permissions.",
+        "description": "Decide a pending held execution — the agent's owner or an ``org:admin`` only.\n\n``approve`` releases the call, which is re-authorized and run once; ``deny``\nfails it with a permission-denied result. The first decision wins: deciding\none that is no longer pending (or has expired) answers ``409``. An agent\ncaller is always refused (``403``), whatever its permissions.\n\nA ``grant_renewal`` hold (the agent's binding ended) is approved with\n``renewal``, the binding's fresh policy, which replaces its old one; with\n``run: false`` the binding is renewed and the call fails instead of\nrunning. Only a reviewer who may renew the binding directly (a person who\nowns the agent and the credential, or an ``org:admin``) can approve one\n(``403 held_execution_renewal_forbidden`` otherwise); anyone who can\ndecide may deny it. ``renewal`` on any other hold is a ``422``. Where this\ndeployment cannot renew from a hold (``renewal.renew_on_decide`` is false on\nthe hold), renew the binding through its own endpoint first, then approve\nwithout ``renewal``; that is accepted once the binding is live again.",
         "operationId": "decideHeldExecution",
         "parameters": [
           {
@@ -36245,6 +38914,7 @@
                   "execution_status": "held",
                   "expires_at": "2026-01-15T10:30:00Z",
                   "id": "held_6968b398a1c4e2d07b5f93c6",
+                  "kind": "execution",
                   "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                   "method": "POST",
                   "operation_id": "listCharges",
@@ -36351,6 +39021,7 @@
                   "execution_status": "held",
                   "expires_at": "2026-01-15T10:30:00Z",
                   "id": "held_6968b398a1c4e2d07b5f93c6",
+                  "kind": "execution",
                   "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                   "method": "POST",
                   "operation_id": "listCharges",
@@ -36443,6 +39114,7 @@
                   "execution_status": "held",
                   "expires_at": "2026-01-15T10:30:00Z",
                   "id": "held_6968b398a1c4e2d07b5f93c6",
+                  "kind": "execution",
                   "matched_rule_id": "apr_6968b398c4e1a2b3d5f60718",
                   "method": "POST",
                   "operation_id": "listCharges",
@@ -37242,7 +39914,7 @@
     "/integrations:connect": {
       "description": "`POST`: Start an integration connect session.",
       "post": {
-        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. Naming\nan owned agent also takes `agents:write`, which confirming for it needs\n(403 `connect_session_confirmation_forbidden` otherwise), and an active\nagent (409 `connect_session_agent_inactive` otherwise). An agent whose\nbinding to a credential covering the requested API is suspended gets\n409 `connect_session_binding_suspended`: only the operator can resume\nthat binding, so a new connect for the same API is refused. When\nnamed, confirm creates the direct agent-credential binding + permission\nrules; when omitted, the credential connects unbound and an agent can\nbe bound later through the credentials API.",
+        "description": "Both entrypoints (agent + UI) use this endpoint.\n\nAgent callers: `agent_id` in the payload is refused (the caller *is*\nthe agent — spoofing another agent's id is a permission-boundary\nviolation). The caller's own identity is injected instead. UI / user\ncallers: `agent_id` is optional and must name an agent the caller owns\n(`org:admin` may name any agent); any other id is refused with 400\n`connect_session_agent_not_found`, the same as an unknown agent. Naming\nan owned agent also takes `agents:write`, which confirming for it needs\n(403 `connect_session_confirmation_forbidden` otherwise), and an active\nagent (409 `connect_session_agent_inactive` otherwise). An agent whose\nbinding to a credential covering the requested API is suspended gets\n409 `connect_session_binding_suspended`, and one whose binding has\nexpired gets 409 `connect_session_binding_expired`: only the operator\ncan resume or renew that binding, so a new connect for the same API is\nrefused. When named, confirm creates the direct agent-credential\nbinding + permission rules; when omitted, the credential connects\nunbound and an agent can be bound later through the credentials API.",
         "operationId": "integrationsConnect",
         "requestBody": {
           "content": {
@@ -37259,6 +39931,8 @@
                 "oauth_app_registration_id": "oar_6968b39821e5f89a6975f501",
                 "preferred_flow": "authorization_code",
                 "reason": "Needs read access to triage issues in the platform repo.",
+                "requested_expires_in": "P7D",
+                "requested_max_idle_period": "P14D",
                 "requested_permission_rules": [
                   {
                     "comment": "Lets the agent draft replies, never send them.",

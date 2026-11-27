@@ -80,6 +80,8 @@ test('an approval link opens on its own, and a finished connect closes itself', 
 	// Only the approval: no credential inventory opened underneath it.
 	await expect(page.getByRole('heading', { name: 'Credentials' })).toHaveCount(0);
 
+	// How long access lasts is a required choice: nothing is preselected.
+	await approval.getByTestId('approve-duration-preset').selectOption('7d');
 	await approval.getByRole('button', { name: /^Continue$/ }).click();
 	await approval.getByRole('button', { name: /^Continue$/ }).click();
 	await approval.getByLabel(/^API key/).fill('sk-e2e-not-a-real-key');

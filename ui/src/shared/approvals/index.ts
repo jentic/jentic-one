@@ -10,6 +10,10 @@ export {
 } from '@/shared/approvals/api';
 export {
 	groupApprovalsByAgent,
+	describeHeldCall,
+	isRenewalHold,
+	summariseHeldCalls,
+	summariseRenewals,
 	useCanDecideApprovals,
 	type AgentPendingApprovals,
 } from '@/shared/approvals/pendingApprovals';
@@ -26,6 +30,7 @@ export {
 	useDecideApproval,
 	useEnsureApproval,
 	useRefreshApprovalSurfaces,
+	type DecideApprovalBody,
 	type DecideApprovalOptions,
 } from '@/shared/approvals/hooks';
 export { isCallUnderWay, isDecidable } from '@/shared/approvals/approvalState';
@@ -34,7 +39,10 @@ export {
 	heldCallMethod,
 	heldCallRoute,
 	isDeleteCall,
+	isRenewalCall,
 	isRouteHeadline,
+	needsOwnReview,
+	ownReviewWords,
 	useHeldCallHeadlines,
 	type HeldCall,
 	type HeldCallDetail,

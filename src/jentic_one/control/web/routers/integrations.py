@@ -10,6 +10,7 @@ ad-hoc error ``JSONResponse`` bodies.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import structlog
@@ -83,6 +84,7 @@ from jentic_one.control.web.schemas.integrations import (
     ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
+    SessionAgentBindingResponse,
     SessionApiReferenceResponse,
     SessionRevisionListResponse,
     SessionRevisionRef,
@@ -90,6 +92,8 @@ from jentic_one.control.web.schemas.integrations import (
     StatusResponse,
 )
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.shared.auth.grant_limits import NewGrantPolicy, default_grant_policy
+from jentic_one.shared.auth.grant_policy import UNSET
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
@@ -192,11 +196,12 @@ async def integrations_connect(
     (403 `connect_session_confirmation_forbidden` otherwise), and an active
     agent (409 `connect_session_agent_inactive` otherwise). An agent whose
     binding to a credential covering the requested API is suspended gets
-    409 `connect_session_binding_suspended`: only the operator can resume
-    that binding, so a new connect for the same API is refused. When
-    named, confirm creates the direct agent-credential binding + permission
-    rules; when omitted, the credential connects unbound and an agent can
-    be bound later through the credentials API.
+    409 `connect_session_binding_suspended`, and one whose binding has
+    expired gets 409 `connect_session_binding_expired`: only the operator
+    can resume or renew that binding, so a new connect for the same API is
+    refused. When named, confirm creates the direct agent-credential
+    binding + permission rules; when omitted, the credential connects
+    unbound and an agent can be bound later through the credentials API.
     """
     await _enforce_connect_rate_limit(request, identity)
 
@@ -228,6 +233,8 @@ async def integrations_connect(
         reason=body.reason,
         credential_name=body.name,
         oauth_app_registration_id=body.oauth_app_registration_id,
+        requested_expires_in=body.requested_expires_in,
+        requested_max_idle_period=body.requested_max_idle_period,
     )
 
     return IntegrationsConnectResponse(
@@ -541,6 +548,8 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
         ),
         target_kind=data.target_kind,  # type: ignore[arg-type]
         requested_scopes=data.requested_scopes,
+        requested_expires_in=data.requested_expires_in,
+        requested_max_idle_period=data.requested_max_idle_period,
         provenance=(
             ReviewProvenanceResponse(
                 origin=data.provenance.origin,
@@ -589,6 +598,18 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 other_bound_agents_truncated=c.other_bound_agents_truncated,
                 can_bind=c.can_bind,
                 needs_vendor_consent=c.needs_vendor_consent,
+                agent_binding=(
+                    SessionAgentBindingResponse(
+                        expires_at=c.agent_binding.expires_at,
+                        max_idle_period=c.agent_binding.max_idle_period,
+                        max_quota=c.agent_binding.max_quota,
+                        quota_remaining=c.agent_binding.quota_remaining,
+                        suspended=c.agent_binding.suspended,
+                        expired=c.agent_binding.ended,
+                    )
+                    if c.agent_binding is not None
+                    else None
+                ),
             )
             for c in data.existing_credentials
         ],
@@ -745,8 +766,9 @@ async def confirm_connect_session(
     free to hammer during a vendor incident. Gated like the review read
     (``poll_token`` or owner / ``org:admin``; 403 otherwise). An agent
     whose binding to a credential covering the session's API is suspended
-    (including one picked at confirm) is refused with 409
-    ``connect_session_binding_suspended``.
+    or expired (including one picked at confirm) is refused with 409
+    ``connect_session_binding_suspended`` or
+    ``connect_session_binding_expired``.
 
     A response carrying an ``authorize_url`` also sets a short-lived
     ``HttpOnly`` cookie scoped to the OAuth callback path: the vendor
@@ -757,6 +779,7 @@ async def confirm_connect_session(
     binding = mint_browser_binding(request)
 
     result: ConfirmResult
+    policy = None if isinstance(body, EditConfirmSessionRequest) else _new_policy(body, ctx)
     if isinstance(body, EditConfirmSessionRequest):
         result = await svc.confirm_edit(
             session_id,
@@ -781,12 +804,18 @@ async def confirm_connect_session(
             digest=body.digest,
             revision_id=body.revision_id,
             browser_binding=binding.claim,
+            expires_at=policy.expires_at if policy else None,
+            max_idle_period=policy.max_idle_period if policy else None,
+            idle_warning=body.idle_warning,
+            after_expiry=body.after_expiry.value,
+            max_quota=policy.max_quota if policy else None,
         )
     else:
+        assert policy is not None
         result = await svc.confirm_variant(
             session_id,
             poll_token=poll_token,
-            variant=_to_variant(body),
+            variant=_to_variant(body, policy),
             identity=identity,
             browser_binding=binding.claim,
         )
@@ -813,12 +842,37 @@ def _confirm_response(result: ConfirmResult) -> ConfirmSessionResponse:
     return ConnectedConfirmSessionResponse(credential_id=result.credential_id)
 
 
+def _new_policy(
+    body: OAuthConfirmSessionRequest
+    | ApiKeyConfirmSessionRequest
+    | BearerConfirmSessionRequest
+    | BasicConfirmSessionRequest
+    | OwnOAuthClientConfirmSessionRequest
+    | ExistingCredentialConfirmSessionRequest,
+    ctx: Context,
+) -> NewGrantPolicy:
+    """The new binding's policy: the org's default when the body sets none.
+
+    The maximums are enforced where an agent is bound (the service), not here: a
+    confirm that binds no agent has no grant to limit.
+    """
+    fields = body.model_fields_set
+    return default_grant_policy(
+        ctx.config.grant_expiry,
+        now=datetime.now(UTC),
+        expires_at=body.expires_at if "expires_at" in fields else UNSET,
+        max_idle_period=body.max_idle_period if "max_idle_period" in fields else UNSET,
+        max_quota=body.max_quota if "max_quota" in fields else UNSET,
+    )
+
+
 def _to_variant(
     body: ApiKeyConfirmSessionRequest
     | BearerConfirmSessionRequest
     | BasicConfirmSessionRequest
     | OwnOAuthClientConfirmSessionRequest
     | ExistingCredentialConfirmSessionRequest,
+    policy: NewGrantPolicy,
 ) -> ConfirmVariant:
     checks = ConfirmChecks(
         permission_rules=[r.model_dump() for r in body.permission_rules],
@@ -826,6 +880,11 @@ def _to_variant(
         digest=body.digest,
         agent_id=body.agent_id,
         revision_id=body.revision_id,
+        expires_at=policy.expires_at,
+        max_idle_period=policy.max_idle_period,
+        idle_warning=body.idle_warning,
+        after_expiry=body.after_expiry.value,
+        max_quota=policy.max_quota,
     )
     if isinstance(body, ApiKeyConfirmSessionRequest):
         return SecretConfirm(kind=body.kind, secret=ApiKeySecret(key=body.key), checks=checks)

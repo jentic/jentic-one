@@ -26,6 +26,16 @@ import {
 } from '@/shared/credentials/mocks/handlers';
 import type { ExistingCredential, PermissionRule } from '@/shared/credentials/api/vendors-types';
 
+/** Choose how long the access lasts (7 days) when the step asks and nothing is chosen yet. */
+async function pickDurationIfAsked(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+	for (const testId of ['approve-duration-preset', 'self-connect-duration-preset']) {
+		const field = screen.queryByTestId(testId);
+		if (field instanceof HTMLSelectElement && field.value === '') {
+			await user.selectOptions(field, '7d');
+		}
+	}
+}
+
 /**
  * Approve mode for the connect-session kinds beyond a vendor OAuth sign-in:
  * `manual_*` sessions (the approver types the secret), `awaiting_app`
@@ -150,10 +160,173 @@ afterEach(() => {
 });
 
 async function continueFromReview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-	await user.click(await screen.findByRole('button', { name: /^continue$/i }));
+	const continueButton = await screen.findByRole('button', { name: /^continue$/i });
+	await pickDurationIfAsked(user);
+	await user.click(continueButton);
 	// The rules page, pre-filled with the agent's suggested rule.
 	await screen.findByText(/permission rules/i);
 }
+
+describe('VendorConnectFlow approve — how long the access lasts', () => {
+	const DAY = 86_400_000;
+
+	it('preselects what the request asked for and sends it as the end date on confirm', async () => {
+		const seeded = seedManualSession({ requested_expires_in: 'P7D' });
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		const preset = (await screen.findByTestId('approve-duration-preset')) as HTMLSelectElement;
+		expect(preset.value).toBe('7d');
+		expect(screen.getByTestId('approve-access-summary')).toHaveTextContent(
+			'The request asked for 7 days.',
+		);
+		// The approver shortens it to a day.
+		await user.selectOptions(preset, '1d');
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_123');
+		const before = Date.now();
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+		const body = getMockConnectSessions()[0].confirmBodies[0] as { expires_at?: string };
+		const end = Date.parse(String(body.expires_at));
+		expect(end).toBeGreaterThanOrEqual(before + DAY);
+		expect(end).toBeLessThanOrEqual(Date.now() + DAY);
+	});
+
+	it("preselects a requested idle limit and sends the approver's choice", async () => {
+		const seeded = seedManualSession({
+			requested_expires_in: 'P30D',
+			requested_max_idle_period: 'P14D',
+		});
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		expect(await screen.findByTestId('approve-access-summary')).toHaveTextContent(
+			'The request asked for 30 days, ending if unused for 14 days.',
+		);
+		const idle = screen.getByTestId('approve-idle-preset') as HTMLSelectElement;
+		expect(idle.value).toBe('14d');
+		await user.selectOptions(idle, '7d');
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_123');
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+		const body = getMockConnectSessions()[0].confirmBodies[0] as { max_idle_period?: string };
+		expect(body.max_idle_period).toBe('P7D');
+	});
+
+	describe('an ask above the org maximum', () => {
+		function orgLimits(
+			limits: { expires?: string; idle?: string },
+			gate?: Promise<void>,
+		): void {
+			worker.use(
+				http.get('/agents/credentials\\:policy', async () => {
+					if (gate) await gate;
+					return HttpResponse.json({
+						expires_in: { default: null, max: limits.expires ?? null },
+						idle_period: { default: null, max: limits.idle ?? null },
+						single_use_by_default: false,
+					});
+				}),
+			);
+		}
+
+		it('is preselected as the maximum, and the note says so', async () => {
+			orgLimits({ expires: 'P30D', idle: 'P14D' });
+			const seeded = seedManualSession({
+				requested_expires_in: 'P90D',
+				requested_max_idle_period: 'P30D',
+			});
+			renderApprove(seeded.session_id);
+
+			const preset = (await screen.findByTestId(
+				'approve-duration-preset',
+			)) as HTMLSelectElement;
+			await waitFor(() => expect(preset.value).toBe('30d'));
+			expect((screen.getByTestId('approve-idle-preset') as HTMLSelectElement).value).toBe(
+				'14d',
+			);
+			const summary = screen.getByTestId('approve-access-summary');
+			expect(summary).toHaveTextContent(
+				'The request asked for 90 days, ending if unused for 30 days.',
+			);
+			expect(summary).toHaveTextContent(
+				'This org allows a lifetime of at most 30 days and an idle limit of at most 14 days, so that is preselected.',
+			);
+		});
+
+		it('comes down to the maximum when the limits arrive after the review', async () => {
+			let release: () => void = () => {};
+			orgLimits(
+				{ expires: 'P30D' },
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+			);
+			const seeded = seedManualSession({ requested_expires_in: 'P90D' });
+			renderApprove(seeded.session_id);
+
+			const preset = (await screen.findByTestId(
+				'approve-duration-preset',
+			)) as HTMLSelectElement;
+			await waitFor(() => expect(preset.value).toBe('90d'));
+			release();
+			await waitFor(() => expect(preset.value).toBe('30d'));
+		});
+
+		it('never overrides a choice the approver already made', async () => {
+			let release: () => void = () => {};
+			orgLimits(
+				{ expires: 'P30D' },
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+			);
+			const seeded = seedManualSession({ requested_expires_in: 'P90D' });
+			renderApprove(seeded.session_id);
+			const user = userEvent.setup();
+
+			const preset = (await screen.findByTestId(
+				'approve-duration-preset',
+			)) as HTMLSelectElement;
+			await waitFor(() => expect(preset.value).toBe('90d'));
+			await user.selectOptions(preset, '7d');
+			release();
+
+			await waitFor(() =>
+				expect(screen.getByTestId('approve-access-summary')).toHaveTextContent(
+					'This org allows a lifetime of at most 30 days',
+				),
+			);
+			expect(preset.value).toBe('7d');
+		});
+	});
+
+	it('waits for a choice when nothing was asked, and asks before No expiry', async () => {
+		const seeded = seedManualSession();
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		const preset = (await screen.findByTestId('approve-duration-preset')) as HTMLSelectElement;
+		expect(preset.value).toBe('');
+		expect(screen.getByTestId('approve-access-summary')).not.toHaveTextContent(/asked for/);
+		expect(screen.getByRole('button', { name: /^continue$/i })).toBeDisabled();
+
+		await user.selectOptions(preset, 'custom');
+		await user.selectOptions(screen.getByTestId('approve-duration-unit'), 'never');
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByTestId('no-expiry-warning')).toHaveTextContent(
+			'Scout will keep this access until someone removes it.',
+		);
+		await user.click(screen.getByRole('button', { name: 'Continue without expiry' }));
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+	});
+});
 
 describe('VendorConnectFlow approve — manual_* sessions', () => {
 	it('shows provenance, agent and owner, scheme, pinned hosts and reason', async () => {
@@ -201,6 +374,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
 		const field = await screen.findByLabelText(/^API key/);
@@ -219,6 +393,9 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_manual',
 			revision_id: expect.stringMatching(/^csr_/),
+			// The end date chosen on the review, worked out on confirm.
+			expires_at: expect.any(String),
+			max_idle_period: null,
 		});
 		// Not persisted client-side anywhere the browser keeps across loads.
 		const persisted =
@@ -236,6 +413,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const { onDone } = renderApprove(seeded.session_id);
 		const user = userEvent.setup();
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_secret_123');
 		await user.click(screen.getByRole('button', { name: 'Connect' }));
@@ -251,6 +429,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const { onDone } = renderApprove(seeded.session_id);
 		const user = userEvent.setup();
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_secret_123');
 		await user.click(screen.getByRole('button', { name: 'Connect' }));
@@ -272,6 +451,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^Username/), 'svc-report');
 		await user.type(screen.getByLabelText(/^Password/), 'hunter2');
@@ -294,6 +474,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		await user.click(screen.getByRole('button', { name: /add rule/i }));
 		await user.type(screen.getByLabelText('Path pattern'), '/v1/refunds');
 		await user.click(screen.getByRole('button', { name: /^add$/i }));
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
 		await user.type(await screen.findByLabelText(/^API key/), 'sk_1');
@@ -316,6 +497,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await screen.findByLabelText(/^API key/);
 		expect(mutatingRequests().filter((r) => r.url.endsWith(':amend'))).toEqual([]);
@@ -350,6 +532,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^API key/), 'sk_1');
 		await user.click(screen.getByRole('button', { name: 'Connect' }));
@@ -368,6 +551,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^API key/), 'sk_first');
 		// What the approver reviewed changes under them.
@@ -379,7 +563,9 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		).toBeInTheDocument();
 		expect(screen.getByText(/an agent is asking to connect/i)).toBeInTheDocument();
 		// The secret was dropped with its step; the next confirm carries the new digest.
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await pickDurationIfAsked(user);
 		await user.click(await screen.findByRole('button', { name: /^continue$/i }));
 		const field = await screen.findByLabelText(/^API key/);
 		expect(field).toHaveValue('');
@@ -401,6 +587,7 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^API key/), 'sk_1');
 		await user.click(screen.getByRole('button', { name: 'Connect' }));
@@ -525,6 +712,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		).not.toBeInTheDocument();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^Client ID/), 'client-123');
 		const secret = screen.getByLabelText(/^Client secret/);
@@ -553,6 +741,9 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
 			revision_id: expect.stringMatching(/^csr_/),
+			// The end date chosen on the review, worked out on confirm.
+			expires_at: expect.any(String),
+			max_idle_period: null,
 		});
 	});
 
@@ -570,6 +761,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^Client ID/), 'client-123');
 		await user.type(screen.getByLabelText(/^Client secret/), 'shh-client-secret');
@@ -605,6 +797,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		const user = userEvent.setup();
 
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^Client ID/), 'client-123');
 		await user.type(screen.getByLabelText(/^Client secret/), 'x');
@@ -625,6 +818,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		expect(option).toHaveAccessibleDescription(/covers the requested scopes \(repo\)/);
 		await user.click(option);
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
 		expect(await screen.findByText('Connected to github')).toBeInTheDocument();
@@ -638,6 +832,9 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
 			revision_id: expect.stringMatching(/^csr_/),
+			// The end date chosen on the review, worked out on confirm.
+			expires_at: expect.any(String),
+			max_idle_period: null,
 		});
 	});
 
@@ -691,6 +888,7 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		expect(option).toHaveAccessibleDescription(/also gives admin:org to 1 other agent/);
 		await user.click(option);
 		await continueFromReview(user);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 
 		await waitFor(() =>
@@ -758,6 +956,7 @@ describe('VendorConnectFlow approve — existing credential on a vendor session'
 		const option = screen.getByRole('radio', { name: /Use Personal GitHub/ });
 		expect(option).toHaveAccessibleDescription(/upstream permissions aren't visible/);
 		await user.click(option);
+		await pickDurationIfAsked(user);
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.click(await screen.findByRole('button', { name: /skip.*continue/i }));
 
@@ -768,6 +967,103 @@ describe('VendorConnectFlow approve — existing credential on a vendor session'
 			// The fallback rule is the approver's, so it is confirmed as their revision.
 			digest: `dig_${seeded.session_id}_2`,
 		});
+	});
+});
+
+describe('VendorConnectFlow approve — a credential the agent already holds', () => {
+	const bound = {
+		expires_at: new Date(Date.now() + 9 * 86_400_000).toISOString(),
+		max_idle_period: 'P14D',
+		max_quota: 3,
+		quota_remaining: 2,
+		suspended: false,
+		expired: false,
+	};
+
+	function seedHeld(agentBinding: typeof bound | null) {
+		return seedMockAgentConnectSession({
+			agent_id: 'agnt_1',
+			vendor_key: 'github',
+			existing_credentials: [
+				candidate({ type: 'api_key', granted_scopes: null, agent_binding: agentBinding }),
+			],
+		});
+	}
+
+	it('says its limits stay as they are, disables the limit controls and sends none', async () => {
+		const seeded = seedHeld(bound);
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		const preset = (await screen.findByTestId('approve-duration-preset')) as HTMLSelectElement;
+		expect(preset).toBeEnabled();
+		expect(screen.queryByTestId('approve-existing-binding')).toBeNull();
+
+		await user.click(screen.getByRole('radio', { name: /Use Personal GitHub/ }));
+
+		const note = await screen.findByTestId('approve-existing-binding');
+		expect(note).toHaveTextContent('is already bound to this credential');
+		expect(note).toHaveTextContent('its current limits stay as they are');
+		expect(note).toHaveTextContent('expires in 9 days');
+		expect(note).toHaveTextContent('2 of 3 uses left');
+		expect(note).toHaveTextContent('ends if unused for 14 days');
+		expect(preset).toBeDisabled();
+		expect(
+			screen.getByTestId('approve-idle-toggle').querySelector('[role=checkbox]'),
+		).toBeDisabled();
+		expect(
+			screen.getByTestId('approve-single-use').querySelector('[role=checkbox]'),
+		).toBeDisabled();
+		expect(screen.getByTestId('approve-after-expiry')).toBeDisabled();
+
+		// Nothing here is chosen, and Continue does not wait for it.
+		expect(preset.value).toBe('');
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.click(await screen.findByRole('button', { name: /skip.*continue/i }));
+
+		expect(await screen.findByText('Connected to github')).toBeInTheDocument();
+		const body = getEndedMockConnectSessions()[0].confirmBodies[0] as unknown as Record<
+			string,
+			unknown
+		>;
+		expect(body).toMatchObject({
+			kind: 'existing_credential',
+			credential_id: 'cred_gh_personal',
+		});
+		for (const field of [
+			'expires_at',
+			'max_idle_period',
+			'max_quota',
+			'idle_warning',
+			'after_expiry',
+		]) {
+			expect(body).not.toHaveProperty(field);
+		}
+	});
+
+	it('goes back to asking for limits when another way to connect is picked', async () => {
+		const seeded = seedHeld(bound);
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('radio', { name: /Use Personal GitHub/ }));
+		expect(await screen.findByTestId('approve-existing-binding')).toBeVisible();
+
+		await user.click(screen.getByRole('radio', { name: /Sign in to github/ }));
+
+		expect(screen.queryByTestId('approve-existing-binding')).toBeNull();
+		expect(screen.getByTestId('approve-duration-preset')).toBeEnabled();
+	});
+
+	it('keeps asking for limits for a credential the agent does not hold yet', async () => {
+		const seeded = seedHeld(null);
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await user.click(await screen.findByRole('radio', { name: /Use Personal GitHub/ }));
+
+		expect(screen.queryByTestId('approve-existing-binding')).toBeNull();
+		expect(screen.getByTestId('approve-duration-preset')).toBeEnabled();
+		expect(screen.getByRole('button', { name: /^continue$/i })).toBeDisabled();
 	});
 });
 

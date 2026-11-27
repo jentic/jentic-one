@@ -25,6 +25,7 @@ from jentic_one.admin.web.deps import get_held_execution_service
 from jentic_one.admin.web.schemas.held_executions import (
     DecideHeldExecutionRequest,
     ExplainHeldExecutionRequest,
+    GrantRenewalRequest,
     HeldExecutionDetailResponse,
     HeldExecutionLinksResponse,
     HeldExecutionListResponse,
@@ -32,6 +33,7 @@ from jentic_one.admin.web.schemas.held_executions import (
     HeldExecutionResultResponse,
     HeldRequestResponse,
 )
+from jentic_one.shared.auth.grant_renewal import GrantRenewalPolicy
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.jobs.hold import PROBLEM_CONTENT_TYPE, review_page_path
 from jentic_one.shared.models.held_executions import HeldExecutionState
@@ -93,6 +95,19 @@ def _fields(view: HeldExecutionView, request: Request, identity: Identity) -> di
             ),
         ),
     }
+
+
+def _renewal_policy(renewal: GrantRenewalRequest) -> GrantRenewalPolicy:
+    """The fresh policy, with an end date left out read as the renewal default.
+
+    ``after_expiry`` left out (or null) keeps the binding's own.
+    """
+    fields = renewal.model_dump()
+    if "expires_at" not in renewal.model_fields_set:
+        fields.pop("expires_at")
+    if fields.get("after_expiry") is None:
+        fields.pop("after_expiry", None)
+    return GrantRenewalPolicy(**fields)
 
 
 def _response(
@@ -262,10 +277,26 @@ async def decide_held_execution(
     fails it with a permission-denied result. The first decision wins: deciding
     one that is no longer pending (or has expired) answers ``409``. An agent
     caller is always refused (``403``), whatever its permissions.
+
+    A ``grant_renewal`` hold (the agent's binding ended) is approved with
+    ``renewal``, the binding's fresh policy, which replaces its old one; with
+    ``run: false`` the binding is renewed and the call fails instead of
+    running. Only a reviewer who may renew the binding directly (a person who
+    owns the agent and the credential, or an ``org:admin``) can approve one
+    (``403 held_execution_renewal_forbidden`` otherwise); anyone who can
+    decide may deny it. ``renewal`` on any other hold is a ``422``. Where this
+    deployment cannot renew from a hold (``renewal.renew_on_decide`` is false on
+    the hold), renew the binding through its own endpoint first, then approve
+    without ``renewal``; that is accepted once the binding is live again.
     """
     view = await svc.decide(
         held_execution_id,
-        DecideInput(decision=body.decision, reason=body.reason),
+        DecideInput(
+            decision=body.decision,
+            reason=body.reason,
+            renewal=(_renewal_policy(body.renewal) if body.renewal is not None else None),
+            run=body.run,
+        ),
         identity=identity,
     )
     return _response(view, request, identity)

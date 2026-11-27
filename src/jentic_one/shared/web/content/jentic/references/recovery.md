@@ -192,6 +192,32 @@ conflicts. Read your access again and amend the request to fit. After the human 
   binding to the credential that serves this API. Only they can resume it.
   Do not start a new connect for the same API (it is refused while the
   suspension stands); ask your operator, then retry once they resume it.
+- **`credential_binding_expired` (403)** — your binding to the credential
+  that serves this API has ended. A binding ends when any one of its limits
+  is reached: its end date passed, it went unused for its idle limit, or its
+  uses ran out (the problem's `expired_reason` is `end_date`, `idle` or
+  `uses`). Only your operator can renew it. Do not start a new connect for
+  the same API (it is refused with 409 `connect_session_binding_expired`
+  while the ended binding stands), and don't ask for a rule change:
+  `show_access` reports the binding with `expired: true`, and
+  `request_access_change` is refused for it. Ask your operator, then retry
+  once they renew it.
+
+  **By default you get a 202 first, not this 403.** The first call through
+  an ended binding is *held for renewal*: the response is the held envelope
+  (a `held_execution_id` and a `review_url`) and its directive says your
+  access has ended. It is handled like any held call: show the user the
+  `review_url` (they cannot renew without it), end your turn, then poll once
+  with the `held_execution_id` after they reply, and never re-send the call.
+  There is nothing to explain to the reviewer; the review page already says
+  why access ended. If the owner approves, access is renewed and the call
+  runs once (they may instead renew it without running the call, which then
+  fails as stale: send it again). You get the 403 above instead when the binding is set to refuse
+  after it ends, when a renewal is already waiting for review (the 403 names
+  its `review_url`), when the owner denied the renewal (only they can renew
+  it from the console now), or when several of your bindings for the API
+  have ended and the call doesn't say which (the 403 lists them as
+  `expired_credentials`; name one with `Jentic-Credential-Id`).
 - **`credential_identity_mismatch` (403)** — a binding exists and a
   credential *is* connected, but that credential's stored identity doesn't
   cover this API (e.g. it targets a different name/version, or was stored

@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jentic_one.shared.agent_text import MAX_AGENT_TEXT_INPUT_LEN
+from jentic_one.shared.auth.expiry import as_utc
+from jentic_one.shared.auth.grant_policy import (
+    AFTER_EXPIRY_DESCRIPTION,
+    MAX_QUOTA,
+    AfterExpiry,
+    GrantEndReason,
+)
+from jentic_one.shared.iso_duration import IdlePeriodRequest, IdlePeriodResponse
 from jentic_one.shared.models.executions import ExecutionStatus
-from jentic_one.shared.models.held_executions import ApprovalDecision, HeldExecutionState
+from jentic_one.shared.models.held_executions import (
+    ApprovalDecision,
+    HeldExecutionKind,
+    HeldExecutionState,
+)
 from jentic_one.shared.web import openapi_examples as ex
 
 #: Where a held call stands, from held through to its outcome.
@@ -75,6 +87,13 @@ class HeldExecutionResponse(BaseModel):
         description="The decision: `pending` until a reviewer acts, then `approved`, "
         "`denied`, `expired` or `withdrawn`.",
         examples=["pending"],
+    )
+    kind: HeldExecutionKind = Field(
+        default=HeldExecutionKind.EXECUTION,
+        description="Why the call is held: `execution` (a require-approval rule matched) or "
+        "`grant_renewal` (the agent's binding to the credential has ended; approving re-grants "
+        "its access first).",
+        examples=["execution"],
     )
     execution_status: HeldExecutionStatus | None = Field(
         default=None,
@@ -145,6 +164,61 @@ class HeldRequestResponse(BaseModel):
     )
 
 
+class HeldRenewalContextResponse(BaseModel):
+    """The binding a `grant_renewal` hold would renew, as it stands now."""
+
+    expired_reason: GrantEndReason | None = Field(
+        default=None,
+        description="Which limit ended it: `end_date`, `idle` or `uses`; null if it holds "
+        "again (renewed since).",
+        examples=["idle"],
+    )
+    last_used_at: datetime | None = Field(
+        default=None,
+        description="Its last recorded use; null if never used.",
+        examples=["2026-01-01T09:30:00Z"],
+    )
+    expires_at: datetime | None = Field(
+        default=None, description="Its current end date.", examples=["2026-01-10T00:00:00Z"]
+    )
+    max_idle_period: IdlePeriodResponse | None = Field(
+        default=None,
+        description="Its current idle limit, as an ISO 8601 duration.",
+        examples=["P14D"],
+    )
+    idle_warning: bool = Field(
+        default=False,
+        description="Whether its owner is warned before it ends (end date or idle limit).",
+        examples=[False],
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        description="What a call through it gets once it has ended: `hold` or `refuse`.",
+        examples=["hold"],
+    )
+    max_quota: int | None = Field(
+        default=None, description="Its use count (1 is single use).", examples=[1]
+    )
+    quota_remaining: int | None = Field(
+        default=None, description="Uses left under its count.", examples=[0]
+    )
+    can_renew: bool = Field(
+        default=False,
+        description="Whether the caller may re-grant access (else it can only deny): a "
+        "person who owns the agent and the credential, or an `org:admin`.",
+        examples=[True],
+    )
+    renew_on_decide: bool = Field(
+        default=True,
+        description="Whether approving with `renewal` renews the binding here. False where "
+        "this deployment's admin surface cannot renew (it runs apart from the control "
+        "database), and `can_renew` is then unknown: renew the binding through "
+        "`PATCH /agents/{agent_id}/credentials/{credential_id}`, then approve without "
+        "`renewal`.",
+        examples=[True],
+    )
+
+
 class HeldExecutionDetailResponse(HeldExecutionResponse):
     """A held execution with the agent context and the held request a reviewer decides on."""
 
@@ -157,6 +231,9 @@ class HeldExecutionDetailResponse(HeldExecutionResponse):
         examples=[ex.USER_ID],
     )
     request: HeldRequestResponse | None = Field(default=None, description="The held call.")
+    renewal: HeldRenewalContextResponse | None = Field(
+        default=None, description="For a `grant_renewal` hold: the binding it would renew."
+    )
 
 
 class HeldExecutionResultResponse(BaseModel):
@@ -226,6 +303,57 @@ class HeldExecutionListResponse(BaseModel):
     )
 
 
+class GrantRenewalRequest(BaseModel):
+    """Re-grant access for an ended binding.
+
+    Every field left out sets no such limit, except the end date: left out, the
+    binding runs again for as long as it was granted for, capped at the org's
+    maximum (``null`` sets no end date).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "New end date (RFC 3339, in the future); null for no end date. Left out, the "
+            "binding runs again for as long as it was granted for, capped at the org's maximum."
+        ),
+        examples=["2026-02-15T09:30:00Z"],
+    )
+    max_idle_period: IdlePeriodRequest | None = Field(
+        default=None,
+        description="New idle limit, as an ISO 8601 duration (P1D to P999D, e.g. P14D);"
+        " null for none.",
+        examples=["P14D"],
+    )
+    idle_warning: bool = Field(
+        default=False,
+        description="Warn the agent's owner before the binding ends (its end date or idle limit).",
+        examples=[False],
+    )
+    after_expiry: AfterExpiry | None = Field(
+        default=None,
+        description=AFTER_EXPIRY_DESCRIPTION + " Left out, the binding keeps its own.",
+        examples=["hold"],
+    )
+    max_quota: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_QUOTA,
+        description="New use count (1 is single use); null for unlimited calls.",
+        examples=[1],
+    )
+
+    @field_validator("expires_at")
+    @classmethod
+    def _future(cls, value: datetime | None) -> datetime | None:
+        # A naive value is read as UTC, as the direct binding endpoint reads it.
+        if value is not None and as_utc(value) <= datetime.now(UTC):
+            raise ValueError("expires_at must be in the future")
+        return value
+
+
 class DecideHeldExecutionRequest(BaseModel):
     """Approve or deny a pending held execution."""
 
@@ -237,6 +365,18 @@ class DecideHeldExecutionRequest(BaseModel):
     decision: ApprovalDecision = Field(description="`approve` releases the call; `deny` fails it.")
     reason: str | None = Field(
         default=None, max_length=500, description="Optional reason, recorded with the decision."
+    )
+    renewal: GrantRenewalRequest | None = Field(
+        default=None,
+        description="Approving a `grant_renewal` hold: the binding's fresh policy, which replaces "
+        "its old one (renewing also restarts its idle clock and restores its uses). Required "
+        "to approve one; refused on any other hold.",
+    )
+    run: bool = Field(
+        default=True,
+        description="With `renewal`: whether the held call runs once access is renewed. "
+        "`false` renews and fails the call (for a stale one).",
+        examples=[True],
     )
 
 

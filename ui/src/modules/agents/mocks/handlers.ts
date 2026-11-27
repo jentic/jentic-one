@@ -22,7 +22,11 @@
  * Registered additively in src/mocks/handlers.ts.
  */
 import { http, HttpResponse } from 'msw';
-import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
+import {
+	isoDurationOrNull,
+	isoDurationSeconds,
+	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
+} from '@/shared/lib';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
 import {
 	findMockCredential,
@@ -174,6 +178,28 @@ interface CredentialBindingRow {
 	suspended: boolean;
 	rule_set_id: string | null;
 	bound_at: string;
+	/** When the binding stops authorizing calls; null = never. */
+	expires_at?: string | null;
+	/** Idle limit in seconds; null = none. */
+	max_idle_period?: number | null;
+	/** Whether the owner is warned before it ends (its end date or idle limit). */
+	idle_warning?: boolean;
+	/** What a call gets once it has ended: `hold` (the default) or `refuse`. */
+	after_expiry?: 'hold' | 'refuse';
+	/** Use count (1 = single use) and the uses left; null = unlimited. */
+	max_quota?: number | null;
+	quota_remaining?: number | null;
+	/** When it was granted or last renewed (restarts the idle clock). */
+	renewed_at?: string | null;
+	/** Last call through the credential; null = never used. */
+	last_used_at: string | null;
+	/** Per-API last use; derived from `last_used_at` and `serves` when absent. */
+	last_used_by_api?: Array<{
+		api_vendor: string;
+		api_name: string | null;
+		api_version?: string | null;
+		last_used_at: string;
+	}>;
 	serves: Array<{ api_vendor: string; api_name?: string | null; api_version?: string | null }>;
 	permissions: BindingRule[];
 	/** The credential's granted OAuth scopes; null (the default) for a non-OAuth one. */
@@ -197,6 +223,7 @@ function seedBinding(
 		suspended: false,
 		rule_set_id: null,
 		bound_at: now(-30),
+		last_used_at: null,
 		serves: [],
 		permissions: [],
 		...over,
@@ -210,6 +237,54 @@ export function seedCredentialBindings(
 	>,
 ): void {
 	for (const over of rows) credentialBindings.push(seedBinding(over));
+}
+
+/** Set or clear a seeded binding's end date (tests: an expiring or expired binding). */
+export function setCredentialBindingExpiry(
+	agentId: string,
+	credentialId: string,
+	expiresAt: string | null,
+): void {
+	const row = credentialBindings.find(
+		(b) => b.agent_id === agentId && b.credential_id === credentialId,
+	);
+	if (!row) throw new Error(`No seeded binding for ${agentId} × ${credentialId}`);
+	row.expires_at = expiresAt;
+}
+
+/**
+ * Re-grant an ended binding as approving a renewal hold does: the policy it
+ * carries replaces the binding's (a limit left out sets none, except the end
+ * date, which runs again for as long as it was granted for), the idle clock
+ * restarts and the uses are restored. A binding that isn't seeded is left alone.
+ */
+export function regrantCredentialBinding(
+	agentId: string,
+	credentialId: string,
+	renewal: {
+		expires_at?: string | null;
+		max_idle_period?: string | null;
+		idle_warning?: boolean;
+		max_quota?: number | null;
+		after_expiry?: 'hold' | 'refuse' | null;
+	},
+): void {
+	const row = credentialBindings.find(
+		(b) => b.agent_id === agentId && b.credential_id === credentialId,
+	);
+	if (!row) return;
+	if ('expires_at' in renewal) {
+		row.expires_at = renewal.expires_at ?? null;
+	} else if (row.expires_at) {
+		const length = Date.parse(row.expires_at) - Date.parse(row.renewed_at ?? row.bound_at);
+		if (length > 0) row.expires_at = new Date(Date.now() + length).toISOString();
+	}
+	row.max_idle_period = isoDurationSeconds(renewal.max_idle_period ?? null);
+	row.idle_warning = renewal.idle_warning ?? false;
+	row.max_quota = renewal.max_quota ?? null;
+	if (renewal.after_expiry) row.after_expiry = renewal.after_expiry;
+	row.quota_remaining = row.max_quota;
+	row.renewed_at = now();
 }
 
 /** Test-only: replace one seeded binding's rules. */
@@ -302,18 +377,147 @@ function bindingJson(row: CredentialBindingRow) {
 	// A row seeded with nothing served is the unenriched shape a surface that
 	// can't reach the control DB returns; it stays as seeded.
 	const credential = row.serves.length > 0 ? findMockCredential(row.credential_id) : undefined;
-	if (!credential) return wire;
+	const enriched = credential
+		? {
+				...wire,
+				name: credential.name,
+				serves: [
+					{
+						api_vendor: credential.api.vendor,
+						api_name: credential.api.name || null,
+						api_version: credential.api.version || null,
+					},
+				],
+			}
+		: wire;
+	// Unless the row seeds its own, one per-API entry per served API, all at the
+	// binding's last use.
+	const last_used_by_api =
+		row.last_used_by_api ??
+		(row.last_used_at
+			? row.serves.map((s) => ({
+					api_vendor: s.api_vendor,
+					api_name: s.api_name ?? null,
+					api_version: s.api_version,
+					last_used_at: row.last_used_at,
+				}))
+			: []);
+	return { ...enriched, ...bindingExpiryJson(row), last_used_by_api };
+}
+
+/** A binding's end date and whether it has passed, as every binding read reports them. */
+function bindingExpiryJson(row: CredentialBindingRow): {
+	expires_at: string | null;
+	expired: boolean;
+	expired_reason: 'end_date' | 'idle' | 'uses' | null;
+	max_idle_period: string | null;
+	idle_expires_at: string | null;
+	renewed_at: string | null;
+	idle_warning: boolean;
+	after_expiry: 'hold' | 'refuse';
+	max_quota: number | null;
+	quota_remaining: number | null;
+} {
+	const expiresAt = row.expires_at ?? null;
+	const limit = row.max_idle_period ?? null;
+	// The idle clock: the later of the last use and the last grant or renewal.
+	const start = Math.max(
+		...[row.last_used_at, row.renewed_at ?? row.bound_at]
+			.filter((t): t is string => Boolean(t))
+			.map((t) => Date.parse(t)),
+	);
+	const idleEnd = limit != null && Number.isFinite(start) ? start + limit * 1000 : null;
+	const now = Date.now();
+	const endedByDate = expiresAt != null && Date.parse(expiresAt) <= now;
+	const endedByIdle = idleEnd != null && idleEnd <= now;
+	const maxQuota = row.max_quota ?? null;
+	const usedUp = maxQuota != null && (row.quota_remaining ?? 0) <= 0;
 	return {
-		...wire,
-		name: credential.name,
-		serves: [
-			{
-				api_vendor: credential.api.vendor,
-				api_name: credential.api.name || null,
-				api_version: credential.api.version || null,
-			},
-		],
+		expires_at: expiresAt,
+		expired: endedByDate || endedByIdle || usedUp,
+		expired_reason:
+			usedUp && !endedByDate && !endedByIdle
+				? 'uses'
+				: endedByIdle
+					? endedByDate && Date.parse(expiresAt!) < idleEnd!
+						? 'end_date'
+						: 'idle'
+					: endedByDate
+						? 'end_date'
+						: null,
+		max_idle_period: isoDurationOrNull(limit),
+		idle_expires_at: idleEnd != null ? new Date(idleEnd).toISOString() : null,
+		renewed_at: row.renewed_at ?? null,
+		idle_warning: row.idle_warning ?? false,
+		after_expiry: row.after_expiry ?? 'hold',
+		max_quota: maxQuota,
+		quota_remaining: maxQuota != null ? (row.quota_remaining ?? 0) : null,
 	};
+}
+
+/** `GET /agents/credentials:policy`: the org's grant limits (none, as in open source). */
+const NO_MOCK_GRANT_LIMITS = {
+	expires_in: { default: null, max: null },
+	idle_period: { default: null, max: null },
+	single_use_by_default: false,
+};
+let mockGrantLimits: typeof NO_MOCK_GRANT_LIMITS | Record<string, unknown> = NO_MOCK_GRANT_LIMITS;
+
+/** Set the org's grant limits the mock reports; `null` restores none. */
+export function setMockGrantLimits(limits: Record<string, unknown> | null): void {
+	mockGrantLimits = limits ? { ...NO_MOCK_GRANT_LIMITS, ...limits } : NO_MOCK_GRANT_LIMITS;
+}
+
+const IDLE_WARNING_WINDOW_MS = 48 * 3_600_000;
+const IDLE_WARNING_MIN_S = 4 * 86_400;
+
+/**
+ * `GET /agents/credentials:ending-soon`: bindings with the warning on, still
+ * holding, whose end date (granted for 4 days or more) or idle deadline (an
+ * idle limit of 4 days or more) falls in the next 48 hours — the nearer as
+ * `ends_at` / `ending` — soonest first.
+ */
+function bindingsEndingSoon(): unknown[] {
+	const now = Date.now();
+	const inWindow = (at: number): boolean => at > now && at <= now + IDLE_WARNING_WINDOW_MS;
+	return credentialBindings
+		.filter((row) => row.idle_warning && !row.suspended)
+		.flatMap((row) => {
+			const policy = bindingExpiryJson(row);
+			if (policy.expired) return [];
+			const due: { at: number; ending: 'end_date' | 'idle' }[] = [];
+			if ((row.max_idle_period ?? 0) >= IDLE_WARNING_MIN_S && policy.idle_expires_at) {
+				const at = Date.parse(policy.idle_expires_at);
+				if (inWindow(at)) due.push({ at, ending: 'idle' });
+			}
+			if (policy.expires_at) {
+				const at = Date.parse(policy.expires_at);
+				const granted = Date.parse(row.renewed_at ?? row.bound_at);
+				if (inWindow(at) && at - granted >= IDLE_WARNING_MIN_S * 1000)
+					due.push({ at, ending: 'end_date' });
+			}
+			if (due.length === 0) return [];
+			const soonest = due.reduce((a, b) => (b.at < a.at ? b : a));
+			return [{ row, soonest }];
+		})
+		.sort((a, b) => a.soonest.at - b.soonest.at)
+		.map(({ row, soonest }) => ({
+			...bindingJson(row),
+			agent_name: agents.find((a) => a.id === row.agent_id)?.name ?? row.agent_id,
+			ends_at: new Date(soonest.at).toISOString(),
+			ending: soonest.ending,
+		}));
+}
+
+/** The 422 a binding write gets for an end date that is not in the future. */
+function pastExpiryError(expiresAt: unknown): Response | null {
+	if (expiresAt == null) return null;
+	const ms = typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
+	if (!Number.isNaN(ms) && ms > Date.now()) return null;
+	return HttpResponse.json(
+		{ detail: [{ loc: ['body', 'expires_at'], msg: 'expires_at must be in the future' }] },
+		{ status: 422 },
+	);
 }
 
 /**
@@ -704,6 +908,16 @@ export function resetAgentsStore(): void {
 			agent_id: 'agnt_active_1',
 			credential_id: 'cred_slack_1',
 			name: 'Slack bot token',
+			last_used_at: now(-12),
+			// Execution records name the resolved API, never the wildcard.
+			last_used_by_api: [
+				{
+					api_vendor: 'slack.com',
+					api_name: 'web-api',
+					api_version: '1.0.0',
+					last_used_at: now(-12),
+				},
+			],
 			serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
 			permissions: [
 				{ effect: 'allow', match_mode: 'prefix', methods: ['POST'], path: '/chat.' },
@@ -714,6 +928,16 @@ export function resetAgentsStore(): void {
 			credential_id: 'cred_github_1',
 			name: 'GitHub PAT',
 			suspended: true,
+			// Idle for weeks: the kind of access the "last used" view surfaces.
+			last_used_at: now(-60 * 24 * 23),
+			last_used_by_api: [
+				{
+					api_vendor: 'github',
+					api_name: 'github-api',
+					api_version: '1.0.0',
+					last_used_at: now(-60 * 24 * 23),
+				},
+			],
 			serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
 		}),
 	];
@@ -1770,6 +1994,12 @@ export const agentsHandlers = [
 
 	// ---- Agents ----
 	http.get('/agents', ({ request }) => paginate(agents, new URL(request.url))),
+	// Before `/agents/:id`, which would otherwise take these custom methods as ids.
+	http.get('/agents/credentials\\:policy', () => HttpResponse.json(mockGrantLimits)),
+	// (`credentials:ending-soon` likewise.)
+	http.get('/agents/credentials\\:ending-soon', () =>
+		HttpResponse.json({ data: bindingsEndingSoon() }),
+	),
 	http.get('/agents/:id', ({ params }) => {
 		const row = agents.find((a) => a.id === params.id);
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
@@ -2042,7 +2272,16 @@ export const agentsHandlers = [
 	http.post('/agents/:id/credentials', async ({ params, request }) => {
 		const agent = agents.find((a) => a.id === params.id);
 		if (!agent) return new HttpResponse(null, { status: 404 });
-		const body = (await request.json().catch(() => ({}))) as { credential_id?: string };
+		const body = (await request.json().catch(() => ({}))) as {
+			credential_id?: string;
+			expires_at?: string | null;
+			max_idle_period?: string | null;
+			idle_warning?: boolean;
+			max_quota?: number | null;
+			after_expiry?: 'hold' | 'refuse';
+		};
+		const pastExpiry = pastExpiryError(body.expires_at);
+		if (pastExpiry) return pastExpiry;
 		if (!body.credential_id) {
 			return HttpResponse.json(
 				{ detail: [{ loc: ['body', 'credential_id'], msg: 'Field required' }] },
@@ -2068,6 +2307,13 @@ export const agentsHandlers = [
 			agent_id: params.id as string,
 			credential_id: body.credential_id,
 			bound_at: now(),
+			expires_at: body.expires_at ?? null,
+			max_idle_period: isoDurationSeconds(body.max_idle_period),
+			idle_warning: body.idle_warning ?? false,
+			after_expiry: body.after_expiry ?? 'hold',
+			max_quota: body.max_quota ?? null,
+			quota_remaining: body.max_quota ?? null,
+			renewed_at: now(),
 			name: credential?.name ?? null,
 			serves: credential
 				? [
@@ -2099,6 +2345,40 @@ export const agentsHandlers = [
 		}
 		return new HttpResponse(null, { status: 204 });
 	}),
+	// Renew: set, move or clear the end date. Never touches `suspended`.
+	http.patch('/agents/:id/credentials/:cid', async ({ params, request }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.id && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		// A field left out stays as it is (an end date left out runs again for
+		// as long as it was granted for); null clears it. Every renewal restarts
+		// the idle clock, so an empty body re-certifies it.
+		const body = (await request.json().catch(() => ({}))) as {
+			expires_at?: string | null;
+			max_idle_period?: string | null;
+			idle_warning?: boolean;
+			max_quota?: number | null;
+			after_expiry?: 'hold' | 'refuse' | null;
+		};
+		if ('expires_at' in body) {
+			const pastExpiry = pastExpiryError(body.expires_at);
+			if (pastExpiry) return pastExpiry;
+			row.expires_at = body.expires_at ?? null;
+		} else if (row.expires_at) {
+			const length = Date.parse(row.expires_at) - Date.parse(row.renewed_at ?? row.bound_at);
+			if (length > 0) row.expires_at = new Date(Date.now() + length).toISOString();
+		}
+		if ('max_idle_period' in body)
+			row.max_idle_period = isoDurationSeconds(body.max_idle_period);
+		if (body.idle_warning !== undefined) row.idle_warning = body.idle_warning;
+		if (body.after_expiry) row.after_expiry = body.after_expiry;
+		if ('max_quota' in body) row.max_quota = body.max_quota ?? null;
+		// Every renewal restores the uses left.
+		row.quota_remaining = row.max_quota ?? null;
+		row.renewed_at = now();
+		return HttpResponse.json(bindingJson(row));
+	}),
 	http.post('/agents/:id/credentials/:cid\\:resume', ({ params }) => {
 		const row = credentialBindings.find(
 			(b) => b.agent_id === params.id && b.credential_id === params.cid,
@@ -2119,10 +2399,13 @@ export const agentsHandlers = [
 				return {
 					agent_id: b.agent_id,
 					agent_name: agent?.name ?? b.agent_id,
+					owner_id: agent?.owner_id ?? null,
 					bound_at: b.bound_at,
 					rule_set_id: b.rule_set_id,
 					status: agent?.status ?? 'active',
 					suspended: b.suspended,
+					...bindingExpiryJson(b),
+					last_used_at: b.last_used_at,
 				};
 			});
 		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });

@@ -10,10 +10,12 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import Boolean, bindparam, text
+from sqlalchemy import Boolean, String, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BindParameter
 
+from jentic_one.shared.auth.expiry import as_utc
+from jentic_one.shared.auth.grant_policy import GRANT_POLICY_COLUMNS, GrantPolicy, grant_ended
 from jentic_one.shared.db.locks import lock_credential_bindings
 from jentic_one.shared.db.types import UTCDateTime
 from jentic_one.shared.pagination import Cursor
@@ -48,6 +50,34 @@ class CredentialBoundAgentRow(NamedTuple):
     # suspended by hand.
     suspended_reason: str | None = None
     agent_owner_id: str | None = None
+    # When the binding stops authorizing calls (fixed expiry); None never expires.
+    expires_at: datetime | None = None
+    # Latest recorded execution by the agent through the credential; None when
+    # never used or not looked up (see :meth:`last_used_by_agents`).
+    last_used_at: datetime | None = None
+    # The idle limit (seconds) and its clock: the binding's own last-use stamp
+    # and when it was granted or last renewed.
+    max_idle_period: int | None = None
+    idle_used_at: datetime | None = None
+    renewed_at: datetime | None = None
+    idle_warning: bool = False
+    # Use count (None = unlimited) and the uses left.
+    max_quota: int | None = None
+    quota_remaining: int | None = None
+    # What a call through it gets once it has ended (``hold`` or ``refuse``).
+    after_expiry: str = "hold"
+
+    def policy(self) -> GrantPolicy:
+        """The binding's policy, against the idle clock's own use stamp."""
+        return GrantPolicy(
+            expires_at=self.expires_at,
+            max_idle_period=self.max_idle_period,
+            last_used_at=self.idle_used_at,
+            renewed_at=self.renewed_at,
+            bound_at=self.bound_at,
+            max_quota=self.max_quota,
+            quota_remaining=self.quota_remaining,
+        )
 
 
 class AgentVisibility(NamedTuple):
@@ -70,6 +100,10 @@ class AgentCredentialBindingRow(NamedTuple):
     rule_set_id: str | None
     agent_name: str | None = None
     credential_name: str | None = None
+    #: When the binding stops authorizing calls; ``None`` never expires.
+    expires_at: datetime | None = None
+    #: The binding's whole policy (end date, idle limit and its clock).
+    policy: GrantPolicy = GrantPolicy()
 
 
 class RuleSetBindingRow(NamedTuple):
@@ -117,27 +151,35 @@ class PrerequisiteRepository:
         return {str(row[0]) for row in result.fetchall()}
 
     @staticmethod
-    async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
+    async def list_credential_ids_for_agent(
+        session: AsyncSession, *, agent_id: str, now: datetime | None = None
+    ) -> list[str]:
         """Return the credential ids the agent is directly and actively bound to.
 
         Read-scoping seam (theme 5 phase 1): an agent must be able to read a
         credential it is bound to even when it owns nothing — same
-        orphaned-agent rationale as issues #665/#682. Suspended bindings
-        grant no visibility: a suspension is a cut-off, so the agent keeps
-        seeing the binding (with its flag) in ``/me`` but loses the widened
-        read of the credential itself until resumed. Runs against an admin
+        orphaned-agent rationale as issues #665/#682. Suspended and expired
+        bindings grant no visibility: both are a cut-off, so the agent keeps
+        seeing the binding (with its flags) in ``/me`` but loses the widened
+        read of the credential itself until it is resumed or renewed. Expiry
+        is compared in Python against ``now`` (default: the clock), with the
+        broker's rule (:func:`grant_ended`). Runs against an admin
         session and returns plain ids for ``build_access_filters`` (the
         control scoping module must not import admin ORM models or query
         across databases).
         """
         result = await session.execute(
             text(
-                "SELECT credential_id FROM agent_credential_bindings "
+                f"SELECT credential_id, {GRANT_POLICY_COLUMNS} FROM agent_credential_bindings "
                 "WHERE agent_id = :agent_id AND suspended = false"
             ),
             {"agent_id": agent_id},
         )
-        return [row[0] for row in result.fetchall()]
+        return [
+            str(row.credential_id)
+            for row in result.fetchall()
+            if not grant_ended(GrantPolicy.from_row(row), now=now)
+        ]
 
     @staticmethod
     async def list_agent_ids_owned_by(session: AsyncSession, *, owner_id: str) -> list[str]:
@@ -203,7 +245,9 @@ class PrerequisiteRepository:
 
         stmt = text(
             "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id, "
-            "b.suspended_reason, a.owner_id "
+            "b.suspended_reason, a.owner_id, b.expires_at, "
+            "b.max_idle_period, b.last_used_at, b.renewed_at, b.idle_warning, "
+            "b.max_quota, b.quota_remaining, b.after_expiry "
             "FROM agent_credential_bindings b "
             "JOIN agents a ON a.id = b.agent_id "
             f"WHERE {' AND '.join(conditions)} "
@@ -213,9 +257,36 @@ class PrerequisiteRepository:
         if bind_params:
             stmt = stmt.bindparams(*bind_params)
         # Typed result columns: SQLite returns raw strings and integers otherwise.
-        typed = stmt.columns(bound_at=UTCDateTime(), suspended=Boolean())
+        typed = stmt.columns(
+            bound_at=UTCDateTime(),
+            suspended=Boolean(),
+            expires_at=UTCDateTime(),
+            last_used_at=UTCDateTime(),
+            renewed_at=UTCDateTime(),
+        )
         result = await session.execute(typed, params)
-        return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
+        return [
+            CredentialBoundAgentRow(
+                binding_id=row[0],
+                agent_id=row[1],
+                agent_name=row[2],
+                agent_status=row[3],
+                bound_at=row[4],
+                suspended=row[5],
+                rule_set_id=row[6],
+                suspended_reason=row[7],
+                agent_owner_id=row[8],
+                expires_at=row[9],
+                max_idle_period=row[10],
+                idle_used_at=as_utc(row[11]) if row[11] is not None else None,
+                renewed_at=as_utc(row[12]) if row[12] is not None else None,
+                idle_warning=bool(row[13]),
+                max_quota=row[14],
+                quota_remaining=row[15],
+                after_expiry=row[16] or "hold",
+            )
+            for row in result.fetchall()
+        ]
 
     @staticmethod
     async def list_agents_for_rule_set(
@@ -256,6 +327,32 @@ class PrerequisiteRepository:
         return [RuleSetBoundAgentRow(*row) for row in result.fetchall()]
 
     @staticmethod
+    async def last_used_by_agents(
+        session: AsyncSession, *, credential_id: str, agent_ids: Sequence[str]
+    ) -> dict[str, datetime]:
+        """Latest ``execution_records.started_at`` per agent through one credential.
+
+        "Last used" for the credential's bound agents: any recorded call counts,
+        whatever its outcome. An agent with no recorded call is absent.
+        """
+        if not agent_ids:
+            return {}
+        stmt = (
+            text(
+                "SELECT actor_id, MAX(started_at) AS last_used_at FROM execution_records "
+                "WHERE credential_id = :credential_id AND actor_id IN :agent_ids "
+                "GROUP BY actor_id"
+            )
+            .bindparams(bindparam("agent_ids", expanding=True))
+            # Typed: SQLite returns the raw stored string otherwise.
+            .columns(actor_id=String(), last_used_at=UTCDateTime())
+        )
+        result = await session.execute(
+            stmt, {"credential_id": credential_id, "agent_ids": list(agent_ids)}
+        )
+        return {str(row[0]): row[1] for row in result.fetchall() if row[1] is not None}
+
+    @staticmethod
     async def get_agent_credential_binding(
         session: AsyncSession,
         *,
@@ -263,7 +360,7 @@ class PrerequisiteRepository:
         credential_id: str,
         visible_to: AgentVisibility | None = None,
     ) -> AgentCredentialBindingRow | None:
-        """Return the direct binding's (id, suspended, rule_set_id, agent name), or ``None``.
+        """Return the direct binding's (id, suspended, rule set, agent name, expiry), or ``None``.
 
         Existence check for the per-binding permission endpoints (theme 5
         phase 1): the binding row lives in the admin DB while the rules live
@@ -279,14 +376,20 @@ class PrerequisiteRepository:
         where = "b.agent_id = :agent_id AND b.credential_id = :credential_id"
         if visible_to is None:
             stmt = text(
-                "SELECT b.id, b.suspended, b.rule_set_id, a.name FROM agent_credential_bindings b "
+                "SELECT b.id, b.suspended, b.rule_set_id, a.name, b.expires_at, "
+                "b.max_idle_period, b.last_used_at, b.renewed_at, b.bound_at, "
+                "b.max_quota, b.quota_remaining "
+                "FROM agent_credential_bindings b "
                 "LEFT JOIN agents a ON a.id = b.agent_id "
                 f"WHERE {where}"
             )
         else:
             params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
             stmt = text(
-                "SELECT b.id, b.suspended, b.rule_set_id, a.name FROM agent_credential_bindings b "
+                "SELECT b.id, b.suspended, b.rule_set_id, a.name, b.expires_at, "
+                "b.max_idle_period, b.last_used_at, b.renewed_at, b.bound_at, "
+                "b.max_quota, b.quota_remaining "
+                "FROM agent_credential_bindings b "
                 "JOIN agents a ON a.id = b.agent_id "
                 f"WHERE {where} AND (a.id = :self_id OR a.owner_id IN :owner_ids)"
             ).bindparams(bindparam("owner_ids", expanding=True))
@@ -299,6 +402,16 @@ class PrerequisiteRepository:
             suspended=bool(row[1]),
             rule_set_id=str(row[2]) if row[2] is not None else None,
             agent_name=str(row[3]) if row[3] is not None else None,
+            expires_at=as_utc(row[4]) if row[4] is not None else None,
+            policy=GrantPolicy(
+                expires_at=row[4],
+                max_idle_period=row[5],
+                last_used_at=row[6],
+                renewed_at=row[7],
+                bound_at=row[8],
+                max_quota=row[9],
+                quota_remaining=row[10],
+            ),
         )
 
     @staticmethod

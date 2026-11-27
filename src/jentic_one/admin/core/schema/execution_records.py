@@ -23,6 +23,18 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         Index("ix_execution_records_status", "status"),
         Index("ix_execution_records_actor", "actor_id", "actor_type"),
         Index("ix_execution_records_credential_id", "credential_id"),
+        # Covers "last used" per agent, credential and API
+        # (``ExecutionRecordRepository.last_used_by_api``,
+        # ``PrerequisiteRepository.last_used_by_agents``): equality on actor and
+        # credential, the grouping columns, then ``MAX(started_at)``, index-only.
+        Index(
+            "ix_execution_records_actor_credential_last_used",
+            "actor_id",
+            "credential_id",
+            "api_vendor",
+            "api_name",
+            "started_at",
+        ),
         # Covers the repeated-failure count in ``shared/events/repeated_failure.py``:
         # equality on actor, credential, and operation, then the ``started_at``
         # window range, over failed rows only.

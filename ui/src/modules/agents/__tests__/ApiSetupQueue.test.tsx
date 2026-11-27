@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { page } from 'vitest/browser';
 import {
+	fireEvent,
 	renderWithProviders,
 	screen,
 	waitFor,
@@ -158,7 +159,19 @@ function expectCautionTone(row: HTMLElement): void {
 
 async function accessReady(): Promise<HTMLElement> {
 	await waitFor(() => expect(accessSection()).toHaveAttribute('data-ready', 'true'));
+	pickDuration();
 	return accessSection();
+}
+
+/**
+ * How long the access lasts: a new binding waits for a choice (nothing is
+ * preselected), so the helpers choose a week unless one is chosen already.
+ */
+function pickDuration(duration = '7d'): void {
+	const preset = within(accessSection()).queryByTestId(
+		'queue-access-duration-preset',
+	) as HTMLSelectElement | null;
+	if (preset && preset.value === '') fireEvent.change(preset, { target: { value: duration } });
 }
 
 async function addWithAccess(
@@ -296,7 +309,10 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		await user.click(addButton());
 		await waitFor(() => expect(calls).toHaveLength(1));
 		expect(calls[0].agentId).toBe(AGENT_ID);
-		expect(calls[0].body).toEqual({ credential_id: 'cred_stripe' });
+		expect(calls[0].body).toEqual({
+			credential_id: 'cred_stripe',
+			expires_at: expect.any(String),
+		});
 		await waitFor(() => expect(rules.calls).toHaveLength(1));
 		expect(rules.calls[0]).toMatchObject({
 			agentId: AGENT_ID,
@@ -342,7 +358,10 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		).toHaveTextContent('Stripe — Sandbox');
 		await addWithAccess(user);
 		await waitFor(() => expect(calls).toHaveLength(1));
-		expect(calls[0].body).toEqual({ credential_id: 'cred_sandbox' });
+		expect(calls[0].body).toEqual({
+			credential_id: 'cred_sandbox',
+			expires_at: expect.any(String),
+		});
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
 	});
 
@@ -539,7 +558,10 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		expect(within(accessSection()).getByRole('radio', { name: /Full access/ })).toBeChecked();
 		await user.click(addButton());
 		await waitFor(() => expect(calls).toHaveLength(1));
-		expect(calls[0].body).toEqual({ credential_id: 'cred_acme_old' });
+		expect(calls[0].body).toEqual({
+			credential_id: 'cred_acme_old',
+			expires_at: expect.any(String),
+		});
 	});
 
 	it('a credential awaiting sign-in says so, and the footer adds and signs in', async () => {
@@ -790,8 +812,10 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 		await user.click(within(rowFor('stripe')).getByRole('button'));
 		await waitFor(() => expect(rowFor('stripe')).toHaveTextContent('In progress'));
 		// Reopened, the reason for the failure is still in view (the bind client
-		// surfaces the response's status text).
-		expect(screen.getByTestId('queue-last-error')).toHaveTextContent('Service Unavailable');
+		// surfaces the server's own words, not just the status line).
+		expect(screen.getByTestId('queue-last-error')).toHaveTextContent(
+			'Upstream is unavailable.',
+		);
 		expect(await screen.findByRole('radio', { name: /stripe\.com key/ })).toBeChecked();
 		await addWithAccess(user);
 		await waitFor(() => expect(rowFor('stripe')).toHaveAttribute('data-status', 'added'));
@@ -1002,6 +1026,42 @@ describe('ApiSetupQueue — one pane per API: ① Credential, then ② Access', 
 			await user.click(within(tester).getByRole('button', { name: 'Test' }));
 			return within(tester).findByTestId('rule-verdict');
 		}
+
+		it('gives a draft edited before the org limits arrived the defaults once they do', async () => {
+			let release: () => void = () => {};
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			worker.use(
+				http.get('/agents/credentials\\:policy', async () => {
+					await gate;
+					return HttpResponse.json({
+						expires_in: { default: 'P7D', max: null },
+						idle_period: { default: 'P14D', max: null },
+						single_use_by_default: false,
+					});
+				}),
+			);
+			const user = userEvent.setup();
+			renderWithProviders(
+				<QueueHarness items={[coveredItem('stripe.com', 'cred_stripe')]} />,
+			);
+			await waitFor(() => expect(accessSection()).toHaveAttribute('data-ready', 'true'));
+
+			// An edit while the limits are still on their way stores the draft with
+			// nothing for the duration or the idle limit.
+			await user.click(within(accessSection()).getByRole('radio', { name: /^Full access$/ }));
+			release();
+
+			const preset = (): HTMLSelectElement =>
+				within(accessSection()).getByTestId('queue-access-duration-preset');
+			await waitFor(() => expect(preset().value).toBe('7d'));
+			expect(
+				within(within(accessSection()).getByTestId('queue-access-idle-toggle')).getByRole(
+					'checkbox',
+				),
+			).toBeChecked();
+		});
 
 		it('four presets, Read only preselected; an empty Custom list holds the footer', async () => {
 			const { calls } = watchBinds();

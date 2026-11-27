@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Discriminator, Field
 
+from jentic_one.shared.auth.grant_policy import AfterExpiry, GrantEndReason
+from jentic_one.shared.iso_duration import IdlePeriodResponse
 from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web import openapi_examples as ex
 
@@ -59,6 +61,75 @@ class CredentialBindingEntry(BaseModel):
             " when the API the credential serves was deleted."
         ),
         examples=["api_deleted"],
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the binding stops authorizing calls (RFC 3339); null if it never expires."
+        ),
+        examples=["2026-12-31T23:59:00Z"],
+    )
+    expired: bool = Field(
+        default=False,
+        description=(
+            "Whether `expires_at` has passed; the agent cannot execute through an expired"
+            " binding until its operator renews it."
+        ),
+        examples=[False],
+    )
+    expired_reason: GrantEndReason | None = Field(
+        default=None,
+        description=(
+            "Which limit ended the binding while `expired` is true: `end_date`"
+            " (`expires_at` passed), `idle` (unused for its idle limit) or `uses`"
+            " (no uses left). Null while the binding holds."
+        ),
+        examples=[None],
+    )
+    max_idle_period: IdlePeriodResponse | None = Field(
+        default=None,
+        description=(
+            "Idle limit (an ISO 8601 duration, e.g. P14D): the binding ends once it goes"
+            " this long without a call;"
+            " null when it has none."
+        ),
+        examples=["P14D"],
+    )
+    idle_expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the idle limit ends the binding if it is not used before then (RFC 3339);"
+            " null without an idle limit. Each call moves it later."
+        ),
+        examples=["2026-12-31T23:59:00Z"],
+    )
+    idle_warning: bool = Field(
+        default=False,
+        description="Whether the owner is warned before the binding ends (its end date or"
+        " idle limit).",
+        examples=[False],
+    )
+    after_expiry: AfterExpiry = Field(
+        default=AfterExpiry.HOLD,
+        description="What a call through the binding gets once it has ended: `hold` holds"
+        " the first call for the owner to renew; `refuse` answers"
+        " `403 credential_binding_expired` (ask your owner to renew).",
+        examples=["hold"],
+    )
+    max_quota: int | None = Field(
+        default=None,
+        description="How many calls the binding allows before it ends; null for unlimited.",
+        examples=[1],
+    )
+    quota_remaining: int | None = Field(
+        default=None,
+        description="How many calls it still allows; null without a use count.",
+        examples=[1],
+    )
+    last_used_at: datetime | None = Field(
+        default=None,
+        description="When this agent last made a call through the binding; null if never.",
+        examples=["2026-11-20T10:00:00Z"],
     )
     # Shared permission rule set this binding points at (None = inline rules)
     # — tells the agent which policy object governs it (theme 5, Q-04).

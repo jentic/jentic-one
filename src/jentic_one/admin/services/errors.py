@@ -123,6 +123,22 @@ class HeldExecutionForbiddenError(AdminServiceError):
     """Raised when a caller is not permitted to decide an approval (e.g. agent actor)."""
 
 
+class HeldExecutionRenewalForbiddenError(HeldExecutionForbiddenError):
+    """Raised when a reviewer who may not renew the binding approves a renewal hold."""
+
+
+class HeldExecutionRenewalInvalidError(AdminServiceError):
+    """Raised when a decision's ``renewal`` doesn't fit the hold.
+
+    Approving a ``grant_renewal`` hold needs the fresh policy; any other hold
+    takes none.
+    """
+
+
+class HeldExecutionRenewalUnavailableError(AdminServiceError):
+    """Raised when this process cannot renew bindings (no grant renewer installed)."""
+
+
 class HeldExecutionResultNotReadyError(AdminServiceError):
     """Raised when a held execution has not finished, so it has no result yet."""
 

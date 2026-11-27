@@ -223,6 +223,13 @@ func apiTargetCoded(he *HTTPError, target string, err error, lane connectLane) (
 			Actionable: "Your operator suspended your access to this API. Do not ask again; " +
 				"ask your operator to resume it.",
 		}, ""
+	case "connect_session_binding_expired":
+		return &ux.CodedError{
+			Code: ux.CodeBrokerDenied,
+			Msg:  fmt.Sprintf("this agent's access to %s has expired: %v", target, err),
+			Actionable: "Your access to this API has expired. Do not ask again; " +
+				"ask your operator to renew it.",
+		}, ""
 	}
 	return nil, ""
 }
@@ -238,6 +245,17 @@ func connectOutcomeCoded(sessionID, status, errorCode, rerun string) *ux.CodedEr
 			Code:       ux.CodeResolveFailed,
 			Msg:        fmt.Sprintf("connect session %s expired before it was approved", sessionID),
 			Actionable: "Run `" + rerun + "` again and relay the fresh approval_url to your human user.",
+		}
+	case errorCode == "binding_expired" || errorCode == "binding_suspended":
+		action := "Ask your operator to renew the expired binding."
+		if errorCode == "binding_suspended" {
+			action = "Ask your operator to resume the suspended binding."
+		}
+		return &ux.CodedError{
+			Code:       ux.CodeBrokerDenied,
+			Msg:        fmt.Sprintf("connect session %s ended (%s)", sessionID, errorCode),
+			Actionable: action,
+			Details:    map[string]any{"error_code": errorCode},
 		}
 	case errorCode == "rejected":
 		return &ux.CodedError{

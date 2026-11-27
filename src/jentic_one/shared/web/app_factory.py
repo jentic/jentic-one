@@ -27,6 +27,7 @@ from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.events.repeated_failure import RepeatedFailureCounter
+from jentic_one.shared.jobs.binding_idle_warning_scanner import BindingIdleWarningScanner
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
 from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
@@ -374,6 +375,23 @@ def _start_expiry_scanner(
     return _BackgroundHandle(scanner, task)
 
 
+def _start_idle_warning_scanner(
+    ctx: Context,
+    enabled_apps: set[str],
+) -> _BackgroundHandle | None:
+    """Start the daily job that warns owners before a binding's idle limit.
+
+    Bindings and events both live in the **admin** DB; the job runs where the
+    admin surface does (it reads bindings the auth and admin surfaces write).
+    """
+    if "admin" not in enabled_apps or not ctx.has_db("admin"):
+        return None
+    scanner = BindingIdleWarningScanner(ctx.admin_db, config=ctx.config.grant_expiry)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("binding_idle_warning_scanner_task_started")
+    return _BackgroundHandle(scanner, task)
+
+
 def _start_catalog_update_scanner(
     ctx: Context,
     enabled_apps: set[str],
@@ -461,6 +479,7 @@ async def _background_services(
     """Start and stop the background worker and periodic scanners."""
     worker_handle = _start_worker(ctx, enabled_apps, **(worker_kwargs or {}))
     expiry_handle = _start_expiry_scanner(ctx, enabled_apps)
+    idle_warning_handle = _start_idle_warning_scanner(ctx, enabled_apps)
     catalog_handle = _start_catalog_update_scanner(ctx, enabled_apps)
     connect_poll_handle = _start_connect_poll_scanner(
         ctx,
@@ -472,6 +491,7 @@ async def _background_services(
     finally:
         await _stop_background(connect_poll_handle)
         await _stop_background(catalog_handle)
+        await _stop_background(idle_warning_handle)
         await _stop_background(expiry_handle)
         await _stop_background(worker_handle, drain=True)
 
