@@ -1,60 +1,58 @@
 #!/usr/bin/env bash
-# Runs inside the harness runlet container, on the per-run Docker network.
-# Docker service names (postgres, redis) resolve as hostnames here.
+# Repo setup for an automated worker: a Software Factory VM runs it once from
+# the repo root (sf-repo-setup), after starting the services in
+# .harness/compose.yaml. It also runs as-is in any plain checkout.
 #
-# Toolchain provisioning (mise install, uv sync) is handled by the harness
-# container image / lifecycle, not by this script. This script's job is to
-# perform any per-run, repo-specific setup the harness can't do generically.
+# All product readiness is `make ready` (see the Makefile): Python and UI
+# dependencies, the fixture Postgres and migrations. It fails on the first step
+# that fails, and so does this script, so a worker never starts on a half-set-up
+# checkout.
 #
-# The harness handles compose up/down — do not invoke docker here.
+# Optional, off by default: JENTIC_RULES_REPO=<owner>/<name> clones a rules
+# source read-only into .rules over plain HTTPS. Access comes from the
+# machine's git credential helper; no token is read, put in a URL or passed on
+# the command line. A requested clone that fails fails setup.
+#
+# HARNESS_ENV_FILE, when set, receives KEY=value lines for the agent's
+# environment. Nothing secret is written there.
 set -euo pipefail
 
-# HARNESS_ENV_FILE is a sourced shell file the harness uses to propagate
-# environment variables from this script back to subsequent harness steps.
-# We don't write to it yet, but we validate it up front so future setup logic
-# can append KEY=value lines without surprise failures.
-: "${HARNESS_ENV_FILE:?HARNESS_ENV_FILE must be set by the harness}"
-if [[ ! -w "${HARNESS_ENV_FILE}" ]]; then
+# The runlet harness's teardown hook: compose lifecycle belongs to the harness.
+if [[ "${1:-}" == "--teardown" ]]; then
+    echo "[harness] teardown: nothing to do"
+    exit 0
+fi
+
+if [[ -n "${HARNESS_ENV_FILE:-}" && ! -w "${HARNESS_ENV_FILE}" ]]; then
     echo "ERROR: HARNESS_ENV_FILE=${HARNESS_ENV_FILE} is not writable" >&2
     exit 1
 fi
 
-# --teardown: harness owns compose lifecycle; nothing to do here.
-if [[ "${1:-}" == "--teardown" ]]; then
-    echo "[harness] Teardown requested — compose lifecycle is managed by the harness; nothing to do."
-    exit 0
+# Runtimes pinned in mise.toml, when mise is how this machine provides them.
+run() { "$@"; }
+if command -v mise >/dev/null 2>&1; then
+    mise install
+    run() { mise exec -- "$@"; }
 fi
 
-# Optionally fetch a rules source (read-only) so harness agents can read the full
-# rule guidance. The harness runlet lacks the ssh binary, so it injects
-# GITHUB_APP_TOKEN_FILE (a refreshable token); the clone only happens when that
-# token is present. The source repo defaults to jentic/jentic-one-rules but is
-# overridable via JENTIC_RULES_REPO (forks/mirrors). With no token (e.g. a public
-# run) this is skipped and the vendored subset under tests/arch is used.
+if ! run uv --version >/dev/null 2>&1; then
+    echo "ERROR: uv is not installed (https://docs.astral.sh/uv/); make ready needs it" >&2
+    exit 1
+fi
+
+run make ready
+
 RULES_DIR="$(pwd)/.rules"
-RULES_REPO="${JENTIC_RULES_REPO:-jentic/jentic-one-rules}"
-
-if [[ ! -d "${RULES_DIR}" && -n "${RULES_REPO}" ]]; then
-    # Grab the token from the harness's secure sidecar file
-    TOKEN=""
-    if [[ -n "${GITHUB_APP_TOKEN_FILE:-}" && -s "${GITHUB_APP_TOKEN_FILE}" ]]; then
-        TOKEN=$(cat "${GITHUB_APP_TOKEN_FILE}")
+if [[ -n "${JENTIC_RULES_REPO:-}" && ! -e "${RULES_DIR}" ]]; then
+    if [[ ! "${JENTIC_RULES_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+        echo "ERROR: JENTIC_RULES_REPO must be <owner>/<name>, got '${JENTIC_RULES_REPO}'" >&2
+        exit 1
     fi
-
-    if [[ -n "${TOKEN}" ]]; then
-        # Use --quiet so we don't accidentally leak the token URL in trace logs
-        if git clone --quiet "https://x-access-token:${TOKEN}@github.com/${RULES_REPO}.git" "${RULES_DIR}"; then
-            echo "[harness] rules: fetched rules source."
-        else
-            echo "[harness] rules: fetch failed (expected without access)."
-        fi
-    else
-        echo "[harness] rules: no token available; skipping rules fetch."
-    fi
+    git clone --quiet --depth 1 "https://github.com/${JENTIC_RULES_REPO}.git" "${RULES_DIR}"
+    echo "[harness] rules: cloned ${JENTIC_RULES_REPO} into .rules"
 fi
 
-# Export the mount so subsequent harness steps inherit it
-if [[ -d "${RULES_DIR}" ]]; then
+if [[ -n "${HARNESS_ENV_FILE:-}" && -d "${RULES_DIR}" ]]; then
     echo "JENTIC_RULES_DIR=${RULES_DIR}" >>"${HARNESS_ENV_FILE}"
 fi
 

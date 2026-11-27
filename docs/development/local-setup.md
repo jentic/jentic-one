@@ -38,6 +38,30 @@ Confirm the environment with `make check` (lint + mypy, the secrets audit,
 the architecture tests, then the OpenAPI scorecard, which skips itself when
 `JENTIC_SCORE_API_KEY` is unset).
 
+## Unattended setup: `make ready`
+
+`make ready` is the one command an automated worker (CI-like agents, a
+Software Factory VM) runs to get a checkout ready to change and test. It is
+strict: it stops with a non-zero exit at the first step that fails, where
+`make install` skips the UI on a machine without `node`. It is idempotent, so
+running it again is safe, and it needs nothing outside this repo.
+
+| Step | Command |
+| ---- | ------- |
+| Python deps, exactly as locked | `uv sync --dev --all-extras --locked` (fails if `uv.lock` is out of date) |
+| UI deps | `npm ci` in `ui/` (`READY_UI=0` skips it for backend-only work) |
+| Git hooks | `uv run lefthook install` |
+| Fixtures + migrations | `scripts/setup.sh`, as `make start-fixtures` |
+
+[`.harness/setup.sh`](../../.harness/setup.sh) is the worker entry point: it
+installs the `mise.toml` runtimes when `mise` is present, runs `make ready`,
+and fails when it fails. In a Software Factory VM,
+[`.harness/compose.yaml`](../../.harness/compose.yaml) starts the fixture
+Postgres first (the same `docker/local-setup` service and compose project) and
+starts it again after the VM resumes. Setting `JENTIC_RULES_REPO=<owner>/<name>`
+also clones that rules source into `.rules`, using the machine's git
+credential helper; without it, nothing outside this repo is fetched.
+
 ## Run the stack
 
 Pick one:
