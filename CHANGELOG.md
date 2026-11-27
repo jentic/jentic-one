@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.46.0](https://github.com/jentic/jentic-one/compare/v0.45.1...v0.46.0) (2026-11-27)
+
+
+### Features
+
+* **broker:** ask the agent to explain a held call, and show the reviewer ([#2070](https://github.com/jentic/jentic-one/issues/2070)) ([5fcad07](https://github.com/jentic/jentic-one/commit/5fcad07fc8ef0ecab068d144bddf60ce4c8a4767))
+* **dev:** add make ready and run it from .harness/setup.sh ([#2179](https://github.com/jentic/jentic-one/issues/2179)) ([8f4d1c0](https://github.com/jentic/jentic-one/commit/8f4d1c0d227be605bcc57d18029ee854e6a7cd99))
+* **ui:** redesign agent onboarding, the New agent panel and API setup ([#1905](https://github.com/jentic/jentic-one/issues/1905)) ([90bcb16](https://github.com/jentic/jentic-one/commit/90bcb162855d761064d648bd8b17d4a8a07e4d99))
+* **ui:** review held calls in a shell-wide pop-up with inbox, toast and waiting card ([#2014](https://github.com/jentic/jentic-one/issues/2014)) ([6eefcda](https://github.com/jentic/jentic-one/commit/6eefcdab902dcb1504be9cadd6792418f4331300))
+
+
+### Bug Fixes
+
+* **fixtures:** run the fixtures on pgvector/pgvector:pg16 and stop on a volume with a mismatched collation ([#2178](https://github.com/jentic/jentic-one/issues/2178)) ([5b46b24](https://github.com/jentic/jentic-one/commit/5b46b245745f76f5f3525653c73503f1d3bbe4a3))
+* harden CLI redaction, auth/OAuth lifecycles, registry races, and extension seams ([#2142](https://github.com/jentic/jentic-one/issues/2142)) ([d30ea8a](https://github.com/jentic/jentic-one/commit/d30ea8a7a7a49b77b8b620e998c59556a448dea4))
+* **tests:** count only this database's advisory-lock holders ([#2177](https://github.com/jentic/jentic-one/issues/2177)) ([f1b3855](https://github.com/jentic/jentic-one/commit/f1b38559a49746d8703cf0573316302588d50c74))
+* **tests:** give every test process its own Postgres database, cloned from a template per migration set ([#2176](https://github.com/jentic/jentic-one/issues/2176)) ([368ce63](https://github.com/jentic/jentic-one/commit/368ce639d27e649f55ab30ba0e7a69fd8cdc6cb6))
+
+
+### Documentation
+
+* **agents:** sync commit conventions and drop dead design-doc paths ([#2173](https://github.com/jentic/jentic-one/issues/2173)) ([0696eb5](https://github.com/jentic/jentic-one/commit/0696eb5176a7b6e095e13b9769a6cfbbd4eda9ab))
+
+
+### Build System
+
+* **deps-dev:** bump prettier from 3.9.10 to 3.10.1 in /ui ([#2149](https://github.com/jentic/jentic-one/issues/2149)) ([778d2f6](https://github.com/jentic/jentic-one/commit/778d2f6d1460c1d1659e05089ae6a4c8ac2c2ed3))
+* **deps-dev:** bump the vite group in /ui with 4 updates ([#2165](https://github.com/jentic/jentic-one/issues/2165)) ([f36371a](https://github.com/jentic/jentic-one/commit/f36371a9752f884549b3896957e3d540c599d72f))
+* **deps-dev:** bump typescript-eslint ([#2147](https://github.com/jentic/jentic-one/issues/2147)) ([953d719](https://github.com/jentic/jentic-one/commit/953d71941f354050711475135be9037dca160929))
+* **deps-dev:** bump vite from 8.3.7 to 8.3.8 in /ui in the vite group ([#2146](https://github.com/jentic/jentic-one/issues/2146)) ([d690772](https://github.com/jentic/jentic-one/commit/d6907728157eb541a5f85fc37d9cbbb0aba4cb84))
+* **deps:** bump @tanstack/react-query from 5.107.1 to 5.108.2 in /ui ([#2169](https://github.com/jentic/jentic-one/issues/2169)) ([39d255f](https://github.com/jentic/jentic-one/commit/39d255fcabf432b42461dee229b5b5a1e6b7e1c2))
+* **deps:** bump lucide-react from 1.70.0 to 1.74.0 in /ui ([#2150](https://github.com/jentic/jentic-one/issues/2150)) ([d7e0ba9](https://github.com/jentic/jentic-one/commit/d7e0ba967286bdb6dacd9d189798598e04b74e3f))
+* **deps:** bump lucide-react from 1.74.0 to 1.77.0 in /ui ([#2168](https://github.com/jentic/jentic-one/issues/2168)) ([99433d5](https://github.com/jentic/jentic-one/commit/99433d5a861220feb98d05f537d0852ff9be9b9c))
+* **deps:** bump postgres in /deploy/docker in the docker-bases group ([#2164](https://github.com/jentic/jentic-one/issues/2164)) ([190490e](https://github.com/jentic/jentic-one/commit/190490e260f8b841c95f9a0cc93142afd2299439))
+* **deps:** bump react-router in /ui in the react group ([#2166](https://github.com/jentic/jentic-one/issues/2166)) ([b765f30](https://github.com/jentic/jentic-one/commit/b765f30e50b270323d3a7515b7f10eb1ecee692d))
+* **deps:** bump the python group with 7 updates ([#2153](https://github.com/jentic/jentic-one/issues/2153)) ([e5ca821](https://github.com/jentic/jentic-one/commit/e5ca82185a78c9717b121c9ceb50ea7954cb3190))
+* **deps:** bump the python group with 9 updates ([#2170](https://github.com/jentic/jentic-one/issues/2170)) ([1b20555](https://github.com/jentic/jentic-one/commit/1b20555db3102bca90c8e75bdc280e4335c735d7))
+
 ## [0.45.1](https://github.com/jentic/jentic-one/compare/v0.45.0...v0.45.1) (2026-11-15)
 
 
