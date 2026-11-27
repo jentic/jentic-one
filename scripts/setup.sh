@@ -5,6 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Hold the host-side fixture lock for this server (tests/harness/fixture_lock.py)
+# for the whole start: `make destroy-fixtures` and the test harness's database
+# preparation take it too, so none of them runs half-way through another.
+if [ "${JENTIC_FIXTURE_LOCK_HELD:-}" != "1" ]; then
+    exec uv run python -m tests.harness.fixture_lock -- "$0" "$@"
+fi
+
 PG_PORT="${JENTIC_PG_PORT:-5432}"
 
 # The migration runner below reads its connection settings from
@@ -19,6 +26,10 @@ fi
 
 COMPOSE_FILE="docker/local-setup/docker-compose.yaml"
 INIT_SQL="docker/local-setup/init-schemas.sql"
+# The compose project: its container, volume and network. Set
+# JENTIC_FIXTURES_PROJECT (with its own JENTIC_PG_PORT) for a second, separate
+# server; `make stop-fixtures` and `make destroy-fixtures` read it too.
+PROJECT="${JENTIC_FIXTURES_PROJECT:-local-setup}"
 
 # JENTIC_PG_EXTERNAL=1: Postgres is already running (e.g. a CI service
 # container on localhost:$PG_PORT, same image and superuser as the compose
@@ -31,7 +42,7 @@ psql_db() {
         PGPASSWORD="${POSTGRES_PASSWORD:-postgres}" \
             psql -h "${JENTIC_PG_HOST:-localhost}" -p "$PG_PORT" -U postgres -d jentic "$@"
     else
-        docker compose -f "$COMPOSE_FILE" exec -T db \
+        docker compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T db \
             psql -U postgres -d jentic "$@"
     fi
 }
@@ -40,7 +51,7 @@ if [ "$EXTERNAL" = "1" ]; then
     echo "==> Using the already-running Postgres on ${JENTIC_PG_HOST:-localhost}:${PG_PORT}"
 else
     echo "==> Starting Docker services..."
-    docker compose -f "$COMPOSE_FILE" up -d
+    docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d
 fi
 
 echo "==> Waiting for database to become healthy..."
@@ -101,20 +112,18 @@ retry_psql() {
 }
 
 echo "==> Ensuring schemas exist..."
-# The compose fixture applies $INIT_SQL (per-surface roles + grants) through
-# the image's first-boot entrypoint. An external Postgres has no such hook, so
-# apply it here, once: CREATE ROLE is not idempotent, so a server that already
-# has the roles is left alone.
-if [ "$EXTERNAL" = "1" ]; then
-    if [ "$(psql_db -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'registry_user'")" != "1" ]; then
-        psql_db -v ON_ERROR_STOP=1 -q -f - < "$INIT_SQL"
-        echo "    applied ${INIT_SQL}"
-    fi
-fi
 for schema in registry control admin; do
     retry_psql "CREATE SCHEMA ${schema}" -c "CREATE SCHEMA IF NOT EXISTS ${schema};"
     echo "    schema '$schema' ensured"
 done
+# $INIT_SQL (per-surface roles, grants, default privileges) is idempotent, so it
+# runs on every start: an external Postgres has no first-boot hook, and a grant
+# added to it reaches a volume created before. It only adds: a role that
+# exists keeps its password, and a grant removed from the file stays until the
+# volume is recreated. The test templates apply it themselves
+# (tests/harness/postgres.py).
+psql_db -v ON_ERROR_STOP=1 -q -c "SET client_min_messages TO warning" -f - < "$INIT_SQL"
+echo "    applied ${INIT_SQL}"
 
 echo "==> Running migrations..."
 # The full runner, not per-database `alembic upgrade`: it orders the databases

@@ -197,10 +197,14 @@ start-fixtures: ## Start Docker database fixtures and apply migrations
 	@./scripts/setup.sh
 
 stop-fixtures: ## Stop Docker database fixtures
-	docker compose -f docker/local-setup/docker-compose.yaml stop
+	docker compose -p "$${JENTIC_FIXTURES_PROJECT:-local-setup}" -f docker/local-setup/docker-compose.yaml stop
 
-destroy-fixtures: ## Remove Docker database fixtures and volumes
-	docker compose -f docker/local-setup/docker-compose.yaml down -v
+clean-test-databases: ## Drop this checkout's test databases (ALL=1: every checkout's, every template and legacy names; FORCE=1: even in use)
+	uv run python -m tests.harness.postgres $(if $(ALL),--all) $(if $(FORCE),--force)
+
+destroy-fixtures: ## Remove Docker database fixtures and volumes (refuses while a live test run owns a database on them; FORCE=1 overrides)
+	uv run python -m tests.harness.postgres --destroy $(if $(FORCE),--force) -- \
+		docker compose -p "$${JENTIC_FIXTURES_PROJECT:-local-setup}" -f docker/local-setup/docker-compose.yaml down -v
 
 # Docker quickstart plus a mock OIDC IdP (web SSO and MCP OAuth), for local development.
 QUICKSTART_DEV := docker compose -p jentic-quickstart-dev \

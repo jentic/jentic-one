@@ -113,9 +113,9 @@ the combined app only.
 
 | Target | Does |
 | ------ | ---- |
-| `make start-fixtures` | Start the Postgres container and apply migrations |
+| `make start-fixtures` | Start the Postgres container, apply the init SQL and migrations to the dev database `jentic` |
 | `make stop-fixtures` | Stop the container (keeps the volume) |
-| `make destroy-fixtures` | Remove the container **and its volume** (full reset) |
+| `make destroy-fixtures` | Remove the container **and its volume** (full reset). Refuses while a live test run, in any checkout, owns a database on it (`FORCE=1` overrides) |
 
 ## UI development
 

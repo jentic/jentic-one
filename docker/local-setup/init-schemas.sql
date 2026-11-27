@@ -1,16 +1,34 @@
 -- Create schemas and per-surface roles for the local PostgreSQL instance.
--- Executed once on first database initialization by the postgres entrypoint.
--- NOTE: If roles or grants change, run `make destroy-fixtures` to recreate
--- the volume — init scripts only execute on first boot.
+-- The postgres entrypoint runs it on first boot, `make start-fixtures`
+-- (scripts/setup.sh) runs it again in `jentic` on every start, and the test
+-- harness runs it in every test template it builds (tests/harness/postgres.py).
+-- It must stay idempotent.
+--
+-- Schemas and grants belong to each database. Roles belong to the server and
+-- are shared by every checkout using it: one is created only when missing, so
+-- changing a password or attribute here does not reach an existing volume, and
+-- the test harness checks the roles still log in. Rerunning the file only adds:
+-- a grant removed from it stays in an existing `jentic` until the volume is
+-- recreated (`make destroy-fixtures && make start-fixtures`).
 
 CREATE SCHEMA IF NOT EXISTS registry;
 CREATE SCHEMA IF NOT EXISTS control;
 CREATE SCHEMA IF NOT EXISTS admin;
 
 -- Per-surface roles (passwords are static; local-dev only).
-CREATE ROLE registry_user LOGIN PASSWORD 'registry_pass';
-CREATE ROLE control_user LOGIN PASSWORD 'control_pass';
-CREATE ROLE admin_user LOGIN PASSWORD 'admin_pass';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'registry_user') THEN
+        CREATE ROLE registry_user LOGIN PASSWORD 'registry_pass';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'control_user') THEN
+        CREATE ROLE control_user LOGIN PASSWORD 'control_pass';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin_user') THEN
+        CREATE ROLE admin_user LOGIN PASSWORD 'admin_pass';
+    END IF;
+END
+$$;
 
 -- Schema-scoped privileges: each role owns its schema's objects.
 GRANT USAGE, CREATE ON SCHEMA registry TO registry_user;

@@ -42,7 +42,7 @@ from jentic_one.admin.repos import UserRepository
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
-from tests.harness.postgres import migrate_to_head, postgres_config, prepare_xdist_database
+from tests.harness.postgres import drop_test_database, postgres_config, prepare_test_database
 
 
 @asynccontextmanager
@@ -88,12 +88,12 @@ def web_config() -> AppConfig:
 
 @pytest.fixture(scope="session", autouse=True)
 def _apply_migrations(
-    web_config: AppConfig, tmp_path_factory: pytest.TempPathFactory
+    web_config: AppConfig,
 ) -> Iterator[None]:
-    """Bring every database up to head once per session (per-worker DB under xdist)."""
-    prepare_xdist_database(tmp_path_factory.getbasetemp().parent)
-    migrate_to_head(web_config)
+    """Give this process its own database, cloned from a migrated template; drop it at the end."""
+    prepare_test_database()
     yield
+    drop_test_database()
 
 
 @pytest.fixture(scope="package", autouse=True)

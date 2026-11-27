@@ -23,9 +23,20 @@ Notes:
 
 - Tests run in parallel (`pytest-xdist`, `-n auto --dist loadfile`). Run
   serially with `make <target> PYTEST_XDIST=`; append flags with
-  `PYTEST_ARGS=...`. Each xdist worker gets its own Postgres database.
+  `PYTEST_ARGS=...`.
+- Each test process gets its own Postgres database, cloned from a template
+  migrated once per set of migration inputs, so any number of runs, in one
+  checkout or several git worktrees, share one fixture server safely. Design:
+  the module docstring of `tests/harness/postgres.py`. The tests never use the
+  dev database `jentic`.
 - Fixtures on a non-default port: set `JENTIC_PG_PORT` for both
-  `make start-fixtures` and the test run.
+  `make start-fixtures` and the test run. A second, separate server: also set
+  `JENTIC_FIXTURES_PROJECT` (its compose project).
+- A run drops its database at the end; `JENTIC_PG_KEEP_DATABASES=1` keeps it
+  for debugging. `make clean-test-databases` drops this checkout's (`ALL=1`:
+  every checkout's and every template; `FORCE=1`: even ones in use).
+- `make destroy-fixtures` refuses while a live test run owns a database on the
+  server (`FORCE=1` overrides).
 
 UI tests: [`ui/README.md`](../../ui/README.md). Go CLI tests: `make help` in
 [`cli/Makefile`](../../cli/Makefile).
