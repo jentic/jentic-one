@@ -81,6 +81,20 @@ while [ "$ok" -lt "$REQUIRED_OK" ]; do
 done
 echo "    db is ready (${REQUIRED_OK} consecutive probes over ${SECONDS}s)"
 
+# A volume created by another image (another glibc) has databases whose
+# recorded collation version no longer matches the server's: Postgres then
+# refuses to create databases from them, and text indexes may be wrong. Stop
+# and say so rather than change anything.
+STALE_COLLATION="$(psql_db -tAc "SELECT string_agg(datname, ', ' ORDER BY datname) FROM pg_database WHERE datcollversion IS NOT NULL AND datcollversion <> pg_database_collation_actual_version(oid)")"
+if [ -n "$STALE_COLLATION" ]; then
+    echo "ERROR: this fixture volume was created by another Postgres image: the collation"
+    echo "       version of ${STALE_COLLATION} no longer matches the server's."
+    echo "       Back up anything you need from it, then reset it:"
+    echo "           make destroy-fixtures && make start-fixtures"
+    echo "       (docs/development/local-setup.md, troubleshooting)"
+    exit 1
+fi
+
 # Run a psql statement, retrying transient startup/shutdown/connection errors
 # until the shared MAX_WAIT deadline (SECONDS keeps counting from the wait
 # above). On timeout, re-run unsuppressed so the real error reaches the log.

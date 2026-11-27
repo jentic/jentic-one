@@ -21,10 +21,13 @@ pytestmark = pytest.mark.integration
 
 _KEY = 0x6A6F_5445_5354  # "joTEST" — distinct from every production key
 
+# Advisory locks belong to a database, and other test runs hold the same key in
+# their own databases on the same server: only this database's holders count.
 _HOLDER_SQL = text(
     "SELECT a.pid, a.state FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid"
     " WHERE l.locktype = 'advisory' AND l.granted"
     " AND l.classid = :hi AND l.objid = :lo"
+    " AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())"
 )
 _KEY_PARAMS = {"hi": _KEY >> 32, "lo": _KEY & 0xFFFFFFFF}
 

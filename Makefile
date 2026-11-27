@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures clean-test-databases start-quickstart-dev stop-quickstart-dev destroy-quickstart-dev start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install ready sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-quickstart-dev stop-quickstart-dev destroy-quickstart-dev start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -13,6 +13,18 @@ help: ## Show this help
 	@$(MAKE) --no-print-directory -C tests/perf help
 
 install: sync ui-setup hooks ## Full dev setup: sync deps, install UI deps, install lefthook hooks
+
+# Strict readiness for an automated worker (.harness/setup.sh calls it): every
+# step must succeed, and none needs anything outside this repo. Idempotent.
+# READY_UI=0 skips the UI dependencies for backend-only work.
+READY_UI ?= 1
+ready: ## Strict, idempotent worker setup: locked deps, UI deps, hooks, fixtures + migrations (READY_UI=0: no UI)
+	uv sync --dev --all-extras --locked
+ifneq ($(READY_UI),0)
+	cd $(UI_DIR) && npm ci
+endif
+	uv run lefthook install
+	./scripts/setup.sh
 
 sync: ## Install/sync project + dev dependencies (includes all extras)
 	uv sync --dev --all-extras

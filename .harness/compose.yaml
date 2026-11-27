@@ -1,0 +1,10 @@
+# The fixture Postgres for a Software Factory VM. It is the service in
+# docker/local-setup/docker-compose.yaml under that file's own compose project
+# (`local-setup`), so `make ready` (scripts/setup.sh) finds it already running,
+# and sf-repo-setup starts it again, with its volume, after the VM resumes.
+# The port is published on the VM, so config/local.yaml's localhost:5432 and
+# the test harness reach it unchanged.
+name: local-setup
+
+include:
+  - ../docker/local-setup/docker-compose.yaml
