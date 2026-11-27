@@ -146,20 +146,6 @@ class IdempotencyOutcome:
     claim_id: str | None = None
 
 
-def _scrub_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Drop headers that must not be persisted for replay.
-
-    Security-bearing headers are never hoarded; ``Server-Timing`` describes the
-    original exchange's latency, which a replay (no upstream call) must not
-    re-assert as its own.
-    """
-    return {
-        k: v
-        for k, v in headers.items()
-        if k.lower() not in SENSITIVE_RESPONSE_HEADERS and k.lower() not in _PER_EXCHANGE_HEADERS
-    }
-
-
 def _scrub_header_items(
     headers: Mapping[str, str] | Iterable[tuple[str, str]],
 ) -> list[tuple[str, str]]:
