@@ -1,6 +1,10 @@
 services:
   db:
-    image: postgres:16
+    # Postgres 16 with pgvector available, so OSS and enterprise checkouts (the
+    # latter needs `vector`) can share one fixture volume: a volume moved between
+    # images can carry a mismatched collation version (scripts/setup.sh stops on
+    # it). OSS never uses the extension; its CI runs plain postgres:16.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: jentic
       POSTGRES_USER: postgres
