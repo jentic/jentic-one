@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-quickstart-dev stop-quickstart-dev destroy-quickstart-dev start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: perf-help help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check detect-secrets secrets-baseline score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures clean-test-databases start-quickstart-dev stop-quickstart-dev destroy-quickstart-dev start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images check-image-lock release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -185,10 +185,14 @@ start-fixtures: ## Start Docker database fixtures and apply migrations
 	@./scripts/setup.sh
 
 stop-fixtures: ## Stop Docker database fixtures
-	docker compose -f docker/local-setup/docker-compose.yaml stop
+	docker compose -p "$${JENTIC_FIXTURES_PROJECT:-local-setup}" -f docker/local-setup/docker-compose.yaml stop
 
-destroy-fixtures: ## Remove Docker database fixtures and volumes
-	docker compose -f docker/local-setup/docker-compose.yaml down -v
+clean-test-databases: ## Drop this checkout's test databases (ALL=1: every checkout's, every template and legacy names; FORCE=1: even in use)
+	uv run python -m tests.harness.postgres $(if $(ALL),--all) $(if $(FORCE),--force)
+
+destroy-fixtures: ## Remove Docker database fixtures and volumes (refuses while a live test run owns a database on them; FORCE=1 overrides)
+	uv run python -m tests.harness.postgres --destroy $(if $(FORCE),--force) -- \
+		docker compose -p "$${JENTIC_FIXTURES_PROJECT:-local-setup}" -f docker/local-setup/docker-compose.yaml down -v
 
 # Docker quickstart plus a mock OIDC IdP (web SSO and MCP OAuth), for local development.
 QUICKSTART_DEV := docker compose -p jentic-quickstart-dev \

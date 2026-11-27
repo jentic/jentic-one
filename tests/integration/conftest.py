@@ -36,10 +36,10 @@ from tests.harness.event_stream import StreamProbe, install_fast_stream
 from tests.harness.postgres import (
     DB_NAMES,
     alembic_config_for,
+    drop_test_database,
     encryption_config,
-    migrate_to_head,
     postgres_config,
-    prepare_xdist_database,
+    prepare_test_database,
 )
 
 
@@ -83,23 +83,26 @@ def integration_config() -> Iterator[AppConfig]:
 
 @pytest.fixture(scope="session", autouse=True)
 def _apply_migrations(
-    integration_config: AppConfig, tmp_path_factory: pytest.TempPathFactory
+    integration_config: AppConfig,
 ) -> Iterator[None]:
     """Bring every integration database up to ``head`` once per session.
 
-    On Postgres we first give an xdist worker its own database (see
-    ``tests/harness/postgres.py``), then ensure the per-surface schemas exist
-    (Docker volumes start empty). On SQLite there are no schemas, so we go
-    straight to applying migrations against the per-surface database files.
+    On Postgres this process gets its own database, cloned from a template the
+    deployment runner migrated to head, and drops it at the end of the session
+    (``tests/harness/postgres.py``). On SQLite
+    there are no schemas, so we apply migrations against the per-surface
+    database files.
     """
-    if _test_backend() == "postgres":
-        prepare_xdist_database(tmp_path_factory.getbasetemp().parent)
-        migrate_to_head(integration_config)
+    postgres = _test_backend() == "postgres"
+    if postgres:
+        prepare_test_database()
     else:
         for name in DB_NAMES:
             cfg = alembic_config_for(name, getattr(integration_config.databases, name))
             command.upgrade(cfg, "head")
     yield
+    if postgres:
+        drop_test_database()
 
 
 @pytest.fixture()
